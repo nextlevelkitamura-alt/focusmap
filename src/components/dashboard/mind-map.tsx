@@ -38,7 +38,7 @@ type MindMapCallbacks = {
     toggleTaskCollapse: (taskId: string) => void;
     createRootTaskAndFocus: (title: string) => Promise<void>;
     onUpdateProject?: (projectId: string, title: string) => Promise<void>;
-    registerSchedule: (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<void>;
+    registerSchedule: (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<{ googleEventId?: string | null }>;
 };
 
 // --- Error Boundary ---
@@ -1043,6 +1043,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error || 'スケジュール登録に失敗しました');
         }
+        const data = await res.json().catch(() => ({}));
+        const googleEventId = typeof data.googleEventId === 'string' ? data.googleEventId : null;
+        if (googleEventId && onUpdateTask) {
+            await onUpdateTask(taskId, { google_event_id: googleEventId });
+        }
+        return { googleEventId };
     }, [onUpdateTask]);
 
     const updateTaskPriority = useCallback(async (taskId: string, priority: number | null) => {
@@ -1439,6 +1445,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onPersistDir={persistCodexDir}
                     onSaveHeading={(taskId, heading) => onUpdateTask?.(taskId, { title: heading })}
                     onSaveDraft={(taskId, draft) => onUpdateTask?.(taskId, { title: draft.title, memo: draft.memo })}
+                    onSaveTaskDetails={(taskId, updates) => onUpdateTask?.(taskId, updates)}
+                    onRegisterSchedule={(taskId, params) => callbacks.registerSchedule(taskId, params)}
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void onUpdateTask?.(taskId, { status: done ? 'done' : 'todo' }); }}
                     onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}

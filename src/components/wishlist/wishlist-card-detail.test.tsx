@@ -270,6 +270,25 @@ describe('WishlistCardDetail', () => {
     })
   })
 
+  test('所要時間カスタムはホイールPopoverで選べる', async () => {
+    const promptSpy = vi.spyOn(window, 'prompt')
+    render(<DetailHarness />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'カスタム' }))
+
+    expect(await screen.findByTestId('duration-wheel-popover')).toBeInTheDocument()
+    const minuteColumn = screen.getByRole('listbox', { name: '分' })
+    for (let i = 0; i < 20; i += 1) {
+      fireEvent.wheel(minuteColumn, { deltaY: 80 })
+    }
+    fireEvent.click(screen.getByRole('button', { name: /反映/ }))
+
+    await waitFor(() => {
+      expect(screen.getByText('1時間20分')).toBeInTheDocument()
+    })
+    expect(promptSpy).not.toHaveBeenCalled()
+  })
+
   test('Codex送信は追加依頼文を編集せず見出しと本文だけ渡す', async () => {
     const onLaunchCodex = vi.fn(async () => undefined)
 

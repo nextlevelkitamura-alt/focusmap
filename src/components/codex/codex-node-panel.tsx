@@ -28,7 +28,9 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Calendar as CalendarIcon, Check, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert } from "lucide-react"
+import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
+import { useCalendars } from "@/hooks/useCalendars"
 import type { Task, TaskAttachment } from "@/types/database"
 
 type NodeInfo = {
@@ -57,6 +59,8 @@ type CodexNodePanelProps = {
   onDelete?: (taskId: string) => void
   onSaveHeading?: (taskId: string, heading: string) => Promise<void> | void
   onSaveDraft?: (taskId: string, draft: { title: string; memo: string | null }) => Promise<void> | void
+  onSaveTaskDetails?: (taskId: string, updates: Partial<Task>) => Promise<void> | void
+  onRegisterSchedule?: (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<{ googleEventId?: string | null } | void> | { googleEventId?: string | null } | void
 }
 
 type SaveStatus = "saved" | "saving" | "error"
@@ -298,9 +302,19 @@ function parseCodexConversation(value: string, prompt: string): { entries: Codex
   return { entries, processLogs }
 }
 
-export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
+export function CodexNodePanel({
+  open,
+  node,
+  candidates,
+  onClose,
+  onSaveHeading,
+  onSaveDraft,
+  onSaveTaskDetails,
+  onRegisterSchedule,
+}: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const { calendars } = useCalendars()
   const {
     getBySourceId: getAiTaskBySourceId,
     refresh: refreshAiTasks,
@@ -326,6 +340,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [scheduledAt, setScheduledAt] = useState<string | null>(null)
   const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(null)
   const [calendarId, setCalendarId] = useState("")
+  const [googleEventId, setGoogleEventId] = useState<string | null>(null)
+  const [isRegisteringSchedule, setIsRegisteringSchedule] = useState(false)
+  const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<TaskAttachmentPreview[]>([])
   const [isLoadingTaskDetail, setIsLoadingTaskDetail] = useState(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -359,6 +376,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexPromptCopied(false)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
+    setGoogleEventId(null)
+    setIsRegisteringSchedule(false)
+    setScheduleNotice(null)
     setImageNotice(null)
     setIsImageDragActive(false)
   }, [open, node.taskId, node.title, node.memo])
@@ -383,6 +403,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           setScheduledAt(taskData.task.scheduled_at ?? null)
           setEstimatedMinutes(taskData.task.estimated_time ?? null)
           setCalendarId(taskData.task.calendar_id ?? "")
+          setGoogleEventId(taskData.task.google_event_id ?? null)
         }
 
         if (attachmentsRes.ok && Array.isArray(attachmentsData.attachments)) {
@@ -500,25 +521,61 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     void saveDraft(heading, nextDetail)
   }, [heading, saveDraft])
 
+  const calendarOptions = useMemo(() => {
+    const writable = calendars.filter(calendar => (
+      calendar.google_calendar_id &&
+      (calendar.access_level === "owner" || calendar.access_level === "writer")
+    ))
+    const selectedWritable = writable.filter(calendar => calendar.selected)
+    const source = selectedWritable.length > 0 ? selectedWritable : writable.length > 0 ? writable : calendars
+    const options = source
+      .filter(calendar => calendar.google_calendar_id)
+      .map(calendar => ({
+        id: calendar.google_calendar_id,
+        name: calendar.name || (calendar.is_primary ? "Google" : calendar.google_calendar_id),
+        color: calendar.background_color ?? calendar.color ?? "#3F51B5",
+        primary: calendar.is_primary,
+      }))
+    if (options.length > 0) return options
+    return [{ id: "primary", name: "Google", color: "#3F51B5", primary: true }]
+  }, [calendars])
+
+  useEffect(() => {
+    if (!open) return
+    setCalendarId(prev => (
+      prev && calendarOptions.some(calendar => calendar.id === prev)
+        ? prev
+        : calendarOptions[0]?.id ?? "primary"
+    ))
+  }, [calendarOptions, open])
+
   const patchTaskDetail = useCallback(async (updates: Record<string, unknown>) => {
     setError(null)
+    setScheduleNotice(null)
     setSaveStatus("saving")
     try {
-      const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(typeof data?.error?.message === "string" ? data.error.message : "タスク詳細の保存に失敗しました")
+      if (onSaveTaskDetails) {
+        await onSaveTaskDetails(node.taskId, updates as Partial<Task>)
+      } else {
+        const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(typeof data?.error?.message === "string" ? data.error.message : "タスク詳細の保存に失敗しました")
+        }
+        if (typeof data?.task?.google_event_id === "string") {
+          setGoogleEventId(data.task.google_event_id)
+        }
       }
       setSaveStatus("saved")
     } catch (err) {
       setSaveStatus("error")
       setError(err instanceof Error ? err.message : "タスク詳細の保存に失敗しました")
     }
-  }, [node.taskId])
+  }, [node.taskId, onSaveTaskDetails])
 
   const dateValue = useMemo(() => toDateInputValue(scheduledAt), [scheduledAt])
   const timeValue = useMemo(() => toTimeInputValue(scheduledAt), [scheduledAt])
@@ -548,11 +605,66 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     void patchTaskDetail({ estimated_time: minutes })
   }, [patchTaskDetail])
 
-  const handleCalendarChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+  const handleCalendarChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     const nextCalendarId = event.target.value
     setCalendarId(nextCalendarId)
     void patchTaskDetail({ calendar_id: nextCalendarId.trim() || null })
   }, [patchTaskDetail])
+
+  const canRegisterSchedule = Boolean(scheduledAt && estimatedMinutes && estimatedMinutes > 0 && calendarId.trim())
+
+  const handleRegisterSchedule = useCallback(async () => {
+    if (!scheduledAt || !estimatedMinutes || estimatedMinutes <= 0 || !calendarId.trim()) {
+      setError("日時・所要時間・カレンダーをすべて選択してください")
+      return
+    }
+
+    const targetCalendarId = calendarId.trim()
+    setError(null)
+    setScheduleNotice(null)
+    setIsRegisteringSchedule(true)
+    try {
+      const wasLinked = Boolean(googleEventId)
+      if (onRegisterSchedule) {
+        const result = await onRegisterSchedule(node.taskId, {
+          scheduledAt,
+          estimatedMinutes,
+          calendarId: targetCalendarId,
+        })
+        if (result?.googleEventId) {
+          setGoogleEventId(result.googleEventId)
+        }
+      } else {
+        await patchTaskDetail({
+          scheduled_at: scheduledAt,
+          estimated_time: estimatedMinutes,
+          calendar_id: targetCalendarId,
+        })
+        const res = await fetch("/api/calendar/sync-task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            taskId: node.taskId,
+            scheduled_at: scheduledAt,
+            estimated_time: estimatedMinutes,
+            calendar_id: targetCalendarId,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "カレンダー登録に失敗しました")
+        if (typeof data.googleEventId === "string") {
+          setGoogleEventId(data.googleEventId)
+        }
+      }
+      setScheduleNotice(wasLinked ? "カレンダー予定を更新しました" : "カレンダーに登録しました")
+      setSaveStatus("saved")
+    } catch (err) {
+      setSaveStatus("error")
+      setError(err instanceof Error ? err.message : "カレンダー登録に失敗しました")
+    } finally {
+      setIsRegisteringSchedule(false)
+    }
+  }, [calendarId, estimatedMinutes, googleEventId, node.taskId, onRegisterSchedule, patchTaskDetail, scheduledAt])
 
   const uploadImages = useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
@@ -1154,6 +1266,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     !canUseLocalCodexOpenApi() &&
     codexRunnerStatus.checked &&
     !codexRunnerStatus.ready
+  const selectedCalendar = calendarOptions.find(calendar => calendar.id === calendarId) ?? calendarOptions[0]
   const nodeMetaTags = useMemo(() => {
     const tags: string[] = []
     if (node.isDone) tags.push("完了")
@@ -1220,8 +1333,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         </div>
 
         <div className="min-h-0 overflow-y-auto px-4 py-5 sm:px-6">
-          <div className="grid gap-4 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start">
-            <div className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)] xl:items-start">
+            <div className="space-y-4 xl:col-start-2 xl:row-start-1">
               <section className="space-y-2">
                 <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
                   <ImagePlus className="h-4 w-4" />
@@ -1357,7 +1470,18 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                   <div className="space-y-1">
                     <div className="flex items-center justify-between gap-2 text-xs text-neutral-400">
                       <span>所要時間</span>
-                      <span>{formatDurationLabel(estimatedMinutes)}</span>
+                      <div className="flex items-center gap-2">
+                        <span>{formatDurationLabel(estimatedMinutes)}</span>
+                        {estimatedMinutes ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDurationChange(null)}
+                            className="min-h-7 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-[11px] font-medium text-neutral-400 transition-colors hover:text-neutral-100"
+                          >
+                            解除
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="grid grid-cols-3 gap-1.5">
                       {QUICK_ESTIMATED_MINUTES.map(minutes => (
@@ -1374,29 +1498,71 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                           {formatDurationLabel(minutes)}
                         </button>
                       ))}
-                      <button
-                        type="button"
-                        onClick={() => handleDurationChange(null)}
-                        className="min-h-9 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-xs font-medium text-neutral-400 transition-colors hover:text-neutral-100"
-                      >
-                        解除
-                      </button>
+                      <DurationWheelPopover
+                        valueMinutes={estimatedMinutes}
+                        onChange={minutes => handleDurationChange(minutes)}
+                        side="top"
+                        align="end"
+                        trigger={(
+                          <button
+                            type="button"
+                            className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+                              estimatedMinutes && !(QUICK_ESTIMATED_MINUTES as readonly number[]).includes(estimatedMinutes)
+                                ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
+                                : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
+                            }`}
+                          >
+                            カスタム
+                          </button>
+                        )}
+                      />
                     </div>
                   </div>
                   <label className="space-y-1 text-xs text-neutral-400">
                     <span>カレンダー</span>
-                    <input
-                      value={calendarId}
-                      onChange={handleCalendarChange}
-                      placeholder="primary"
-                      className="min-h-11 w-full rounded-md border border-neutral-800 bg-neutral-900/55 px-3 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-emerald-500"
-                    />
+                    <span className="relative flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+                      />
+                      <select
+                        value={calendarId}
+                        onChange={handleCalendarChange}
+                        className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
+                      >
+                        {calendarOptions.map(calendar => (
+                          <option key={calendar.id} value={calendar.id}>
+                            {calendar.name}{calendar.primary ? "（主）" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                    </span>
                   </label>
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                    <p className="min-w-0 text-xs leading-5 text-neutral-500">
+                      日時・所要時間・カレンダーが揃うと登録できます。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleRegisterSchedule()}
+                      disabled={!canRegisterSchedule || isRegisteringSchedule}
+                      className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600"
+                    >
+                      {isRegisteringSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarIcon className="h-3.5 w-3.5" />}
+                      {googleEventId ? "予定を更新" : "予定を登録"}
+                    </button>
+                  </div>
+                  {scheduleNotice && (
+                    <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                      {scheduleNotice}
+                    </p>
+                  )}
                 </div>
               </section>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2 xl:col-start-1 xl:row-start-1">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div className="flex items-center justify-between gap-3 sm:justify-start">
                 <span className="text-sm text-muted-foreground">メモ詳細</span>

@@ -115,6 +115,7 @@ export async function POST(request: NextRequest) {
       estimated_time,
       google_event_id: currentGoogleEventId,
       calendar_id,
+      source_calendar_id: task.calendar_id,
       memo: task.memo,
       reminders,
     });

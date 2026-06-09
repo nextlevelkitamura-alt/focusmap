@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  type WheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -20,6 +19,8 @@ import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from 
 import Link from "next/link"
 import { Settings as SettingsIcon } from "lucide-react"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
+import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
+import { IosWheelColumn } from "@/components/ui/ios-wheel-column"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
@@ -31,8 +32,6 @@ const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
-const IOS_TIME_WHEEL_ITEM_HEIGHT = 44
-const IOS_TIME_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
 const DATE_POPOVER_APPROX_HEIGHT = 340
 const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
@@ -168,6 +167,11 @@ function formatTimeValue(value: string | null | undefined) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ""
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+}
+
+function getMemoCalendarId(item: IdealGoalWithItems | null | undefined) {
+  const value = (item as { calendar_id?: unknown } | null | undefined)?.calendar_id
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null
 }
 
 function formatLocalDateValue(date: Date) {
@@ -430,305 +434,6 @@ function getActionClassName(actionType: "execution" | "research" | "decision") {
     case "decision": return "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
     default: return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
   }
-}
-
-function moduloIndex(index: number, length: number) {
-  if (length <= 0) return 0
-  return ((index % length) + length) % length
-}
-
-function nearestWheelIndex(currentVirtualIndex: number, targetIndex: number, length: number) {
-  if (length <= 0) return 0
-  const base = Math.round((currentVirtualIndex - targetIndex) / length) * length + targetIndex
-  const previous = base - length
-  const next = base + length
-  return [previous, base, next].reduce((nearest, candidate) => (
-    Math.abs(candidate - currentVirtualIndex) < Math.abs(nearest - currentVirtualIndex) ? candidate : nearest
-  ), base)
-}
-
-function clampNumber(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
-
-type IosTimeWheelColumnProps = {
-  label: string
-  values: readonly number[]
-  value: number
-  onPreview: (value: number) => void
-  onCommit: (value: number) => void
-}
-
-type TimeWheelDragState = {
-  baseVirtualIndex: number
-  startY: number
-  lastY: number
-  lastAt: number
-  velocity: number
-  moved: boolean
-}
-
-function IosTimeWheelColumn({
-  label,
-  values,
-  value,
-  onPreview,
-  onCommit,
-}: IosTimeWheelColumnProps) {
-  const wheelRef = useRef<HTMLDivElement>(null)
-  const selectedIndex = Math.max(0, values.indexOf(value))
-  const [virtualIndex, setVirtualIndex] = useState(selectedIndex)
-  const [isDragging, setIsDragging] = useState(false)
-  const [isSettling, setIsSettling] = useState(false)
-  const virtualIndexRef = useRef(virtualIndex)
-  const previewIndexRef = useRef(selectedIndex)
-  const dragRef = useRef<TimeWheelDragState | null>(null)
-  const activePointerIdRef = useRef<number | null>(null)
-  const ignoreClickUntilRef = useRef(0)
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const clearSettleTimer = useCallback(() => {
-    if (!settleTimerRef.current) return
-    window.clearTimeout(settleTimerRef.current)
-    settleTimerRef.current = null
-  }, [])
-
-  const updateVirtualIndex = useCallback((nextVirtualIndex: number) => {
-    if (values.length === 0) return
-
-    virtualIndexRef.current = nextVirtualIndex
-    setVirtualIndex(nextVirtualIndex)
-
-    const nextIndex = moduloIndex(Math.round(nextVirtualIndex), values.length)
-    if (previewIndexRef.current === nextIndex) return
-    previewIndexRef.current = nextIndex
-    onPreview(values[nextIndex])
-  }, [onPreview, values])
-
-  const settleToIndex = useCallback((absoluteIndex: number, commit: boolean) => {
-    if (values.length === 0) return
-
-    const nextIndex = moduloIndex(absoluteIndex, values.length)
-    previewIndexRef.current = nextIndex
-    virtualIndexRef.current = absoluteIndex
-    setVirtualIndex(absoluteIndex)
-    onPreview(values[nextIndex])
-    if (commit) onCommit(values[nextIndex])
-
-    setIsSettling(true)
-    clearSettleTimer()
-    settleTimerRef.current = window.setTimeout(() => {
-      settleTimerRef.current = null
-      setIsSettling(false)
-    }, 190)
-  }, [clearSettleTimer, onCommit, onPreview, values])
-
-  const finishDrag = useCallback(() => {
-    const drag = dragRef.current
-    if (!drag || values.length === 0) return
-
-    dragRef.current = null
-    activePointerIdRef.current = null
-    setIsDragging(false)
-
-    if (!drag.moved) return
-
-    const projectedItems = clampNumber((drag.velocity * 180) / IOS_TIME_WHEEL_ITEM_HEIGHT, -7, 7)
-    const targetIndex = Math.round(virtualIndexRef.current + projectedItems)
-
-    ignoreClickUntilRef.current = Date.now() + 160
-    settleToIndex(targetIndex, true)
-  }, [settleToIndex, values.length])
-
-  const startDrag = useCallback((clientY: number) => {
-    clearSettleTimer()
-    setIsDragging(true)
-    setIsSettling(false)
-    dragRef.current = {
-      baseVirtualIndex: virtualIndexRef.current,
-      startY: clientY,
-      lastY: clientY,
-      lastAt: performance.now(),
-      velocity: 0,
-      moved: false,
-    }
-  }, [clearSettleTimer])
-
-  const moveDrag = useCallback((clientY: number) => {
-    const drag = dragRef.current
-    if (!drag) return
-
-    const totalDelta = drag.startY - clientY
-    const now = performance.now()
-    const dt = Math.max(8, now - drag.lastAt)
-    const stepDelta = drag.lastY - clientY
-
-    drag.velocity = stepDelta / dt
-    drag.lastY = clientY
-    drag.lastAt = now
-    if (Math.abs(totalDelta) >= 2) drag.moved = true
-
-    updateVirtualIndex(drag.baseVirtualIndex + totalDelta / IOS_TIME_WHEEL_ITEM_HEIGHT)
-  }, [updateVirtualIndex])
-
-  const handleOptionClick = useCallback((absoluteIndex: number) => {
-    if (Date.now() < ignoreClickUntilRef.current) return
-    const targetIndex = nearestWheelIndex(virtualIndexRef.current, moduloIndex(absoluteIndex, values.length), values.length)
-    settleToIndex(targetIndex, true)
-  }, [settleToIndex, values.length])
-
-  const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
-    if (values.length === 0) return
-
-    event.preventDefault()
-    event.stopPropagation()
-    clearSettleTimer()
-    setIsDragging(false)
-    setIsSettling(false)
-    dragRef.current = null
-    activePointerIdRef.current = null
-
-    const primaryDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-    if (primaryDelta === 0) return
-    const step = primaryDelta > 0 ? 1 : -1
-    settleToIndex(Math.round(virtualIndexRef.current) + step, true)
-  }, [clearSettleTimer, settleToIndex, values.length])
-
-  useEffect(() => {
-    previewIndexRef.current = selectedIndex
-    if (dragRef.current) return
-    const nextVirtualIndex = nearestWheelIndex(virtualIndexRef.current, selectedIndex, values.length)
-    virtualIndexRef.current = nextVirtualIndex
-    setVirtualIndex(nextVirtualIndex)
-  }, [selectedIndex, values.length])
-
-  useEffect(() => {
-    const node = wheelRef.current
-    if (!node) return
-
-    const handleTouchStart = (event: TouchEvent) => {
-      const touch = event.touches[0]
-      if (!touch) return
-      event.stopPropagation()
-      startDrag(touch.clientY)
-    }
-
-    const handleTouchMove = (event: TouchEvent) => {
-      const touch = event.touches[0]
-      if (!touch || !dragRef.current) return
-      event.preventDefault()
-      event.stopPropagation()
-      moveDrag(touch.clientY)
-    }
-
-    const handleTouchEnd = (event: TouchEvent) => {
-      const drag = dragRef.current
-      if (!drag) return
-      if (drag.moved) event.preventDefault()
-      event.stopPropagation()
-      finishDrag()
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.pointerType === "touch") return
-      if (event.pointerType === "mouse" && event.button !== 0) return
-      event.preventDefault()
-      event.stopPropagation()
-      activePointerIdRef.current = event.pointerId
-      node.setPointerCapture?.(event.pointerId)
-      startDrag(event.clientY)
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      if (activePointerIdRef.current !== event.pointerId || !dragRef.current) return
-      event.preventDefault()
-      event.stopPropagation()
-      moveDrag(event.clientY)
-    }
-
-    const handlePointerEnd = (event: PointerEvent) => {
-      if (activePointerIdRef.current !== event.pointerId || !dragRef.current) return
-      event.preventDefault()
-      event.stopPropagation()
-      node.releasePointerCapture?.(event.pointerId)
-      finishDrag()
-    }
-
-    node.addEventListener("touchstart", handleTouchStart, { passive: false })
-    node.addEventListener("touchmove", handleTouchMove, { passive: false })
-    node.addEventListener("touchend", handleTouchEnd, { passive: false })
-    node.addEventListener("touchcancel", handleTouchEnd, { passive: false })
-    node.addEventListener("pointerdown", handlePointerDown)
-    node.addEventListener("pointermove", handlePointerMove)
-    node.addEventListener("pointerup", handlePointerEnd)
-    node.addEventListener("pointercancel", handlePointerEnd)
-
-    return () => {
-      node.removeEventListener("touchstart", handleTouchStart)
-      node.removeEventListener("touchmove", handleTouchMove)
-      node.removeEventListener("touchend", handleTouchEnd)
-      node.removeEventListener("touchcancel", handleTouchEnd)
-      node.removeEventListener("pointerdown", handlePointerDown)
-      node.removeEventListener("pointermove", handlePointerMove)
-      node.removeEventListener("pointerup", handlePointerEnd)
-      node.removeEventListener("pointercancel", handlePointerEnd)
-    }
-  }, [finishDrag, moveDrag, startDrag])
-
-  useEffect(() => {
-    return () => clearSettleTimer()
-  }, [clearSettleTimer])
-
-  const roundedVirtualIndex = Math.round(virtualIndex)
-  const currentIndex = moduloIndex(roundedVirtualIndex, values.length)
-
-  return (
-    <div
-      ref={wheelRef}
-      className="relative h-full min-w-0 touch-none select-none overflow-hidden [touch-action:none]"
-      data-time-wheel-column={label === "時" ? "hour" : "minute"}
-      onWheel={handleWheel}
-      aria-label={label}
-      role="listbox"
-      aria-activedescendant={`${label}-${values[currentIndex]}`}
-    >
-      {IOS_TIME_WHEEL_OFFSETS.map(offset => {
-        const absoluteIndex = roundedVirtualIndex + offset
-        const optionIndex = moduloIndex(absoluteIndex, values.length)
-        const optionValue = values[optionIndex]
-        const relativeOffset = absoluteIndex - virtualIndex
-        const distance = Math.abs(relativeOffset)
-        const isCurrent = optionIndex === currentIndex
-        const opacity = distance > 2.85 ? 0.08 : Math.max(0.18, 1 - distance * 0.34)
-        const scale = 1 - Math.min(distance * 0.075, 0.22)
-        const y = relativeOffset * IOS_TIME_WHEEL_ITEM_HEIGHT
-
-        return (
-          <button
-            key={`${label}-${absoluteIndex}`}
-            id={`${label}-${optionValue}`}
-            type="button"
-            role="option"
-            aria-selected={isCurrent}
-            data-time-wheel-option={label === "時" ? "hour" : "minute"}
-            data-time-wheel-value={optionValue}
-            onClick={() => handleOptionClick(absoluteIndex)}
-            className={cn(
-              "absolute inset-x-1 top-1/2 flex h-11 -translate-y-1/2 items-center justify-center rounded-xl text-[22px] font-semibold leading-none tabular-nums tracking-normal outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/60",
-              isCurrent ? "text-neutral-50" : "text-neutral-500",
-            )}
-            style={{
-              opacity,
-              transform: `translate3d(0, ${y}px, 0) translateY(-50%) scale(${scale})`,
-              transition: isDragging ? "none" : isSettling ? "transform 190ms cubic-bezier(.2,.85,.2,1), opacity 190ms ease" : "color 120ms ease",
-            }}
-          >
-            {formatTimePart(optionValue)}
-          </button>
-        )
-      })}
-    </div>
-  )
 }
 
 function getStatusLabel(status: string) {
@@ -1484,6 +1189,7 @@ export function WishlistCardDetail({
   const itemTitle = item?.title ?? ""
   const itemDescription = item?.description ?? ""
   const itemScheduledAt = item?.scheduled_at ?? null
+  const itemCalendarId = getMemoCalendarId(item)
   const currentDateValue = formatDateValue(itemScheduledAt)
   const currentTimeValue = formatTimeValue(itemScheduledAt)
   const currentHour = currentTimeValue ? Number(currentTimeValue.slice(0, 2)) : 9
@@ -1633,11 +1339,13 @@ export function WishlistCardDetail({
   useEffect(() => {
     if (!open) return
     setSelectedCalendarId(prev => (
-      prev && calendarOptions.some(calendar => calendar.id === prev)
+      itemCalendarId && calendarOptions.some(calendar => calendar.id === itemCalendarId)
+        ? itemCalendarId
+        : prev && calendarOptions.some(calendar => calendar.id === prev)
         ? prev
         : calendarOptions[0]?.id ?? "primary"
     ))
-  }, [calendarOptions, open])
+  }, [calendarOptions, itemCalendarId, open])
 
   useEffect(() => {
     const pendingImageUrls = pendingImageUrlsRef.current
@@ -1735,7 +1443,7 @@ export function WishlistCardDetail({
   const selectedHour = previewTimeValue ? Number(previewTimeValue.slice(0, 2)) : currentHour
   const selectedMinute = previewTimeValue ? Number(previewTimeValue.slice(3, 5)) : currentMinute
   const selectedCalendar = calendarOptions.find(calendar => calendar.id === selectedCalendarId) ?? calendarOptions[0]
-  const canAddCalendar = Boolean(item.scheduled_at && item.duration_minutes && selectedCalendar?.id)
+  const canAddCalendar = Boolean(item.scheduled_at && item.duration_minutes && item.duration_minutes > 0 && selectedCalendar?.id)
 
   const handleScheduleChange = async (nextDateValue: string, nextTimeValue: string) => {
     const scheduledAt = combineDateTime(nextDateValue, nextTimeValue)
@@ -1791,14 +1499,7 @@ export function WishlistCardDetail({
     setIsCalendarPopoverOpen(false)
   }
 
-  const handleCustomDuration = async () => {
-    const value = window.prompt("所要時間を分で入力してください", String(item.duration_minutes ?? 60))
-    if (value == null) return
-    const minutes = Number.parseInt(value, 10)
-    if (!Number.isFinite(minutes) || minutes <= 0) {
-      setSaveError("所要時間は分単位の数字で入力してください")
-      return
-    }
+  const handleDurationChange = async (minutes: number | null) => {
     setSaveError(null)
     await update({ duration_minutes: minutes })
   }
@@ -2402,7 +2103,7 @@ export function WishlistCardDetail({
             </div>
           </div>
 
-            <div className="order-4 space-y-2 xl:col-start-1 xl:row-start-3">
+            <div className="order-4 space-y-2 xl:col-start-2 xl:row-start-3">
               <Label className="flex items-center gap-1.5">
                 <Clock className="h-4 w-4" />
                 時間・予定
@@ -2510,19 +2211,25 @@ export function WishlistCardDetail({
                             <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-16 bg-gradient-to-b from-[#383838] via-[#383838]/90 to-transparent" />
                             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-16 bg-gradient-to-t from-[#383838] via-[#383838]/90 to-transparent" />
                             <div className="relative z-30 grid h-full grid-cols-2 px-3">
-                              <IosTimeWheelColumn
+                              <IosWheelColumn
                                 label="時"
                                 values={HOUR_OPTIONS}
                                 value={selectedHour}
                                 onPreview={previewHourValue}
                                 onCommit={commitHourValue}
+                                formatValue={formatTimePart}
+                                dataColumn="hour"
+                                idPrefix="memo-time-hour"
                               />
-                              <IosTimeWheelColumn
+                              <IosWheelColumn
                                 label="分"
                                 values={MINUTE_OPTIONS}
                                 value={selectedMinute}
                                 onPreview={previewMinuteValue}
                                 onCommit={commitMinuteValue}
+                                formatValue={formatTimePart}
+                                dataColumn="minute"
+                                idPrefix="memo-time-minute"
                               />
                             </div>
                           </div>
@@ -2534,14 +2241,25 @@ export function WishlistCardDetail({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-muted-foreground">所要時間</span>
-                    <span className="text-xs text-muted-foreground">{formatDurationLabel(item.duration_minutes)}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">{formatDurationLabel(item.duration_minutes)}</span>
+                      {item.duration_minutes ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleDurationChange(null)}
+                          className="min-h-7 rounded-md border bg-background px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          解除
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-1.5">
                     {QUICK_MINUTES.map(minutes => (
                       <button
                         key={minutes}
                         type="button"
-                        onClick={() => update({ duration_minutes: minutes })}
+                        onClick={() => void handleDurationChange(minutes)}
                         className={cn(
                           "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
                           item.duration_minutes === minutes ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground",
@@ -2550,65 +2268,75 @@ export function WishlistCardDetail({
                         {formatDurationLabel(minutes)}
                       </button>
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => void handleCustomDuration()}
-                      className={cn(
-                        "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
-                        item.duration_minutes && !QUICK_MINUTES.includes(item.duration_minutes) ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:text-foreground",
+                    <DurationWheelPopover
+                      valueMinutes={item.duration_minutes}
+                      onChange={handleDurationChange}
+                      side={isMobile ? "bottom" : "top"}
+                      align="end"
+                      trigger={(
+                        <button
+                          type="button"
+                          className={cn(
+                            "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
+                            item.duration_minutes && !QUICK_MINUTES.includes(item.duration_minutes) ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          カスタム
+                        </button>
                       )}
-                    >
-                      カスタム
-                    </button>
+                    />
                   </div>
                 </div>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  <Popover open={isCalendarPopoverOpen} onOpenChange={setIsCalendarPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="flex min-h-[42px] min-w-0 items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
-                      >
-                        <span
-                          className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{selectedCalendar?.name ?? "Google"}</span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent align="start" className="w-[min(18rem,calc(100vw-2rem))] p-1.5">
-                      {calendarOptions.map(calendar => (
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">カレンダー</span>
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                    <Popover open={isCalendarPopoverOpen} onOpenChange={setIsCalendarPopoverOpen}>
+                      <PopoverTrigger asChild>
                         <button
-                          key={calendar.id}
                           type="button"
-                          onClick={() => handleCalendarSelect(calendar.id)}
-                          className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                          className="flex min-h-[42px] min-w-0 items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
                         >
-                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: calendar.color }} />
-                          <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
-                          {calendar.primary && <span className="text-[10px] text-muted-foreground">主</span>}
-                          {calendar.id === selectedCalendarId && <Check className="h-4 w-4 text-primary" />}
+                          <span
+                            className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+                          />
+                          <span className="min-w-0 flex-1 truncate">{selectedCalendar?.name ?? "Google"}</span>
+                          <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
                         </button>
-                      ))}
-                    </PopoverContent>
-                  </Popover>
-                  <Button
-                    onClick={handleAddCalendar}
-                    disabled={isAddingCalendar || !canAddCalendar}
-                    variant={item.google_event_id ? "outline" : "default"}
-                    className="min-h-[42px] shrink-0 px-3"
-                  >
-                    {isAddingCalendar ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarIcon className="mr-1.5 h-4 w-4" />}
-                    {item.google_event_id ? "登録済み" : "予定を追加"}
-                  </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-[min(18rem,calc(100vw-2rem))] p-1.5">
+                        {calendarOptions.map(calendar => (
+                          <button
+                            key={calendar.id}
+                            type="button"
+                            onClick={() => handleCalendarSelect(calendar.id)}
+                            className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                          >
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: calendar.color }} />
+                            <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
+                            {calendar.primary && <span className="text-[10px] text-muted-foreground">主</span>}
+                            {calendar.id === selectedCalendarId && <Check className="h-4 w-4 text-primary" />}
+                          </button>
+                        ))}
+                      </PopoverContent>
+                    </Popover>
+                    <Button
+                      onClick={handleAddCalendar}
+                      disabled={isAddingCalendar || !canAddCalendar}
+                      variant={item.google_event_id ? "outline" : "default"}
+                      className="min-h-[42px] shrink-0 px-3"
+                    >
+                      {isAddingCalendar ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarIcon className="mr-1.5 h-4 w-4" />}
+                      {item.google_event_id ? "予定を更新" : "予定を追加"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="order-1 space-y-1 xl:col-start-2 xl:row-start-2">
+            <div className="order-1 space-y-1 xl:col-start-1 xl:row-start-2 xl:row-span-2">
               <div className="flex items-center justify-between gap-2">
-                <Label>メモ</Label>
+                <Label>メモ詳細</Label>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     type="button"
@@ -2711,7 +2439,7 @@ export function WishlistCardDetail({
               )}
             </div>
 
-            <div className="order-2 space-y-2 xl:col-start-1 xl:row-start-2">
+            <div className="order-2 space-y-2 xl:col-start-2 xl:row-start-2">
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   <ImagePlus className="h-4 w-4" />
@@ -2872,7 +2600,7 @@ export function WishlistCardDetail({
 
             </div>
 
-            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-3")}>
+            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-4")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
