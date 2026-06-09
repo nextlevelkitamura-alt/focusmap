@@ -70,8 +70,8 @@ type BuildMindMapModelParams = {
     projectNodeId?: string;
 };
 
-const COLUMN_GAP = 52;
-const COLUMN_GAP_MOBILE = 44;
+const COLUMN_GAP = 24;
+const COLUMN_GAP_MOBILE = 20;
 
 const hasMemoImages = (task: Task) =>
     Array.isArray(task.memo_images) && task.memo_images.some(url => typeof url === 'string' && url.trim().length > 0);
@@ -112,8 +112,8 @@ export function buildMindMapModel({
     graph.setDefaultEdgeLabel(() => ({}));
     graph.setGraph({
         rankdir: 'LR',
-        nodesep: isMobile ? 22 : 12,
-        ranksep: isMobile ? 40 : 36,
+        nodesep: isMobile ? 14 : 10,
+        ranksep: isMobile ? 20 : 24,
         edgesep: 4,
         ranker: 'network-simplex',
     });

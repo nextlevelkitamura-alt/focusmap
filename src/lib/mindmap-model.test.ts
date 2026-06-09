@@ -122,6 +122,63 @@ describe("buildMindMapModel", () => {
         expect(childNode).toBeDefined();
         expect(childNode!.x).toBeGreaterThan(wideNode!.x + wideNode!.width);
     });
+
+    test("keeps the next column close after accounting for the widest node", () => {
+        const wideParent = makeTask({
+            id: "wide-parent",
+            title: "横に長い親ノード",
+            node_width: 360,
+            order_index: 0,
+        });
+        const child = makeTask({
+            id: "child",
+            title: "子",
+            parent_task_id: "wide-parent",
+            order_index: 0,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [wideParent],
+            tasks: [child],
+            isMobile: false,
+        });
+
+        const parentNode = model.taskById.get("wide-parent");
+        const childNode = model.taskById.get("child");
+
+        expect(parentNode).toBeDefined();
+        expect(childNode).toBeDefined();
+        expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(24);
+    });
+
+    test("uses a compact mobile column gap", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "親",
+            order_index: 0,
+        });
+        const child = makeTask({
+            id: "child",
+            title: "子",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [child],
+            isMobile: true,
+        });
+
+        const parentNode = model.taskById.get("parent");
+        const childNode = model.taskById.get("child");
+
+        expect(parentNode).toBeDefined();
+        expect(childNode).toBeDefined();
+        expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(20);
+    });
 });
 
 describe("mindmap geometry", () => {
