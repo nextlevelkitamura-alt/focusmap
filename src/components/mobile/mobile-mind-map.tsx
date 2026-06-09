@@ -6,6 +6,7 @@ import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
 import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
+import { buildLongNodeMemoDetail } from "@/lib/memo-ai-generation"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
@@ -60,6 +61,7 @@ export function MobileMindMap({
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
+    const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set())
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
@@ -134,6 +136,49 @@ export function MobileMindMap({
             setIsRefreshingTaskProgressSnapshot(false)
         }
     }, [refreshTaskProgressSnapshot])
+    const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
+        if (!onUpdateTask) return
+
+        const targetTask = taskMap.get(taskId)
+        if (!targetTask) return
+
+        const detail = buildLongNodeMemoDetail(targetTask.title, targetTask.memo)
+        if (!detail) return
+
+        setGeneratingHeadingNodeIds(prev => {
+            const next = new Set(prev)
+            next.add(taskId)
+            return next
+        })
+
+        try {
+            const res = await fetch("/api/ai/generate-memo-heading", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ detail }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                throw new Error(typeof data.error === "string" ? data.error : "見出し生成に失敗しました")
+            }
+
+            const heading = typeof data.heading === "string" ? data.heading.trim() : ""
+            if (!heading) throw new Error("見出し生成に失敗しました")
+
+            await onUpdateTask(taskId, {
+                title: heading,
+                memo: detail,
+            })
+        } catch (error) {
+            console.error("[MobileMindMap] Failed to generate heading from long node:", error)
+        } finally {
+            setGeneratingHeadingNodeIds(prev => {
+                const next = new Set(prev)
+                next.delete(taskId)
+                return next
+            })
+        }
+    }, [onUpdateTask, taskMap])
     const taskProgressFallbackTasks = useMemo(() => {
         if (taskProgressFixtureEnabled) return []
         const fallbackTasks: TaskProgressSnapshotTask[] = []
@@ -537,6 +582,8 @@ export function MobileMindMap({
                     calendar_id: params.calendarId,
                 })}
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
+                onGenerateHeadingFromLongNode={handleGenerateHeadingFromLongNode}
+                generatingHeadingNodeIds={generatingHeadingNodeIds}
                 onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
                 codexRunByNodeId={codexRunByNodeId}
                 taskProgressByNodeId={taskProgressByNodeId}

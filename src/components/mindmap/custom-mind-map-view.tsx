@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Loader2, MoreVertical } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, MoreVertical, Sparkles } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -49,6 +49,8 @@ type CustomMindMapViewProps = {
     onUpdateScheduledAt?: (taskId: string, scheduledAt: string | null) => void | Promise<void>;
     onUpdateSchedule?: (taskId: string, params: { scheduledAt: string; estimatedMinutes: number; calendarId: string }) => void | Promise<void>;
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
+    onGenerateHeadingFromLongNode?: (taskId: string) => void | Promise<void>;
+    generatingHeadingNodeIds?: Set<string>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexRunByNodeId?: Record<string, CodexNodeState>;
     taskProgressByNodeId?: Record<string, TaskProgressSnapshotTask>;
@@ -294,6 +296,8 @@ function CustomTaskNode({
     onSaveTitle,
     onUpdateStatus,
     onResize,
+    onGenerateHeadingFromLongNode,
+    isGeneratingHeading,
     resizeScale,
     isMobile,
     onRunCodex,
@@ -326,6 +330,8 @@ function CustomTaskNode({
     onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
     onResize?: (taskId: string, width: number, commit: boolean) => void;
+    onGenerateHeadingFromLongNode?: (taskId: string) => void | Promise<void>;
+    isGeneratingHeading?: boolean;
     resizeScale: number;
     isMobile: boolean;
     onRunCodex?: (taskId: string) => void | Promise<void>;
@@ -347,6 +353,12 @@ function CustomTaskNode({
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const nodeCodexBadge = buildCodexBadge(codexState, taskProgress);
+    const canGenerateHeadingFromLongNode =
+        !isEditing &&
+        !floatingEditing &&
+        !dragging &&
+        node.titleLineCount >= 3 &&
+        !!onGenerateHeadingFromLongNode;
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -486,6 +498,15 @@ function CustomTaskNode({
             console.error("[CustomMindMap] Failed to open node detail:", error);
         });
     }, [node.id, onRunCodex, onSelectNode]);
+
+    const handleGenerateHeadingFromLongNode = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelectNode(node.id, { additive: false });
+        void Promise.resolve(onGenerateHeadingFromLongNode?.(node.id)).catch(error => {
+            console.error("[CustomMindMap] Failed to generate heading from long node:", error);
+        });
+    }, [node.id, onGenerateHeadingFromLongNode, onSelectNode]);
 
     useEffect(() => {
         onEditingChange?.(node.id, isEditing);
@@ -722,6 +743,29 @@ function CustomTaskNode({
                     <span className="truncate">{nodeCodexBadge.label}</span>
                 </div>
             ) : null}
+            {canGenerateHeadingFromLongNode && (
+                <button
+                    type="button"
+                    className={cn(
+                        "absolute z-30 inline-flex items-center justify-center rounded-full border border-sky-400/50 bg-sky-500/15 text-sky-200 shadow-lg shadow-sky-950/20 backdrop-blur transition-colors",
+                        "hover:bg-sky-500/25 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-1 focus:ring-offset-background disabled:pointer-events-none disabled:opacity-70",
+                        isMobile
+                            ? "-bottom-3 -right-3 h-11 w-11"
+                            : "-bottom-2 -right-2 h-7 w-7"
+                    )}
+                    disabled={isGeneratingHeading}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={handleGenerateHeadingFromLongNode}
+                    title="長いノードをメモ化して見出し生成"
+                    aria-label="長いノードをメモ化して見出し生成"
+                >
+                    {isGeneratingHeading ? (
+                        <Loader2 className={cn("animate-spin", isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
+                    ) : (
+                        <Sparkles className={cn(isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
+                    )}
+                </button>
+            )}
             <div className="flex min-h-0 flex-1 items-center gap-1">
                 <button
                     type="button"
@@ -1152,6 +1196,8 @@ export function CustomMindMapView({
     onSaveProjectTitle,
     onUpdateStatus,
     onResizeNode,
+    onGenerateHeadingFromLongNode,
+    generatingHeadingNodeIds = new Set(),
     onRunCodex,
     codexRunByNodeId = {},
     taskProgressByNodeId = {},
@@ -2754,6 +2800,8 @@ export function CustomMindMapView({
                                 onSaveTitle={onSaveTitle}
                                 onUpdateStatus={handleUpdateNodeStatus}
                                 onResize={onResizeNode ? handleResizeNode : undefined}
+                                onGenerateHeadingFromLongNode={onGenerateHeadingFromLongNode}
+                                isGeneratingHeading={generatingHeadingNodeIds.has(node.id)}
                                 resizeScale={zoom}
                                 isMobile={isMobile}
                                 onRunCodex={onRunCodex}

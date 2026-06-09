@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest"
 import {
   cleanGeneratedMemoHeading,
+  buildLongNodeMemoDetail,
   MEMO_AI_INGEST_TITLE_MAX_CHARS,
   MEMO_HEADING_HARD_MAX_CHARS,
   normalizeAiIngestTitle,
@@ -40,5 +41,12 @@ describe("memo AI generation helpers", () => {
 
     expect(body).toContain("それこそカゴデックスにプロンプトを送る部分に関して")
     expect(body.split("\n")).toHaveLength(3)
+  })
+
+  test("builds memo detail for long mind map nodes without dropping existing memo", () => {
+    const detail = buildLongNodeMemoDetail("長いノード本文", "既存メモ")
+
+    expect(detail).toBe("長いノード本文\n\n既存メモ")
+    expect(buildLongNodeMemoDetail("長いノード本文", "長いノード本文")).toBe("長いノード本文")
   })
 })

@@ -29,3 +29,12 @@ export function normalizeAiIngestTitle(title: string | undefined, fallbackText: 
 export function preserveMemoInputBody(value: string) {
   return value.trim()
 }
+
+export function buildLongNodeMemoDetail(title: string | null | undefined, memo: string | null | undefined) {
+  const titleText = (title ?? "").trim()
+  const memoText = (memo ?? "").trim()
+
+  if (!titleText) return memoText
+  if (!memoText || memoText === titleText || memoText.startsWith(`${titleText}\n`)) return titleText
+  return `${titleText}\n\n${memoText}`
+}

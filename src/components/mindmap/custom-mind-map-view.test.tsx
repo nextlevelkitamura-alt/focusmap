@@ -379,6 +379,38 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(within(node).queryByRole("button", { name: "日時を指定する" })).not.toBeInTheDocument()
   })
 
+  test("shows the heading generation button only for nodes that wrap to three or more lines", async () => {
+    const onGenerateHeadingFromLongNode = vi.fn()
+    const longRoot = makeTask({
+      id: "root-1",
+      title: "一行目\n二行目\n三行目",
+    })
+    const shortChild = makeTask({
+      id: "child-1",
+      title: "一行目\n二行目",
+      parent_task_id: "root-1",
+    })
+
+    renderMap({
+      groups: [longRoot],
+      tasks: [shortChild],
+      onGenerateHeadingFromLongNode,
+    })
+
+    const longNode = document.querySelector('[data-id="root-1"]')
+    const shortNode = document.querySelector('[data-id="child-1"]')
+    if (!(longNode instanceof HTMLElement) || !(shortNode instanceof HTMLElement)) {
+      throw new Error("nodes not rendered")
+    }
+
+    const generateButton = within(longNode).getByRole("button", { name: "長いノードをメモ化して見出し生成" })
+    expect(within(shortNode).queryByRole("button", { name: "長いノードをメモ化して見出し生成" })).not.toBeInTheDocument()
+
+    fireEvent.click(generateButton)
+
+    await waitFor(() => expect(onGenerateHeadingFromLongNode).toHaveBeenCalledWith("root-1"))
+  })
+
   test("promotes with Shift+Tab and saves inline edits", async () => {
     const onPromoteNode = vi.fn()
     const onSaveTitle = vi.fn()

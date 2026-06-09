@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react"
-import { describe, expect, test, vi } from "vitest"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, test, vi } from "vitest"
 
 vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
   loadSettings: () => ({
@@ -41,10 +41,21 @@ vi.mock("@/hooks/useTaskProgressSnapshot", () => ({
 }))
 
 vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
-  CustomMindMapView: ({ onSelectNode }: { onSelectNode: (nodeId: string) => void }) => (
-    <button type="button" onClick={() => onSelectNode("root-1")}>
-      Root task
-    </button>
+  CustomMindMapView: ({
+    onSelectNode,
+    onGenerateHeadingFromLongNode,
+  }: {
+    onSelectNode: (nodeId: string) => void
+    onGenerateHeadingFromLongNode?: (nodeId: string) => void
+  }) => (
+    <>
+      <button type="button" onClick={() => onSelectNode("root-1")}>
+        Root task
+      </button>
+      <button type="button" onClick={() => onGenerateHeadingFromLongNode?.("root-1")}>
+        長いノードの見出し生成
+      </button>
+    </>
   ),
 }))
 
@@ -86,6 +97,10 @@ const task = {
   habit_end_date: null,
 } as Task
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe("MindMap controls", () => {
   test("keeps only display settings in the map corner and hides node shortcut help", () => {
     render(<MindMap project={project} groups={[task]} tasks={[]} />)
@@ -98,5 +113,40 @@ describe("MindMap controls", () => {
     expect(screen.queryByText("子追加")).not.toBeInTheDocument()
     expect(screen.queryByText("兄弟追加")).not.toBeInTheDocument()
     expect(screen.queryByText("複製")).not.toBeInTheDocument()
+  })
+
+  test("turns a long node title into memo detail and saves the generated heading", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ heading: "クリップボード改善" }),
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    const onUpdateTask = vi.fn()
+    const longTitle = [
+      "プロンプトに関して",
+      "画像をとろくしているものはマックアプリもスマホアプリも画像をクリップボードに保存して",
+      "見出しと本文を改行してコピーする",
+    ].join("\n")
+    const longTask = {
+      ...task,
+      title: longTitle,
+      memo: "既存メモ",
+    } as Task
+
+    render(<MindMap project={project} groups={[longTask]} tasks={[]} onUpdateTask={onUpdateTask} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "長いノードの見出し生成" }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/ai/generate-memo-heading", expect.objectContaining({
+        method: "POST",
+      }))
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", {
+        title: "クリップボード改善",
+        memo: `${longTitle}\n\n既存メモ`,
+      })
+    })
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(requestInit.body))).toEqual({ detail: `${longTitle}\n\n既存メモ` })
   })
 })

@@ -12,6 +12,7 @@ import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
+import { buildLongNodeMemoDetail } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
@@ -376,6 +377,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // Codex ノードパネル（実行/往復/作業場所/プロンプト編集を一元化）の対象ノード
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null);
+    const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set());
     const mindMapTaskNodes = useMemo(() => [...groups, ...tasks], [groups, tasks]);
 
     // ノードの「Codex」ボタン / 状態アイコン → Codex ノードパネルを開く（実行はパネルから）
@@ -577,6 +579,52 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             flashClipboardFeedback('画像の貼り付けに失敗しました');
         }
     }, [onUpdateTask, tasks, groups, flashClipboardFeedback]);
+
+    const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
+        if (!onUpdateTask) return;
+
+        const targetTask = tasks.find(t => t.id === taskId) ?? groups.find(g => g.id === taskId);
+        if (!targetTask) return;
+
+        const detail = buildLongNodeMemoDetail(targetTask.title, targetTask.memo);
+        if (!detail) return;
+
+        setGeneratingHeadingNodeIds(prev => {
+            const next = new Set(prev);
+            next.add(taskId);
+            return next;
+        });
+
+        try {
+            const res = await fetch("/api/ai/generate-memo-heading", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ detail }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(typeof data.error === "string" ? data.error : "見出し生成に失敗しました");
+            }
+
+            const heading = typeof data.heading === "string" ? data.heading.trim() : "";
+            if (!heading) throw new Error("見出し生成に失敗しました");
+
+            await onUpdateTask(taskId, {
+                title: heading,
+                memo: detail,
+            });
+            flashClipboardFeedback("メモ化して見出しを生成しました");
+        } catch (error) {
+            console.error("[MindMap] Failed to generate heading from long node:", error);
+            flashClipboardFeedback(error instanceof Error ? error.message : "見出し生成に失敗しました");
+        } finally {
+            setGeneratingHeadingNodeIds(prev => {
+                const next = new Set(prev);
+                next.delete(taskId);
+                return next;
+            });
+        }
+    }, [flashClipboardFeedback, groups, onUpdateTask, tasks]);
 
     const handleContainerPasteCapture = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
         const clipboard = event.clipboardData;
@@ -1385,6 +1433,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                             calendar_id: params.calendarId,
                         })}
                         onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
+                        onGenerateHeadingFromLongNode={handleGenerateHeadingFromLongNode}
+                        generatingHeadingNodeIds={generatingHeadingNodeIds}
                         onRunCodex={handleRunCodex}
                         codexRunByNodeId={codexRunByNodeId}
                         taskProgressByNodeId={taskProgressByNodeId}

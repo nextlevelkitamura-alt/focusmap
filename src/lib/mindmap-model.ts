@@ -3,6 +3,7 @@ import type { Project, Task } from '@/types/database';
 import {
     PROJECT_NODE_HEIGHT,
     estimateProjectNodeWidth,
+    estimateTaskTitleLineCount,
     estimateTaskNodeHeight,
     estimateTaskNodeWidth,
 } from './mindmap-geometry';
@@ -13,6 +14,7 @@ export type MindMapModelNode = {
     id: string;
     kind: MindMapModelNodeKind;
     title: string;
+    titleLineCount: number;
     parentId: string | null;
     depth: number;
     x: number;
@@ -160,6 +162,7 @@ export function buildMindMapModel({
         id: projectNodeId,
         kind: 'project',
         title: projectTitle,
+        titleLineCount: 1,
         parentId: null,
         depth: -1,
         x: 0,
@@ -211,6 +214,10 @@ export function buildMindMapModel({
             hasChildren: taskHasChildren,
             childCount,
         });
+        const titleLineCount = estimateTaskTitleLineCount(task.title || '', nodeWidth, isMobile, {
+            hasChildren: taskHasChildren,
+            childCount,
+        });
         const nodeHeight = estimateTaskNodeHeight(task.title || '', hasInfoRow, nodeWidth, isMobile, taskHasChildren, childCount);
         const parentTask = task.parent_task_id ? rawTaskById.get(task.parent_task_id) : null;
 
@@ -218,6 +225,7 @@ export function buildMindMapModel({
             id: task.id,
             kind: 'task',
             title: task.title || 'Task',
+            titleLineCount,
             parentId,
             depth,
             x: 0,

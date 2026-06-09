@@ -72,6 +72,27 @@ const estimateTextWidthPx = (text: string): number => {
     return width;
 };
 
+export const estimateTaskTitleLineCount = (
+    title: string,
+    nodeWidth: number = NODE_WIDTH,
+    isMobile = false,
+    options: TaskNodeMeasureOptions = {},
+) => {
+    const reserved = getTaskNodeReservedWidth(isMobile, options);
+    const availableTextWidthPx = Math.max(48, nodeWidth - reserved);
+    const text = (title || '').trim();
+
+    return Math.max(
+        1,
+        text
+            .split('\n')
+            .reduce((acc, line) => {
+                const linePx = estimateTextWidthPx(line);
+                return acc + Math.max(1, Math.ceil(linePx / availableTextWidthPx));
+            }, 0)
+    );
+};
+
 export const estimateTaskNodeWidth = (title: string, isMobile = false, options: TaskNodeMeasureOptions = {}) => {
     const minW = isMobile ? NODE_MIN_WIDTH_MOBILE : NODE_MIN_WIDTH;
     const maxW = isMobile ? NODE_MAX_WIDTH_MOBILE : NODE_MAX_WIDTH;
@@ -106,19 +127,7 @@ export const estimateTaskNodeHeight = (
     hasChildren = false,
     childCount = 0,
 ) => {
-    const reserved = getTaskNodeReservedWidth(isMobile, { hasChildren, childCount });
-    const availableTextWidthPx = Math.max(48, nodeWidth - reserved);
-    const text = (title || '').trim();
-
-    const lines = Math.max(
-        1,
-        text
-            .split('\n')
-            .reduce((acc, line) => {
-                const linePx = estimateTextWidthPx(line);
-                return acc + Math.max(1, Math.ceil(linePx / availableTextWidthPx));
-            }, 0)
-    );
+    const lines = estimateTaskTitleLineCount(title, nodeWidth, isMobile, { hasChildren, childCount });
 
     const textHeight = lines * NODE_TEXT_LINE_HEIGHT;
     const estimated = textHeight + NODE_VERTICAL_PADDING;
