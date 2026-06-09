@@ -109,6 +109,8 @@ const managedProcesses = {
   runner: null,
 };
 const hasSingleInstance = app.requestSingleInstanceLock();
+const PENDING_DESKTOP_AUTH_TTL_MS = 5 * 60 * 1000;
+const pendingDesktopAuthNonces = new Map();
 let lastExternalAuthUrl = '';
 let lastExternalAuthAt = 0;
 let dashboardLoadAttemptedAt = 0;
@@ -538,7 +540,35 @@ function openAuthExternally(url) {
   if (url === lastExternalAuthUrl && now - lastExternalAuthAt < 5000) return;
   lastExternalAuthUrl = url;
   lastExternalAuthAt = now;
+  rememberDesktopAuthNonceFromUrl(url);
   shell.openExternal(url);
+}
+
+function pruneDesktopAuthNonces() {
+  const now = Date.now();
+  for (const [nonce, expiresAt] of pendingDesktopAuthNonces.entries()) {
+    if (expiresAt <= now) pendingDesktopAuthNonces.delete(nonce);
+  }
+}
+
+function rememberDesktopAuthNonceFromUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    if (url.pathname !== '/auth/native-start' || url.searchParams.get('desktop') !== '1') return;
+    const nonce = url.searchParams.get('nonce');
+    if (!nonce || nonce.length > 128) return;
+    pruneDesktopAuthNonces();
+    pendingDesktopAuthNonces.set(nonce, Date.now() + PENDING_DESKTOP_AUTH_TTL_MS);
+  } catch {
+    // Ignore non-URL strings passed to shell.openExternal.
+  }
+}
+
+function consumePendingDesktopAuthNonce(nonce) {
+  pruneDesktopAuthNonces();
+  if (!pendingDesktopAuthNonces.has(nonce)) return false;
+  pendingDesktopAuthNonces.delete(nonce);
+  return true;
 }
 
 function isNavigationAbortError(error) {
@@ -844,6 +874,66 @@ function clearDesktopAuthSession() {
     const message = error instanceof Error ? error.message : String(error);
     log('auth', `failed to clear desktop auth session: ${message}`);
     return { ok: false, error: message };
+  }
+}
+
+function decodeDesktopDeepLinkPayload(value) {
+  if (typeof value !== 'string' || value.length > 20000) return null;
+  try {
+    return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function loadLoginForDesktopSessionRestore(reason) {
+  const loginUrl = `${APP_ORIGIN}/login?desktop=1&source=mac&auth=${encodeURIComponent(reason)}`;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.loadURL(loginUrl).catch((error) => {
+      if (!isNavigationAbortError(error)) log('auth', `failed to load login for session restore: ${error.message}`);
+    });
+    focusWindow(mainWindow);
+    return;
+  }
+  createMainWindow().then(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.loadURL(loginUrl).catch((error) => {
+      if (!isNavigationAbortError(error)) log('auth', `failed to load login for session restore: ${error.message}`);
+    });
+  }).catch((error) => {
+    log('auth', `failed to create window for session restore: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
+function handleFocusmapDeepLink(urlString) {
+  try {
+    const url = new URL(urlString);
+    if (url.protocol !== 'focusmap:' || url.hostname !== 'auth-complete') return false;
+    if (url.searchParams.get('desktop') !== '1') return false;
+
+    const nonce = url.searchParams.get('nonce');
+    if (!nonce || !consumePendingDesktopAuthNonce(nonce)) {
+      log('auth', 'ignored desktop auth deep link without a matching pending nonce');
+      return true;
+    }
+
+    const payload = decodeDesktopDeepLinkPayload(url.searchParams.get('payload'));
+    if (!payload || payload.nonce !== nonce) {
+      log('auth', 'ignored desktop auth deep link with invalid payload');
+      return true;
+    }
+
+    const saved = saveDesktopAuthSession(null, payload);
+    if (!saved.ok) {
+      log('auth', `failed to save desktop auth deep link session: ${saved.error || 'unknown error'}`);
+      return true;
+    }
+
+    loadLoginForDesktopSessionRestore('deeplink');
+    return true;
+  } catch (error) {
+    log('auth', `failed to handle focusmap deep link: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }
 
@@ -1228,7 +1318,17 @@ if (!hasSingleInstance) {
   app.quit();
 }
 
-app.on('second-instance', () => {
+app.setAsDefaultProtocolClient('focusmap');
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleFocusmapDeepLink(url);
+});
+
+app.on('second-instance', (_event, commandLine) => {
+  for (const arg of commandLine) {
+    if (handleFocusmapDeepLink(arg)) return;
+  }
   if (focusAndRetryMainWindow()) return;
   createMainWindow().catch((error) => {
     log('app', error instanceof Error ? error.message : String(error));
@@ -1239,7 +1339,10 @@ ipcMain.handle('focusmap-desktop:openMain', () => {
   createMainWindow();
   return true;
 });
-ipcMain.handle('focusmap-desktop:openExternal', (_event, url) => shell.openExternal(url));
+ipcMain.handle('focusmap-desktop:openExternal', (_event, url) => {
+  rememberDesktopAuthNonceFromUrl(url);
+  return shell.openExternal(url);
+});
 ipcMain.handle('focusmap-desktop:getWebAuthOrigin', () => WEB_AUTH_ORIGIN);
 ipcMain.handle('focusmap-desktop:consumeAuthSession', consumeExternalAuthSession);
 ipcMain.handle('focusmap-desktop:saveAuthSession', saveDesktopAuthSession);

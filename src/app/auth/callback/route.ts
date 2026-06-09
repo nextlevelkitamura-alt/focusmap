@@ -3,7 +3,25 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { registerDesktopAuthSession } from '@/lib/desktop-auth-session'
 
-function desktopAuthDonePage() {
+function encodeDesktopDeepLinkPayload(payload: Record<string, unknown>) {
+    return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+}
+
+function desktopAuthDonePage(payload?: {
+    nonce: string
+    access_token: string
+    refresh_token: string
+    expires_at?: number | null
+    user_id?: string | null
+}) {
+    const deepLink = payload ? new URL('focusmap://auth-complete') : null
+    if (deepLink && payload) {
+        deepLink.searchParams.set('desktop', '1')
+        deepLink.searchParams.set('nonce', payload.nonce)
+        deepLink.searchParams.set('payload', encodeDesktopDeepLinkPayload(payload))
+    }
+    const scriptDeepLink = deepLink ? JSON.stringify(deepLink.toString()) : 'null'
+
     return `<!doctype html>
 <html lang="ja">
   <head>
@@ -22,7 +40,11 @@ function desktopAuthDonePage() {
       <h1>Focusmap にログインしました</h1>
       <p>Macアプリに戻ってください。このタブは閉じて構いません。</p>
     </main>
-    <script>setTimeout(() => window.close(), 1200)</script>
+    <script>
+      const deepLink = ${scriptDeepLink};
+      if (deepLink) setTimeout(() => { window.location.href = deepLink }, 250);
+      setTimeout(() => window.close(), 1500);
+    </script>
   </body>
 </html>`
 }
@@ -110,8 +132,17 @@ export async function GET(request: Request) {
                     refreshToken: data.session.refresh_token,
                     userId: data.user.id,
                 })
-                return new NextResponse(desktopAuthDonePage(), {
-                    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+                return new NextResponse(desktopAuthDonePage({
+                    nonce: desktopNonce,
+                    access_token: data.session.access_token,
+                    refresh_token: data.session.refresh_token,
+                    expires_at: data.session.expires_at ?? null,
+                    user_id: data.user.id,
+                }), {
+                    headers: {
+                        'Content-Type': 'text/html; charset=utf-8',
+                        'Cache-Control': 'no-store',
+                    },
                 })
             }
             if (nativeApp === 'ios' && nativeNonce && data.session?.access_token && data.session?.refresh_token && data.user?.id) {

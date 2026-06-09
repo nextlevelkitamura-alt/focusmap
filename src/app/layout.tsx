@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, DM_Sans } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
+import { DesktopAuthSessionBridge } from "@/components/auth/desktop-auth-session-bridge";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -86,6 +87,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <ServiceWorkerRegistration />
+          <DesktopAuthSessionBridge />
           {children}
         </ThemeProvider>
       </body>

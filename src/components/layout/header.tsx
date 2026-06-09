@@ -91,6 +91,7 @@ export function Header({
     }, [supabase])
 
     const handleLogout = async () => {
+        await window.focusmapDesktop?.clearAuthSession?.().catch(() => undefined)
         await supabase.auth.signOut()
         router.refresh()
         router.push("/login")

@@ -20,6 +20,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
 
     setIsLoggingOut(true)
     try {
+      await window.focusmapDesktop?.clearAuthSession?.().catch(() => undefined)
       const res = await fetch('/api/auth/logout', { method: 'POST' })
       if (res.ok) {
         router.push('/login')
