@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { hasPendingArchiveRequest, parseRollout, taskStateForSummary } from './src/codex-thread-monitor';
+import {
+  hasPendingArchiveRequest,
+  isOrphanThreadImportCandidate,
+  knownCodexThreadIds,
+  parseRollout,
+  taskStateForSummary,
+} from './src/codex-thread-monitor';
 
 const threadRow = {
   id: 'thread-1',
@@ -146,5 +152,37 @@ describe('codex-thread-monitor state detection', () => {
     }), summary);
 
     expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
+  });
+
+  test('builds known thread ids from column and result before orphan import', () => {
+    const ids = knownCodexThreadIds([
+      task({ codex_thread_id: 'thread-column' }),
+      task({ result: { codex_thread_id: 'thread-result' } }),
+      task({ result: {} }),
+    ] as never);
+
+    expect([...ids].sort()).toEqual(['thread-column', 'thread-result']);
+  });
+
+  test('imports only recent user-created threads that are not already known', () => {
+    const nowMs = Date.parse('2026-06-10T10:00:00.000Z');
+    const base = {
+      ...threadRow,
+      id: 'thread-new',
+      has_user_event: 1,
+      archived: 0,
+      first_user_message: 'Codexから直接始めた依頼',
+      updated_at_ms: nowMs - 60_000,
+    };
+
+    expect(isOrphanThreadImportCandidate(base, new Set(), nowMs, 10 * 60_000)).toBe(true);
+    expect(isOrphanThreadImportCandidate(base, new Set(['thread-new']), nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, has_user_event: 0 }, new Set(), nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, updated_at_ms: nowMs - 20 * 60_000 }, new Set(), nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({
+      ...base,
+      first_user_message: '# AGENTS.md instructions\n<environment_context>',
+    }, new Set(), nowMs, 10 * 60_000)).toBe(false);
   });
 });

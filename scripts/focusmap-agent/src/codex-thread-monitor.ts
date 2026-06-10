@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentApiClient } from './api-client.js';
-import type { AgentActivityMessage, AiTask, TaskResultJson } from './types.js';
+import type { AgentActivityMessage, AiTask, CodexThreadImportPayload, TaskResultJson } from './types.js';
 import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
 import { debug, error as logError, info } from './logger.js';
 
@@ -14,7 +14,14 @@ const SQLITE_BIN = '/usr/bin/sqlite3';
 const MONITOR_LIMIT = 80;
 const MAX_VISIBLE_MESSAGES = 8;
 const syncCache = new Map<string, string>();
+const orphanImportCache = new Map<string, number>();
 const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 10_000;
+const ORPHAN_IMPORT_LIMIT = 20;
+const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
+const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
+  ? configuredOrphanImportWindowMs
+  : 2 * 60 * 60 * 1000;
+const ORPHAN_IMPORT_RETRY_MS = 5 * 60 * 1000;
 
 type CodexThreadRow = {
   id: string;
@@ -23,6 +30,7 @@ type CodexThreadRow = {
   has_user_event?: number | boolean | null;
   archived?: number | boolean | null;
   updated_at_ms?: number | null;
+  created_at_ms?: number | null;
   preview?: string | null;
   rollout_path?: string | null;
   source?: string | null;
@@ -308,6 +316,46 @@ function taskThreadId(task: AiTask): string | null {
   return typeof resultThreadId === 'string' && resultThreadId.trim() ? resultThreadId.trim() : null;
 }
 
+function boolValue(value: unknown): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
+export function knownCodexThreadIds(tasks: AiTask[]): Set<string> {
+  const ids = new Set<string>();
+  for (const task of tasks) {
+    const threadId = taskThreadId(task);
+    if (threadId) ids.add(threadId);
+  }
+  return ids;
+}
+
+export function isOrphanThreadImportCandidate(
+  row: CodexThreadRow,
+  knownThreadIds: Set<string>,
+  nowMs = Date.now(),
+  windowMs = ORPHAN_IMPORT_WINDOW_MS,
+): boolean {
+  if (!row.id || knownThreadIds.has(row.id)) return false;
+  if (boolValue(row.archived)) return false;
+  if (!boolValue(row.has_user_event)) return false;
+  const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
+  if (updatedMs <= 0 || nowMs - updatedMs > windowMs) return false;
+  const firstUserMessage = compactText(row.first_user_message ?? '', 400);
+  if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
+  return true;
+}
+
+function importPayloadFromThread(row: CodexThreadRow): CodexThreadImportPayload {
+  return {
+    id: row.id,
+    title: row.title ?? null,
+    preview: row.preview ?? null,
+    first_user_message: row.first_user_message ?? null,
+    cwd: row.cwd ?? null,
+    updated_at_ms: row.updated_at_ms ?? row.created_at_ms ?? null,
+  };
+}
+
 function taskHandoffToken(task: AiTask): string | null {
   const result = isRecord(task.result) ? task.result : {};
   const resultToken = result.codex_handoff_token;
@@ -485,6 +533,56 @@ async function readRollout(row: CodexThreadRow): Promise<string> {
   return await readFile(row.rollout_path, 'utf-8').catch(() => '');
 }
 
+async function readRecentThreads(dbPath: string, sinceMs: number): Promise<CodexThreadRow[]> {
+  return sqliteJson<CodexThreadRow>(
+    dbPath,
+    [
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, cwd, first_user_message',
+      'FROM threads',
+      `WHERE updated_at_ms >= ${Math.max(0, Math.floor(sinceMs))}`,
+      'ORDER BY updated_at_ms DESC',
+      `LIMIT ${ORPHAN_IMPORT_LIMIT}`,
+    ].join(' '),
+  );
+}
+
+async function importOrphanThreads(
+  api: AgentApiClient,
+  runnerId: string,
+  dbPath: string,
+  tasks: AiTask[],
+): Promise<number> {
+  const now = Date.now();
+  const knownThreadIds = knownCodexThreadIds(tasks);
+  const rows = await readRecentThreads(dbPath, Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS));
+  let imported = 0;
+
+  for (const row of rows) {
+    if (!isOrphanThreadImportCandidate(row, knownThreadIds, now)) continue;
+    const cachedAt = orphanImportCache.get(row.id) ?? 0;
+    if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;
+    orphanImportCache.set(row.id, now);
+
+    try {
+      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row));
+      if (result.imported) {
+        imported += 1;
+        knownThreadIds.add(row.id);
+        info(`codex orphan thread imported thread=${row.id.slice(0, 8)} task=${result.ai_task_id ?? 'unknown'}`);
+      } else if (result.reason === 'already_imported') {
+        knownThreadIds.add(row.id);
+      } else {
+        debug(`codex orphan thread skipped thread=${row.id.slice(0, 8)} reason=${result.reason ?? 'unknown'}`);
+      }
+    } catch (error) {
+      logError(`codex orphan import failed thread=${row.id.slice(0, 8)}`, error instanceof Error ? error.message : error);
+    }
+    await sleep(20);
+  }
+
+  return imported;
+}
+
 type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
 
 async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_deleted' | 'archived'): Promise<void> {
@@ -644,6 +742,7 @@ export function startCodexThreadMonitorLoop(
           logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
         }
       }
+      await importOrphanThreads(api, runnerId, dbPath, tasks);
     } catch (error) {
       logError('codex monitor loop error', error instanceof Error ? error.message : error);
     } finally {

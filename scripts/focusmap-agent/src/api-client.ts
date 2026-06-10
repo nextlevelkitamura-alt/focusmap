@@ -1,4 +1,4 @@
-import type { AgentActivityMessage, AgentCommand, AgentConfig, AiTask, TaskResultJson } from './types.js';
+import type { AgentActivityMessage, AgentCommand, AgentConfig, AiTask, CodexThreadImportPayload, TaskResultJson } from './types.js';
 import type { ScreenshotPreviewBundle } from './screenshot-preview.js';
 
 function normalizeApiUrl(value: string | undefined): string {
@@ -207,6 +207,16 @@ export class AgentApiClient {
       limit,
     });
     return Array.isArray(data.tasks) ? data.tasks : [];
+  }
+
+  async importCodexThread(
+    runnerId: string,
+    thread: CodexThreadImportPayload,
+  ): Promise<{ imported: boolean; reason?: string; ai_task_id?: string; source_task_id?: string }> {
+    return this.request('/agents/codex-monitor/import-thread', {
+      runner_id: runnerId,
+      thread,
+    });
   }
 
   async updateTaskState(

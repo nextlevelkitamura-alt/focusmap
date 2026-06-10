@@ -122,6 +122,15 @@ export interface TaskResultJson {
   meta?: Record<string, unknown>;
 }
 
+export interface CodexThreadImportPayload {
+  id: string;
+  title?: string | null;
+  preview?: string | null;
+  first_user_message?: string | null;
+  cwd?: string | null;
+  updated_at_ms?: number | null;
+}
+
 export interface AgentCommand {
   id: string;
   runner_id: string;
