@@ -1927,6 +1927,10 @@ async function createMainWindow() {
     title: 'Focusmap',
     icon: appIconPath(),
     backgroundColor: '#050505',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 14 } : undefined,
+    vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
+    visualEffectState: process.platform === 'darwin' ? 'active' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

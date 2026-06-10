@@ -152,6 +152,7 @@ Goals → Projects → TaskGroups → Tasks
 ### ダッシュボードナビゲーション
 
 - デスクトップ上部タブとモバイル下部ナビの通常導線は `Todo` / `メモ` / `マップ` / `チャット` / `設定` を基本にする。`マップ` は通常タブとして残し、メモ由来の `マップ追加済み` 判定も裏側に残す。
+- Focusmap Macアプリ（Electronシェル）は macOS では `hiddenInset` のネイティブタイトルバーを使い、OS標準の信号ボタンをWebヘッダー内へ溶け込ませる。Web側ヘッダーは `desktop=1` / `source=mac` / `window.focusmapDesktop` を検知した時だけ左に信号ボタン分の余白を取り、ヘッダー全体をドラッグ領域、操作群を `no-drag` 領域にする。通常ブラウザとiOS WebViewにはこの余白を入れない。
 - モバイル下部ナビは `Todo` / `メモ` / `マップ` / `チャット` / `設定` の5項目にし、`チャット` を強調表示の対象にする。
 - モバイル下部ナビとデスクトップヘッダーの `設定` は、通常利用では `/dashboard/settings` へルート遷移せず、`DashboardClient` 内の `settings` ビューとして `SettingsOverview` を表示する。マップやTodoのクライアント状態を破棄しないことで、設定へ移動して戻る時の再取得・マップ再初期化を避ける。設定内の詳細カテゴリリンクは従来通り `/dashboard/settings/*` を使う。
 - 設定トップと設定サイドナビのカテゴリリンクは `prefetch={false}` にし、一覧表示だけで重い設定詳細のRSC/JSを先読みしない。AIモデルはアプリ側の固定値を正とし、ユーザー設定UI・AI設定カテゴリ・`/dashboard/settings/ai` の詳細画面は表示しない。古いAI設定URLは設定トップへ戻す。
