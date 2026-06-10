@@ -6,6 +6,8 @@ import { error as logError } from './logger.js';
 const MAX_HEARTBEAT_BACKOFF_MS = 5 * 60_000;
 const FULL_REGISTRATION_ACTIVE_INTERVAL_MS = 60_000;
 const FULL_REGISTRATION_IDLE_INTERVAL_MS = 10 * 60_000;
+const AGENT_VERSION = '0.2.1';
+const CODEX_THREAD_IMPORT_API_PATH = '/api/agents/codex-monitor/import-thread';
 
 export async function upsertRunner(api: AgentApiClient, config: AgentConfig): Promise<string> {
   const capabilities = await collectCapabilities(config);
@@ -35,8 +37,13 @@ async function sendRunnerHeartbeat(
     current_task_id: currentTaskId,
     metadata: {
       app: 'focusmap-lite',
+      agent: 'focusmap-agent',
+      version: AGENT_VERSION,
       heartbeat_kind: 'liveness',
       agent_state: status === 'offline' ? 'offline' : currentTaskId ? 'running' : 'idle',
+      codex_thread_monitor: true,
+      codex_orphan_thread_import: true,
+      codex_thread_import_api_path: CODEX_THREAD_IMPORT_API_PATH,
       ...metadata,
     },
   });
