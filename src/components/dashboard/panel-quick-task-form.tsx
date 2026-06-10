@@ -69,6 +69,7 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
     const memoRef = useRef<HTMLTextAreaElement>(null)
 
     const titleInputRef = useRef<HTMLInputElement>(null)
+    const titleIsComposingRef = useRef(false)
 
     // Avoid popping the mobile keyboard just because the sheet opened.
     useEffect(() => {
@@ -105,6 +106,7 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
         setPriority(3)
         setIsDurationPickerOpen(false)
         setMemo("")
+        titleIsComposingRef.current = false
         if (memoRef.current) memoRef.current.style.height = "auto"
         onDraftChange?.({
             title: "",
@@ -145,6 +147,18 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
             resetForm()
         }
     }, [resetForm, setIsOpen])
+
+    const handleTitleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== 'Enter') return
+
+        const nativeEvent = e.nativeEvent as KeyboardEvent
+        if (titleIsComposingRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229) {
+            return
+        }
+
+        e.preventDefault()
+        void handleSubmit()
+    }, [handleSubmit])
 
     if (!isOpen) {
         return (
@@ -193,6 +207,13 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
                         type="text"
                         value={title}
                         onChange={(e) => setTitle(e.target.value)}
+                        onCompositionStart={() => {
+                            titleIsComposingRef.current = true
+                        }}
+                        onCompositionEnd={() => {
+                            titleIsComposingRef.current = false
+                        }}
+                        onKeyDown={handleTitleKeyDown}
                         className="h-11 w-full px-4 text-base border border-border/80 rounded-xl bg-background/95 focus:outline-none focus:ring-2 focus:ring-primary/70 focus:border-primary/50"
                         placeholder="タスク名"
                     />
