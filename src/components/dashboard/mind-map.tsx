@@ -1529,6 +1529,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     pollIntervalMs={taskProgressPollIntervalMs}
                     onRefresh={handleRefreshTaskProgressSnapshot}
                     onOpenTask={handleOpenTaskProgress}
+                    onToggleSourceTaskComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo"); }}
+                    onDeleteSourceTask={(taskId) => { void callbacks.deleteTask(taskId); }}
                 />
             </div>
             <TaskProgressDetailPanel

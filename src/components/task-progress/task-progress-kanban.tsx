@@ -1,6 +1,6 @@
 "use client"
 
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   Bot,
@@ -10,6 +10,7 @@ import {
   Clock,
   Loader2,
   RefreshCw,
+  Trash2,
   Wifi,
   WifiOff,
 } from "lucide-react"
@@ -39,6 +40,10 @@ const HEARTBEAT_POLL_INTERVAL_MS = 30_000
 const HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS = 750
 const MOBILE_LANE_SWIPE_MIN_DISTANCE = 48
 const MOBILE_LANE_SWIPE_MAX_OFF_AXIS = 72
+const DESKTOP_BOARD_HEIGHT_STORAGE_KEY = "focusmap:codex-kanban:desktop-height"
+const DESKTOP_BOARD_DEFAULT_HEIGHT_PX = 260
+const DESKTOP_BOARD_MIN_HEIGHT_PX = 180
+const DESKTOP_BOARD_VIEWPORT_PADDING_PX = 160
 
 function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible"
@@ -73,6 +78,8 @@ type TaskProgressKanbanProps = {
   pollIntervalMs: number
   onRefresh: () => void | Promise<void>
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
+  onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }
 
 const LANES: Array<{
@@ -120,6 +127,19 @@ const LANES: Array<{
 ]
 
 const LANE_IDS = LANES.map(lane => lane.id)
+
+function clampDesktopBoardHeight(heightPx: number) {
+  const minHeight = DESKTOP_BOARD_MIN_HEIGHT_PX
+  if (typeof window === "undefined") return Math.max(minHeight, heightPx)
+  const maxHeight = Math.max(minHeight, window.innerHeight - DESKTOP_BOARD_VIEWPORT_PADDING_PX)
+  return Math.min(Math.max(heightPx, minHeight), maxHeight)
+}
+
+function readStoredDesktopBoardHeight() {
+  if (typeof window === "undefined") return DESKTOP_BOARD_DEFAULT_HEIGHT_PX
+  const stored = Number(window.localStorage.getItem(DESKTOP_BOARD_HEIGHT_STORAGE_KEY))
+  return clampDesktopBoardHeight(Number.isFinite(stored) && stored > 0 ? stored : DESKTOP_BOARD_DEFAULT_HEIGHT_PX)
+}
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
   const refreshInFlightRef = useRef<Promise<void> | null>(null)
@@ -304,18 +324,24 @@ function RunnerCompactStatus({ state }: { state: RunnerConnectionState }) {
 
 function KanbanCard({
   task,
+  sourceTask,
   runnerState,
   isMobile,
   nowMs,
   forceDone = false,
   onOpen,
+  onToggleComplete,
+  onDelete,
 }: {
   task: TaskProgressSnapshotTask
+  sourceTask: SourceTaskInfo | null
   runnerState: RunnerConnectionState
   isMobile: boolean
   nowMs: number
   forceDone?: boolean
   onOpen: (task: TaskProgressSnapshotTask) => void
+  onToggleComplete?: (taskId: string, done: boolean) => void | Promise<void>
+  onDelete?: (taskId: string) => void | Promise<void>
 }) {
   const statusLabel = forceDone ? "完了済み" : codexMonitorUiLabel(task.status)
   const uiStatus = forceDone ? "done" : getCodexMonitorUiStatus(task.status)
@@ -339,52 +365,91 @@ function KanbanCard({
           ? "pulse待ち"
           : "Mac offline"
     : null
+  const sourceTaskId = sourceTask?.id ?? null
+  const sourceTaskDone = sourceTask?.status === "done"
+  const shortTitle = task.title || "Codexタスク"
 
   return (
-    <button
-      type="button"
-      className="group min-h-11 w-full rounded-lg border bg-background px-3 py-2 text-left shadow-sm transition-colors hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring"
-      onClick={() => onOpen(task)}
+    <article
+      className="group w-full rounded-lg border bg-background px-2.5 py-2 text-left shadow-sm transition-colors hover:bg-muted/30"
       title={task.title ?? "Codexタスク"}
     >
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold leading-5">
-            {task.title || "Codexタスク"}
-          </div>
-          {primary && (
-            <div className="mt-0.5 text-[11px] leading-4 text-foreground/80">
-              {primary}
-            </div>
-          )}
-        </div>
-        <span className={cn("inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold", toneClass)}>
-          {statusLabel}
-        </span>
-      </div>
-      {!isMobile && secondary && secondary !== primary && (
-        <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-          {secondary}
-        </p>
-      )}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-        <RunnerChip state={runnerState} />
-        {updatedAt && <span className="rounded-full bg-muted px-2 py-0.5">最終 {updatedAt}</span>}
-        {uiStatus === "running" && (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
-              hasRecentTaskPulse && hasFreshTaskUpdate
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
-                : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
-            )}
+      <div className="flex min-w-0 items-start gap-2">
+        {sourceTaskId && onToggleComplete && (
+          <label
+            className="flex min-h-11 w-7 shrink-0 cursor-pointer items-start justify-center pt-1.5"
+            title={sourceTaskDone ? "完了を外す" : "完了にする"}
           >
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {pulseLabel}
-          </span>
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border accent-emerald-500"
+              checked={sourceTaskDone}
+              aria-label={`「${shortTitle}」を${sourceTaskDone ? "未完了に戻す" : "完了にする"}`}
+              onChange={(event) => {
+                void onToggleComplete(sourceTaskId, event.currentTarget.checked)
+              }}
+            />
+          </label>
+        )}
+        <button
+          type="button"
+          className="min-h-11 min-w-0 flex-1 rounded-md text-left focus:outline-none focus:ring-2 focus:ring-ring"
+          aria-label={`「${shortTitle}」の詳細を開く`}
+          onClick={() => onOpen(task)}
+        >
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold leading-5">
+                {shortTitle}
+              </div>
+              {primary && (
+                <div className="mt-0.5 text-[11px] leading-4 text-foreground/80">
+                  {primary}
+                </div>
+              )}
+            </div>
+            <span className={cn("inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold", toneClass)}>
+              {statusLabel}
+            </span>
+          </div>
+          {!isMobile && secondary && secondary !== primary && (
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+              {secondary}
+            </p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            <RunnerChip state={runnerState} />
+            {updatedAt && <span className="rounded-full bg-muted px-2 py-0.5">最終 {updatedAt}</span>}
+            {uiStatus === "running" && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
+                  hasRecentTaskPulse && hasFreshTaskUpdate
+                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                    : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
+                )}
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {pulseLabel}
+              </span>
+            )}
+          </div>
+        </button>
+        {sourceTaskId && onDelete && (
+          <button
+            type="button"
+            className="flex h-11 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-ring dark:hover:text-red-300"
+            aria-label={`「${shortTitle}」を削除`}
+            title="ノードから削除"
+            onClick={() => {
+              void onDelete(sourceTaskId)
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
         )}
       </div>
-    </button>
+    </article>
   )
 }
 
@@ -399,17 +464,23 @@ function EmptyLane({ label }: { label: string }) {
 function KanbanLaneSection({
   lane,
   tasks,
+  sourceTasksById,
   runnerState,
   isMobile,
   nowMs,
   onOpenTask,
+  onToggleSourceTaskComplete,
+  onDeleteSourceTask,
 }: {
   lane: (typeof LANES)[number]
   tasks: TaskProgressSnapshotTask[]
+  sourceTasksById: ReadonlyMap<string, SourceTaskInfo>
   runnerState: RunnerConnectionState
   isMobile: boolean
   nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
+  onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
   const Icon = lane.icon
 
@@ -433,11 +504,14 @@ function KanbanLaneSection({
             <KanbanCard
               key={task.id}
               task={task}
+              sourceTask={sourceTaskForProgressTask(task, sourceTasksById)}
               runnerState={runnerState}
               isMobile={isMobile}
               nowMs={nowMs}
               forceDone={lane.id === "done"}
               onOpen={onOpenTask}
+              onToggleComplete={onToggleSourceTaskComplete}
+              onDelete={onDeleteSourceTask}
             />
           ))
           : <EmptyLane label={lane.label} />}
@@ -448,16 +522,22 @@ function KanbanLaneSection({
 
 function KanbanLanes({
   lanes,
+  sourceTasksById,
   runnerState,
   isMobile,
   nowMs,
   onOpenTask,
+  onToggleSourceTaskComplete,
+  onDeleteSourceTask,
 }: {
   lanes: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]>
+  sourceTasksById: ReadonlyMap<string, SourceTaskInfo>
   runnerState: RunnerConnectionState
   isMobile: boolean
   nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
+  onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
   return (
     <div className={cn("grid gap-3", isMobile ? "grid-cols-1" : "grid-cols-5")}>
@@ -468,10 +548,13 @@ function KanbanLanes({
             key={lane.id}
             lane={lane}
             tasks={tasks}
+            sourceTasksById={sourceTasksById}
             runnerState={runnerState}
             isMobile={isMobile}
             nowMs={nowMs}
             onOpenTask={onOpenTask}
+            onToggleSourceTaskComplete={onToggleSourceTaskComplete}
+            onDeleteSourceTask={onDeleteSourceTask}
           />
         )
       })}
@@ -482,15 +565,21 @@ function KanbanLanes({
 function MobileKanbanLanePager({
   lanes,
   activeLaneId,
+  sourceTasksById,
   runnerState,
   nowMs,
   onOpenTask,
+  onToggleSourceTaskComplete,
+  onDeleteSourceTask,
 }: {
   lanes: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]>
   activeLaneId: CodexKanbanLaneId
+  sourceTasksById: ReadonlyMap<string, SourceTaskInfo>
   runnerState: RunnerConnectionState
   nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
+  onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
   const lane = LANES.find(candidate => candidate.id === activeLaneId) ?? LANES[0]
   const tasks = lanes[lane.id]
@@ -504,10 +593,13 @@ function MobileKanbanLanePager({
       <KanbanLaneSection
         lane={lane}
         tasks={tasks}
+        sourceTasksById={sourceTasksById}
         runnerState={runnerState}
         isMobile
         nowMs={nowMs}
         onOpenTask={onOpenTask}
+        onToggleSourceTaskComplete={onToggleSourceTaskComplete}
+        onDeleteSourceTask={onDeleteSourceTask}
       />
     </div>
   )
@@ -529,17 +621,42 @@ export function TaskProgressKanban({
   error,
   onRefresh,
   onOpenTask,
+  onToggleSourceTaskComplete,
+  onDeleteSourceTask,
 }: TaskProgressKanbanProps) {
   const [expanded, setExpanded] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [desktopBodyHeightPx, setDesktopBodyHeightPx] = useState(readStoredDesktopBoardHeight)
   const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const desktopResizeCleanupRef = useRef<(() => void) | null>(null)
   const runnerState = useRunnerConnection()
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNowMs(Date.now()), HEARTBEAT_POLL_INTERVAL_MS)
     return () => window.clearInterval(intervalId)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(DESKTOP_BOARD_HEIGHT_STORAGE_KEY, String(Math.round(desktopBodyHeightPx)))
+  }, [desktopBodyHeightPx])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const handleResize = () => {
+      setDesktopBodyHeightPx(previous => clampDesktopBoardHeight(previous))
+    }
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      desktopResizeCleanupRef.current?.()
+      desktopResizeCleanupRef.current = null
+    }
   }, [])
 
   const lanes = useMemo(() => {
@@ -609,6 +726,44 @@ export function TaskProgressKanban({
 
   const handleMobileLanePointerCancel = useCallback(() => {
     mobileSwipeStartRef.current = null
+  }, [])
+
+  const handleDesktopResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (isMobile || typeof window === "undefined") return
+    event.preventDefault()
+    setExpanded(true)
+    desktopResizeCleanupRef.current?.()
+
+    const startY = event.clientY
+    const startHeight = desktopBodyHeightPx
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = startHeight + startY - moveEvent.clientY
+      setDesktopBodyHeightPx(clampDesktopBoardHeight(nextHeight))
+    }
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", cleanup)
+      window.removeEventListener("pointercancel", cleanup)
+      desktopResizeCleanupRef.current = null
+    }
+
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", cleanup)
+    window.addEventListener("pointercancel", cleanup)
+    desktopResizeCleanupRef.current = cleanup
+  }, [desktopBodyHeightPx, isMobile])
+
+  const handleDesktopResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Home" && event.key !== "End") return
+    event.preventDefault()
+    setExpanded(true)
+    setDesktopBodyHeightPx(previous => {
+      if (event.key === "Home") return DESKTOP_BOARD_MIN_HEIGHT_PX
+      if (event.key === "End" && typeof window !== "undefined") {
+        return clampDesktopBoardHeight(window.innerHeight - DESKTOP_BOARD_VIEWPORT_PADDING_PX)
+      }
+      return clampDesktopBoardHeight(previous + (event.key === "ArrowUp" ? 36 : -36))
+    })
   }, [])
 
   if (isMobile) {
@@ -702,9 +857,12 @@ export function TaskProgressKanban({
                 <MobileKanbanLanePager
                   lanes={lanes}
                   activeLaneId={activeMobileLaneId}
+                  sourceTasksById={sourceTasksById}
                   runnerState={runnerState}
                   nowMs={nowMs}
                   onOpenTask={onOpenTask}
+                  onToggleSourceTaskComplete={onToggleSourceTaskComplete}
+                  onDeleteSourceTask={onDeleteSourceTask}
                 />
               )}
             </div>
@@ -715,7 +873,20 @@ export function TaskProgressKanban({
   }
 
   return (
-    <section className="shrink-0 border-t bg-background/95 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur">
+    <section className="relative shrink-0 border-t bg-background/95 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur">
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Codex看板の高さを変更"
+        aria-valuemin={DESKTOP_BOARD_MIN_HEIGHT_PX}
+        aria-valuenow={Math.round(desktopBodyHeightPx)}
+        tabIndex={0}
+        className="absolute -top-1 left-0 right-0 z-10 flex h-3 cursor-ns-resize items-center justify-center focus:outline-none focus:ring-2 focus:ring-ring"
+        onPointerDown={handleDesktopResizePointerDown}
+        onKeyDown={handleDesktopResizeKeyDown}
+      >
+        <span className="h-1 w-14 rounded-full bg-border/80 transition-colors hover:bg-foreground/30" />
+      </div>
       <div className="flex min-h-12 items-center justify-between gap-3 px-4 py-2">
         <button
           type="button"
@@ -755,13 +926,26 @@ export function TaskProgressKanban({
       </div>
 
       {expanded && (
-        <div className="max-h-[28dvh] overflow-y-auto border-t px-4 py-3">
+        <div
+          className="overflow-y-auto border-t px-4 py-3"
+          style={{ height: desktopBodyHeightPx }}
+          data-testid="codex-kanban-desktop-body"
+        >
           {isLoading && total === 0 ? (
             <div className="rounded-lg border border-dashed px-3 py-8 text-center text-xs text-muted-foreground">
               最新状態を確認中...
             </div>
           ) : (
-            <KanbanLanes lanes={lanes} runnerState={runnerState} isMobile={false} nowMs={nowMs} onOpenTask={onOpenTask} />
+            <KanbanLanes
+              lanes={lanes}
+              sourceTasksById={sourceTasksById}
+              runnerState={runnerState}
+              isMobile={false}
+              nowMs={nowMs}
+              onOpenTask={onOpenTask}
+              onToggleSourceTaskComplete={onToggleSourceTaskComplete}
+              onDeleteSourceTask={onDeleteSourceTask}
+            />
           )}
         </div>
       )}

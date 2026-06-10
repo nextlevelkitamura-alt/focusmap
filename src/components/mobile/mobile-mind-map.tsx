@@ -667,6 +667,8 @@ export function MobileMindMap({
                 pollIntervalMs={taskProgressPollIntervalMs}
                 onRefresh={handleRefreshTaskProgressSnapshot}
                 onOpenTask={(task) => setTaskProgressPanelTaskId(task.id)}
+                onToggleSourceTaskComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
+                onDeleteSourceTask={(taskId) => { void handleDeleteNode(taskId) }}
             />
             <TaskProgressDetailPanel
                 open={!!taskProgressPanelTask}

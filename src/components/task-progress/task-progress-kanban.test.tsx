@@ -61,9 +61,37 @@ function renderMobileKanban(
   )
 }
 
+function renderDesktopKanban({
+  tasks = [progressTask({ title: '看板操作テスト' })],
+  sourceTasksById = new Map([['node-1', sourceTask('node-1')]]),
+  onOpenTask = vi.fn(),
+  onToggleSourceTaskComplete = vi.fn(),
+  onDeleteSourceTask = vi.fn(),
+}: {
+  tasks?: TaskProgressSnapshotTask[]
+  sourceTasksById?: Map<string, ReturnType<typeof sourceTask>>
+  onOpenTask?: ReturnType<typeof vi.fn>
+  onToggleSourceTaskComplete?: ReturnType<typeof vi.fn>
+  onDeleteSourceTask?: ReturnType<typeof vi.fn>
+} = {}) {
+  render(
+    <TaskProgressKanban
+      tasks={tasks}
+      sourceTasksById={sourceTasksById}
+      pollIntervalMs={3000}
+      onRefresh={vi.fn()}
+      onOpenTask={onOpenTask}
+      onToggleSourceTaskComplete={onToggleSourceTaskComplete}
+      onDeleteSourceTask={onDeleteSourceTask}
+    />,
+  )
+  return { onOpenTask, onToggleSourceTaskComplete, onDeleteSourceTask }
+}
+
 describe('TaskProgressKanban', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
     fetchWithSupabaseAuthMock.mockResolvedValue(jsonResponse({ source: 'turso', heartbeats: [] }))
   })
 
@@ -238,5 +266,39 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByText('残っているノードのCodexタスク')).toBeInTheDocument()
     expect(screen.queryByText('削除済みノードのCodexタスク')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
+  })
+
+  test('デスクトップ看板カードから元ノードを完了チェック・削除できる', async () => {
+    const callbacks = renderDesktopKanban()
+    await screen.findByText('Mac offline')
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /看板操作テスト.+完了にする/ }))
+    expect(callbacks.onToggleSourceTaskComplete).toHaveBeenCalledWith('node-1', true)
+    expect(callbacks.onOpenTask).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+削除/ }))
+    expect(callbacks.onDeleteSourceTask).toHaveBeenCalledWith('node-1')
+    expect(callbacks.onOpenTask).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+詳細を開く/ }))
+    expect(callbacks.onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1' }))
+  })
+
+  test('デスクトップ看板は上端ドラッグで表示高さを広げられる', async () => {
+    renderDesktopKanban()
+    await screen.findByText('Mac offline')
+
+    const separator = screen.getByRole('separator', { name: /Codex看板の高さを変更/ })
+    act(() => {
+      fireEvent.pointerDown(separator, { clientY: 500 })
+      fireEvent.pointerMove(window, { clientY: 360 })
+    })
+
+    expect(screen.getByTestId('codex-kanban-desktop-body')).toHaveStyle({ height: '400px' })
+    act(() => {
+      fireEvent.pointerUp(window)
+    })
   })
 })
