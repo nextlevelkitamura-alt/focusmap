@@ -30,6 +30,7 @@ interface SpaceProjectSwitcherProps {
   onSpaceSaved?: (space: Space) => void
   showAllSpacesOption?: boolean
   showAllProjectsOption?: boolean
+  allowMutations?: boolean
   variant?: "default" | "memoHeaderCompact"
   className?: string
 }
@@ -57,6 +58,7 @@ export function SpaceProjectSwitcher({
   onSpaceSaved,
   showAllSpacesOption = true,
   showAllProjectsOption = false,
+  allowMutations = true,
   variant = "default",
   className,
 }: SpaceProjectSwitcherProps) {
@@ -126,20 +128,6 @@ export function SpaceProjectSwitcher({
     setProjectOpen(false)
   }
 
-  const openCreateProject = () => {
-    setProjectFormMode("create")
-    setEditingProject(null)
-    setProjectFormOpen(true)
-    setProjectOpen(false)
-  }
-
-  const openEditProject = (project: Project) => {
-    setProjectFormMode("edit")
-    setEditingProject(project)
-    setProjectFormOpen(true)
-    setProjectOpen(false)
-  }
-
   const confirmDeleteProject = async (project: Project) => {
     const confirmed = window.confirm(`「${project.title}」を削除しますか？\n関連するタスクも削除される場合があります。`)
     if (!confirmed) return
@@ -152,6 +140,20 @@ export function SpaceProjectSwitcher({
     } finally {
       setDeletingProjectId(null)
     }
+  }
+
+  const openCreateProject = () => {
+    setProjectFormMode("create")
+    setEditingProject(null)
+    setProjectFormOpen(true)
+    setProjectOpen(false)
+  }
+
+  const openEditProject = (project: Project) => {
+    setProjectFormMode("edit")
+    setEditingProject(project)
+    setProjectFormOpen(true)
+    setProjectOpen(false)
   }
 
   const openCreateSpace = () => {
@@ -247,31 +249,35 @@ export function SpaceProjectSwitcher({
                     <span className="truncate flex-1">{space.title}</span>
                     {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      openEditSpace(space)
-                    }}
-                    aria-label={`${space.title} を編集`}
-                    title="名前・色を編集"
-                    className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
+                  {allowMutations && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openEditSpace(space)
+                      }}
+                      aria-label={`${space.title} を編集`}
+                      title="名前・色を編集"
+                      className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               )
             })}
           </div>
-          <div className="mt-1 border-t border-border/40 pt-1">
-            <button
-              onClick={openCreateSpace}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-primary hover:bg-primary/10 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate flex-1">新しいスペース</span>
-            </button>
-          </div>
+          {allowMutations && (
+            <div className="mt-1 border-t border-border/40 pt-1">
+              <button
+                onClick={openCreateSpace}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-primary hover:bg-primary/10 transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate flex-1">新しいスペース</span>
+              </button>
+            </div>
+          )}
         </PopoverContent>
       </Popover>
 
@@ -352,73 +358,81 @@ export function SpaceProjectSwitcher({
                     <span className="truncate flex-1">{p.title}</span>
                     {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
-                  <>
-                    <button
-                      type="button"
-                      disabled={deletingProjectId === p.id}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void confirmDeleteProject(p)
-                      }}
-                      aria-label={`${p.title} を削除`}
-                      title="削除"
-                      className="pointer-events-auto absolute right-8 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 disabled:pointer-events-none disabled:opacity-40 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        openEditProject(p)
-                      }}
-                      aria-label={`${p.title} を編集`}
-                      title="名前・色を編集"
-                      className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                  </>
+                  {allowMutations && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={deletingProjectId === p.id}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void confirmDeleteProject(p)
+                        }}
+                        aria-label={`${p.title} を削除`}
+                        title="削除"
+                        className="pointer-events-auto absolute right-8 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 disabled:pointer-events-none disabled:opacity-40 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openEditProject(p)
+                        }}
+                        aria-label={`${p.title} を編集`}
+                        title="名前・色を編集"
+                        className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
                 </div>
               )
             })}
           </div>
-          <div className="mt-1 border-t border-border/40 pt-1">
-            <button
-              onClick={openCreateProject}
-              disabled={spaces.length === 0}
-              className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
-                spaces.length === 0
-                  ? "text-muted-foreground/40 cursor-not-allowed"
-                  : "text-primary hover:bg-primary/10",
-              )}
-            >
-              <Plus className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate flex-1">新しいプロジェクト</span>
-            </button>
-          </div>
+          {allowMutations && (
+            <div className="mt-1 border-t border-border/40 pt-1">
+              <button
+                onClick={openCreateProject}
+                disabled={spaces.length === 0}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                  spaces.length === 0
+                    ? "text-muted-foreground/40 cursor-not-allowed"
+                    : "text-primary hover:bg-primary/10",
+                )}
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate flex-1">新しいプロジェクト</span>
+              </button>
+            </div>
+          )}
         </PopoverContent>
       </Popover>
 
-      <ProjectFormDialog
-        open={projectFormOpen}
-        mode={projectFormMode}
-        spaces={spaces}
-        project={editingProject}
-        defaultSpaceId={selectedSpaceId ?? currentSpace?.id ?? null}
-        onClose={() => setProjectFormOpen(false)}
-        onSaved={projectFormMode === "create" ? handleProjectCreated : handleProjectSaved}
-        onDeleted={handleProjectDeleted}
-      />
+      {allowMutations && (
+        <>
+          <ProjectFormDialog
+            open={projectFormOpen}
+            mode={projectFormMode}
+            spaces={spaces}
+            project={editingProject}
+            defaultSpaceId={selectedSpaceId ?? currentSpace?.id ?? null}
+            onClose={() => setProjectFormOpen(false)}
+            onSaved={projectFormMode === "create" ? handleProjectCreated : handleProjectSaved}
+            onDeleted={handleProjectDeleted}
+          />
 
-      <SpaceFormDialog
-        open={spaceFormOpen}
-        mode={spaceFormMode}
-        space={editingSpace}
-        onClose={() => setSpaceFormOpen(false)}
-        onSaved={handleSpaceSaved}
-      />
+          <SpaceFormDialog
+            open={spaceFormOpen}
+            mode={spaceFormMode}
+            space={editingSpace}
+            onClose={() => setSpaceFormOpen(false)}
+            onSaved={handleSpaceSaved}
+          />
+        </>
+      )}
     </div>
   )
 }

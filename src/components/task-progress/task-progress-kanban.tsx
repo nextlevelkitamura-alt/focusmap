@@ -15,6 +15,7 @@ import {
   WifiOff,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import {
   Sheet,
   SheetContent,
@@ -32,7 +33,7 @@ import {
   isSameLocalDate,
 } from "@/lib/task-progress-ui"
 import { cn } from "@/lib/utils"
-import type { Task } from "@/types/database"
+import type { Project, Space, Task } from "@/types/database"
 import type { TaskProgressSnapshotTask } from "@/types/task-progress"
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
@@ -49,7 +50,9 @@ function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible"
 }
 
-type SourceTaskInfo = Pick<Task, "id" | "status" | "title" | "deleted_at">
+type SourceTaskInfo = Pick<Task, "id" | "status" | "title" | "deleted_at"> & {
+  updated_at?: string | null
+}
 
 type RunnerHeartbeat = {
   status?: string | null
@@ -71,6 +74,14 @@ type CodexKanbanLaneId = "unsent" | "running" | "review" | "connection_failed" |
 type TaskProgressKanbanProps = {
   tasks: TaskProgressSnapshotTask[]
   sourceTasksById: ReadonlyMap<string, SourceTaskInfo>
+  spaces?: Space[]
+  projects?: Project[]
+  selectedSpaceId?: string | null
+  selectedProjectId?: string | null
+  onSelectSpace?: (id: string | null) => void
+  onSelectProject?: (id: string | null) => void
+  includeUnsentSourceTasks?: boolean
+  closeSignal?: number
   isMobile?: boolean
   isLoading?: boolean
   isRefreshing?: boolean
@@ -78,6 +89,7 @@ type TaskProgressKanbanProps = {
   pollIntervalMs: number
   onRefresh: () => void | Promise<void>
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onRunSourceTask?: (taskId: string) => void
   onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }
@@ -271,6 +283,43 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
   return "review"
 }
 
+function unsentProgressTaskForSourceTask(sourceTask: SourceTaskInfo): TaskProgressSnapshotTask {
+  return {
+    id: `source:${sourceTask.id}`,
+    title: sourceTask.title,
+    status: "pending",
+    executor: "codex_app",
+    codex_thread_id: null,
+    current_step: "Codex.appで開始待ち",
+    progress_percent: null,
+    summary: "このマップノードからCodexを実行できます",
+    updated_at: sourceTask.updated_at || new Date(0).toISOString(),
+    source_type: "mindmap",
+    source_id: sourceTask.id,
+  }
+}
+
+function isSourceOnlyProgressTask(task: TaskProgressSnapshotTask) {
+  return task.id.startsWith("source:")
+}
+
+function withUnsentSourceTasks(
+  tasks: TaskProgressSnapshotTask[],
+  sourceTasksById: ReadonlyMap<string, SourceTaskInfo>,
+) {
+  const coveredSourceIds = new Set<string>()
+  const result = [...tasks]
+  for (const task of tasks) {
+    if (task.source_type !== "mindmap" || !task.source_id) continue
+    coveredSourceIds.add(task.source_id)
+  }
+  for (const sourceTask of sourceTasksById.values()) {
+    if (!sourceTask?.id || sourceTask.deleted_at || coveredSourceIds.has(sourceTask.id)) continue
+    result.push(unsentProgressTaskForSourceTask(sourceTask))
+  }
+  return result
+}
+
 function RunnerChip({ state }: { state: RunnerConnectionState }) {
   if (state.loading) {
     return (
@@ -330,6 +379,7 @@ function KanbanCard({
   nowMs,
   forceDone = false,
   onOpen,
+  onRunSourceTask,
   onToggleComplete,
   onDelete,
 }: {
@@ -340,6 +390,7 @@ function KanbanCard({
   nowMs: number
   forceDone?: boolean
   onOpen: (task: TaskProgressSnapshotTask) => void
+  onRunSourceTask?: (taskId: string) => void
   onToggleComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDelete?: (taskId: string) => void | Promise<void>
 }) {
@@ -368,6 +419,13 @@ function KanbanCard({
   const sourceTaskId = sourceTask?.id ?? null
   const sourceTaskDone = sourceTask?.status === "done"
   const shortTitle = task.title || "Codexタスク"
+  const openPrimary = () => {
+    if (sourceTaskId && isSourceOnlyProgressTask(task) && onRunSourceTask) {
+      onRunSourceTask(sourceTaskId)
+      return
+    }
+    onOpen(task)
+  }
 
   return (
     <article
@@ -394,8 +452,8 @@ function KanbanCard({
         <button
           type="button"
           className="min-h-11 min-w-0 flex-1 rounded-md text-left focus:outline-none focus:ring-2 focus:ring-ring"
-          aria-label={`「${shortTitle}」の詳細を開く`}
-          onClick={() => onOpen(task)}
+          aria-label={`「${shortTitle}」の${isSourceOnlyProgressTask(task) ? "Codex実行を開く" : "詳細を開く"}`}
+          onClick={openPrimary}
         >
           <div className="flex min-w-0 items-start justify-between gap-2">
             <div className="min-w-0">
@@ -435,6 +493,17 @@ function KanbanCard({
             )}
           </div>
         </button>
+        {sourceTaskId && onRunSourceTask && (
+          <button
+            type="button"
+            className="flex h-11 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-700 focus:outline-none focus:ring-2 focus:ring-ring dark:hover:text-emerald-200"
+            aria-label={`「${shortTitle}」をCodexで実行`}
+            title="Codexで実行"
+            onClick={() => onRunSourceTask(sourceTaskId)}
+          >
+            <Bot className="h-4 w-4" />
+          </button>
+        )}
         {sourceTaskId && onDelete && (
           <button
             type="button"
@@ -469,6 +538,7 @@ function KanbanLaneSection({
   isMobile,
   nowMs,
   onOpenTask,
+  onRunSourceTask,
   onToggleSourceTaskComplete,
   onDeleteSourceTask,
 }: {
@@ -479,6 +549,7 @@ function KanbanLaneSection({
   isMobile: boolean
   nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onRunSourceTask?: (taskId: string) => void
   onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
@@ -510,6 +581,7 @@ function KanbanLaneSection({
               nowMs={nowMs}
               forceDone={lane.id === "done"}
               onOpen={onOpenTask}
+              onRunSourceTask={onRunSourceTask}
               onToggleComplete={onToggleSourceTaskComplete}
               onDelete={onDeleteSourceTask}
             />
@@ -527,6 +599,7 @@ function KanbanLanes({
   isMobile,
   nowMs,
   onOpenTask,
+  onRunSourceTask,
   onToggleSourceTaskComplete,
   onDeleteSourceTask,
 }: {
@@ -536,6 +609,7 @@ function KanbanLanes({
   isMobile: boolean
   nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onRunSourceTask?: (taskId: string) => void
   onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
@@ -553,6 +627,7 @@ function KanbanLanes({
             isMobile={isMobile}
             nowMs={nowMs}
             onOpenTask={onOpenTask}
+            onRunSourceTask={onRunSourceTask}
             onToggleSourceTaskComplete={onToggleSourceTaskComplete}
             onDeleteSourceTask={onDeleteSourceTask}
           />
@@ -569,6 +644,7 @@ function MobileKanbanLanePager({
   runnerState,
   nowMs,
   onOpenTask,
+  onRunSourceTask,
   onToggleSourceTaskComplete,
   onDeleteSourceTask,
 }: {
@@ -578,6 +654,7 @@ function MobileKanbanLanePager({
   runnerState: RunnerConnectionState
   nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onRunSourceTask?: (taskId: string) => void
   onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
@@ -598,6 +675,7 @@ function MobileKanbanLanePager({
         isMobile
         nowMs={nowMs}
         onOpenTask={onOpenTask}
+        onRunSourceTask={onRunSourceTask}
         onToggleSourceTaskComplete={onToggleSourceTaskComplete}
         onDeleteSourceTask={onDeleteSourceTask}
       />
@@ -612,19 +690,70 @@ function adjacentLaneId(current: CodexKanbanLaneId, direction: 1 | -1) {
   return LANE_IDS[nextIndex] ?? current
 }
 
+function KanbanScopeSwitcher({
+  spaces,
+  projects,
+  selectedSpaceId,
+  selectedProjectId,
+  onSelectSpace,
+  onSelectProject,
+  compact = false,
+}: {
+  spaces?: Space[]
+  projects?: Project[]
+  selectedSpaceId?: string | null
+  selectedProjectId?: string | null
+  onSelectSpace?: (id: string | null) => void
+  onSelectProject?: (id: string | null) => void
+  compact?: boolean
+}) {
+  if (!spaces || !projects || !onSelectSpace || !onSelectProject) return null
+  if (projects.length === 0) return null
+
+  return (
+    <div className={cn("min-w-0", compact ? "w-full" : "shrink-0")}>
+      <SpaceProjectSwitcher
+        spaces={spaces}
+        projects={projects}
+        selectedSpaceId={selectedSpaceId ?? null}
+        selectedProjectId={selectedProjectId ?? null}
+        onSelectSpace={onSelectSpace}
+        onSelectProject={onSelectProject}
+        showAllSpacesOption
+        showAllProjectsOption={false}
+        allowMutations={false}
+        variant={compact ? "memoHeaderCompact" : "default"}
+        className={cn(
+          compact && "max-w-full justify-start px-0",
+          !compact && "px-0",
+        )}
+      />
+    </div>
+  )
+}
+
 export function TaskProgressKanban({
   tasks,
   sourceTasksById,
+  spaces,
+  projects,
+  selectedSpaceId,
+  selectedProjectId,
+  onSelectSpace,
+  onSelectProject,
+  includeUnsentSourceTasks = false,
+  closeSignal = 0,
   isMobile = false,
   isLoading = false,
   isRefreshing = false,
   error,
   onRefresh,
   onOpenTask,
+  onRunSourceTask,
   onToggleSourceTaskComplete,
   onDeleteSourceTask,
 }: TaskProgressKanbanProps) {
-  const [expanded, setExpanded] = useState(false)
+  const [desktopExpansion, setDesktopExpansion] = useState(() => ({ closeSignal, expanded: false }))
   const [mobileOpen, setMobileOpen] = useState(false)
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -661,6 +790,17 @@ export function TaskProgressKanban({
     }
   }, [])
 
+  const expanded = desktopExpansion.closeSignal === closeSignal ? desktopExpansion.expanded : false
+  const setDesktopExpanded = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    setDesktopExpansion(previous => {
+      const current = previous.closeSignal === closeSignal ? previous.expanded : false
+      return {
+        closeSignal,
+        expanded: typeof next === "function" ? next(current) : next,
+      }
+    })
+  }, [closeSignal])
+
   const effectiveSourceTasksById = useMemo(() => {
     if (sourceTaskStatusOverrides.size === 0 && hiddenSourceTaskIds.size === 0) return sourceTasksById
     const next = new Map(sourceTasksById)
@@ -675,6 +815,12 @@ export function TaskProgressKanban({
     return next
   }, [hiddenSourceTaskIds, sourceTaskStatusOverrides, sourceTasksById])
 
+  const displayTasks = useMemo(() => (
+    includeUnsentSourceTasks
+      ? withUnsentSourceTasks(tasks, effectiveSourceTasksById)
+      : tasks
+  ), [effectiveSourceTasksById, includeUnsentSourceTasks, tasks])
+
   const lanes = useMemo(() => {
     const grouped: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]> = {
       unsent: [],
@@ -683,7 +829,7 @@ export function TaskProgressKanban({
       connection_failed: [],
       done: [],
     }
-    for (const task of tasks) {
+    for (const task of displayTasks) {
       const laneId = laneForTask(task, effectiveSourceTasksById)
       if (!laneId) continue
       grouped[laneId].push(task)
@@ -692,7 +838,7 @@ export function TaskProgressKanban({
       laneTasks.sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0))
     }
     return grouped
-  }, [effectiveSourceTasksById, tasks])
+  }, [displayTasks, effectiveSourceTasksById])
 
   const counts = useMemo(() => {
     return LANES.reduce<Record<CodexKanbanLaneId, number>>((acc, lane) => {
@@ -785,7 +931,7 @@ export function TaskProgressKanban({
   const handleDesktopResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (isMobile || typeof window === "undefined") return
     event.preventDefault()
-    setExpanded(true)
+    setDesktopExpanded(true)
     desktopResizeCleanupRef.current?.()
 
     const startY = event.clientY
@@ -805,12 +951,12 @@ export function TaskProgressKanban({
     window.addEventListener("pointerup", cleanup)
     window.addEventListener("pointercancel", cleanup)
     desktopResizeCleanupRef.current = cleanup
-  }, [desktopBodyHeightPx, isMobile])
+  }, [desktopBodyHeightPx, isMobile, setDesktopExpanded])
 
   const handleDesktopResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Home" && event.key !== "End") return
     event.preventDefault()
-    setExpanded(true)
+    setDesktopExpanded(true)
     setDesktopBodyHeightPx(previous => {
       if (event.key === "Home") return DESKTOP_BOARD_MIN_HEIGHT_PX
       if (event.key === "End" && typeof window !== "undefined") {
@@ -818,7 +964,7 @@ export function TaskProgressKanban({
       }
       return clampDesktopBoardHeight(previous + (event.key === "ArrowUp" ? 36 : -36))
     })
-  }, [])
+  }, [setDesktopExpanded])
 
   if (isMobile) {
     return (
@@ -858,6 +1004,17 @@ export function TaskProgressKanban({
               </div>
               <div className="flex flex-wrap gap-1.5 pt-2">
                 <RunnerChip state={runnerState} />
+              </div>
+              <div className="pt-2">
+                <KanbanScopeSwitcher
+                  spaces={spaces}
+                  projects={projects}
+                  selectedSpaceId={selectedSpaceId}
+                  selectedProjectId={selectedProjectId}
+                  onSelectSpace={onSelectSpace}
+                  onSelectProject={onSelectProject}
+                  compact
+                />
               </div>
               <div className="-mx-1 overflow-x-auto pt-2">
                 <div className="flex w-max gap-1.5 px-1" role="tablist" aria-label="Codexステータス">
@@ -915,6 +1072,7 @@ export function TaskProgressKanban({
                   runnerState={runnerState}
                   nowMs={nowMs}
                   onOpenTask={onOpenTask}
+                  onRunSourceTask={onRunSourceTask}
                   onToggleSourceTaskComplete={handleToggleSourceTaskComplete}
                   onDeleteSourceTask={handleDeleteSourceTask}
                 />
@@ -945,7 +1103,7 @@ export function TaskProgressKanban({
         <button
           type="button"
           className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
-          onClick={() => setExpanded(prev => !prev)}
+          onClick={() => setDesktopExpanded(prev => !prev)}
           aria-expanded={expanded}
         >
           <Bot className="h-4 w-4 shrink-0 text-emerald-600" />
@@ -965,6 +1123,16 @@ export function TaskProgressKanban({
           </div>
           {expanded ? <ChevronDown className="ml-auto h-4 w-4 shrink-0" /> : <ChevronUp className="ml-auto h-4 w-4 shrink-0" />}
         </button>
+        {expanded && (
+          <KanbanScopeSwitcher
+            spaces={spaces}
+            projects={projects}
+            selectedSpaceId={selectedSpaceId}
+            selectedProjectId={selectedProjectId}
+            onSelectSpace={onSelectSpace}
+            onSelectProject={onSelectProject}
+          />
+        )}
         <Button
           type="button"
           variant="outline"
@@ -997,6 +1165,7 @@ export function TaskProgressKanban({
               isMobile={false}
               nowMs={nowMs}
               onOpenTask={onOpenTask}
+              onRunSourceTask={onRunSourceTask}
               onToggleSourceTaskComplete={handleToggleSourceTaskComplete}
               onDeleteSourceTask={handleDeleteSourceTask}
             />

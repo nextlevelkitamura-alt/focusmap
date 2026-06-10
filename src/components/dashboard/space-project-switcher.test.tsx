@@ -93,4 +93,23 @@ describe('SpaceProjectSwitcher', () => {
 
     confirmSpy.mockRestore()
   })
+
+  test('読取専用モードではスペースとプロジェクトの作成・編集導線を出さない', () => {
+    render(
+      <SpaceProjectSwitcher
+        spaces={spaces}
+        projects={projects}
+        selectedSpaceId="space-work"
+        selectedProjectId="project-work"
+        onSelectSpace={vi.fn()}
+        onSelectProject={vi.fn()}
+        allowMutations={false}
+      />,
+    )
+
+    expect(screen.queryByText('新しいスペース')).not.toBeInTheDocument()
+    expect(screen.queryByText('新しいプロジェクト')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('仕事 を編集')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('仕事プロジェクト を編集')).not.toBeInTheDocument()
+  })
 })

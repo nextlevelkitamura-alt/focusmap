@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
-import { Task, Project } from "@/types/database";
+import { Task, Project, Space } from "@/types/database";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
@@ -140,6 +140,9 @@ interface MindMapProps {
     project: Project
     groups: Task[]              // ルートタスク（parent_task_id === null）
     tasks: Task[]
+    spaces?: Space[]
+    projects?: Project[]
+    allTasks?: Task[]
     onCreateGroup?: (title: string) => Promise<Task | null>
     onDeleteGroup?: (groupId: string) => Promise<void>
     onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
@@ -153,9 +156,11 @@ interface MindMapProps {
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
+    onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+    onKanbanDeleteTask?: (taskId: string) => Promise<void>
 }
 
-function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
     const projectId = project?.id ?? '';
 
     // 画面幅 767px 以下でモバイルレイアウト（コンパクト化）
@@ -163,6 +168,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // MindMap Display Settings
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
+    const [kanbanCloseSignal, setKanbanCloseSignal] = useState(0);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -172,8 +178,34 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onAddOptimisticEvent,
         onRemoveOptimisticEvent,
     });
-    const allTasksByIdForCodex = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task])), [groups, tasks]);
-    const codexSourceTaskIds = useMemo(() => [...groups, ...tasks].map(task => task.id).filter(Boolean), [groups, tasks]);
+    const mindMapTaskNodes = useMemo(() => [...groups, ...tasks], [groups, tasks]);
+    const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects]);
+    const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project?.space_id ?? null);
+    const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(() => project?.id ?? null);
+
+    useEffect(() => {
+        setKanbanSpaceId(project?.space_id ?? null);
+        setKanbanProjectId(project?.id ?? null);
+    }, [project?.id, project?.space_id]);
+
+    const kanbanProject = useMemo(() => (
+        kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
+    ), [kanbanProjectId, kanbanProjects, project]);
+    const kanbanTaskNodes = useMemo(() => {
+        if (!kanbanProject?.id) return mindMapTaskNodes;
+        if (kanbanProject.id === project.id) return mindMapTaskNodes;
+        return allTasks.filter(task => task.project_id === kanbanProject.id && task.deleted_at === null);
+    }, [allTasks, kanbanProject?.id, mindMapTaskNodes, project.id]);
+    const knownCodexTaskNodes = useMemo(() => {
+        const map = new Map<string, Task>();
+        for (const task of mindMapTaskNodes) map.set(task.id, task);
+        for (const task of kanbanTaskNodes) map.set(task.id, task);
+        return Array.from(map.values());
+    }, [kanbanTaskNodes, mindMapTaskNodes]);
+    const allTasksByIdForCodex = useMemo(() => new Map(mindMapTaskNodes.map(task => [task.id, task])), [mindMapTaskNodes]);
+    const fallbackSourceTasksByIdForCodex = useMemo(() => new Map(knownCodexTaskNodes.map(task => [task.id, task])), [knownCodexTaskNodes]);
+    const kanbanSourceTasksById = useMemo(() => new Map(kanbanTaskNodes.map(task => [task.id, task])), [kanbanTaskNodes]);
+    const codexSourceTaskIds = useMemo(() => knownCodexTaskNodes.map(task => task.id).filter(Boolean), [knownCodexTaskNodes]);
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture());
     const {
         bySourceId: aiTasksBySourceId,
@@ -250,9 +282,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const taskStatusByIdRef = useRef(new Map<string, string | null | undefined>());
     useEffect(() => {
         const next = new Map<string, string | null | undefined>();
-        for (const task of [...groups, ...tasks]) next.set(task.id, task.status);
+        for (const task of knownCodexTaskNodes) next.set(task.id, task.status);
         taskStatusByIdRef.current = next;
-    }, [groups, tasks]);
+    }, [knownCodexTaskNodes]);
     useEffect(() => {
         const timers = codexArchiveRequestTimersRef.current;
         return () => {
@@ -328,16 +360,24 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         window.addEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus);
         return () => window.removeEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus);
     }, [syncCodexSourceTaskCompletion]);
+    const updateTaskForCodexScope = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        const task = fallbackSourceTasksByIdForCodex.get(taskId);
+        const update = task?.project_id && task.project_id !== project.id
+            ? onKanbanUpdateTask ?? onUpdateTask
+            : onUpdateTask ?? onKanbanUpdateTask;
+        if (!update) return;
+        await update(taskId, updates);
+    }, [fallbackSourceTasksByIdForCodex, onKanbanUpdateTask, onUpdateTask, project.id]);
+
     const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
-        if (!onUpdateTask) return;
-        await onUpdateTask(taskId, { status });
+        await updateTaskForCodexScope(taskId, { status });
         await syncCodexSourceTaskCompletion(taskId, status);
-    }, [onUpdateTask, syncCodexSourceTaskCompletion]);
+    }, [syncCodexSourceTaskCompletion, updateTaskForCodexScope]);
     const taskProgressFallbackTasks = useMemo(() => {
         if (taskProgressFixtureEnabled) return [];
         const fallbackTasks: TaskProgressSnapshotTask[] = [];
         for (const [sourceId, aiTask] of aiTasksBySourceId.entries()) {
-            const sourceTask = allTasksByIdForCodex.get(sourceId);
+            const sourceTask = fallbackSourceTasksByIdForCodex.get(sourceId);
             if (!sourceTask) continue;
             const fallbackTask = aiTaskToTaskProgressFallback(aiTask, {
                 id: sourceId,
@@ -346,7 +386,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             if (fallbackTask) fallbackTasks.push(fallbackTask);
         }
         return fallbackTasks;
-    }, [aiTasksBySourceId, allTasksByIdForCodex, taskProgressFixtureEnabled]);
+    }, [aiTasksBySourceId, fallbackSourceTasksByIdForCodex, taskProgressFixtureEnabled]);
     const taskProgressDisplayTasks = useMemo(() => {
         const merged = new Map<string, TaskProgressSnapshotTask>();
         for (const task of taskProgressFallbackTasks) merged.set(task.id, task);
@@ -480,34 +520,43 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // Codex ノードパネル（実行/往復/作業場所/プロンプト編集を一元化）の対象ノード
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null);
     const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set());
-    const mindMapTaskNodes = useMemo(() => [...groups, ...tasks], [groups, tasks]);
 
     // ノードの「Codex」ボタン / 状態アイコン → Codex ノードパネルを開く（実行はパネルから）
     const handleRunCodex = useCallback((taskId: string) => {
         setCodexPanelTaskId(taskId);
     }, []);
 
+    const codexPanelTask = useMemo(() => {
+        if (!codexPanelTaskId) return null;
+        return fallbackSourceTasksByIdForCodex.get(codexPanelTaskId) ?? null;
+    }, [codexPanelTaskId, fallbackSourceTasksByIdForCodex]);
+    const codexPanelProject = useMemo(() => {
+        if (!codexPanelTask?.project_id) return project;
+        return kanbanProjects.find(candidate => candidate.id === codexPanelTask.project_id) ?? project;
+    }, [codexPanelTask?.project_id, kanbanProjects, project]);
+
     // codex_work_dir を per-node に保存
     const persistCodexDir = useCallback(async (taskId: string, dir: string) => {
-        try { await onUpdateTask?.(taskId, { codex_work_dir: dir }); } catch { /* 永続化失敗でも続行 */ }
-    }, [onUpdateTask]);
+        try { await updateTaskForCodexScope(taskId, { codex_work_dir: dir }); } catch { /* 永続化失敗でも続行 */ }
+    }, [updateTaskForCodexScope]);
 
     // よく使う候補（履歴の codex_work_dir + プロジェクトの repo_path）
     const codexDirCandidates = useMemo(() => {
         const set = new Set<string>();
+        const panelRepo = (codexPanelProject?.repo_path ?? '').trim();
+        if (panelRepo) set.add(panelRepo);
         const repo = (project?.repo_path ?? '').trim();
         if (repo) set.add(repo);
-        for (const t of mindMapTaskNodes) {
+        for (const t of knownCodexTaskNodes) {
             const d = (t.codex_work_dir ?? '').trim();
             if (d) set.add(d);
         }
         return Array.from(set);
-    }, [mindMapTaskNodes, project?.repo_path]);
+    }, [codexPanelProject?.repo_path, knownCodexTaskNodes, project?.repo_path]);
 
     // パネルに渡すノード情報
     const codexPanelNode = useMemo(() => {
-        if (!codexPanelTaskId) return null;
-        const task = mindMapTaskNodes.find(t => t.id === codexPanelTaskId);
+        const task = codexPanelTask;
         if (!task) return null;
         const aiTask = getAiTaskBySourceId(task.id);
         const aiResult = aiTask?.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
@@ -531,7 +580,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             isDone: task.status === 'done',
             hasMemo: !!(task.memo && task.memo.trim()),
         };
-    }, [codexPanelTaskId, getAiTaskBySourceId, mindMapTaskNodes]);
+    }, [codexPanelTask, getAiTaskBySourceId]);
 
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null) => {
         setSelectedNodeIds(ids);
@@ -1235,6 +1284,18 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         registerSchedule,
     ]);
 
+    const handleDeleteTaskFromKanban = useCallback(async (taskId: string) => {
+        const sourceTask = fallbackSourceTasksByIdForCodex.get(taskId);
+        if (sourceTask?.project_id && sourceTask.project_id !== project.id && onKanbanDeleteTask) {
+            await onKanbanDeleteTask(taskId);
+            return;
+        }
+        await callbacks.deleteTask(taskId);
+    }, [callbacks, fallbackSourceTasksByIdForCodex, onKanbanDeleteTask, project.id]);
+
+    const closeKanbanFromMapInteraction = useCallback(() => {
+        setKanbanCloseSignal(signal => signal + 1);
+    }, []);
 
     const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
         if (getIsTypingTarget(event.target)) return;
@@ -1516,7 +1577,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             </div>
 
             <div className="flex h-full min-h-0 flex-col">
-                <div className="relative min-h-0 flex-1">
+                <div className="relative min-h-0 flex-1" onPointerDownCapture={closeKanbanFromMapInteraction}>
                     <CustomMindMapView
                         project={project}
                         groups={groups}
@@ -1557,7 +1618,15 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 </div>
                 <TaskProgressKanban
                     tasks={taskProgressDisplayTasks}
-                    sourceTasksById={allTasksByIdForCodex}
+                    sourceTasksById={kanbanSourceTasksById}
+                    spaces={spaces}
+                    projects={kanbanProjects}
+                    selectedSpaceId={kanbanSpaceId}
+                    selectedProjectId={kanbanProject?.id ?? kanbanProjectId}
+                    onSelectSpace={setKanbanSpaceId}
+                    onSelectProject={setKanbanProjectId}
+                    includeUnsentSourceTasks
+                    closeSignal={kanbanCloseSignal}
                     isMobile={isNarrow}
                     isLoading={isTaskProgressSnapshotLoading}
                     isRefreshing={isRefreshingTaskProgressSnapshot}
@@ -1565,8 +1634,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     pollIntervalMs={taskProgressPollIntervalMs}
                     onRefresh={handleRefreshTaskProgressSnapshot}
                     onOpenTask={handleOpenTaskProgress}
+                    onRunSourceTask={handleRunCodex}
                     onToggleSourceTaskComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo"); }}
-                    onDeleteSourceTask={(taskId) => { void callbacks.deleteTask(taskId); }}
+                    onDeleteSourceTask={(taskId) => { void handleDeleteTaskFromKanban(taskId); }}
                 />
             </div>
             <TaskProgressDetailPanel
@@ -1584,9 +1654,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     candidates={codexDirCandidates}
                     onClose={() => setCodexPanelTaskId(null)}
                     onPersistDir={persistCodexDir}
-                    onSaveHeading={(taskId, heading) => onUpdateTask?.(taskId, { title: heading })}
-                    onSaveDraft={(taskId, draft) => onUpdateTask?.(taskId, { title: draft.title, memo: draft.memo })}
-                    onSaveTaskDetails={(taskId, updates) => onUpdateTask?.(taskId, updates)}
+                    onSaveHeading={(taskId, heading) => updateTaskForCodexScope(taskId, { title: heading })}
+                    onSaveDraft={(taskId, draft) => updateTaskForCodexScope(taskId, { title: draft.title, memo: draft.memo })}
+                    onSaveTaskDetails={(taskId, updates) => updateTaskForCodexScope(taskId, updates)}
                     onRegisterSchedule={(taskId, params) => callbacks.registerSchedule(taskId, params)}
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? 'done' : 'todo'); }}
