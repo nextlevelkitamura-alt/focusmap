@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MobileEventEditModal } from './mobile-event-edit-modal'
 import type { TimeBlock } from '@/lib/time-block'
 
@@ -16,6 +16,10 @@ vi.mock('@/contexts/TimerContext', () => ({
   }),
   formatTime: (seconds: number) => `${seconds}s`,
 }))
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 function calendarEventBlock(): TimeBlock {
   return {
@@ -48,8 +52,8 @@ function calendarEventBlock(): TimeBlock {
 }
 
 describe('MobileEventEditModal', () => {
-  test('削除確認OK後は削除APIの完了を待たず編集画面を閉じる', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  test('削除ボタンは確認ダイアログなしで削除し、削除APIの完了を待たず編集画面を閉じる', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const onClose = vi.fn()
     let resolveDelete: (() => void) | undefined
     const deletePromise = new Promise<void>(resolve => {
@@ -71,7 +75,7 @@ describe('MobileEventEditModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '削除' }))
 
-    expect(confirmSpy).toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
     expect(onDeleteEvent).toHaveBeenCalledWith('event-cache-1', 'google-event-1', 'calendar-1')
     expect(onClose).toHaveBeenCalledTimes(1)
 

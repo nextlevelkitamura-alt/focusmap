@@ -371,9 +371,6 @@ export function MobileEventEditModal({
     // Delete handler
     const handleDelete = useCallback(async () => {
         if (!target) return
-        const dateLabel = format(target.startTime, 'M/d(E) HH:mm', { locale: ja })
-        const ok = window.confirm(`「${target.title}」\n${dateLabel} の予定を削除します。よろしいですか？`)
-        if (!ok) return
 
         setIsDeleting(true)
         onClose()
