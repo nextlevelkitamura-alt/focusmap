@@ -179,7 +179,7 @@ export function Header({
         <header
             className={cn(
             "relative h-14 border-b items-center justify-between px-4 bg-background z-50 flex-shrink-0",
-            isDesktopShell && "h-[52px] border-white/10 bg-background/95 pl-[132px] pr-5 shadow-[0_1px_0_rgba(255,255,255,0.04)]",
+            isDesktopShell && "h-[52px] border-white/10 bg-background/95 pl-[108px] pr-5 shadow-[0_1px_0_rgba(255,255,255,0.04)]",
             desktopFlexClass,
             forceDesktopDashboard && "min-w-[1120px]",
         )}
