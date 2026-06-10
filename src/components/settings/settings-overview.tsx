@@ -66,7 +66,7 @@ function SettingsListSection({ title, items }: { title: string; items: OverviewI
   return (
     <section className="space-y-2">
       <h2 className="px-4 text-[13px] font-medium text-zinc-500">{title}</h2>
-      <div className="overflow-hidden rounded-xl bg-[#1c1c1e]">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-transparent dark:bg-[#1c1c1e] dark:shadow-none">
         {items.map((item, index) => (
           <SettingsListRow
             key={item.href}
@@ -86,14 +86,14 @@ function SettingsListRow({ item, showDivider }: { item: OverviewItem; showDivide
     <Link
       href={item.href}
       prefetch={false}
-      className="group flex min-h-[58px] items-center gap-3 px-4 transition active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:hover:bg-white/[0.04]"
+      className="group flex min-h-[58px] items-center gap-3 px-4 transition active:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:hover:bg-zinc-50 dark:active:bg-white/[0.06] dark:md:hover:bg-white/[0.04]"
     >
       <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", item.iconClass)}>
         <Icon className="h-4.5 w-4.5" />
       </span>
-      <div className={cn("flex min-w-0 flex-1 items-center gap-3 py-2.5", showDivider && "border-b border-white/[0.08]")}>
+      <div className={cn("flex min-w-0 flex-1 items-center gap-3 py-2.5", showDivider && "border-b border-zinc-200 dark:border-white/[0.08]")}>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[17px] leading-5 text-zinc-50">{item.title}</div>
+          <div className="truncate text-[17px] leading-5 text-zinc-950 dark:text-zinc-50">{item.title}</div>
           <div className="mt-0.5 truncate text-[12px] leading-4 text-zinc-500">{item.description}</div>
         </div>
         <ChevronRight className="h-4.5 w-4.5 shrink-0 text-zinc-600 transition group-hover:translate-x-0.5 group-hover:text-zinc-400" />
@@ -110,12 +110,12 @@ export function SettingsOverview() {
       className="max-w-[720px]"
     >
       <div className="space-y-7">
-        <div className="flex min-h-[76px] items-center gap-3 rounded-xl bg-[#1c1c1e] px-4">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-zinc-800 text-zinc-100">
-            <Sparkles className="h-5 w-5 text-blue-300" />
+        <div className="flex min-h-[76px] items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 shadow-sm dark:border-transparent dark:bg-[#1c1c1e] dark:shadow-none">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+            <Sparkles className="h-5 w-5 text-blue-500 dark:text-blue-300" />
           </span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[17px] font-semibold text-zinc-50">Focusmap</div>
+            <div className="truncate text-[17px] font-semibold text-zinc-950 dark:text-zinc-50">Focusmap</div>
             <div className="mt-0.5 truncate text-[13px] text-zinc-500">予定と自動化をまとめて管理</div>
           </div>
         </div>

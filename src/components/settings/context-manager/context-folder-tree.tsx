@@ -39,7 +39,7 @@ function FolderItem({
       {/* フォルダ行 */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100"
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
       >
         {hasChildren ? (
@@ -66,8 +66,8 @@ function FolderItem({
               onClick={() => onSelectDocument(doc)}
               className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
                 selectedDocId === doc.id
-                  ? 'bg-blue-400/10 text-blue-200'
-                  : 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100'
+                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-400/10 dark:text-blue-200'
+                  : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100'
               }`}
               style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
             >
@@ -98,7 +98,7 @@ function FolderItem({
           {(folder.folder_type === 'root_personal' || folder.folder_type === 'project') && (
             <button
               onClick={() => onCreateDocument(folder.id)}
-              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-white/[0.06] dark:hover:text-zinc-200"
               style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
             >
               <Plus className="h-3 w-3" />

@@ -136,22 +136,22 @@ function MacCodexConnectionPanel() {
   if (!bridgeAvailable && !loading) return null
 
   return (
-    <section className="rounded-lg border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
+    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex min-w-0 items-start gap-3">
-          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${connected ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-800 text-zinc-300"}`}>
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${connected ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}>
             {connected ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase text-zinc-500">Mac App Control</p>
-            <h2 className="text-base font-semibold text-zinc-50">
+            <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
               {connected ? "Macアプリ操作は接続中" : "Macアプリ操作は要確認"}
             </h2>
-            <p className="mt-1 text-sm leading-6 text-zinc-400">
+            <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
               このパネルはFocusmap Macアプリ内だけで表示します。AIエージェントの再接続とCodex導入を操作できます。
             </p>
             {status?.keepAwake?.active && (
-              <p className="mt-1 text-xs text-emerald-300">
+              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
                 Macアプリのバックグラウンド停止を抑制中です。
               </p>
             )}
@@ -200,21 +200,21 @@ function MacCodexConnectionPanel() {
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div className="rounded-md border border-white/[0.08] bg-black/30 p-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-            <Workflow className="h-4 w-4 text-emerald-300" />
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
+          <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            <Workflow className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
             Macエージェント
-            <span className="ml-auto rounded-full bg-black/25 px-2 py-0.5 text-[10px] text-zinc-300">
+            <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-black/25 dark:text-zinc-300">
               {status?.agent.ready ? "接続中" : "要確認"}
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-zinc-500">{agentDetail(status)}</p>
         </div>
-        <div className="rounded-md border border-white/[0.08] bg-black/30 p-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-            <Bot className="h-4 w-4 text-emerald-300" />
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
+          <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            <Bot className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
             Codex
-            <span className="ml-auto rounded-full bg-black/25 px-2 py-0.5 text-[10px] text-zinc-300">
+            <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-black/25 dark:text-zinc-300">
               {codexNeedsInstall ? "要インストール" : status?.codex.ready ? "接続中" : "要確認"}
             </span>
           </div>
@@ -226,7 +226,7 @@ function MacCodexConnectionPanel() {
         <span>
           最終診断: {formatStatusTime(status?.timestamp)} / 自動確認: {status?.supervisor?.enabled ? "有効" : "停止"}
         </span>
-        {message && <span className="text-zinc-300">{message}</span>}
+        {message && <span className="text-zinc-700 dark:text-zinc-300">{message}</span>}
       </div>
     </section>
   )
@@ -294,12 +294,12 @@ function FocusmapLiteInstallPanel() {
   return (
     <div className="grid gap-3">
       <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-end">
-        <label className="grid gap-1 text-xs text-zinc-400">
+        <label className="grid gap-1 text-xs text-zinc-600 dark:text-zinc-400">
           Workspace
           <select
             value={spaceId}
             onChange={event => setSpaceId(event.target.value)}
-            className="h-10 rounded-md border border-white/[0.08] bg-black/40 px-3 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-400"
+            className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:ring-1 focus:ring-blue-400 dark:border-white/[0.08] dark:bg-black/40 dark:text-zinc-100"
           >
             {spaces.length === 0 ? (
               <option value="">Workspaceを読み込み中</option>
@@ -315,21 +315,21 @@ function FocusmapLiteInstallPanel() {
       </div>
 
       {command && (
-        <div className="rounded-md border border-white/[0.08] bg-black/40 p-3">
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/40">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-zinc-300">Macのターミナルで1回だけ実行</span>
+            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Macのターミナルで1回だけ実行</span>
             <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={copyCommand}>
               {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
               {copied ? "コピー済み" : "コピー"}
             </Button>
           </div>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-100">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-zinc-100 p-3 font-mono text-xs leading-5 text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
             {command}
           </pre>
         </div>
       )}
 
-      {message && <p className="text-xs leading-5 text-zinc-400">{message}</p>}
+      {message && <p className="text-xs leading-5 text-zinc-600 dark:text-zinc-400">{message}</p>}
     </div>
   )
 }
@@ -341,11 +341,11 @@ export function AutomationSettings() {
 
       <MacCodexConnectionPanel />
 
-      <section className="rounded-lg border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
+      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-zinc-50">AIへ依頼</h2>
-            <p className="mt-1 text-sm leading-6 text-zinc-400">
+            <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">AIへ依頼</h2>
+            <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
               メモやノードから依頼を作り、Macエージェントが巡回してCodexへつなぎます。
             </p>
           </div>
@@ -363,8 +363,8 @@ export function AutomationSettings() {
           </Button>
         </div>
 
-        <details className="mt-4 rounded-md border border-white/[0.08] bg-black/30 p-3 text-sm text-zinc-300">
-          <summary className="cursor-pointer select-none font-medium text-zinc-100">
+        <details className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700 dark:border-white/[0.08] dark:bg-black/30 dark:text-zinc-300">
+          <summary className="cursor-pointer select-none font-medium text-zinc-950 dark:text-zinc-100">
             Macエージェントを導入/再設定
           </summary>
           <div className="mt-3">
