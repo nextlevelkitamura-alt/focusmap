@@ -249,7 +249,7 @@ function isProgressTaskVisibleInCurrentMap(
   task: TaskProgressSnapshotTask,
   sourceTasksById: ReadonlyMap<string, SourceTaskInfo>,
 ) {
-  if (task.source_type !== "mindmap") return true
+  if (task.source_type !== "mindmap") return false
   const sourceId = task.source_id?.trim()
   if (!sourceId) return false
   const sourceTask = sourceTasksById.get(sourceId)
@@ -629,6 +629,8 @@ export function TaskProgressKanban({
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [desktopBodyHeightPx, setDesktopBodyHeightPx] = useState(readStoredDesktopBoardHeight)
+  const [sourceTaskStatusOverrides, setSourceTaskStatusOverrides] = useState<Map<string, string>>(new Map())
+  const [hiddenSourceTaskIds, setHiddenSourceTaskIds] = useState<Set<string>>(new Set())
   const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
   const desktopResizeCleanupRef = useRef<(() => void) | null>(null)
   const runnerState = useRunnerConnection()
@@ -659,6 +661,20 @@ export function TaskProgressKanban({
     }
   }, [])
 
+  const effectiveSourceTasksById = useMemo(() => {
+    if (sourceTaskStatusOverrides.size === 0 && hiddenSourceTaskIds.size === 0) return sourceTasksById
+    const next = new Map(sourceTasksById)
+    for (const [taskId, status] of sourceTaskStatusOverrides.entries()) {
+      const sourceTask = next.get(taskId)
+      if (!sourceTask) continue
+      next.set(taskId, { ...sourceTask, status })
+    }
+    for (const taskId of hiddenSourceTaskIds) {
+      next.delete(taskId)
+    }
+    return next
+  }, [hiddenSourceTaskIds, sourceTaskStatusOverrides, sourceTasksById])
+
   const lanes = useMemo(() => {
     const grouped: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]> = {
       unsent: [],
@@ -668,7 +684,7 @@ export function TaskProgressKanban({
       done: [],
     }
     for (const task of tasks) {
-      const laneId = laneForTask(task, sourceTasksById)
+      const laneId = laneForTask(task, effectiveSourceTasksById)
       if (!laneId) continue
       grouped[laneId].push(task)
     }
@@ -676,7 +692,7 @@ export function TaskProgressKanban({
       laneTasks.sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0))
     }
     return grouped
-  }, [sourceTasksById, tasks])
+  }, [effectiveSourceTasksById, tasks])
 
   const counts = useMemo(() => {
     return LANES.reduce<Record<CodexKanbanLaneId, number>>((acc, lane) => {
@@ -692,6 +708,44 @@ export function TaskProgressKanban({
       runnerState.refresh(),
     ])
   }, [onRefresh, runnerState])
+
+  const handleToggleSourceTaskComplete = useCallback(async (taskId: string, done: boolean) => {
+    if (!onToggleSourceTaskComplete) return
+    setSourceTaskStatusOverrides(previous => {
+      const next = new Map(previous)
+      next.set(taskId, done ? "done" : "todo")
+      return next
+    })
+    try {
+      await onToggleSourceTaskComplete(taskId, done)
+    } catch (error) {
+      setSourceTaskStatusOverrides(previous => {
+        const next = new Map(previous)
+        next.delete(taskId)
+        return next
+      })
+      console.error("[TaskProgressKanban] Failed to toggle source task completion:", error)
+    }
+  }, [onToggleSourceTaskComplete])
+
+  const handleDeleteSourceTask = useCallback(async (taskId: string) => {
+    if (!onDeleteSourceTask) return
+    setHiddenSourceTaskIds(previous => {
+      const next = new Set(previous)
+      next.add(taskId)
+      return next
+    })
+    try {
+      await onDeleteSourceTask(taskId)
+    } catch (error) {
+      setHiddenSourceTaskIds(previous => {
+        const next = new Set(previous)
+        next.delete(taskId)
+        return next
+      })
+      console.error("[TaskProgressKanban] Failed to delete source task:", error)
+    }
+  }, [onDeleteSourceTask])
 
   const openMobileKanban = useCallback(() => {
     setActiveMobileLaneId(current => {
@@ -857,12 +911,12 @@ export function TaskProgressKanban({
                 <MobileKanbanLanePager
                   lanes={lanes}
                   activeLaneId={activeMobileLaneId}
-                  sourceTasksById={sourceTasksById}
+                  sourceTasksById={effectiveSourceTasksById}
                   runnerState={runnerState}
                   nowMs={nowMs}
                   onOpenTask={onOpenTask}
-                  onToggleSourceTaskComplete={onToggleSourceTaskComplete}
-                  onDeleteSourceTask={onDeleteSourceTask}
+                  onToggleSourceTaskComplete={handleToggleSourceTaskComplete}
+                  onDeleteSourceTask={handleDeleteSourceTask}
                 />
               )}
             </div>
@@ -938,13 +992,13 @@ export function TaskProgressKanban({
           ) : (
             <KanbanLanes
               lanes={lanes}
-              sourceTasksById={sourceTasksById}
+              sourceTasksById={effectiveSourceTasksById}
               runnerState={runnerState}
               isMobile={false}
               nowMs={nowMs}
               onOpenTask={onOpenTask}
-              onToggleSourceTaskComplete={onToggleSourceTaskComplete}
-              onDeleteSourceTask={onDeleteSourceTask}
+              onToggleSourceTaskComplete={handleToggleSourceTaskComplete}
+              onDeleteSourceTask={handleDeleteSourceTask}
             />
           )}
         </div>
