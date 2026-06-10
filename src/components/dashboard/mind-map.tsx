@@ -19,6 +19,7 @@ import {
 } from "@/lib/codex-source-completion";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
+import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
@@ -350,8 +351,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         const merged = new Map<string, TaskProgressSnapshotTask>();
         for (const task of taskProgressFallbackTasks) merged.set(task.id, task);
         for (const task of taskProgressTasks) merged.set(task.id, task);
-        return Array.from(merged.values());
-    }, [taskProgressFallbackTasks, taskProgressTasks]);
+        return hydrateTaskProgressMindMapSources(Array.from(merged.values()), aiTasksBySourceId);
+    }, [aiTasksBySourceId, taskProgressFallbackTasks, taskProgressTasks]);
     const appliedCodexCompletionKeysRef = useRef(new Set<string>());
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {};

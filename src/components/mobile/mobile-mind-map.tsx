@@ -13,6 +13,7 @@ import {
 } from "@/lib/codex-source-completion"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
+import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source"
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
@@ -299,8 +300,8 @@ export function MobileMindMap({
         const merged = new Map<string, TaskProgressSnapshotTask>()
         for (const task of taskProgressFallbackTasks) merged.set(task.id, task)
         for (const task of taskProgressTasks) merged.set(task.id, task)
-        return Array.from(merged.values())
-    }, [taskProgressFallbackTasks, taskProgressTasks])
+        return hydrateTaskProgressMindMapSources(Array.from(merged.values()), bySourceId)
+    }, [bySourceId, taskProgressFallbackTasks, taskProgressTasks])
 
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {}
