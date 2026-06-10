@@ -23,8 +23,10 @@ import { DesktopPanelFab } from "@/components/dashboard/desktop-panel-fab"
 import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useClickOutside } from "@/hooks/useClickOutside"
 import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
+import type { MindMapNodeCalendarDragPayload } from "@/lib/calendar-constants"
 
 // --- Types ---
+const MINDMAP_NODE_DROP_IN_FLIGHT_MS = 4000
 
 interface DesktopTodayPanelProps {
     allTasks: Task[]
@@ -202,6 +204,31 @@ export function DesktopTodayPanel({
     const draftCalendarColor = taskFormDraft?.calendarId
         ? writableCalendars.find(c => c.id === taskFormDraft.calendarId)?.background_color
         : undefined
+    const mindMapNodeDropInFlightRef = useRef<Map<string, number>>(new Map())
+    const handleMindMapNodeDrop = useCallback(async (payload: MindMapNodeCalendarDragPayload, startTime: Date) => {
+        const durationMinutes = Math.max(15, payload.durationMinutes || 30)
+        const scheduledAt = startTime.toISOString()
+        const dropKey = `${payload.taskId}:${scheduledAt}`
+        const now = Date.now()
+        for (const [key, timestamp] of mindMapNodeDropInFlightRef.current) {
+            if (now - timestamp > MINDMAP_NODE_DROP_IN_FLIGHT_MS) {
+                mindMapNodeDropInFlightRef.current.delete(key)
+            }
+        }
+        if (mindMapNodeDropInFlightRef.current.has(dropKey)) return
+        mindMapNodeDropInFlightRef.current.set(dropKey, now)
+        try {
+            await onUpdateTask(payload.taskId, {
+                scheduled_at: scheduledAt,
+                estimated_time: durationMinutes,
+                calendar_id: payload.calendarId ?? defaultQuickCreateCalendarId,
+            })
+        } finally {
+            window.setTimeout(() => {
+                mindMapNodeDropInFlightRef.current.delete(dropKey)
+            }, MINDMAP_NODE_DROP_IN_FLIGHT_MS)
+        }
+    }, [defaultQuickCreateCalendarId, onUpdateTask])
     const draftPreview = taskFormDraft?.scheduledDate
         ? {
             title: taskFormDraft.title?.trim() || '新しい予定',
@@ -661,6 +688,7 @@ export function DesktopTodayPanel({
                             setTaskFormPreset({ scheduledDate: scheduledAt, estimatedTime })
                             setIsTaskFormOpen(true)
                         }}
+                        onMindMapNodeDrop={handleMindMapNodeDrop}
                         syncFailedIds={syncFailedIds}
                         scrollToHourRequest={
                             calendarScrollToHour != null && calendarScrollRequestKey != null

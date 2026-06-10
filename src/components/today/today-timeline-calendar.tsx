@@ -11,7 +11,15 @@ import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
 import type { TimeBlock } from "@/lib/time-block"
-import { CALENDAR_EVENT_MEMO_DRAG_MIME, MEMO_DRAG_MIME, SCHEDULED_MEMO_DRAG_MIME, SCHEDULED_MEMO_INDEX_EVENT } from "@/lib/calendar-constants"
+import {
+    CALENDAR_EVENT_MEMO_DRAG_MIME,
+    MEMO_DRAG_MIME,
+    MINDMAP_NODE_DRAG_EVENT,
+    SCHEDULED_MEMO_DRAG_MIME,
+    SCHEDULED_MEMO_INDEX_EVENT,
+    type MindMapNodeCalendarDragEventDetail,
+    type MindMapNodeCalendarDragPayload,
+} from "@/lib/calendar-constants"
 import { calculateTodayTimelineLayout } from "@/lib/today-timeline-layout"
 import {
     buildCalendarEventMemoPayload,
@@ -29,6 +37,9 @@ const QUICK_CREATE_MINUTES = 15
 const QUICK_CREATE_DEFAULT_MINUTES = 30
 const TOUCH_LONG_PRESS_MS = 260
 const TOUCH_MOVE_CANCEL_PX = 10
+const DRAG_AUTO_SCROLL_ZONE = 56
+const DRAG_AUTO_SCROLL_MAX_SPEED = 2
+const MINDMAP_NODE_DROP_DEDUPE_MS = 2500
 const DENSE_CLUSTER_COLUMNS = 3
 const SHOW_TIMELINE_CARD_ACTIONS = false
 
@@ -43,6 +54,16 @@ type ScheduledMemoDragPayload = {
     title: string
 }
 type CalendarEventMemoDragPayload = CalendarEventMemoPayload
+type TimelineDragScrollSource = "quick-create" | "memo" | "mindmap-node" | "native-calendar-drag" | "desktop-item"
+type TimelineDragScrollSnapshot = {
+    gridOverflow: string
+    gridTouchAction: string
+    gridOverscrollBehavior: string
+    bodyOverflow: string
+    bodyTouchAction: string
+    bodyOverscrollBehavior: string
+    htmlOverscrollBehavior: string
+}
 
 // --- Types ---
 
@@ -83,6 +104,7 @@ interface TodayTimelineCalendarProps {
         color?: string
     } | null
     onQuickCreateRangeSelect?: (payload: { scheduledAt: Date; estimatedTime: number }) => void
+    onMindMapNodeDrop?: (payload: MindMapNodeCalendarDragPayload, startTime: Date) => void | Promise<void>
     selectedDate?: Date
     syncFailedIds?: Set<string>
     scrollToHourRequest?: { hour: number; requestKey: number }
@@ -157,6 +179,7 @@ export function TodayTimelineCalendar({
     defaultQuickCreateCalendarId = null,
     draftPreview,
     onQuickCreateRangeSelect,
+    onMindMapNodeDrop,
     selectedDate,
     onConvertEventAndStartTimer,
     onConvertEventAndExpand,
@@ -237,9 +260,180 @@ export function TodayTimelineCalendar({
 
     // メモカード（HTML5 native draggable）からのドロップ受信
     const [memoDragOver, setMemoDragOver] = useState<{ topPx: number; durationMinutes: number; title: string; startTime: Date } | null>(null)
+    const [mindMapNodeDragOver, setMindMapNodeDragOver] = useState<{
+        topPx: number
+        durationMinutes: number
+        title: string
+        startTime: Date
+        payload: MindMapNodeCalendarDragPayload
+    } | null>(null)
+    const [mindMapNodeDragOverlay, setMindMapNodeDragOverlay] = useState<{
+        clientX: number
+        clientY: number
+        overCalendar: boolean
+        payload: MindMapNodeCalendarDragPayload
+        startTime: Date | null
+    } | null>(null)
+    const mindMapNodeDragEnteredCalendarRef = useRef(false)
+    const processedMindMapNodeDropsRef = useRef<Map<string, number>>(new Map())
     const [scheduledMemoIndex, setScheduledMemoIndex] = useState<Record<string, ScheduledMemoIndexEntry>>({})
     const [returningScheduledMemo, setReturningScheduledMemo] = useState<ScheduledMemoDragPayload | null>(null)
     const [returningCalendarEventMemo, setReturningCalendarEventMemo] = useState<CalendarEventMemoDragPayload | null>(null)
+    const timelineDragScrollSourcesRef = useRef<Set<TimelineDragScrollSource>>(new Set())
+    const timelineDragScrollSnapshotRef = useRef<TimelineDragScrollSnapshot | null>(null)
+    const timelineDragAutoScrollRef = useRef<{
+        frame: number | null
+        speed: number
+        clientY: number
+        onTick: ((clientY: number) => void) | null
+    }>({
+        frame: null,
+        speed: 0,
+        clientY: 0,
+        onTick: null,
+    })
+
+    const preventTimelineDragTouchMove = useCallback((event: TouchEvent) => {
+        if (timelineDragScrollSourcesRef.current.size === 0 || !event.cancelable) return
+        event.preventDefault()
+    }, [])
+
+    const stopTimelineDragAutoScroll = useCallback(() => {
+        const state = timelineDragAutoScrollRef.current
+        if (state.frame !== null) {
+            cancelAnimationFrame(state.frame)
+        }
+        state.frame = null
+        state.speed = 0
+        state.onTick = null
+    }, [])
+
+    const restoreTimelineDragScroll = useCallback(() => {
+        if (typeof document === "undefined") return
+        const snapshot = timelineDragScrollSnapshotRef.current
+        if (!snapshot) return
+
+        const grid = gridRef.current
+        if (grid) {
+            grid.style.overflow = snapshot.gridOverflow
+            grid.style.touchAction = snapshot.gridTouchAction
+            grid.style.overscrollBehavior = snapshot.gridOverscrollBehavior
+        }
+        document.body.style.overflow = snapshot.bodyOverflow
+        document.body.style.touchAction = snapshot.bodyTouchAction
+        document.body.style.overscrollBehavior = snapshot.bodyOverscrollBehavior
+        document.documentElement.style.overscrollBehavior = snapshot.htmlOverscrollBehavior
+        document.removeEventListener("touchmove", preventTimelineDragTouchMove, { capture: true })
+        timelineDragScrollSnapshotRef.current = null
+    }, [preventTimelineDragTouchMove])
+
+    const lockTimelineDragScroll = useCallback((source: TimelineDragScrollSource) => {
+        if (typeof document === "undefined") return
+        const sources = timelineDragScrollSourcesRef.current
+        if (sources.has(source)) return
+
+        const grid = gridRef.current
+        if (sources.size === 0) {
+            timelineDragScrollSnapshotRef.current = {
+                gridOverflow: grid?.style.overflow ?? "",
+                gridTouchAction: grid?.style.touchAction ?? "",
+                gridOverscrollBehavior: grid?.style.overscrollBehavior ?? "",
+                bodyOverflow: document.body.style.overflow,
+                bodyTouchAction: document.body.style.touchAction,
+                bodyOverscrollBehavior: document.body.style.overscrollBehavior,
+                htmlOverscrollBehavior: document.documentElement.style.overscrollBehavior,
+            }
+            if (grid) {
+                grid.style.overflow = "hidden"
+                grid.style.touchAction = "none"
+                grid.style.overscrollBehavior = "contain"
+            }
+            document.body.style.overflow = "hidden"
+            document.body.style.touchAction = "none"
+            document.body.style.overscrollBehavior = "none"
+            document.documentElement.style.overscrollBehavior = "none"
+            document.addEventListener("touchmove", preventTimelineDragTouchMove, { passive: false, capture: true })
+        }
+        sources.add(source)
+    }, [preventTimelineDragTouchMove])
+
+    const unlockTimelineDragScroll = useCallback((source: TimelineDragScrollSource) => {
+        const sources = timelineDragScrollSourcesRef.current
+        sources.delete(source)
+        if (sources.size > 0) return
+        stopTimelineDragAutoScroll()
+        restoreTimelineDragScroll()
+    }, [restoreTimelineDragScroll, stopTimelineDragAutoScroll])
+
+    const updateTimelineDragAutoScroll = useCallback((
+        clientY: number,
+        onTick?: (clientY: number) => void,
+    ) => {
+        const grid = gridRef.current
+        if (!grid || timelineDragScrollSourcesRef.current.size === 0) {
+            stopTimelineDragAutoScroll()
+            return
+        }
+
+        const rect = grid.getBoundingClientRect()
+        const relativeY = clientY - rect.top
+        const maxScrollTop = Math.max(0, grid.scrollHeight - grid.clientHeight)
+        if (maxScrollTop <= 0) {
+            stopTimelineDragAutoScroll()
+            return
+        }
+
+        let speed = 0
+        if (relativeY < DRAG_AUTO_SCROLL_ZONE) {
+            const ratio = clamp((DRAG_AUTO_SCROLL_ZONE - relativeY) / DRAG_AUTO_SCROLL_ZONE, 0, 1)
+            speed = -DRAG_AUTO_SCROLL_MAX_SPEED * ratio
+        } else if (relativeY > rect.height - DRAG_AUTO_SCROLL_ZONE) {
+            const ratio = clamp((relativeY - (rect.height - DRAG_AUTO_SCROLL_ZONE)) / DRAG_AUTO_SCROLL_ZONE, 0, 1)
+            speed = DRAG_AUTO_SCROLL_MAX_SPEED * ratio
+        }
+
+        const state = timelineDragAutoScrollRef.current
+        state.clientY = clientY
+        state.speed = speed
+        state.onTick = onTick ?? null
+
+        if (speed === 0) {
+            stopTimelineDragAutoScroll()
+            return
+        }
+
+        if (state.frame !== null) return
+
+        const step = () => {
+            const current = timelineDragAutoScrollRef.current
+            const currentGrid = gridRef.current
+            if (!currentGrid || timelineDragScrollSourcesRef.current.size === 0 || current.speed === 0) {
+                current.frame = null
+                return
+            }
+            const max = Math.max(0, currentGrid.scrollHeight - currentGrid.clientHeight)
+            const nextScrollTop = clamp(currentGrid.scrollTop + current.speed, 0, max)
+            if (nextScrollTop === currentGrid.scrollTop) {
+                current.frame = null
+                return
+            }
+            currentGrid.scrollTop = nextScrollTop
+            current.onTick?.(current.clientY)
+            current.frame = requestAnimationFrame(step)
+        }
+
+        state.frame = requestAnimationFrame(step)
+    }, [stopTimelineDragAutoScroll])
+
+    const clearAllTimelineDragScroll = useCallback(() => {
+        timelineDragScrollSourcesRef.current.clear()
+        stopTimelineDragAutoScroll()
+        restoreTimelineDragScroll()
+    }, [restoreTimelineDragScroll, stopTimelineDragAutoScroll])
+
+    useEffect(() => {
+        return clearAllTimelineDragScroll
+    }, [clearAllTimelineDragScroll])
 
     useEffect(() => {
         const syncScheduledMemoIndex = () => {
@@ -283,26 +477,140 @@ export function TodayTimelineCalendar({
         return start
     }, [selectedDate])
 
-    const handleMemoDragOver = useCallback((e: React.DragEvent) => {
-        if (!isMemoDragEvent(e)) return
-        e.preventDefault()
-        e.dataTransfer.dropEffect = "move"
+    const isPointInsideCalendarGrid = useCallback((clientX: number, clientY: number) => {
+        const grid = gridRef.current
+        if (!grid) return false
+        const rect = grid.getBoundingClientRect()
+        return (
+            clientX >= rect.left + 48 &&
+            clientX <= rect.right &&
+            clientY >= rect.top &&
+            clientY <= rect.bottom
+        )
+    }, [])
+
+    useEffect(() => {
+        const clearMindMapNodeDrag = () => {
+            mindMapNodeDragEnteredCalendarRef.current = false
+            stopTimelineDragAutoScroll()
+            unlockTimelineDragScroll("mindmap-node")
+            setMindMapNodeDragOver(null)
+            setMindMapNodeDragOverlay(null)
+        }
+
+        const handleMindMapNodeDrag = (event: Event) => {
+            const detail = (event as CustomEvent<MindMapNodeCalendarDragEventDetail>).detail
+            if (!detail?.payload) return
+
+            if (detail.phase === "cancel") {
+                clearMindMapNodeDrag()
+                return
+            }
+
+            const start = computeSnappedStartFromY(detail.clientY)
+            const overCalendar = isPointInsideCalendarGrid(detail.clientX, detail.clientY)
+            if (overCalendar) {
+                mindMapNodeDragEnteredCalendarRef.current = true
+            }
+            if (overCalendar || mindMapNodeDragEnteredCalendarRef.current) {
+                lockTimelineDragScroll("mindmap-node")
+            }
+            setMindMapNodeDragOverlay(overCalendar || mindMapNodeDragEnteredCalendarRef.current
+                ? {
+                    clientX: detail.clientX,
+                    clientY: detail.clientY,
+                    overCalendar,
+                    payload: detail.payload,
+                    startTime: overCalendar ? start : null,
+                }
+                : null
+            )
+
+            if (overCalendar && start) {
+                const updatePreview = (clientY: number) => {
+                    const previewStart = computeSnappedStartFromY(clientY)
+                    if (!previewStart) return
+                    const startMin = previewStart.getHours() * 60 + previewStart.getMinutes()
+                    setMindMapNodeDragOver({
+                        topPx: (startMin / (24 * 60)) * TOTAL_HEIGHT,
+                        durationMinutes: detail.payload.durationMinutes,
+                        title: detail.payload.title,
+                        startTime: previewStart,
+                        payload: detail.payload,
+                    })
+                    setMindMapNodeDragOverlay(prev => prev
+                        ? { ...prev, clientY, startTime: previewStart }
+                        : prev
+                    )
+                }
+                updatePreview(detail.clientY)
+                updateTimelineDragAutoScroll(detail.clientY, updatePreview)
+            } else {
+                stopTimelineDragAutoScroll()
+                setMindMapNodeDragOver(null)
+            }
+
+            if (detail.phase === "end") {
+                if (overCalendar && start) {
+                    const now = Date.now()
+                    const dropKey = `${detail.payload.taskId}:${start.toISOString()}`
+                    for (const [key, timestamp] of processedMindMapNodeDropsRef.current) {
+                        if (now - timestamp > MINDMAP_NODE_DROP_DEDUPE_MS) {
+                            processedMindMapNodeDropsRef.current.delete(key)
+                        }
+                    }
+                    const lastProcessedAt = processedMindMapNodeDropsRef.current.get(dropKey)
+                    if (!lastProcessedAt || now - lastProcessedAt > MINDMAP_NODE_DROP_DEDUPE_MS) {
+                        processedMindMapNodeDropsRef.current.set(dropKey, now)
+                        void Promise.resolve(onMindMapNodeDrop?.(detail.payload, start)).catch(error => {
+                            processedMindMapNodeDropsRef.current.delete(dropKey)
+                            console.error("[TodayTimelineCalendar] Failed to schedule mindmap node:", error)
+                        })
+                    }
+                }
+                clearMindMapNodeDrag()
+            }
+        }
+
+        window.addEventListener(MINDMAP_NODE_DRAG_EVENT, handleMindMapNodeDrag)
+        return () => window.removeEventListener(MINDMAP_NODE_DRAG_EVENT, handleMindMapNodeDrag)
+    }, [
+        computeSnappedStartFromY,
+        isPointInsideCalendarGrid,
+        lockTimelineDragScroll,
+        onMindMapNodeDrop,
+        stopTimelineDragAutoScroll,
+        unlockTimelineDragScroll,
+        updateTimelineDragAutoScroll,
+    ])
+
+    const updateMemoDragOverFromClientY = useCallback((clientY: number) => {
         const drag = window.__focusmapMemoDrag
-        const start = computeSnappedStartFromY(e.clientY)
+        const start = computeSnappedStartFromY(clientY)
         if (!drag || !start) return
         const startMin = start.getHours() * 60 + start.getMinutes()
-        const topPx = (startMin / (24 * 60)) * TOTAL_HEIGHT
         setMemoDragOver({
-            topPx,
+            topPx: (startMin / (24 * 60)) * TOTAL_HEIGHT,
             durationMinutes: drag.durationMinutes,
             title: drag.title,
             startTime: start,
         })
-    }, [isMemoDragEvent, computeSnappedStartFromY])
+    }, [computeSnappedStartFromY])
+
+    const handleMemoDragOver = useCallback((e: React.DragEvent) => {
+        if (!isMemoDragEvent(e)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = "move"
+        lockTimelineDragScroll("memo")
+        updateMemoDragOverFromClientY(e.clientY)
+        updateTimelineDragAutoScroll(e.clientY, updateMemoDragOverFromClientY)
+    }, [isMemoDragEvent, lockTimelineDragScroll, updateMemoDragOverFromClientY, updateTimelineDragAutoScroll])
 
     const handleMemoDrop = useCallback((e: React.DragEvent) => {
         if (!isMemoDragEvent(e)) return
         e.preventDefault()
+        stopTimelineDragAutoScroll()
+        unlockTimelineDragScroll("memo")
         const drag = extractMemoPayload(e)
         const start = computeSnappedStartFromY(e.clientY)
         setMemoDragOver(null)
@@ -311,7 +619,7 @@ export function TodayTimelineCalendar({
         if (handler && drag && start) {
             void handler(drag.memoId, start, drag.durationMinutes)
         }
-    }, [isMemoDragEvent, extractMemoPayload, computeSnappedStartFromY])
+    }, [isMemoDragEvent, stopTimelineDragAutoScroll, unlockTimelineDragScroll, extractMemoPayload, computeSnappedStartFromY])
 
     const handleScheduledMemoDragStart = useCallback((
         e: ReactDragEvent<HTMLButtonElement>,
@@ -336,6 +644,7 @@ export function TodayTimelineCalendar({
         e.dataTransfer.effectAllowed = "move"
         window.__focusmapScheduledMemoDrag = payload
         setReturningScheduledMemo(payload)
+        lockTimelineDragScroll("native-calendar-drag")
         desktopDragContextRef.current = null
         desktopDragPreviewRef.current = null
         setDesktopDragState(null)
@@ -347,7 +656,7 @@ export function TodayTimelineCalendar({
         document.body.appendChild(ghost)
         e.dataTransfer.setDragImage(ghost, 12, 16)
         setTimeout(() => ghost.remove(), 0)
-    }, [])
+    }, [lockTimelineDragScroll])
 
     const handleCalendarEventMemoPayloadDragStart = useCallback((
         e: ReactDragEvent<HTMLButtonElement>,
@@ -364,6 +673,7 @@ export function TodayTimelineCalendar({
         e.dataTransfer.effectAllowed = "move"
         window.__focusmapCalendarEventMemoDrag = payload
         setReturningCalendarEventMemo(payload)
+        lockTimelineDragScroll("native-calendar-drag")
         desktopDragContextRef.current = null
         desktopDragPreviewRef.current = null
         setDesktopDragState(null)
@@ -375,18 +685,23 @@ export function TodayTimelineCalendar({
         document.body.appendChild(ghost)
         e.dataTransfer.setDragImage(ghost, 12, 16)
         setTimeout(() => ghost.remove(), 0)
-    }, [])
+    }, [lockTimelineDragScroll])
 
     const handleScheduledMemoDragEnd = useCallback(() => {
         window.__focusmapScheduledMemoDrag = null
         window.__focusmapCalendarEventMemoDrag = null
+        stopTimelineDragAutoScroll()
+        unlockTimelineDragScroll("native-calendar-drag")
         setReturningScheduledMemo(null)
         setReturningCalendarEventMemo(null)
-    }, [])
+    }, [stopTimelineDragAutoScroll, unlockTimelineDragScroll])
 
     // ドラッグ操作終了時にプレビューをクリア（drop されなくても消す）
     useEffect(() => {
         const clear = () => {
+            stopTimelineDragAutoScroll()
+            unlockTimelineDragScroll("memo")
+            unlockTimelineDragScroll("native-calendar-drag")
             setMemoDragOver(null)
             setReturningScheduledMemo(null)
             setReturningCalendarEventMemo(null)
@@ -395,7 +710,7 @@ export function TodayTimelineCalendar({
         }
         window.addEventListener("dragend", clear)
         return () => window.removeEventListener("dragend", clear)
-    }, [])
+    }, [stopTimelineDragAutoScroll, unlockTimelineDragScroll])
 
     const { dragState, createItemTouchHandlers } = useTouchDrag({
         gridRef,
@@ -474,6 +789,7 @@ export function TodayTimelineCalendar({
             if (!ctx.hasMoved) {
                 ctx.hasMoved = true
                 if (document.body) document.body.style.userSelect = 'none'
+                lockTimelineDragScroll("desktop-item")
             }
 
             const isReturningToMemo = moveEvent.clientX < ctx.startClientX - 24
@@ -487,12 +803,18 @@ export function TodayTimelineCalendar({
             }
 
             updateDesktopDragPreview(ctx.item, moveEvent.clientY, ctx.initialOffsetInItem)
+            updateTimelineDragAutoScroll(
+                moveEvent.clientY,
+                clientY => updateDesktopDragPreview(ctx.item, clientY, ctx.initialOffsetInItem)
+            )
         }
 
         const onMouseUp = (upEvent: MouseEvent) => {
             window.removeEventListener('mousemove', onMouseMove)
             window.removeEventListener('mouseup', onMouseUp)
             if (document.body) document.body.style.userSelect = ''
+            stopTimelineDragAutoScroll()
+            unlockTimelineDragScroll("desktop-item")
 
             const ctx = desktopDragContextRef.current
             const preview = desktopDragPreviewRef.current
@@ -541,13 +863,21 @@ export function TodayTimelineCalendar({
 
         window.addEventListener('mousemove', onMouseMove)
         window.addEventListener('mouseup', onMouseUp)
-    }, [onDragDrop, updateDesktopDragPreview])
+    }, [
+        lockTimelineDragScroll,
+        onDragDrop,
+        stopTimelineDragAutoScroll,
+        unlockTimelineDragScroll,
+        updateDesktopDragPreview,
+        updateTimelineDragAutoScroll,
+    ])
 
     useEffect(() => {
         return () => {
             if (document.body) document.body.style.userSelect = ''
+            unlockTimelineDragScroll("desktop-item")
         }
-    }, [])
+    }, [unlockTimelineDragScroll])
 
     useEffect(() => {
         const grid = gridRef.current
@@ -687,6 +1017,13 @@ export function TodayTimelineCalendar({
         return clamp(clientY - rect.top + grid.scrollTop, 0, TOTAL_HEIGHT)
     }, [])
 
+    const updateQuickSelectionFromClientY = useCallback((pointerId: number, clientY: number) => {
+        setSelectionState(prev => {
+            if (!prev || prev.pointerId !== pointerId || !prev.active) return prev
+            return { ...prev, currentY: toGridY(clientY) }
+        })
+    }, [toGridY])
+
     const baseDate = selectedDate ?? currentTime
 
     const toDateFromGridY = useCallback((gridY: number) => {
@@ -800,6 +1137,7 @@ export function TodayTimelineCalendar({
                     active: true,
                     pointerType,
                 })
+                lockTimelineDragScroll("quick-create")
                 captureTargetRef.current = captureTarget
                 captureTarget.setPointerCapture(pointerId)
                 clearTouchPending()
@@ -814,10 +1152,11 @@ export function TodayTimelineCalendar({
             active: true,
             pointerType: e.pointerType,
         })
+        lockTimelineDragScroll("quick-create")
         captureTargetRef.current = captureTarget
         captureTarget.setPointerCapture(pointerId)
         e.preventDefault()
-    }, [onQuickCreateTask, dragState.isDragging, quickDraft, toGridY, clearTouchPending])
+    }, [onQuickCreateTask, dragState.isDragging, quickDraft, toGridY, clearTouchPending, lockTimelineDragScroll])
 
     const handleGridPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (pendingTouchRef.current && pendingTouchRef.current.pointerId === e.pointerId) {
@@ -826,11 +1165,17 @@ export function TodayTimelineCalendar({
             }
         }
 
+        if (selectionState?.pointerId === e.pointerId && selectionState.active) {
+            e.preventDefault()
+            e.stopPropagation()
+            updateTimelineDragAutoScroll(e.clientY, clientY => updateQuickSelectionFromClientY(e.pointerId, clientY))
+        }
+
         setSelectionState(prev => {
             if (!prev || prev.pointerId !== e.pointerId || !prev.active) return prev
             return { ...prev, currentY: toGridY(e.clientY) }
         })
-    }, [clearTouchPending, toGridY])
+    }, [clearTouchPending, selectionState, toGridY, updateQuickSelectionFromClientY, updateTimelineDragAutoScroll])
 
     const handleGridPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (pendingTouchRef.current?.pointerId === e.pointerId) {
@@ -838,16 +1183,12 @@ export function TodayTimelineCalendar({
             return
         }
 
-        let finalizedQuickSelection = false
-        setSelectionState(prev => {
-            if (!prev || prev.pointerId !== e.pointerId || !prev.active) return prev
-            finalizeQuickSelection(prev)
-            finalizedQuickSelection = true
-            return null
-        })
+        if (!selectionState || selectionState.pointerId !== e.pointerId || !selectionState.active) return
+        finalizeQuickSelection(selectionState)
+        setSelectionState(null)
 
-        if (!finalizedQuickSelection) return
-
+        stopTimelineDragAutoScroll()
+        unlockTimelineDragScroll("quick-create")
         const captureTarget = captureTargetRef.current
         if (captureTarget?.hasPointerCapture(e.pointerId)) {
             captureTarget.releasePointerCapture(e.pointerId)
@@ -862,7 +1203,7 @@ export function TodayTimelineCalendar({
         }, 280)
         e.preventDefault()
         e.stopPropagation()
-    }, [clearTouchPending, finalizeQuickSelection])
+    }, [clearTouchPending, finalizeQuickSelection, selectionState, stopTimelineDragAutoScroll, unlockTimelineDragScroll])
 
     const handleGridClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         if (suppressItemTapUntil && Date.now() < suppressItemTapUntil) {
@@ -875,13 +1216,17 @@ export function TodayTimelineCalendar({
         if (pendingTouchRef.current?.pointerId === e.pointerId) {
             clearTouchPending()
         }
+        if (selectionState?.pointerId === e.pointerId) {
+            stopTimelineDragAutoScroll()
+            unlockTimelineDragScroll("quick-create")
+        }
         setSelectionState(prev => (prev?.pointerId === e.pointerId ? null : prev))
         const captureTarget = captureTargetRef.current
         if (captureTarget?.hasPointerCapture(e.pointerId)) {
             captureTarget.releasePointerCapture(e.pointerId)
         }
         captureTargetRef.current = null
-    }, [clearTouchPending])
+    }, [clearTouchPending, selectionState, stopTimelineDragAutoScroll, unlockTimelineDragScroll])
 
     const quickSelectionPreview = useMemo(() => {
         if (!selectionState?.active) return null
@@ -971,9 +1316,10 @@ export function TodayTimelineCalendar({
             {/* Calendar Day Grid */}
             <div
                 ref={gridRef}
+                data-testid="today-timeline-scroll"
                 className={cn(
                     "timeline-touch-guard flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y",
-                    (dragState.isDragging || !!desktopDragState) && "select-none"
+                    (dragState.isDragging || !!desktopDragState || !!selectionState || !!memoDragOver || !!mindMapNodeDragOverlay) && "select-none"
                 )}
                 onScroll={handleGridScroll}
             >
@@ -994,6 +1340,7 @@ export function TodayTimelineCalendar({
                     {/* Main Grid */}
                     <div
                         className="relative flex-1 min-w-0"
+                        data-focusmap-mindmap-node-calendar-target="true"
                         style={{ height: TOTAL_HEIGHT }}
                         onPointerDown={handleGridPointerDown}
                         onPointerMove={handleGridPointerMove}
@@ -1011,18 +1358,30 @@ export function TodayTimelineCalendar({
                             aria-hidden="true"
                         />
 
-                        {(memoDragOver || returningScheduledMemo || returningCalendarEventMemo) && (
+                        {(memoDragOver || mindMapNodeDragOver || returningScheduledMemo || returningCalendarEventMemo) && (
                             <div className="pointer-events-none absolute inset-y-0 left-0 z-40 flex items-center">
                                 <div className={cn(
                                     "h-full w-2 rounded-r-full shadow-[0_0_24px_rgba(245,158,11,0.55)]",
-                                    returningScheduledMemo || returningCalendarEventMemo ? "bg-primary" : "bg-amber-500",
+                                    returningScheduledMemo || returningCalendarEventMemo ? "bg-primary" : mindMapNodeDragOver ? "bg-emerald-500" : "bg-amber-500",
                                 )} />
                                 <div className={cn(
                                     "ml-2 rounded-md border bg-background/95 px-3 py-2 text-xs font-medium shadow-lg",
-                                    returningScheduledMemo || returningCalendarEventMemo ? "border-primary/50 text-primary" : "border-amber-500/50 text-amber-500",
+                                    returningScheduledMemo || returningCalendarEventMemo
+                                        ? "border-primary/50 text-primary"
+                                        : mindMapNodeDragOver
+                                            ? "border-emerald-500/50 text-emerald-500"
+                                            : "border-amber-500/50 text-amber-500",
                                 )}>
-                                    <div className="text-[10px] text-muted-foreground">メモ境界</div>
-                                    <div>{returningScheduledMemo || returningCalendarEventMemo ? "左へドロップで予定をメモ化" : "右へドロップで予定化"}</div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                        {mindMapNodeDragOver ? "カレンダー" : "メモ境界"}
+                                    </div>
+                                    <div>
+                                        {returningScheduledMemo || returningCalendarEventMemo
+                                            ? "左へドロップで予定をメモ化"
+                                            : mindMapNodeDragOver
+                                                ? "ドロップでノードを予定化"
+                                                : "右へドロップで予定化"}
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -1039,6 +1398,23 @@ export function TodayTimelineCalendar({
                                 <div className="bg-amber-500 text-white text-[11px] px-2 py-0.5 inline-block m-1 rounded-md shadow font-medium">
                                     {format(memoDragOver.startTime, "HH:mm")}・{memoDragOver.durationMinutes}分
                                     <span className="ml-1 opacity-90">{memoDragOver.title}</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {mindMapNodeDragOver && (
+                            <div
+                                className="absolute left-[14px] pointer-events-none z-30 rounded-md border-2 border-dashed border-emerald-500/70 bg-emerald-400/20 px-2 py-1 shadow-[0_0_22px_rgba(16,185,129,0.18)] transition-all duration-150 ease-out"
+                                style={{
+                                    top: mindMapNodeDragOver.topPx,
+                                    height: Math.max((mindMapNodeDragOver.durationMinutes / 60) * HOUR_HEIGHT, HOUR_HEIGHT * 0.42),
+                                    right: GUTTER_WIDTH + 2,
+                                }}
+                            >
+                                <div className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-500 px-2 py-0.5 text-[11px] font-semibold text-white shadow">
+                                    <span>{format(mindMapNodeDragOver.startTime, "HH:mm")}</span>
+                                    <span className="opacity-80">・{mindMapNodeDragOver.durationMinutes}分</span>
+                                    <span className="min-w-0 truncate opacity-95">{mindMapNodeDragOver.title}</span>
                                 </div>
                             </div>
                         )}
@@ -1325,6 +1701,63 @@ export function TodayTimelineCalendar({
                     </div>
                 </div>
             </div>
+
+            {mindMapNodeDragOverlay && (
+                <MindMapNodeDragOverlay
+                    overlay={mindMapNodeDragOverlay}
+                />
+            )}
+        </div>
+    )
+}
+
+function MindMapNodeDragOverlay({
+    overlay,
+}: {
+    overlay: {
+        clientX: number
+        clientY: number
+        overCalendar: boolean
+        payload: MindMapNodeCalendarDragPayload
+        startTime: Date | null
+    }
+}) {
+    const startLabel = overlay.startTime ? format(overlay.startTime, "HH:mm") : null
+    return (
+        <div
+            className={cn(
+                "pointer-events-none fixed z-[1000] overflow-hidden shadow-2xl backdrop-blur-sm",
+                "transition-[width,height,background-color,border-color,border-radius,transform,opacity] duration-200 ease-out",
+                overlay.overCalendar
+                    ? "w-[236px] rounded-md border border-emerald-400/60 border-l-[4px] bg-emerald-500/20 px-2 py-1.5 text-foreground"
+                    : "w-[188px] rounded-lg border border-border bg-background/95 px-2.5 py-1.5 text-foreground"
+            )}
+            style={{
+                left: overlay.clientX + 14,
+                top: overlay.clientY + 14,
+                minHeight: overlay.overCalendar ? 54 : 38,
+                transform: overlay.overCalendar ? "scale(1.02)" : "scale(0.98)",
+            }}
+        >
+            {overlay.overCalendar ? (
+                <div className="flex min-w-0 flex-col gap-0.5">
+                    <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-200">
+                        <Square className="h-3 w-3" />
+                        <span>{startLabel ?? "予定"}</span>
+                        <span className="opacity-80">・{overlay.payload.durationMinutes}分</span>
+                    </div>
+                    <div className="truncate text-[12px] font-semibold leading-4">
+                        {overlay.payload.title}
+                    </div>
+                </div>
+            ) : (
+                <div className="flex min-w-0 items-center gap-1.5">
+                    <Square className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate text-[12px] font-semibold leading-4">
+                        {overlay.payload.title}
+                    </span>
+                </div>
+            )}
         </div>
     )
 }

@@ -5,12 +5,8 @@ import { Task } from '@/types/database'
 import { CalendarEvent } from '@/types/calendar'
 import { invalidateCalendarCache } from '@/hooks/useCalendarEvents'
 
-type SyncStatus = 'idle' | 'syncing' | 'success' | 'error'
-
-interface TaskSyncState {
-  status: SyncStatus
-  error: Error | null
-}
+const globalSyncingTaskIds = new Set<string>()
+const globalLastSyncedAt = new Map<string, number>()
 
 interface UseMultiTaskCalendarSyncOptions {
   tasks: Task[]
@@ -150,16 +146,29 @@ export function useMultiTaskCalendarSync({
     task: Task,
     sourceCalendarId?: string
   ) => {
+    const globalKey = `${method}:${taskId}`
+    if (globalSyncingTaskIds.has(globalKey)) {
+      return
+    }
+
     // クールダウンチェック（DELETE は即時実行を許可）
     if (method !== 'DELETE') {
       const lastSynced = lastSyncedAtRef.current.get(taskId)
-      if (lastSynced && Date.now() - lastSynced < SYNC_COOLDOWN_MS) {
+      const globalLastSynced = globalLastSyncedAt.get(globalKey)
+      const now = Date.now()
+      if (
+        (lastSynced && now - lastSynced < SYNC_COOLDOWN_MS) ||
+        (globalLastSynced && now - globalLastSynced < SYNC_COOLDOWN_MS)
+      ) {
         return
       }
     }
 
+    globalSyncingTaskIds.add(globalKey)
     syncingTasksRef.current.add(taskId)
-    lastSyncedAtRef.current.set(taskId, Date.now())
+    const syncStartedAt = Date.now()
+    lastSyncedAtRef.current.set(taskId, syncStartedAt)
+    globalLastSyncedAt.set(globalKey, syncStartedAt)
     const optimisticId = `optimistic-${task.id}`
 
     try {
@@ -246,6 +255,7 @@ export function useMultiTaskCalendarSync({
       onRemoveOptimisticEvent?.(optimisticId)
     } finally {
       syncingTasksRef.current.delete(taskId)
+      globalSyncingTaskIds.delete(globalKey)
     }
   }
 

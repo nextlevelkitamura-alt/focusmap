@@ -628,15 +628,33 @@ export function useTodayViewLogic({
         () => new Set([...todayScheduledTasks, ...overflowTasks].map(t => t.id)),
         [todayScheduledTasks, overflowTasks]
     )
-    const taskGoogleIds = new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!))
-    const eventLikeTaskKeys = new Set(
-        [...todayScheduledTasks, ...overflowTasks]
-            .filter(t => t.source === 'google_event' && !!t.scheduled_at)
-            .map(t => {
-                const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
-                const title = t.title.trim().toLowerCase()
-                return `${t.calendar_id || ''}|${title}|${minute}`
-            })
+    const taskGoogleIds = useMemo(
+        () => new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!)),
+        [allTasksWithGoogleEvent]
+    )
+    const scheduledTaskEventKeys = useMemo(
+        () => new Set(
+            [...todayScheduledTasks, ...overflowTasks]
+                .filter(t => t.scheduled_at && t.calendar_id)
+                .map(t => {
+                    const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
+                    const title = t.title.trim().toLowerCase()
+                    return `${t.calendar_id || ''}|${title}|${minute}`
+                })
+        ),
+        [todayScheduledTasks, overflowTasks]
+    )
+    const eventLikeTaskKeys = useMemo(
+        () => new Set(
+            [...todayScheduledTasks, ...overflowTasks]
+                .filter(t => t.source === 'google_event' && !!t.scheduled_at)
+                .map(t => {
+                    const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
+                    const title = t.title.trim().toLowerCase()
+                    return `${t.calendar_id || ''}|${title}|${minute}`
+                })
+        ),
+        [todayScheduledTasks, overflowTasks]
     )
 
     const timelineItems: TimeBlock[] = useMemo(() => {
@@ -648,6 +666,7 @@ export function useTodayViewLogic({
             if (taskGoogleIds.has(event.google_event_id)) continue
             const eventMinute = Math.floor(new Date(event.start_time).getTime() / 60000)
             const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
+            if (scheduledTaskEventKeys.has(eventKey)) continue
             if (eventLikeTaskKeys.has(eventKey)) continue
 
             const calendarColor =
@@ -688,7 +707,7 @@ export function useTodayViewLogic({
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         return items
-    }, [calendarEvents, scheduledTaskIds, stableCalendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
+    }, [calendarEvents, eventLikeTaskKeys, scheduledTaskIds, scheduledTaskEventKeys, stableCalendarColorMap, taskGoogleIds, todayScheduledTasks, overflowTasks, today, tomorrow])
 
     // All-day events
     const allDayEvents = useMemo(() => {

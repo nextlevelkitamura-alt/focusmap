@@ -38,6 +38,25 @@ export const TODAY_DURATION_DEFAULT = 30 as const
 /** Custom DataTransfer MIME type for memo → calendar D&D */
 export const MEMO_DRAG_MIME = "application/x-focusmap-memo" as const
 
+/** Custom event name for mindmap node → calendar D&D */
+export const MINDMAP_NODE_DRAG_EVENT = "focusmap:mindmap-node-calendar-drag" as const
+
+/** Payload shared while dragging a mindmap node over calendar panes */
+export type MindMapNodeCalendarDragPayload = {
+  taskId: string
+  title: string
+  durationMinutes: number
+  calendarId?: string | null
+  isDone?: boolean
+}
+
+export type MindMapNodeCalendarDragEventDetail = {
+  phase: "move" | "end" | "cancel"
+  clientX: number
+  clientY: number
+  payload: MindMapNodeCalendarDragPayload
+}
+
 /** Custom DataTransfer MIME type for scheduled memo → memo board D&D */
 export const SCHEDULED_MEMO_DRAG_MIME = "application/x-focusmap-scheduled-memo" as const
 

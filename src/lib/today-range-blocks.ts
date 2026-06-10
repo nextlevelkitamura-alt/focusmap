@@ -53,6 +53,14 @@ export function buildTimeBlocksForDay({
 
   const scheduledTaskIds = new Set(dayTasks.map((task) => task.id))
   const taskGoogleIds = new Set(dayTasks.filter((task) => task.google_event_id).map((task) => task.google_event_id!))
+  const scheduledTaskEventKeys = new Set(
+    dayTasks
+      .filter((task) => task.scheduled_at && task.calendar_id)
+      .map((task) => {
+        const minute = Math.floor(new Date(task.scheduled_at!).getTime() / 60000)
+        return `${task.calendar_id || ""}|${task.title.trim().toLowerCase()}|${minute}`
+      }),
+  )
   const eventLikeTaskKeys = new Set(
     dayTasks
       .filter((task) => task.source === "google_event" && !!task.scheduled_at)
@@ -74,6 +82,7 @@ export function buildTimeBlocksForDay({
 
     const eventMinute = Math.floor(start.getTime() / 60000)
     const eventKey = `${event.calendar_id || ""}|${event.title.trim().toLowerCase()}|${eventMinute}`
+    if (scheduledTaskEventKeys.has(eventKey)) continue
     if (eventLikeTaskKeys.has(eventKey)) continue
 
     const color =

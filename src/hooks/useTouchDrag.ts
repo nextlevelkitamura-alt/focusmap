@@ -5,8 +5,8 @@ import { useRef, useCallback, useEffect, useState } from "react"
 // --- Constants ---
 const LONG_PRESS_MS = 350
 const SNAP_MINUTES = 15
-const AUTO_SCROLL_ZONE = 60 // px from edge
-const AUTO_SCROLL_MAX_SPEED = 8 // px per frame
+const AUTO_SCROLL_ZONE = 56 // px from edge
+const AUTO_SCROLL_MAX_SPEED = 2 // px per frame
 const HOUR_HEIGHT = 56 // must match calendar grid
 const TOTAL_HEIGHT = HOUR_HEIGHT * 24
 
@@ -153,40 +153,6 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
         unlockPageScroll()
     }, [gridRef, unlockPageScroll])
 
-    // Auto-scroll logic
-    const runAutoScroll = useCallback((touchClientY: number) => {
-        const grid = gridRef.current
-        if (!grid) return
-
-        const rect = grid.getBoundingClientRect()
-        const relativeY = touchClientY - rect.top
-        const gridHeight = rect.height
-
-        let scrollSpeed = 0
-
-        if (relativeY < AUTO_SCROLL_ZONE) {
-            // Near top → scroll up
-            const ratio = 1 - relativeY / AUTO_SCROLL_ZONE
-            scrollSpeed = -AUTO_SCROLL_MAX_SPEED * ratio
-        } else if (relativeY > gridHeight - AUTO_SCROLL_ZONE) {
-            // Near bottom → scroll down
-            const ratio = (relativeY - (gridHeight - AUTO_SCROLL_ZONE)) / AUTO_SCROLL_ZONE
-            scrollSpeed = AUTO_SCROLL_MAX_SPEED * ratio
-        }
-
-        if (scrollSpeed !== 0) {
-            const scroll = () => {
-                if (!isDraggingRef.current || !grid) return
-                grid.scrollTop += scrollSpeed
-                autoScrollRAF.current = requestAnimationFrame(scroll)
-            }
-            stopAutoScroll()
-            autoScrollRAF.current = requestAnimationFrame(scroll)
-        } else {
-            stopAutoScroll()
-        }
-    }, [gridRef, stopAutoScroll])
-
     // Calculate preview position from touch
     const updatePreview = useCallback((touchClientY: number) => {
         const grid = gridRef.current
@@ -215,6 +181,45 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             previewTop,
         }))
     }, [gridRef])
+
+    // Auto-scroll logic
+    const runAutoScroll = useCallback((touchClientY: number) => {
+        const grid = gridRef.current
+        if (!grid) return
+
+        const rect = grid.getBoundingClientRect()
+        const relativeY = touchClientY - rect.top
+        const gridHeight = rect.height
+
+        let scrollSpeed = 0
+
+        if (relativeY < AUTO_SCROLL_ZONE) {
+            const ratio = Math.max(0, Math.min(1, 1 - relativeY / AUTO_SCROLL_ZONE))
+            scrollSpeed = -AUTO_SCROLL_MAX_SPEED * ratio
+        } else if (relativeY > gridHeight - AUTO_SCROLL_ZONE) {
+            const ratio = Math.max(0, Math.min(1, (relativeY - (gridHeight - AUTO_SCROLL_ZONE)) / AUTO_SCROLL_ZONE))
+            scrollSpeed = AUTO_SCROLL_MAX_SPEED * ratio
+        }
+
+        if (scrollSpeed !== 0) {
+            const scroll = () => {
+                if (!isDraggingRef.current || !grid) return
+                const maxScrollTop = Math.max(0, grid.scrollHeight - grid.clientHeight)
+                const nextScrollTop = Math.max(0, Math.min(maxScrollTop, grid.scrollTop + scrollSpeed))
+                if (nextScrollTop === grid.scrollTop) {
+                    autoScrollRAF.current = null
+                    return
+                }
+                grid.scrollTop = nextScrollTop
+                updatePreview(touchClientY)
+                autoScrollRAF.current = requestAnimationFrame(scroll)
+            }
+            stopAutoScroll()
+            autoScrollRAF.current = requestAnimationFrame(scroll)
+        } else {
+            stopAutoScroll()
+        }
+    }, [gridRef, stopAutoScroll, updatePreview])
 
     // Start drag for a specific item
     const startDragForItem = useCallback((

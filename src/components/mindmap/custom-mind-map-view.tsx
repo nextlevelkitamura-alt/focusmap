@@ -24,6 +24,11 @@ import {
     codexMonitorUiLabel,
 } from "@/lib/task-progress-ui";
 import type { TaskProgressSnapshotTask } from "@/types/task-progress";
+import {
+    MINDMAP_NODE_DRAG_EVENT,
+    type MindMapNodeCalendarDragEventDetail,
+    type MindMapNodeCalendarDragPayload,
+} from "@/lib/calendar-constants";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -219,6 +224,14 @@ type WebKitGestureEvent = Event & {
     clientX?: number;
     clientY?: number;
 };
+
+const DEFAULT_NODE_CALENDAR_DURATION_MINUTES = 30;
+const MIN_NODE_CALENDAR_DURATION_MINUTES = 15;
+
+function dispatchMindMapNodeCalendarDrag(detail: MindMapNodeCalendarDragEventDetail) {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent<MindMapNodeCalendarDragEventDetail>(MINDMAP_NODE_DRAG_EVENT, { detail }));
+}
 
 const getTouchDistance = (touches: TouchList) => {
     const first = touches[0];
@@ -1277,6 +1290,7 @@ export function CustomMindMapView({
     const [zoom, setZoom] = useState(() => isMobile ? 0.85 : 0.9);
     const [panOffset, setPanOffset] = useState<Point>(() => isMobile ? { x: -20, y: 4 } : { x: 0, y: 0 });
     const [dragState, setDragState] = useState<DragState | null>(null);
+    const dragStateRef = useRef<DragState | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
     const [panState, setPanState] = useState<PanState | null>(null);
     const [spacePressed, setSpacePressed] = useState(false);
@@ -1317,6 +1331,9 @@ export function CustomMindMapView({
         }
         return byId;
     }, [groups, tasks]);
+    useEffect(() => {
+        dragStateRef.current = dragState;
+    }, [dragState]);
     const allTaskTitleById = useMemo(() => {
         const byId = new Map<string, string>();
         for (const task of [...groups, ...tasks]) {
@@ -1386,6 +1403,34 @@ export function CustomMindMapView({
         return branchByDepth;
     }, [positionedNodes]);
     const rawTaskTitleById = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task.title ?? ""])), [groups, tasks]);
+
+    const buildNodeCalendarDragPayload = useCallback((nodeId: string): MindMapNodeCalendarDragPayload | null => {
+        const node = nodeById.get(nodeId);
+        if (!node || node.kind !== "task") return null;
+        const durationMinutes = Math.max(
+            MIN_NODE_CALENDAR_DURATION_MINUTES,
+            node.estimatedDisplayMinutes || node.estimatedTime || DEFAULT_NODE_CALENDAR_DURATION_MINUTES,
+        );
+        return {
+            taskId: node.id,
+            title: rawTaskTitleById.get(node.id) ?? node.title,
+            durationMinutes,
+            calendarId: node.calendarId,
+            isDone: node.isDone,
+        };
+    }, [nodeById, rawTaskTitleById]);
+
+    const publishNodeCalendarDrag = useCallback((
+        phase: MindMapNodeCalendarDragEventDetail["phase"],
+        state: DragState,
+        clientX: number,
+        clientY: number,
+    ) => {
+        if (!state.dragging || state.nodeIds.length !== 1) return;
+        const payload = buildNodeCalendarDragPayload(state.primaryNodeId);
+        if (!payload) return;
+        dispatchMindMapNodeCalendarDrag({ phase, clientX, clientY, payload });
+    }, [buildNodeCalendarDragPayload]);
 
     const handlePreviewTitleChange = useCallback((taskId: string, title: string | null) => {
         setTitlePreviewByTaskId(prev => {
@@ -2097,7 +2142,7 @@ export function CustomMindMapView({
             onSelectNode(node.id);
         }
 
-        setDragState({
+        const nextDragState = {
             primaryNodeId: node.id,
             nodeIds: Object.keys(nodeStarts),
             nodeStarts,
@@ -2109,7 +2154,9 @@ export function CustomMindMapView({
             deltaY: 0,
             dragging: false,
             target: null,
-        });
+        };
+        dragStateRef.current = nextDragState;
+        setDragState(nextDragState);
     }, [getStagePoint, nodeById, onSelectNode, selectedNodeIds, selectedTaskIds]);
 
     const handleStartDrag = useCallback((node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => {
@@ -2190,6 +2237,7 @@ export function CustomMindMapView({
         event.stopPropagation();
         event.currentTarget.setPointerCapture?.(event.pointerId);
         setSelectionBox(null);
+        dragStateRef.current = null;
         setDragState(null);
         setPanState({
             startClientX: event.clientX,
@@ -2244,6 +2292,7 @@ export function CustomMindMapView({
             };
             setPanState(null);
             setSelectionBox(null);
+            dragStateRef.current = null;
             setDragState(null);
         };
 
@@ -2303,6 +2352,7 @@ export function CustomMindMapView({
             };
             setPanState(null);
             setSelectionBox(null);
+            dragStateRef.current = null;
             setDragState(null);
         };
 
@@ -2403,46 +2453,53 @@ export function CustomMindMapView({
         const handlePointerMove = (event: PointerEvent) => {
             const point = getStagePoint(event.clientX, event.clientY);
             if (!point) return;
-            setDragState(prev => {
-                if (!prev) return prev;
-                const deltaX = point.x - prev.startPointerX;
-                const deltaY = point.y - prev.startPointerY;
-                const x = prev.primaryStartX + deltaX;
-                const y = prev.primaryStartY + deltaY;
-                const distance = Math.hypot(deltaX, deltaY);
-                const dragging = prev.dragging || distance >= DRAG_START_THRESHOLD;
-                return {
-                    ...prev,
-                    deltaX,
-                    deltaY,
-                    dragging,
-                    target: dragging ? getDropTarget(prev.nodeIds, prev.primaryNodeId, x, y) : null,
-                };
-            });
+            const prev = dragStateRef.current;
+            if (!prev) return;
+            const deltaX = point.x - prev.startPointerX;
+            const deltaY = point.y - prev.startPointerY;
+            const x = prev.primaryStartX + deltaX;
+            const y = prev.primaryStartY + deltaY;
+            const distance = Math.hypot(deltaX, deltaY);
+            const dragging = prev.dragging || distance >= DRAG_START_THRESHOLD;
+            const next: DragState = {
+                ...prev,
+                deltaX,
+                deltaY,
+                dragging,
+                target: dragging ? getDropTarget(prev.nodeIds, prev.primaryNodeId, x, y) : null,
+            };
+            dragStateRef.current = next;
+            setDragState(next);
+            if (next.dragging) {
+                publishNodeCalendarDrag("move", next, event.clientX, event.clientY);
+            }
         };
 
-        const handlePointerUp = () => {
-            setDragState(prev => {
-                if (prev?.dragging) {
-                    suppressPaneClickUntilRef.current = Date.now() + 200;
-                    if (prev.target) {
-                        if (prev.nodeIds.length > 1 && onMoveTasks) {
-                            void onMoveTasks({
-                                taskIds: prev.nodeIds,
-                                targetId: prev.target.nodeId,
-                                position: prev.target.position,
-                            });
-                        } else {
-                            void onMoveTask?.({
-                                taskId: prev.primaryNodeId,
-                                targetId: prev.target.nodeId,
-                                position: prev.target.position,
-                            });
-                        }
+        const handlePointerUp = (event: PointerEvent) => {
+            const prev = dragStateRef.current;
+            if (prev?.dragging) {
+                suppressPaneClickUntilRef.current = Date.now() + 200;
+                const dropElement = document.elementFromPoint(event.clientX, event.clientY);
+                const isCalendarDrop = !!dropElement?.closest?.('[data-focusmap-mindmap-node-calendar-target="true"]');
+                publishNodeCalendarDrag(isCalendarDrop ? "end" : "cancel", prev, event.clientX, event.clientY);
+                if (!isCalendarDrop && prev.target) {
+                    if (prev.nodeIds.length > 1 && onMoveTasks) {
+                        void onMoveTasks({
+                            taskIds: prev.nodeIds,
+                            targetId: prev.target.nodeId,
+                            position: prev.target.position,
+                        });
+                    } else {
+                        void onMoveTask?.({
+                            taskId: prev.primaryNodeId,
+                            targetId: prev.target.nodeId,
+                            position: prev.target.position,
+                        });
                     }
                 }
-                return null;
-            });
+            }
+            dragStateRef.current = null;
+            setDragState(null);
         };
 
         window.addEventListener("pointermove", handlePointerMove);
@@ -2453,7 +2510,7 @@ export function CustomMindMapView({
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, [dragState, getDropTarget, getStagePoint, onMoveTask, onMoveTasks]);
+    }, [dragState, getDropTarget, getStagePoint, onMoveTask, onMoveTasks, publishNodeCalendarDrag]);
 
     useEffect(() => {
         if (!selectionBox) return;
