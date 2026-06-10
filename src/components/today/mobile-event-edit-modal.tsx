@@ -376,6 +376,7 @@ export function MobileEventEditModal({
         if (!ok) return
 
         setIsDeleting(true)
+        onClose()
         try {
             if (target.source === 'task') {
                 await onDeleteTask?.(target.taskId!)
@@ -385,7 +386,6 @@ export function MobileEventEditModal({
                 }
                 await onDeleteEvent?.(target.id, target.googleEventId, target.calendarId)
             }
-            onClose()
         } catch (err) {
             console.error('[MobileEventEditModal] Delete error:', err)
             const message = err instanceof Error ? err.message : '予定の削除に失敗しました'
