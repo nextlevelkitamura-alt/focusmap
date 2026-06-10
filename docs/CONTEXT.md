@@ -135,6 +135,13 @@ Goals → Projects → TaskGroups → Tasks
 
 このセクションは、チャット履歴がなくても実装意図を復元できるようにするための現行仕様メモ。主要なUI・同期方式・データフローを変えた場合は、実装と同じコミットで更新する。
 
+### 公開LP
+
+- ルートページ `src/app/page.tsx` は、旧B2SMB向けの「AI業務自動化プラットフォーム」訴求ではなく、個人のMac/AIパワーユーザー向けに「マインドマップから自分のAIサブスクを動かす司令地図」として訴求する。
+- LPの料金・差別化メッセージは「API再販ゼロ」「Focusmapは定額」「実行コストはユーザー自身のCodex / Claude / Gemini等のサブスク側」という方針を正にし、旧来のseat課金、AI実行コスト込み、激安モデル再販、Enterprise/SSO/BYOK主導線は通常LPから外す。
+- ヒーローはダーク基調の製品モックを使い、ノードの `待機` / `実行中` / `要返信` / `完了` と実行ログ・カレンダー反映を一画面で見せる。デモ動画が用意できるまでは `ProductMock` を正とする。
+- Google OAuth審査に必要な Calendar API 開示文言（`calendar.events` / `calendar.calendarlist.readonly`、連携解除可能）は公開LP内に残す。LP詳細計画は `docs/plans/active/lp-redesign.md` を参照する。
+
 ### AIエージェント並列作業ポリシー
 
 - 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は、`task-router` Skill を入口にする。詳細な判断基準、worktree安全策、各チャット用プロンプト雛形は `task-router` の workflows を正とする。
