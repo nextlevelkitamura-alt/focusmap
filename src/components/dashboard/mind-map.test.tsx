@@ -60,7 +60,9 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
 }))
 
 vi.mock("@/components/task-progress/task-progress-kanban", () => ({
-  TaskProgressKanban: () => <div data-testid="task-progress-kanban" />,
+  TaskProgressKanban: ({ closeSignal }: { closeSignal?: number }) => (
+    <div data-testid="task-progress-kanban" data-close-signal={closeSignal ?? 0} />
+  ),
 }))
 
 vi.mock("@/components/task-progress/task-progress-detail-panel", () => ({
@@ -154,6 +156,18 @@ describe("MindMap controls", () => {
     expect(JSON.parse(String(requestInit.body))).toEqual({
       detail: `${longTitle}\n\n既存メモ`,
       currentHeading: "プロンプトに関して",
+    })
+  })
+
+  test("notifies the Codex board to close when the map side is pressed", async () => {
+    render(<MindMap project={project} groups={[task]} tasks={[]} />)
+
+    expect(screen.getByTestId("task-progress-kanban")).toHaveAttribute("data-close-signal", "0")
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Root task" }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-progress-kanban")).toHaveAttribute("data-close-signal", "1")
     })
   })
 })
