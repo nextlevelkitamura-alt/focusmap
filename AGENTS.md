@@ -13,6 +13,8 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 実装方針・同期方式・主要UI・データフローを変えたら、同じ作業内で [docs/CONTEXT.md](docs/CONTEXT.md) の該当セクションも更新する
 - Codex.app連携、ai_tasks、マインドマップ操作、runnerの巡回間隔はチャットに残さず `docs/CONTEXT.md` を正にする
 - 新しい仕様書を増やす前に、既存の `docs/CONTEXT.md` / `docs/plans/*` / `docs/specs/*` に追記できないか確認する
+- Web / Macアプリ / iOSアプリ / agent / Windows対応の境界は [docs/specs/platform-boundaries.md](docs/specs/platform-boundaries.md) を正にする
+- Microsoft StoreやWindows対応を始める時は、PWA配布とWindowsローカル自動化を分けて扱い、Mac/iOS/Webの既存導線へ混ぜない
 
 ## 技術スタック
 - Next.js (App Router) / React / TypeScript
@@ -129,6 +131,13 @@ docs/
 scripts/
   task-runner.ts    ← Mac常駐スクリプト（Phase 2）
 ```
+
+### プラットフォーム境界
+- `src/**` と `public/**` はWeb/Cloud Run/PWA本体。`desktop/**`、`mobile/**`、`scripts/focusmap-agent/**` から直接importしない
+- `desktop/focusmap-mac/**` は現時点ではMac専用Electron shell。Windows処理をここへ直接足す前にplatform adapterまたは別shellを検討する
+- `mobile/focusmap-app/**` はiOS WebView shell。プロダクトUIは原則Web側へ置き、ネイティブ側は外部URL起動・クリップボード・復帰通知に絞る
+- `scripts/focusmap-agent/**` はローカル実行agent。UIやElectron shellへ依存させず、Windows対応は `darwin` / `win32` のadapter境界を作ってから進める
+- Microsoft Store PWA対応はWeb/PWA metadataの作業として扱い、Codex runnerやローカル巡回とは別タスクにする
 
 ## 安全策（最重要）
 - `ANTHROPIC_API_KEY` が環境変数にないことを確認してからCodex -pを使う
