@@ -103,6 +103,11 @@ vi.mock('@/hooks/useVoiceRecorder', () => ({
   }),
 }))
 
+vi.mock('@/lib/image-compression', () => ({
+  MAX_UPLOAD_IMAGE_BYTES: 300 * 1024,
+  compressImageFileForUpload: vi.fn(async (file: File) => file),
+}))
+
 vi.mock('@/hooks/useCalendarEvents', () => ({
   ...calendarEvents,
   CALENDAR_EVENT_TIME_UPDATE_EVENT: 'focusmap-calendar-event-time-update',
@@ -242,7 +247,7 @@ describe('WishlistView calendar D&D', () => {
       calendar_id: 'work-cal',
 	    })
 	    await waitFor(() => {
-	      expect(screen.getAllByText('予定済み').length).toBeGreaterThanOrEqual(2)
+	      expect(screen.getByText('予定済み')).toBeInTheDocument()
 	    })
     expect(calendarEvents.invalidateCalendarCache).toHaveBeenCalled()
   })
@@ -279,7 +284,7 @@ describe('WishlistView calendar D&D', () => {
     await waitFor(() => {
       expect(screen.getByText('カレンダー登録に失敗しました: Google Calendar error')).toBeInTheDocument()
     })
-	    expect(screen.getAllByText('予定済み')).toHaveLength(1)
+	    expect(screen.queryByText('予定済み')).not.toBeInTheDocument()
     expect(calendarEvents.broadcastCalendarOptimisticEventRemoval).toHaveBeenCalled()
   })
 
@@ -348,7 +353,8 @@ describe('WishlistView calendar D&D', () => {
 
     await renderVisibleWishlist('Mapped memo')
 
-    expect(screen.getByText('マップ追加済み')).toBeInTheDocument()
+    expect(screen.queryByText('マップ追加済み')).not.toBeInTheDocument()
+    expect(screen.getAllByText('未予定').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Mapped memo')).toBeInTheDocument()
     expect(screen.getByText('Unsorted memo')).toBeInTheDocument()
   })
@@ -445,7 +451,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('デスクトップ表示では入力ありの追加ボタンでメモを即時追加する', async () => {
+  test('デスクトップ表示では左パネルの保存でメモを追加する', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -472,13 +478,13 @@ describe('WishlistView calendar D&D', () => {
     render(<WishlistView selectedProjectId="project-1" />)
 
     await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /追加/ })[0]).toBeInTheDocument()
+      expect(screen.getByText('メモを追加')).toBeInTheDocument()
     })
 
-    fireEvent.change(screen.getByPlaceholderText('音声またはテキストで入力'), {
+    fireEvent.change(screen.getByPlaceholderText('本文を入力'), {
       target: { value: 'あ' },
     })
-    fireEvent.click(screen.getAllByRole('button', { name: /追加/ })[0])
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => {
       const createCall = fetchMock.mock.calls.find(([input, init]) =>
@@ -495,7 +501,55 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('入力なしの追加ボタンは空の未保存メモ編集だけを開く', async () => {
+  test('デスクトップ左パネルで選んだ画像を保存後に添付APIへアップロードする', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist' && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}')
+        return jsonResponse({ item: createMemoItem({ id: 'created-memo', title: body.title, ...body }) }, { status: 201 })
+      }
+      if (url === '/api/wishlist/created-memo/attachments' && init?.method === 'POST') {
+        return jsonResponse({ attachment: { id: 'image-1' } }, { status: 201 })
+      }
+      if (url === '/api/wishlist') return jsonResponse({ items: [] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { container } = render(<WishlistView selectedProjectId="project-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('メモを追加')).toBeInTheDocument()
+    })
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const imageFile = new File(['image'], 'memo.png', { type: 'image/png' })
+    fireEvent.change(fileInput, { target: { files: [imageFile] } })
+    fireEvent.change(screen.getByPlaceholderText('本文を入力'), {
+      target: { value: '画像付きメモ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) =>
+        requestUrl(input) === '/api/wishlist/created-memo/attachments' && init?.method === 'POST',
+      )).toBe(true)
+    })
+  })
+
+  test('デスクトップ左パネルは文字入力まで保存しない', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -521,19 +575,7 @@ describe('WishlistView calendar D&D', () => {
     render(<WishlistView selectedProjectId="project-1" />)
 
     await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /追加/ })[0]).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getAllByRole('button', { name: /追加/ })[0])
-
-    await waitFor(() => {
-      expect(screen.getByTestId('memo-detail')).not.toHaveTextContent('新しいメモ')
-      expect(screen.getByTestId('memo-detail')).not.toHaveTextContent('作成中')
-    })
-    fireEvent.click(screen.getByRole('button', { name: '閉じる' }))
-
-    await waitFor(() => {
-      expect(screen.queryByTestId('memo-detail')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
     })
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
