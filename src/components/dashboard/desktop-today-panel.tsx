@@ -1,10 +1,10 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    List, Flame, Play, Pause, RefreshCw, Check, Loader2
+    List, Flame, Play, Pause, RefreshCw, Check, Loader2, CalendarDays
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -68,6 +68,7 @@ export function DesktopTodayPanel({
         calendarId: string | null
     } | null>(null)
     const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | '3days' | 'month'>('day')
+    const [mindMapDropCalendarId, setMindMapDropCalendarId] = useState<string | null>(null)
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -201,9 +202,25 @@ export function DesktopTodayPanel({
         )?.google_calendar_id
         ?? writableCalendars[0]?.id
         ?? null
+    const selectedMindMapDropCalendarId = useMemo(() => {
+        if (mindMapDropCalendarId && writableCalendars.some(c => c.id === mindMapDropCalendarId)) {
+            return mindMapDropCalendarId
+        }
+        return defaultQuickCreateCalendarId
+    }, [defaultQuickCreateCalendarId, mindMapDropCalendarId, writableCalendars])
     const draftCalendarColor = taskFormDraft?.calendarId
         ? writableCalendars.find(c => c.id === taskFormDraft.calendarId)?.background_color
         : undefined
+    useEffect(() => {
+        if (writableCalendars.length === 0) {
+            if (mindMapDropCalendarId !== null) setMindMapDropCalendarId(null)
+            return
+        }
+        if (mindMapDropCalendarId && writableCalendars.some(c => c.id === mindMapDropCalendarId)) return
+        if (defaultQuickCreateCalendarId && mindMapDropCalendarId !== defaultQuickCreateCalendarId) {
+            setMindMapDropCalendarId(defaultQuickCreateCalendarId)
+        }
+    }, [defaultQuickCreateCalendarId, mindMapDropCalendarId, writableCalendars])
     const mindMapNodeDropInFlightRef = useRef<Map<string, number>>(new Map())
     const handleMindMapNodeDrop = useCallback(async (payload: MindMapNodeCalendarDragPayload, startTime: Date) => {
         const durationMinutes = Math.max(15, payload.durationMinutes || 30)
@@ -221,14 +238,14 @@ export function DesktopTodayPanel({
             await onUpdateTask(payload.taskId, {
                 scheduled_at: scheduledAt,
                 estimated_time: durationMinutes,
-                calendar_id: payload.calendarId ?? defaultQuickCreateCalendarId,
+                calendar_id: selectedMindMapDropCalendarId ?? payload.calendarId ?? defaultQuickCreateCalendarId,
             })
         } finally {
             window.setTimeout(() => {
                 mindMapNodeDropInFlightRef.current.delete(dropKey)
             }, MINDMAP_NODE_DROP_IN_FLIGHT_MS)
         }
-    }, [defaultQuickCreateCalendarId, onUpdateTask])
+    }, [defaultQuickCreateCalendarId, onUpdateTask, selectedMindMapDropCalendarId])
     const draftPreview = taskFormDraft?.scheduledDate
         ? {
             title: taskFormDraft.title?.trim() || '新しい予定',
@@ -378,6 +395,24 @@ export function DesktopTodayPanel({
                             >
                                 <List className="h-3.5 w-3.5" />
                             </button>
+                        )}
+                        {calendarRangeMode === 'day' && writableCalendars.length > 0 && (
+                            <label className="mt-1 flex h-8 max-w-[168px] flex-shrink-0 items-center gap-1 rounded-md border border-border/50 bg-background px-1.5 text-[11px] text-muted-foreground">
+                                <CalendarDays className="h-3.5 w-3.5 flex-shrink-0" />
+                                <select
+                                    value={selectedMindMapDropCalendarId ?? ""}
+                                    onChange={event => setMindMapDropCalendarId(event.target.value || null)}
+                                    className="min-w-0 flex-1 bg-transparent text-[11px] font-medium text-foreground outline-none"
+                                    aria-label="ノード予定の追加先カレンダー"
+                                    title="ノード予定の追加先カレンダー"
+                                >
+                                    {writableCalendars.map(calendar => (
+                                        <option key={calendar.id} value={calendar.id}>
+                                            {calendar.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
                         )}
                         <div className="inline-flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5">
                             {(['day', '3days', 'month'] as const).map(mode => (
