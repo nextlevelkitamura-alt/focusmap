@@ -89,6 +89,61 @@ describe("buildMindMapModel", () => {
         expect(model.taskById.get("short")?.x).toBe(model.taskById.get("long")?.x);
     });
 
+    test("places completed root siblings below active root siblings", () => {
+        const doneRoot = makeTask({
+            id: "done-root",
+            title: "Done root",
+            status: "done",
+            order_index: 0,
+        });
+        const activeRoot = makeTask({
+            id: "active-root",
+            title: "Active root",
+            status: "todo",
+            order_index: 1,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [doneRoot, activeRoot],
+            tasks: [],
+            isMobile: false,
+        });
+
+        expect(model.taskById.get("active-root")?.y).toBeLessThan(model.taskById.get("done-root")?.y ?? 0);
+    });
+
+    test("places completed child siblings below active child siblings within the same parent", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const doneChild = makeTask({
+            id: "done-child",
+            title: "Done child",
+            parent_task_id: "parent",
+            status: "done",
+            order_index: 0,
+        });
+        const activeChild = makeTask({
+            id: "active-child",
+            title: "Active child",
+            parent_task_id: "parent",
+            status: "todo",
+            order_index: 1,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [doneChild, activeChild],
+            isMobile: false,
+        });
+
+        expect(model.taskById.get("active-child")?.y).toBeLessThan(model.taskById.get("done-child")?.y ?? 0);
+    });
+
     test("uses the widest node in a depth as the basis for the next column", () => {
         const shortParent = makeTask({
             id: "short-parent",

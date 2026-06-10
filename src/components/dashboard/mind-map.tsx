@@ -19,6 +19,7 @@ import {
 } from "@/lib/codex-source-completion";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
+import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
@@ -243,6 +244,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [refreshTaskProgressSnapshot]);
     const codexArchiveRequestTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+    const codexCompletionSyncInFlightRef = useRef(new Map<string, Promise<void>>());
+    const codexCompletionLastSyncRef = useRef(new Map<string, { status: string; syncedAt: number }>());
     const taskStatusByIdRef = useRef(new Map<string, string | null | undefined>());
     useEffect(() => {
         const next = new Map<string, string | null | undefined>();
@@ -277,26 +280,58 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }, CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS);
         codexArchiveRequestTimersRef.current.set(taskId, timer);
     }, [clearCodexArchiveRequestTimer, refreshAiTaskStatus, refreshTaskProgressSnapshot]);
-    const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
-        if (!onUpdateTask) return;
-        await onUpdateTask(taskId, { status });
+    const syncCodexSourceTaskCompletion = useCallback(async (taskId: string, status: string) => {
         if (status !== "done" && status !== "todo") return;
-        clearCodexArchiveRequestTimer(taskId);
 
         const aiTask = aiTasksBySourceId.get(taskId);
         if (!aiTask || (aiTask.executor !== "codex" && aiTask.executor !== "codex_app")) return;
 
-        try {
-            await setCodexSourceTaskCompletionFromNode(aiTask, status === "done");
-            if (status === "done") scheduleCodexArchiveRequest(taskId, aiTask);
-            await Promise.all([
-                refreshAiTaskStatus(),
-                refreshTaskProgressSnapshot(),
-            ]);
-        } catch (error) {
-            console.error("[MindMap] Failed to update Codex completion from node status:", error);
+        const now = Date.now();
+        const lastSync = codexCompletionLastSyncRef.current.get(taskId);
+        if (lastSync?.status === status && now - lastSync.syncedAt < 2_000) return;
+
+        const syncKey = `${taskId}:${status}`;
+        const inFlight = codexCompletionSyncInFlightRef.current.get(syncKey);
+        if (inFlight) {
+            await inFlight;
+            return;
         }
-    }, [aiTasksBySourceId, clearCodexArchiveRequestTimer, onUpdateTask, refreshAiTaskStatus, refreshTaskProgressSnapshot, scheduleCodexArchiveRequest]);
+
+        clearCodexArchiveRequestTimer(taskId);
+        const syncPromise = (async () => {
+            try {
+                await setCodexSourceTaskCompletionFromNode(aiTask, status === "done");
+                codexCompletionLastSyncRef.current.set(taskId, { status, syncedAt: Date.now() });
+                if (status === "done") scheduleCodexArchiveRequest(taskId, aiTask);
+                await Promise.all([
+                    refreshAiTaskStatus(),
+                    refreshTaskProgressSnapshot(),
+                ]);
+            } catch (error) {
+                console.error("[MindMap] Failed to update Codex completion from node status:", error);
+            } finally {
+                codexCompletionSyncInFlightRef.current.delete(syncKey);
+            }
+        })();
+        codexCompletionSyncInFlightRef.current.set(syncKey, syncPromise);
+        await syncPromise;
+    }, [aiTasksBySourceId, clearCodexArchiveRequestTimer, refreshAiTaskStatus, refreshTaskProgressSnapshot, scheduleCodexArchiveRequest]);
+    useEffect(() => {
+        const handleLinkedTaskStatus = (event: Event) => {
+            const detail = (event as CustomEvent<{ taskId?: unknown; status?: unknown }>).detail;
+            const taskId = typeof detail?.taskId === "string" ? detail.taskId : null;
+            const status = typeof detail?.status === "string" ? detail.status : null;
+            if (!taskId || !status) return;
+            void syncCodexSourceTaskCompletion(taskId, status);
+        };
+        window.addEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus);
+        return () => window.removeEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus);
+    }, [syncCodexSourceTaskCompletion]);
+    const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
+        if (!onUpdateTask) return;
+        await onUpdateTask(taskId, { status });
+        await syncCodexSourceTaskCompletion(taskId, status);
+    }, [onUpdateTask, syncCodexSourceTaskCompletion]);
     const taskProgressFallbackTasks = useMemo(() => {
         if (taskProgressFixtureEnabled) return [];
         const fallbackTasks: TaskProgressSnapshotTask[] = [];

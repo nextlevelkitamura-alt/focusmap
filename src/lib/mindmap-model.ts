@@ -83,6 +83,12 @@ const isTaskDone = (task: Task) =>
         ? (task.status === 'done' && !!task.habit_end_date && new Date(task.habit_end_date) < new Date())
         : task.status === 'done';
 
+const compareTaskDisplayOrder = (a: Task, b: Task) => {
+    const doneDelta = Number(isTaskDone(a)) - Number(isTaskDone(b));
+    if (doneDelta !== 0) return doneDelta;
+    return (a.order_index ?? 0) - (b.order_index ?? 0);
+};
+
 const getBounds = (nodes: MindMapModelNode[]) => {
     if (nodes.length === 0) {
         return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
@@ -138,7 +144,7 @@ export function buildMindMapModel({
         childrenByParent.set(task.parent_task_id, children);
     }
     for (const [, children] of childrenByParent) {
-        children.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        children.sort(compareTaskDisplayOrder);
     }
 
     const getChildren = (taskId: string) => childrenByParent.get(taskId) ?? [];
@@ -262,7 +268,7 @@ export function buildMindMapModel({
         }
     };
 
-    for (const group of [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))) {
+    for (const group of [...groups].sort(compareTaskDisplayOrder)) {
         if (!group?.id) continue;
         addTask(group, projectNodeId, 0);
     }

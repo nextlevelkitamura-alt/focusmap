@@ -407,7 +407,15 @@ function CustomTaskNode({
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
-    const nodeCodexBadge = buildCodexBadge(codexState, taskProgress);
+    const baseNodeCodexBadge = buildCodexBadge(codexState, taskProgress);
+    const nodeCodexBadge = node.isDone && baseNodeCodexBadge
+        ? {
+            ...baseNodeCodexBadge,
+            label: "完了済み",
+            status: "completed" as const,
+            title: "Codex 完了済み",
+        }
+        : baseNodeCodexBadge;
     const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(codexState, taskProgress);
     const showLongNodeHeadingAction =
         !isEditing &&
@@ -1404,6 +1412,22 @@ export function CustomMindMapView({
             return changed ? next : prev;
         });
     }, [allTaskTitleById]);
+
+    useEffect(() => {
+        const statusByTaskId = new Map([...groups, ...tasks].map(task => [task.id, task.status ?? "todo"]));
+        setOptimisticStatusByTaskId(prev => {
+            let changed = false;
+            const next = { ...prev };
+            for (const [taskId, status] of Object.entries(prev)) {
+                const savedStatus = statusByTaskId.get(taskId);
+                if (savedStatus == null || savedStatus === status) {
+                    delete next[taskId];
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
+        });
+    }, [groups, tasks]);
 
     const floatingEditNode = floatingEditNodeId ? nodeById.get(floatingEditNodeId) ?? null : null;
     const floatingEditKind = floatingEditNode?.kind ?? null;

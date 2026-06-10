@@ -505,6 +505,42 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(within(reviewNode).queryByRole("button", { name: "長いノードをメモ化して見出し生成" })).not.toBeInTheDocument()
   })
 
+  test("shows completed on the Codex badge when the linked node is checked", () => {
+    const completedRoot = makeTask({
+      id: "root-1",
+      title: "Root task",
+      status: "done",
+    })
+
+    renderMap({
+      groups: [completedRoot],
+      tasks: [],
+      taskProgressByNodeId: {
+        "root-1": {
+          id: "ai-task-1",
+          title: completedRoot.title,
+          status: "awaiting_approval",
+          executor: "codex_app",
+          codex_thread_id: "thread-1",
+          current_step: "確認待ちです",
+          progress_percent: null,
+          summary: null,
+          updated_at: "2026-06-07T00:00:00.000Z",
+          source_type: "mindmap",
+          source_id: "root-1",
+        },
+      },
+    })
+
+    const node = document.querySelector('[data-id="root-1"]')
+    if (!(node instanceof HTMLElement)) {
+      throw new Error("node not rendered")
+    }
+
+    expect(within(node).getByRole("button", { name: "Codex状態: 完了済み を開く" })).toBeInTheDocument()
+    expect(within(node).queryByText("確認待ち")).not.toBeInTheDocument()
+  })
+
   test("keeps the heading generation indicator visible while a shortened node is still generating", () => {
     renderMap({
       groups: [makeTask({ id: "root-1", title: "短い仮見出し" })],
@@ -904,6 +940,45 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(onUpdateStatus).toHaveBeenNthCalledWith(2, "root-1", "todo")
     expect(document.querySelector('[data-id="root-1"]')).toBeInTheDocument()
     expect(screen.queryByRole("dialog", { name: "完了の取り消し" })).not.toBeInTheDocument()
+  })
+
+  test("lets saved status changes from undo override the optimistic checked state", async () => {
+    const onUpdateStatus = vi.fn(() => Promise.resolve())
+    const rootTodo = makeTask({ id: "root-1", title: "Root task", status: "todo" })
+    const rootDone = makeTask({ id: "root-1", title: "Root task", status: "done" })
+
+    const view = (rootTask: Task) => (
+      <CustomMindMapView
+        project={project}
+        groups={[rootTask]}
+        tasks={[]}
+        collapsedTaskIds={new Set()}
+        selectedNodeId={null}
+        selectedNodeIds={new Set()}
+        onSelectNode={vi.fn()}
+        onSelectNodes={vi.fn()}
+        onToggleCollapse={vi.fn()}
+        onUpdateStatus={onUpdateStatus}
+      />
+    )
+    const { rerender } = render(view(rootTodo))
+
+    const node = getNode("Root task", "root-1")
+    await act(async () => {
+      fireEvent.click(within(node).getByRole("checkbox", { name: "完了にする" }))
+      await Promise.resolve()
+    })
+    expect(within(node).getByRole("checkbox")).toHaveAttribute("aria-checked", "true")
+
+    rerender(view(rootDone))
+    await waitFor(() => {
+      expect(within(getNode("Root task", "root-1")).getByRole("checkbox")).toHaveAttribute("aria-checked", "true")
+    })
+
+    rerender(view(rootTodo))
+    await waitFor(() => {
+      expect(within(getNode("Root task", "root-1")).getByRole("checkbox", { name: "完了にする" })).toHaveAttribute("aria-checked", "false")
+    })
   })
 
   test("does not show an undo dialog after checking a task", async () => {
