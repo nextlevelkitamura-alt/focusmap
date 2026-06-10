@@ -107,6 +107,9 @@ export function Header({
         setIsDesktopShell(isFocusmapDesktopShell())
     }, [])
 
+    const desktopDragStyle = isDesktopShell ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined
+    const desktopNoDragStyle = isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined
+
     const handleLogoClick = () => {
         if (onLogoClick) {
             onLogoClick()
@@ -176,33 +179,35 @@ export function Header({
         <header
             className={cn(
             "relative h-14 border-b items-center justify-between px-4 bg-background z-50 flex-shrink-0",
-            isDesktopShell && "h-[52px] border-white/10 bg-background/95 pl-[86px] pr-5 shadow-[0_1px_0_rgba(255,255,255,0.04)]",
+            isDesktopShell && "h-[52px] border-white/10 bg-background/95 pl-[132px] pr-5 shadow-[0_1px_0_rgba(255,255,255,0.04)]",
             desktopFlexClass,
             forceDesktopDashboard && "min-w-[1120px]",
         )}
-            style={isDesktopShell ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
+            style={desktopDragStyle}
         >
             {/* Left: Logo & current workspace */}
             <div
                 className={cn(
                     "flex min-w-0 max-w-[440px] items-center gap-3",
-                    isDesktopShell && "max-w-[540px] gap-5",
+                    isDesktopShell && "max-w-[460px] gap-4",
                 )}
-                style={isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined}
+                style={desktopNoDragStyle}
             >
-                <button
-                    type="button"
-                    onClick={handleLogoClick}
-                    className="inline-flex min-h-11 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label="Todayボードへ移動"
-                    title="Today"
-                >
-                    <FocusmapLogo className="h-9 w-auto text-foreground" />
-                </button>
+                {!isDesktopShell && (
+                    <button
+                        type="button"
+                        onClick={handleLogoClick}
+                        className="inline-flex min-h-11 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Todayボードへ移動"
+                        title="Today"
+                    >
+                        <FocusmapLogo className="h-9 w-auto text-foreground" />
+                    </button>
+                )}
 
                 {onSelectSpace && onSelectProject && (
                     <>
-                        <div className={cn("h-6 w-px bg-border", isDesktopShell && "mx-1 bg-border/70")} />
+                        {!isDesktopShell && <div className="h-6 w-px bg-border" />}
                         <SpaceProjectSwitcher
                             spaces={spaces}
                             projects={projects}
@@ -227,12 +232,14 @@ export function Header({
             {/* Center: View Tabs */}
             <div
                 className={cn("items-center gap-2 absolute left-1/2 -translate-x-1/2", desktopFlexClass)}
-                style={isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined}
+                style={desktopDragStyle}
             >
                 <div className={cn(
                     "flex items-center gap-1 bg-muted/50 rounded-lg p-0.5",
                     isDesktopShell && "gap-1.5 rounded-xl bg-muted/45 p-1",
-                )}>
+                )}
+                    style={desktopDragStyle}
+                >
                     {viewTabs.map(tab => (
                         <Button
                             key={tab.id}
@@ -246,6 +253,7 @@ export function Header({
                                     : "text-muted-foreground hover:text-foreground"
                             )}
                             onClick={() => setActiveView(tab.id)}
+                            style={desktopNoDragStyle}
                         >
                             {tab.icon}
                             {tab.label}
@@ -262,6 +270,7 @@ export function Header({
                         )}
                         onClick={handleOpenAiOrganize}
                         disabled={isLoadingOrganizeMemos || !selectedProjectId}
+                        style={desktopNoDragStyle}
                     >
                         <Sparkles className={cn("h-3.5 w-3.5", isLoadingOrganizeMemos && "animate-spin")} />
                         AIで整理
@@ -272,7 +281,7 @@ export function Header({
             {/* Right: User Profile & Settings */}
             <div
                 className="flex items-center gap-2"
-                style={isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined}
+                style={desktopNoDragStyle}
             >
                 {showMapSplitToggle && onToggleMapSplit && (
                     <Button

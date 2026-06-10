@@ -124,7 +124,7 @@ const CODEX_SERVER_SCRIPT = app.isPackaged
 const TASK_RUNNER_SCRIPT = path.join(REPO_ROOT, 'scripts', 'run-task-runner.sh');
 const TASK_RUNNER_PAUSE_FILE = path.join(REPO_ROOT, 'scripts', 'task-runner.paused');
 const APP_ICON_PATH = app.isPackaged
-  ? path.join(process.resourcesPath, 'icon.icns')
+  ? path.join(process.resourcesPath, 'icon.png')
   : path.join(__dirname, 'assets', 'icon.png');
 const FALLBACK_APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'oauth2.googleapis.com']);
