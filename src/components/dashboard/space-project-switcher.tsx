@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronDown, Check, Plus, Layers, FolderKanban, Pencil } from "lucide-react"
+import { ChevronDown, Check, Plus, Layers, FolderKanban, Pencil, Trash2 } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import {
   Popover,
@@ -65,6 +65,7 @@ export function SpaceProjectSwitcher({
   const [projectFormOpen, setProjectFormOpen] = useState(false)
   const [projectFormMode, setProjectFormMode] = useState<ProjectFormMode>("create")
   const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [spaceFormOpen, setSpaceFormOpen] = useState(false)
   const [spaceFormMode, setSpaceFormMode] = useState<SpaceFormMode>("create")
   const [editingSpace, setEditingSpace] = useState<Space | null>(null)
@@ -137,6 +138,20 @@ export function SpaceProjectSwitcher({
     setEditingProject(project)
     setProjectFormOpen(true)
     setProjectOpen(false)
+  }
+
+  const confirmDeleteProject = async (project: Project) => {
+    const confirmed = window.confirm(`「${project.title}」を削除しますか？\n関連するタスクも削除される場合があります。`)
+    if (!confirmed) return
+
+    setDeletingProjectId(project.id)
+    try {
+      await handleProjectDeleted(project)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "プロジェクトの削除に失敗しました")
+    } finally {
+      setDeletingProjectId(null)
+    }
   }
 
   const openCreateSpace = () => {
@@ -328,7 +343,7 @@ export function SpaceProjectSwitcher({
                   <button
                     type="button"
                     onClick={() => handlePickProject(p)}
-                    className="flex min-h-9 w-full items-center gap-2 rounded px-2 py-1.5 pr-16 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="flex min-h-9 w-full items-center gap-2 rounded px-2 py-1.5 pr-20 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
@@ -337,18 +352,33 @@ export function SpaceProjectSwitcher({
                     <span className="truncate flex-1">{p.title}</span>
                     {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      openEditProject(p)
-                    }}
-                    aria-label={`${p.title} を編集`}
-                    title="名前・色を編集"
-                    className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      disabled={deletingProjectId === p.id}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void confirmDeleteProject(p)
+                      }}
+                      aria-label={`${p.title} を削除`}
+                      title="削除"
+                      className="pointer-events-auto absolute right-8 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 disabled:pointer-events-none disabled:opacity-40 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openEditProject(p)
+                      }}
+                      aria-label={`${p.title} を編集`}
+                      title="名前・色を編集"
+                      className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </>
                 </div>
               )
             })}

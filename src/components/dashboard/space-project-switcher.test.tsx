@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { SpaceProjectSwitcher } from './space-project-switcher'
 import type { Project, Space } from '@/types/database'
@@ -66,5 +66,31 @@ describe('SpaceProjectSwitcher', () => {
 
     expect(onSelectProject).toHaveBeenCalledWith('project-work')
     expect(onSelectSpace).not.toHaveBeenCalled()
+  })
+
+  test('プロジェクト削除ボタンは確認後に削除コールバックを呼ぶ', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onProjectDeleted = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <SpaceProjectSwitcher
+        spaces={spaces}
+        projects={projects}
+        selectedSpaceId="space-work"
+        selectedProjectId="project-work"
+        onSelectSpace={vi.fn()}
+        onSelectProject={vi.fn()}
+        onProjectDeleted={onProjectDeleted}
+      />,
+    )
+
+    fireEvent.click(screen.getByLabelText('仕事プロジェクト を削除'))
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith('「仕事プロジェクト」を削除しますか？\n関連するタスクも削除される場合があります。')
+      expect(onProjectDeleted).toHaveBeenCalledWith('project-work')
+    })
+
+    confirmSpy.mockRestore()
   })
 })
