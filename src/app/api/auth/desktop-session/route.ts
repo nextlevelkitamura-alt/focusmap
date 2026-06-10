@@ -18,5 +18,6 @@ export async function GET(request: Request) {
     user_id: session.userId,
     access_token: session.accessToken,
     refresh_token: session.refreshToken,
+    expires_at: session.sessionExpiresAt,
   })
 }

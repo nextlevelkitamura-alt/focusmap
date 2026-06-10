@@ -76,6 +76,35 @@
         overflow: auto;
       }
 
+      .actions {
+        display: none;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+
+      button {
+        min-height: 38px;
+        border: 1px solid #333;
+        border-radius: 8px;
+        background: #18181b;
+        color: #f4f4f5;
+        padding: 0 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.primary {
+        border-color: #2f5f4f;
+        background: #123226;
+        color: #d1fae5;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
+
       @keyframes spin {
         to {
           transform: rotate(360deg);
@@ -92,17 +121,74 @@
         <span id="message" class="muted">Next.js を起動中です</span>
       </div>
       <div id="error" class="error" style="display:none;"></div>
+      <div id="actions" class="actions">
+        <button id="retry" class="primary" type="button">もう一度開く</button>
+        <button id="browser" type="button">ブラウザで開く</button>
+      </div>
     </div>
     <script>
       const params = new URLSearchParams(location.search);
       const message = document.getElementById('message');
       const error = document.getElementById('error');
+      const actions = document.getElementById('actions');
+      const retry = document.getElementById('retry');
+      const browser = document.getElementById('browser');
       const errorMessage = params.get('error');
+      const mode = params.get('mode');
+      const origin = params.get('origin');
+      const dashboard = params.get('dashboard');
+
+      if (mode === 'remote') {
+        message.textContent = 'Focusmap Web を読み込み中です';
+      } else {
+        message.textContent = 'ローカル Next.js を起動中です';
+      }
+
       if (errorMessage) {
-        message.textContent = '起動に失敗しました。Focusmapを開き直してください。';
+        message.textContent = '起動に失敗しました。';
         error.textContent = errorMessage;
         error.style.display = 'block';
+        actions.style.display = 'flex';
       }
+
+      setTimeout(() => {
+        if (errorMessage) return;
+        message.textContent = mode === 'remote'
+          ? '読み込みに時間がかかっています。再試行できます。'
+          : '起動に時間がかかっています。3001番の古いプロセスを確認してください。';
+        actions.style.display = 'flex';
+      }, 15000);
+
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        message.textContent = '再試行しています...';
+        try {
+          if (window.focusmapDesktop?.retryDashboard) {
+            await window.focusmapDesktop.retryDashboard();
+          } else if (dashboard) {
+            location.href = dashboard;
+          } else if (origin) {
+            location.href = `${origin}/dashboard?desktop=1&source=mac`;
+          }
+        } catch (err) {
+          error.textContent = err instanceof Error ? err.message : String(err);
+          error.style.display = 'block';
+          retry.disabled = false;
+        }
+      });
+
+      browser.addEventListener('click', async () => {
+        try {
+          if (window.focusmapDesktop?.openDashboardExternal) {
+            await window.focusmapDesktop.openDashboardExternal();
+          } else if (dashboard) {
+            window.open(dashboard, '_blank');
+          }
+        } catch (err) {
+          error.textContent = err instanceof Error ? err.message : String(err);
+          error.style.display = 'block';
+        }
+      });
     </script>
   </body>
 </html>

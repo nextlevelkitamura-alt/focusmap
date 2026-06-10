@@ -211,6 +211,7 @@ function LoginContent() {
                         await saveDesktopSession({
                             access_token: payload.access_token,
                             refresh_token: payload.refresh_token,
+                            expires_at: typeof payload.expires_at === 'number' ? payload.expires_at : null,
                             user_id: payload.user_id ?? null,
                         })
                         router.push('/dashboard?desktop=1&source=mac')

@@ -11,9 +11,14 @@ const path = require('node:path');
 const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
 const LOCAL_APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`;
 const PRODUCTION_APP_ORIGIN = 'https://focusmap-official.com';
+const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co';
+const FALLBACK_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA';
 const DESKTOP_USER_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'focusmap-desktop-shell');
 const DESKTOP_BROWSER_PARTITION = 'persist:focusmap-desktop';
 const DESKTOP_HEALTH_TOKEN = process.env.FOCUSMAP_DESKTOP_HEALTH_TOKEN || randomUUID();
+const SUPABASE_AUTH_COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60;
+const SUPABASE_AUTH_COOKIE_CHUNK_SIZE = 3180;
+const DESKTOP_AUTH_REFRESH_MARGIN_SECONDS = 10 * 60;
 app.setName('Focusmap');
 app.setAboutPanelOptions({ applicationName: 'Focusmap' });
 app.setPath('userData', DESKTOP_USER_DATA_DIR);
@@ -493,6 +498,207 @@ function desktopBrowserSession() {
   return session.fromPartition(DESKTOP_BROWSER_PARTITION);
 }
 
+function supabaseUrl() {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL || DESKTOP_ENV.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL;
+}
+
+function supabaseAnonKey() {
+  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || DESKTOP_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY;
+}
+
+function supabaseAuthStorageKey() {
+  try {
+    const url = new URL(supabaseUrl());
+    return `sb-${url.hostname.split('.')[0]}-auth-token`;
+  } catch {
+    return null;
+  }
+}
+
+function base64UrlEncode(value) {
+  return Buffer.from(value, 'utf8').toString('base64url');
+}
+
+function isSupabaseAuthCookieName(name, storageKey) {
+  if (!storageKey) return false;
+  if (name === storageKey || name === `${storageKey}-user` || name === `${storageKey}-code-verifier`) return true;
+  const match = name.match(/^(.*)[.](0|[1-9][0-9]*)$/);
+  return Boolean(match && match[1] === storageKey);
+}
+
+function createCookieChunks(key, value, chunkSize = SUPABASE_AUTH_COOKIE_CHUNK_SIZE) {
+  const encodedValue = encodeURIComponent(value);
+  if (encodedValue.length <= chunkSize) return [{ name: key, value }];
+
+  const chunks = [];
+  let remainder = encodedValue;
+  while (remainder.length > 0) {
+    let encodedHead = remainder.slice(0, chunkSize);
+    const lastEscape = encodedHead.lastIndexOf('%');
+    if (lastEscape > chunkSize - 3) encodedHead = encodedHead.slice(0, lastEscape);
+
+    let head = '';
+    while (encodedHead.length > 0) {
+      try {
+        head = decodeURIComponent(encodedHead);
+        break;
+      } catch (error) {
+        if (error instanceof URIError && encodedHead.at(-3) === '%' && encodedHead.length > 3) {
+          encodedHead = encodedHead.slice(0, encodedHead.length - 3);
+          continue;
+        }
+        throw error;
+      }
+    }
+    chunks.push(head);
+    remainder = remainder.slice(encodedHead.length);
+  }
+  return chunks.map((valuePart, index) => ({ name: `${key}.${index}`, value: valuePart }));
+}
+
+function normalizeSupabaseSessionPayload(payload) {
+  const source = payload?.session && typeof payload.session === 'object' ? payload.session : payload;
+  if (!source || typeof source !== 'object') return null;
+  const accessToken = source.access_token || source.accessToken;
+  const refreshToken = source.refresh_token || source.refreshToken;
+  if (typeof accessToken !== 'string' || accessToken.length < 10) return null;
+  if (typeof refreshToken !== 'string' || refreshToken.length < 10) return null;
+  const expiresIn = typeof source.expires_in === 'number' ? source.expires_in : null;
+  const expiresAt = typeof source.expires_at === 'number'
+    ? source.expires_at
+    : typeof source.expiresAt === 'number'
+      ? source.expiresAt
+      : expiresIn
+        ? Math.floor(Date.now() / 1000) + expiresIn
+        : null;
+
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    token_type: typeof source.token_type === 'string' ? source.token_type : 'bearer',
+    expires_in: expiresIn,
+    expires_at: expiresAt,
+    user: source.user && typeof source.user === 'object' ? source.user : undefined,
+  };
+}
+
+async function clearSupabaseAuthCookies(origin = APP_ORIGIN) {
+  const storageKey = supabaseAuthStorageKey();
+  if (!storageKey) return;
+  const url = `${origin}/`;
+  const webSession = desktopBrowserSession();
+  const cookies = await webSession.cookies.get({ url });
+  await Promise.all(
+    cookies
+      .filter((cookie) => isSupabaseAuthCookieName(cookie.name, storageKey))
+      .map((cookie) => webSession.cookies.remove(url, cookie.name).catch(() => undefined)),
+  );
+}
+
+async function seedSupabaseAuthCookies(sessionPayload, origin = APP_ORIGIN) {
+  const storageKey = supabaseAuthStorageKey();
+  const normalized = normalizeSupabaseSessionPayload(sessionPayload);
+  if (!storageKey || !normalized) return false;
+
+  const url = `${origin}/`;
+  const encoded = `base64-${base64UrlEncode(JSON.stringify(normalized))}`;
+  const chunks = createCookieChunks(storageKey, encoded);
+  const expirationDate = Math.floor(Date.now() / 1000) + SUPABASE_AUTH_COOKIE_MAX_AGE_SECONDS;
+  const secure = origin.startsWith('https:');
+  const webSession = desktopBrowserSession();
+
+  await clearSupabaseAuthCookies(origin);
+  await Promise.all(chunks.map((chunk) => webSession.cookies.set({
+    url,
+    name: chunk.name,
+    value: chunk.value,
+    path: '/',
+    secure,
+    httpOnly: false,
+    sameSite: 'lax',
+    expirationDate,
+  })));
+  return true;
+}
+
+async function fetchJsonWithTimeout(url, init = {}, timeoutMs = 8000) {
+  if (typeof fetch !== 'function') throw new Error('fetch is not available in this Electron runtime');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const payload = await response.json().catch(() => null);
+    return { response, payload };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function refreshDesktopAuthSession(savedSession) {
+  const normalized = normalizeSupabaseSessionPayload(savedSession);
+  if (!normalized?.refresh_token) return { ok: false, reason: 'missing-refresh-token', clear: true };
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (normalized.expires_at && normalized.expires_at - nowSeconds > DESKTOP_AUTH_REFRESH_MARGIN_SECONDS) {
+    return { ok: true, session: normalized, refreshed: false };
+  }
+
+  const url = new URL('/auth/v1/token', supabaseUrl());
+  url.searchParams.set('grant_type', 'refresh_token');
+  const { response, payload } = await fetchJsonWithTimeout(url.toString(), {
+    method: 'POST',
+    headers: {
+      apikey: supabaseAnonKey(),
+      Authorization: `Bearer ${supabaseAnonKey()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ refresh_token: normalized.refresh_token }),
+  });
+
+  if (!response.ok) {
+    const code = typeof payload?.code === 'string' ? payload.code : '';
+    const message = typeof payload?.msg === 'string'
+      ? payload.msg
+      : typeof payload?.message === 'string'
+        ? payload.message
+        : `Supabase refresh failed (${response.status})`;
+    return {
+      ok: false,
+      reason: message,
+      clear: response.status === 400 || response.status === 401 || code.includes('refresh'),
+    };
+  }
+
+  const sessionPayload = normalizeSupabaseSessionPayload(payload);
+  if (!sessionPayload) return { ok: false, reason: 'invalid-refresh-response', clear: false };
+  return { ok: true, session: sessionPayload, refreshed: true };
+}
+
+async function ensureDesktopAuthCookies(reason, origin = APP_ORIGIN) {
+  const loaded = loadDesktopAuthSession();
+  if (!loaded.ok || !loaded.session) return { ok: true, status: 'missing' };
+
+  try {
+    const refreshed = await refreshDesktopAuthSession(loaded.session);
+    if (!refreshed.ok) {
+      log('auth', `desktop session restore skipped (${reason}): ${refreshed.reason || 'unknown error'}`);
+      if (refreshed.clear) {
+        clearDesktopAuthSession();
+        await clearSupabaseAuthCookies(origin);
+      }
+      return { ok: false, status: 'failed', reason: refreshed.reason };
+    }
+
+    if (refreshed.refreshed) saveDesktopAuthSession(null, refreshed.session);
+    await seedSupabaseAuthCookies(refreshed.session, origin);
+    log('auth', `seeded Supabase auth cookies from desktop session (${reason}, refreshed=${refreshed.refreshed ? 'yes' : 'no'})`);
+    return { ok: true, status: refreshed.refreshed ? 'refreshed' : 'seeded' };
+  } catch (error) {
+    log('auth', `desktop session restore failed (${reason}): ${error instanceof Error ? error.message : String(error)}`);
+    return { ok: false, status: 'failed', reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function ensureFreshRemoteUiCache(origin = APP_ORIGIN, reason = 'dashboard-load') {
   if (isLocalOriginValue(origin)) return;
   if (remoteUiCacheClearPromise) return remoteUiCacheClearPromise;
@@ -568,14 +774,31 @@ function allowedDesktopIpcOrigins() {
   return allowedDesktopAuthOrigins();
 }
 
+const LOADING_SCREEN_IPC_CHANNELS = new Set([
+  'focusmap-desktop:retryDashboard',
+  'focusmap-desktop:openDashboardExternal',
+]);
+
 function senderFrameUrl(event) {
   return event.senderFrame?.url || event.sender?.getURL?.() || '';
 }
 
+function isTrustedLoadingScreenUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'file:' && decodeURIComponent(url.pathname).endsWith('/desktop/focusmap-mac/loading.html');
+  } catch {
+    return false;
+  }
+}
+
 function assertAllowedIpcSender(event, channel) {
-  const origin = normalizeHttpOrigin(senderFrameUrl(event));
+  const frameUrl = senderFrameUrl(event);
+  if (LOADING_SCREEN_IPC_CHANNELS.has(channel) && isTrustedLoadingScreenUrl(frameUrl)) return;
+
+  const origin = normalizeHttpOrigin(frameUrl);
   if (origin && allowedDesktopIpcOrigins().has(origin)) return;
-  const message = `blocked IPC ${channel} from ${origin || senderFrameUrl(event) || 'unknown origin'}`;
+  const message = `blocked IPC ${channel} from ${origin || frameUrl || 'unknown origin'}`;
   log('ipc', message);
   throw new Error('このFocusmap画面からはMac連携を実行できません');
 }
@@ -717,6 +940,22 @@ async function loadFileAllowingAbort(win, filePath, options) {
   }
 }
 
+function loadingScreenQuery(extra = {}) {
+  return {
+    mode: isLocalAppOrigin() ? 'local' : 'remote',
+    origin: APP_ORIGIN,
+    dashboard: dashboardUrl(),
+    ...Object.fromEntries(Object.entries(extra).filter(([, value]) => value !== undefined && value !== null)),
+  };
+}
+
+async function loadStartupScreen(extra = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  await loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html'), {
+    query: loadingScreenQuery(extra),
+  });
+}
+
 async function loadUrlAllowingRedirect(win, url) {
   try {
     await win.loadURL(url);
@@ -737,11 +976,14 @@ function loadDashboardSoon(reason) {
 
   log('app', `loading dashboard (${reason}): ${dashboardUrl()}`);
   void (async () => {
+    await ensureDesktopAuthCookies(reason, APP_ORIGIN);
     await ensureFreshRemoteUiCache(APP_ORIGIN, reason);
     if (!mainWindow || mainWindow.isDestroyed()) return;
     await loadUrlAllowingRedirect(mainWindow, dashboardUrl());
   })().catch((error) => {
-    log('app', `dashboard load failed (${reason}): ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    log('app', `dashboard load failed (${reason}): ${message}`);
+    void loadStartupScreen({ error: message, reason }).catch(() => undefined);
   });
 }
 
@@ -759,6 +1001,7 @@ async function loadDashboardWhenReady(reason) {
     const currentUrl = mainWindow.webContents.getURL();
     if (!isSameOrigin(currentUrl, origin) || isLoadingScreenUrl(currentUrl)) {
       log('app', `loading dashboard (${reason}): ${dashboardUrl(origin)}`);
+      await ensureDesktopAuthCookies(reason, origin);
       await ensureFreshRemoteUiCache(origin, reason);
       await loadUrlAllowingRedirect(mainWindow, dashboardUrl(origin));
     }
@@ -949,16 +1192,27 @@ async function ensureFocusmapApp() {
 }
 
 function normalizeDesktopAuthSession(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-  const accessToken = payload.access_token;
-  const refreshToken = payload.refresh_token;
-  if (typeof accessToken !== 'string' || accessToken.length < 20) return null;
-  if (typeof refreshToken !== 'string' || refreshToken.length < 20) return null;
+  const source = payload?.session && typeof payload.session === 'object' ? payload.session : payload;
+  if (!source || typeof source !== 'object') return null;
+  const accessToken = source.access_token || source.accessToken;
+  const refreshToken = source.refresh_token || source.refreshToken;
+  if (typeof accessToken !== 'string' || accessToken.length < 10) return null;
+  if (typeof refreshToken !== 'string' || refreshToken.length < 10) return null;
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
-    expires_at: typeof payload.expires_at === 'number' ? payload.expires_at : null,
-    user_id: typeof payload.user_id === 'string' ? payload.user_id : null,
+    expires_at: typeof source.expires_at === 'number'
+      ? source.expires_at
+      : typeof source.expiresAt === 'number'
+        ? source.expiresAt
+        : null,
+    user_id: typeof source.user_id === 'string'
+      ? source.user_id
+      : typeof source.userId === 'string'
+        ? source.userId
+        : typeof source.user?.id === 'string'
+          ? source.user.id
+          : null,
     saved_at: new Date().toISOString(),
   };
 }
@@ -1022,6 +1276,7 @@ function loadDesktopAuthSession() {
 function clearDesktopAuthSession() {
   try {
     fs.rmSync(AUTH_SESSION_PATH, { force: true });
+    void clearSupabaseAuthCookies(APP_ORIGIN).catch(() => undefined);
     log('auth', 'cleared desktop auth session');
     return { ok: true };
   } catch (error) {
@@ -1080,10 +1335,17 @@ function handleFocusmapDeepLink(urlString) {
     const saved = saveDesktopAuthSession(null, payload);
     if (!saved.ok) {
       log('auth', `failed to save desktop auth deep link session: ${saved.error || 'unknown error'}`);
+      loadLoginForDesktopSessionRestore('deeplink-save-failed');
       return true;
     }
 
-    loadLoginForDesktopSessionRestore('deeplink');
+    void (async () => {
+      await ensureDesktopAuthCookies('deeplink', APP_ORIGIN);
+      await loadDashboardWhenReady('auth-deeplink');
+    })().catch((error) => {
+      log('auth', `failed to restore desktop auth from deep link: ${error instanceof Error ? error.message : String(error)}`);
+      loadLoginForDesktopSessionRestore('deeplink');
+    });
     return true;
   } catch (error) {
     log('auth', `failed to handle focusmap deep link: ${error instanceof Error ? error.message : String(error)}`);
@@ -1279,6 +1541,10 @@ async function launchCodexFromBridge(_event, payload) {
 
 async function startAgent() {
   if (isChildRunning(managedProcesses.agent)) return { ok: true, message: 'agentは起動済みです' };
+  const externalAgentRunning = await processRunning('focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start').catch(() => false);
+  if (externalAgentRunning) {
+    return { ok: true, message: '既存のfocusmap-agentを利用します', external: true };
+  }
   if (!fs.existsSync(CONFIG_PATH)) {
     return {
       ok: false,
@@ -1587,6 +1853,17 @@ async function connectAutomation() {
   return ensureAutomationServices('manual-connect', { recoverRunner: true });
 }
 
+async function retryDashboardFromLoadingScreen() {
+  void loadStartupScreen({ reason: 'manual-retry' }).catch(() => undefined);
+  await loadDashboardWhenReady('manual-retry');
+  return { ok: true };
+}
+
+async function openDashboardExternalFromLoadingScreen() {
+  await shell.openExternal(dashboardUrl(APP_ORIGIN));
+  return { ok: true, url: dashboardUrl(APP_ORIGIN) };
+}
+
 async function disconnectAutomation() {
   stopAutomationSupervisor();
   const results = {
@@ -1658,7 +1935,7 @@ async function createMainWindow() {
       partition: DESKTOP_BROWSER_PARTITION,
     },
   });
-  void loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html')).catch((error) => {
+  void loadStartupScreen({ reason: 'create-main-window' }).catch((error) => {
     log('app', `failed to load loading screen: ${error.message}`);
   });
   mainWindow.webContents.on('will-navigate', handleMainNavigation);
@@ -1668,6 +1945,13 @@ async function createMainWindow() {
   });
   mainWindow.webContents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
     handleAuthNavigationFallback(url, isMainFrame);
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || isNavigationAbortError(`${errorDescription} (${errorCode})`)) return;
+    if (!validatedURL || !isSameOrigin(validatedURL, APP_ORIGIN)) return;
+    const message = `${errorDescription || '読み込みに失敗しました'} (${errorCode}) loading '${validatedURL}'`;
+    log('app', message);
+    void loadStartupScreen({ error: message, reason: 'did-fail-load' }).catch(() => undefined);
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isGoogleAuthUrl(url) || isSupabaseAuthUrl(url)) {
@@ -1692,9 +1976,7 @@ async function createMainWindow() {
     const message = error instanceof Error ? error.message : String(error);
     log('app', message);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      await loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html'), {
-        query: { error: message },
-      });
+      await loadStartupScreen({ error: message, reason: 'create-main-window' });
       focusWindow(mainWindow);
     }
     return;
@@ -1760,6 +2042,8 @@ handleDesktopIpc('focusmap-desktop:consumeAuthSession', consumeExternalAuthSessi
 handleDesktopIpc('focusmap-desktop:saveAuthSession', saveDesktopAuthSession);
 handleDesktopIpc('focusmap-desktop:loadAuthSession', loadDesktopAuthSession);
 handleDesktopIpc('focusmap-desktop:clearAuthSession', clearDesktopAuthSession);
+handleDesktopIpc('focusmap-desktop:retryDashboard', retryDashboardFromLoadingScreen);
+handleDesktopIpc('focusmap-desktop:openDashboardExternal', openDashboardExternalFromLoadingScreen);
 handleDesktopIpc('focusmap-desktop:getAutomationStatus', getAutomationStatus);
 handleDesktopIpc('focusmap-desktop:connectAutomation', connectAutomation);
 handleDesktopIpc('focusmap-desktop:disconnectAutomation', disconnectAutomation);

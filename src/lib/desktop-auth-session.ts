@@ -3,6 +3,7 @@ type DesktopAuthSession = {
   refreshToken: string
   userId: string
   expiresAt: number
+  sessionExpiresAt: number | null
 }
 
 const DESKTOP_AUTH_SESSION_TTL_MS = 5 * 60 * 1000
@@ -26,12 +27,14 @@ export function registerDesktopAuthSession(input: {
   accessToken: string
   refreshToken: string
   userId: string
+  expiresAt?: number | null
 }) {
   sessionStore().set(input.nonce, {
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     userId: input.userId,
     expiresAt: Date.now() + DESKTOP_AUTH_SESSION_TTL_MS,
+    sessionExpiresAt: input.expiresAt ?? null,
   })
 }
 

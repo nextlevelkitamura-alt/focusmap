@@ -131,6 +131,7 @@ export async function GET(request: Request) {
                     accessToken: data.session.access_token,
                     refreshToken: data.session.refresh_token,
                     userId: data.user.id,
+                    expiresAt: data.session.expires_at ?? null,
                 })
                 return new NextResponse(desktopAuthDonePage({
                     nonce: desktopNonce,
@@ -151,6 +152,7 @@ export async function GET(request: Request) {
                     accessToken: data.session.access_token,
                     refreshToken: data.session.refresh_token,
                     userId: data.user.id,
+                    expiresAt: data.session.expires_at ?? null,
                 })
                 return new NextResponse(nativeAuthDonePage(nativeNonce, next), {
                     headers: { 'Content-Type': 'text/html; charset=utf-8' },
