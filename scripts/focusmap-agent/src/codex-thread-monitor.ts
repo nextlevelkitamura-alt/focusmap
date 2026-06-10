@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { AgentApiClient } from './api-client.js';
+import { AgentApiError, type AgentApiClient } from './api-client.js';
 import type { AgentActivityMessage, AiTask, CodexThreadImportPayload, TaskResultJson } from './types.js';
 import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
 import { debug, error as logError, info } from './logger.js';
@@ -22,6 +22,8 @@ const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) 
   ? configuredOrphanImportWindowMs
   : 2 * 60 * 60 * 1000;
 const ORPHAN_IMPORT_RETRY_MS = 5 * 60 * 1000;
+const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
+let orphanImportApiUnavailableUntil = 0;
 
 type CodexThreadRow = {
   id: string;
@@ -345,6 +347,10 @@ export function isOrphanThreadImportCandidate(
   return true;
 }
 
+export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiError {
+  return error instanceof AgentApiError && (error.status === 404 || error.status === 405);
+}
+
 function importPayloadFromThread(row: CodexThreadRow): CodexThreadImportPayload {
   return {
     id: row.id,
@@ -553,6 +559,7 @@ async function importOrphanThreads(
   tasks: AiTask[],
 ): Promise<number> {
   const now = Date.now();
+  if (now < orphanImportApiUnavailableUntil) return 0;
   const knownThreadIds = knownCodexThreadIds(tasks);
   const rows = await readRecentThreads(dbPath, Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS));
   let imported = 0;
@@ -575,6 +582,11 @@ async function importOrphanThreads(
         debug(`codex orphan thread skipped thread=${row.id.slice(0, 8)} reason=${result.reason ?? 'unknown'}`);
       }
     } catch (error) {
+      if (isOrphanImportApiUnavailable(error)) {
+        orphanImportApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+        info(`codex orphan import API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+        return imported;
+      }
       logError(`codex orphan import failed thread=${row.id.slice(0, 8)}`, error instanceof Error ? error.message : error);
     }
     await sleep(20);

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { Bot, CheckCircle2, Clipboard, DownloadCloud, Play, Power, PowerOff, RefreshCw, WifiOff, Workflow } from "lucide-react"
+import { Bot, CheckCircle2, Clipboard, DownloadCloud, Inbox, Play, Power, PowerOff, RefreshCw, WifiOff, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AgentStatusBadge } from "@/components/settings/agent-status-badge"
 import type { FocusmapDesktopAutomationStatus } from "@/lib/external-auth-launch"
@@ -46,6 +46,19 @@ function codexDetail(status: FocusmapDesktopAutomationStatus | null) {
   if (!codex.available) return "Codex.app または codex CLI が見つかりません。"
   if (!codex.scriptAvailable) return "起動スクリプトが見つかりません。"
   return "停止中です。接続で起動できます。"
+}
+
+function codexImportDetail(status: FocusmapDesktopAutomationStatus | null) {
+  const api = status?.codex?.threadImportApi
+  if (!api) return "Macアプリから取り込みAPIの状態を取得していません。"
+  if (api.ready) {
+    const mode = api.mode === "remote" ? "本番API" : "ローカルAPI"
+    return `${mode}でCodex.app起点threadの取り込み口を確認済みです。`
+  }
+  if (api.reason === "app_not_ready") return "ローカルWebの起動後に確認します。"
+  if (api.reason === "not_deployed") return "現在のWeb/APIには取り込み口が未反映です。Macアプリ更新または本番反映が必要です。"
+  if (api.reason === "unreachable") return "取り込みAPIに到達できません。接続/復旧で再確認してください。"
+  return api.message || "取り込みAPIの状態を確認できません。"
 }
 
 function MacCodexConnectionPanel() {
@@ -113,6 +126,7 @@ function MacCodexConnectionPanel() {
   const canDisconnect = Boolean(status?.agent.managed || status?.codex.managed)
   const codexNeedsInstall = status?.codex?.appInstalled === false
   const codexInstallUrl = status?.codex?.installUrl || CODEX_DOWNLOAD_URL
+  const codexThreadImportReady = status?.codex?.threadImportApi?.ready === true
 
   const openCodexInstall = async () => {
     if (typeof window === "undefined") return
@@ -199,7 +213,7 @@ function MacCodexConnectionPanel() {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
         <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
           <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
             <Workflow className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
@@ -219,6 +233,16 @@ function MacCodexConnectionPanel() {
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-zinc-500">{codexDetail(status)}</p>
+        </div>
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
+          <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            <Inbox className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
+            Codex thread取り込み
+            <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-black/25 dark:text-zinc-300">
+              {codexThreadImportReady ? "対応済み" : status?.codex.threadImportApi?.checked ? "未反映" : "未確認"}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-zinc-500">{codexImportDetail(status)}</p>
         </div>
       </div>
 

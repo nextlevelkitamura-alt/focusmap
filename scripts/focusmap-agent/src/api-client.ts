@@ -10,6 +10,17 @@ export function webOriginFromApiUrl(apiUrl: string | undefined): string {
   return normalizeApiUrl(apiUrl).replace(/\/api$/, '');
 }
 
+export class AgentApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly path: string,
+  ) {
+    super(message);
+    this.name = 'AgentApiError';
+  }
+}
+
 export class AgentApiClient {
   private readonly apiUrl: string;
   private readonly token: string;
@@ -31,7 +42,11 @@ export class AgentApiClient {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`);
+      throw new AgentApiError(
+        typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`,
+        res.status,
+        path,
+      );
     }
     return data as T;
   }

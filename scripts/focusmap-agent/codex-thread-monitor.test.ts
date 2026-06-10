@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'vitest';
 import {
   hasPendingArchiveRequest,
+  isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
   parseRollout,
   taskStateForSummary,
 } from './src/codex-thread-monitor';
+import { AgentApiError } from './src/api-client';
 
 const threadRow = {
   id: 'thread-1',
@@ -184,5 +186,12 @@ describe('codex-thread-monitor state detection', () => {
       ...base,
       first_user_message: '# AGENTS.md instructions\n<environment_context>',
     }, new Set(), nowMs, 10 * 60_000)).toBe(false);
+  });
+
+  test('treats missing orphan import endpoint as temporarily unavailable', () => {
+    expect(isOrphanImportApiUnavailable(new AgentApiError('not found', 404, '/agents/codex-monitor/import-thread'))).toBe(true);
+    expect(isOrphanImportApiUnavailable(new AgentApiError('method not allowed', 405, '/agents/codex-monitor/import-thread'))).toBe(true);
+    expect(isOrphanImportApiUnavailable(new AgentApiError('unauthorized', 401, '/agents/codex-monitor/import-thread'))).toBe(false);
+    expect(isOrphanImportApiUnavailable(new AgentApiError('server error', 500, '/agents/codex-monitor/import-thread'))).toBe(false);
   });
 });

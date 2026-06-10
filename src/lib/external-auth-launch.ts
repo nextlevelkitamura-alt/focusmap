@@ -91,6 +91,18 @@ export type FocusmapDesktopAutomationServiceStatus = {
   lastKickMessage?: string | null
   disabledReason?: string | null
   installUrl?: string | null
+  threadImportApi?: FocusmapDesktopAutomationApiRouteStatus
+}
+
+export type FocusmapDesktopAutomationApiRouteStatus = {
+  ready?: boolean
+  checked?: boolean
+  statusCode?: number
+  url?: string
+  path?: string
+  mode?: string
+  reason?: string | null
+  message?: string | null
 }
 
 export type FocusmapDesktopAutomationActionItemResult = {
