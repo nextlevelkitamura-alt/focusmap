@@ -25,6 +25,8 @@ import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { codexMonitorUiLabel } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
+import { useUndoRedo } from "@/hooks/useUndoRedo";
+import { createClient } from "@/utils/supabase/client";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
@@ -194,10 +196,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
     const [kanbanCloseSignal, setKanbanCloseSignal] = useState(0);
     const [codexRepoPathOverride, setCodexRepoPathOverride] = useState<string | null | undefined>(undefined);
+    const [codexImportRepoPathOverride, setCodexImportRepoPathOverride] = useState<string | null | undefined>(undefined);
     const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null);
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false);
-    const [isCodexRepoSaving, setIsCodexRepoSaving] = useState(false);
+    const [hiddenCodexChatImportIds, setHiddenCodexChatImportIds] = useState<Set<string>>(() => new Set());
     const [isCodexChatImportSidebarOpen, setIsCodexChatImportSidebarOpen] = useState(false);
+    const { pushAction: pushUndoableAction } = useUndoRedo();
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -216,81 +220,95 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setKanbanSpaceId(project?.space_id ?? null);
         setKanbanProjectId(project?.id ?? null);
         setCodexRepoPathOverride(undefined);
+        setCodexImportRepoPathOverride(undefined);
         setCodexThreadImportOverride(null);
+        setHiddenCodexChatImportIds(new Set());
         setIsCodexChatImportSidebarOpen(false);
     }, [project?.id, project?.space_id]);
 
     const projectRepoPath = useMemo(() => (
         (codexRepoPathOverride !== undefined ? codexRepoPathOverride ?? '' : project?.repo_path ?? '').trim()
     ), [codexRepoPathOverride, project?.repo_path]);
+    const selectedCodexImportRepoPath = useMemo(() => (
+        (codexImportRepoPathOverride !== undefined ? codexImportRepoPathOverride ?? '' : projectRepoPath).trim()
+    ), [codexImportRepoPathOverride, projectRepoPath]);
     const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project?.codex_thread_import_enabled);
+    const projectsForSelectedImportRepo = useMemo(() => {
+        if (!selectedCodexImportRepoPath) return [];
+        return projects.filter(candidate => (candidate.repo_path ?? '').trim() === selectedCodexImportRepoPath);
+    }, [projects, selectedCodexImportRepoPath]);
+    const selectedRepoImportProjects = useMemo(() => (
+        projectsForSelectedImportRepo.filter(candidate => Boolean(candidate.codex_thread_import_enabled))
+    ), [projectsForSelectedImportRepo]);
+    const selectedRepoImportEnabled = selectedRepoImportProjects.length > 0 ||
+        (projectRepoPath === selectedCodexImportRepoPath && codexThreadImportEnabled);
+    const selectedRepoImportOwnerLabel = selectedRepoImportProjects
+        .map(candidate => candidate.title)
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(' / ') || (selectedRepoImportEnabled ? project.title : null);
 
-    const saveCodexRepoPath = useCallback(async (repoPath: string | null) => {
-        if (!project?.id || isCodexRepoSaving) return;
-        const normalizedRepoPath = repoPath?.trim().replace(/\/+$/, '') || null;
-        const previousRepoPathOverride = codexRepoPathOverride;
+    const patchProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
+        if (onPatchProject) {
+            await onPatchProject(projectId, updates);
+            return;
+        }
+        const res = await fetch(`/api/projects/${projectId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(typeof data.error === 'string' ? data.error : 'Project update failed');
+        }
+    }, [onPatchProject]);
+
+    const selectCodexImportRepoPath = useCallback((repoPath: string | null) => {
+        setCodexImportRepoPathOverride(repoPath?.trim().replace(/\/+$/, '') || null);
+    }, []);
+
+    const toggleSelectedRepoImport = useCallback(async () => {
+        if (!project?.id || !selectedCodexImportRepoPath || isCodexThreadImportSaving) return;
         const previousImportOverride = codexThreadImportOverride;
-        const previousImportEnabled = codexThreadImportEnabled;
-        const currentPersistedRepoPath = (project?.repo_path ?? '').trim() || null;
-
-        setCodexRepoPathOverride(normalizedRepoPath);
-        if (normalizedRepoPath !== currentPersistedRepoPath) {
-            setCodexThreadImportOverride(false);
-        }
-        setIsCodexRepoSaving(true);
-        try {
-            const updates: Partial<Project> = { repo_path: normalizedRepoPath };
-            if (onPatchProject) {
-                await onPatchProject(project.id, updates);
-            } else {
-                const res = await fetch(`/api/projects/${project.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updates),
-                });
-                if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    throw new Error(typeof data.error === 'string' ? data.error : 'Project repo update failed');
-                }
-            }
-        } catch (error) {
-            setCodexRepoPathOverride(previousRepoPathOverride);
-            setCodexThreadImportOverride(previousImportOverride ?? previousImportEnabled);
-            console.error('[MindMap] Failed to save project repo path:', error);
-            throw error;
-        } finally {
-            setIsCodexRepoSaving(false);
-        }
-    }, [codexRepoPathOverride, codexThreadImportEnabled, codexThreadImportOverride, isCodexRepoSaving, onPatchProject, project?.id, project?.repo_path]);
-
-    const toggleCodexThreadImport = useCallback(async () => {
-        if (!project?.id || !projectRepoPath || isCodexThreadImportSaving) return;
-        const nextEnabled = !codexThreadImportEnabled;
-        const previous = codexThreadImportEnabled;
-        setCodexThreadImportOverride(nextEnabled);
+        const previousRepoOverride = codexRepoPathOverride;
         setIsCodexThreadImportSaving(true);
         try {
-            const updates: Partial<Project> = { codex_thread_import_enabled: nextEnabled };
-            if (onPatchProject) {
-                await onPatchProject(project.id, updates);
-            } else {
-                const res = await fetch(`/api/projects/${project.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updates),
-                });
-                if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    throw new Error(typeof data.error === 'string' ? data.error : 'Codex thread import update failed');
-                }
+            if (selectedRepoImportEnabled) {
+                const targets = selectedRepoImportProjects.length > 0
+                    ? selectedRepoImportProjects
+                    : (projectRepoPath === selectedCodexImportRepoPath ? [project] : []);
+                await Promise.all(targets.map(candidate => (
+                    patchProject(candidate.id, { codex_thread_import_enabled: false })
+                )));
+                if (projectRepoPath === selectedCodexImportRepoPath) setCodexThreadImportOverride(false);
+                return;
             }
+
+            await patchProject(project.id, {
+                repo_path: selectedCodexImportRepoPath,
+                codex_thread_import_enabled: true,
+            });
+            setCodexRepoPathOverride(selectedCodexImportRepoPath);
+            setCodexThreadImportOverride(true);
         } catch (error) {
-            setCodexThreadImportOverride(previous);
-            console.error('[MindMap] Failed to toggle Codex thread import:', error);
+            setCodexThreadImportOverride(previousImportOverride);
+            setCodexRepoPathOverride(previousRepoOverride);
+            console.error('[MindMap] Failed to toggle repo-scoped Codex thread import:', error);
         } finally {
             setIsCodexThreadImportSaving(false);
         }
-    }, [codexThreadImportEnabled, isCodexThreadImportSaving, onPatchProject, project?.id, projectRepoPath]);
+    }, [
+        codexRepoPathOverride,
+        codexThreadImportOverride,
+        isCodexThreadImportSaving,
+        patchProject,
+        project,
+        projectRepoPath,
+        selectedCodexImportRepoPath,
+        selectedRepoImportEnabled,
+        selectedRepoImportProjects,
+    ]);
 
     const kanbanProject = useMemo(() => (
         kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
@@ -306,8 +324,24 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         for (const task of kanbanTaskNodes) map.set(task.id, task);
         return Array.from(map.values());
     }, [kanbanTaskNodes, mindMapTaskNodes]);
+    const repoScopedCodexTaskNodes = useMemo(() => {
+        const map = new Map<string, Task>();
+        const source = allTasks.length > 0 ? allTasks : mindMapTaskNodes;
+        for (const task of source) {
+            if (task.deleted_at == null) map.set(task.id, task);
+        }
+        for (const task of mindMapTaskNodes) map.set(task.id, task);
+        return Array.from(map.values());
+    }, [allTasks, mindMapTaskNodes]);
+    const repoScopedTasksById = useMemo(() => new Map(repoScopedCodexTaskNodes.map(task => [task.id, task])), [repoScopedCodexTaskNodes]);
+    const projectTitleById = useMemo(() => new Map(projects.map(candidate => [candidate.id, candidate.title])), [projects]);
     const allTasksByIdForCodex = useMemo(() => new Map(mindMapTaskNodes.map(task => [task.id, task])), [mindMapTaskNodes]);
-    const fallbackSourceTasksByIdForCodex = useMemo(() => new Map(knownCodexTaskNodes.map(task => [task.id, task])), [knownCodexTaskNodes]);
+    const fallbackSourceTasksByIdForCodex = useMemo(() => {
+        const map = new Map<string, Task>();
+        for (const task of repoScopedCodexTaskNodes) map.set(task.id, task);
+        for (const task of knownCodexTaskNodes) map.set(task.id, task);
+        return map;
+    }, [knownCodexTaskNodes, repoScopedCodexTaskNodes]);
     const kanbanSourceTasksById = useMemo(() => new Map(kanbanTaskNodes.map(task => [task.id, task])), [kanbanTaskNodes]);
     const codexSourceTaskIds = useMemo(() => knownCodexTaskNodes.map(task => task.id).filter(Boolean), [knownCodexTaskNodes]);
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture());
@@ -537,26 +571,51 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const codexInboxGroupId = useMemo(() => {
         return groups.find(group => group.source === 'codex_inbox' || group.title === 'Codex Inbox')?.id ?? null;
     }, [groups]);
+    const codexInboxGroupIds = useMemo(() => {
+        const ids = new Set<string>();
+        for (const task of repoScopedCodexTaskNodes) {
+            if (task.deleted_at != null) continue;
+            if (task.source === 'codex_inbox' || task.title === 'Codex Inbox') ids.add(task.id);
+        }
+        if (codexInboxGroupId) ids.add(codexInboxGroupId);
+        return ids;
+    }, [codexInboxGroupId, repoScopedCodexTaskNodes]);
     const codexChatImportItems = useMemo<CodexChatImportItem[]>(() => {
-        return [...groups, ...tasks]
-            .filter(task => task.source === 'codex_app_thread' && task.deleted_at === null)
+        return repoScopedCodexTaskNodes
+            .filter(task => task.source === 'codex_app_thread' && task.deleted_at == null)
+            .filter(task => !hiddenCodexChatImportIds.has(task.id))
+            .filter(task => !selectedCodexImportRepoPath || (task.codex_work_dir ?? '').trim() === selectedCodexImportRepoPath)
+            .filter(task => !!task.parent_task_id && codexInboxGroupIds.has(task.parent_task_id))
             .map(task => {
                 const progressTask = taskProgressByNodeId[task.id];
                 const codexRun = codexRunByNodeId[task.id];
-                const placed = codexInboxGroupId ? task.parent_task_id !== codexInboxGroupId : true;
                 return {
                     id: task.id,
                     title: task.title,
                     snippet: task.memo?.trim() || null,
                     repoPath: task.codex_work_dir?.trim() || null,
-                    placementLabel: placed ? '配置済み' : '未配置',
+                    projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
+                    placementLabel: '未配置',
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
                     updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
-                    placed,
+                    placed: false,
                 };
             })
-            .sort((a, b) => Number(a.placed) - Number(b.placed));
-    }, [codexInboxGroupId, codexRunByNodeId, groups, taskProgressByNodeId, tasks]);
+            .sort((a, b) => {
+                const updatedA = repoScopedTasksById.get(a.id)?.updated_at ?? '';
+                const updatedB = repoScopedTasksById.get(b.id)?.updated_at ?? '';
+                return updatedB.localeCompare(updatedA);
+            });
+    }, [
+        codexInboxGroupIds,
+        codexRunByNodeId,
+        hiddenCodexChatImportIds,
+        projectTitleById,
+        repoScopedCodexTaskNodes,
+        repoScopedTasksById,
+        selectedCodexImportRepoPath,
+        taskProgressByNodeId,
+    ]);
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null;
         return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ?? null;
@@ -1721,6 +1780,139 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         );
     }, [groups, handleCustomMoveTask, isDescendant, onUpdateTask, project?.id, tasks]);
 
+    const handleDropImportedChatNode = useCallback(async ({
+        taskId,
+        targetId,
+        position,
+    }: {
+        taskId: string;
+        targetId: string;
+        position: 'above' | 'below' | 'as-child';
+    }) => {
+        if (!project?.id) return;
+        const importedTask = repoScopedTasksById.get(taskId) ?? getTaskById(taskId);
+        if (!importedTask) return;
+        if (taskId === targetId) return;
+        if (targetId !== 'project-root' && !getTaskById(targetId)) return;
+
+        const parentTaskId = targetId === 'project-root' ? null : targetId;
+        const updates: Partial<Task> = {
+            parent_task_id: parentTaskId,
+            project_id: project.id,
+        };
+
+        setHiddenCodexChatImportIds(prev => {
+            const next = new Set(prev);
+            next.add(taskId);
+            return next;
+        });
+
+        try {
+            if (parentTaskId) {
+                setCollapsedTaskIds(prev => {
+                    if (!prev.has(parentTaskId)) return prev;
+                    const next = new Set(prev);
+                    next.delete(parentTaskId);
+                    return next;
+                });
+            }
+            await updateTaskForCodexScope(taskId, updates);
+            if (position === 'as-child') {
+                applySelection(new Set([taskId]), taskId);
+                focusNodeWithPollingV2(taskId, 300, false);
+            }
+        } catch (error) {
+            setHiddenCodexChatImportIds(prev => {
+                const next = new Set(prev);
+                next.delete(taskId);
+                return next;
+            });
+            console.error('[MindMap] Failed to place imported Codex chat:', error);
+        }
+    }, [
+        applySelection,
+        focusNodeWithPollingV2,
+        getTaskById,
+        project?.id,
+        repoScopedTasksById,
+        updateTaskForCodexScope,
+    ]);
+
+    const handleDeleteCodexChatImportItem = useCallback(async (taskId: string) => {
+        const capturedTask = repoScopedTasksById.get(taskId);
+        if (!capturedTask) return;
+
+        const allRepoTasks = Array.from(repoScopedTasksById.values());
+        const childrenByParent = new Map<string, Task[]>();
+        for (const task of allRepoTasks) {
+            if (!task.parent_task_id) continue;
+            const children = childrenByParent.get(task.parent_task_id) ?? [];
+            children.push(task);
+            childrenByParent.set(task.parent_task_id, children);
+        }
+        const descendants: Task[] = [];
+        const collect = (parentId: string) => {
+            for (const child of childrenByParent.get(parentId) ?? []) {
+                descendants.push(child);
+                collect(child.id);
+            }
+        };
+        collect(taskId);
+        const capturedTasks = [capturedTask, ...descendants];
+
+        setHiddenCodexChatImportIds(prev => {
+            const next = new Set(prev);
+            for (const task of capturedTasks) next.add(task.id);
+            return next;
+        });
+
+        try {
+            const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+            if (!response.ok && response.status !== 404) {
+                throw new Error(`DELETE /api/tasks/${taskId} failed: ${response.status}`);
+            }
+        } catch (error) {
+            setHiddenCodexChatImportIds(prev => {
+                const next = new Set(prev);
+                for (const task of capturedTasks) next.delete(task.id);
+                return next;
+            });
+            console.error('[MindMap] Failed to delete imported Codex chat:', error);
+            return;
+        }
+
+        pushUndoableAction({
+            description: `「${capturedTask.title}」を削除`,
+            toast: {
+                message: 'チャットを削除しました。',
+                actionLabel: '元に戻す',
+                duration: 5000,
+            },
+            undo: async () => {
+                setHiddenCodexChatImportIds(prev => {
+                    const next = new Set(prev);
+                    for (const task of capturedTasks) next.delete(task.id);
+                    return next;
+                });
+                const restoredTasks = capturedTasks.map(task => ({ ...task, google_event_id: null }));
+                const supabase = createClient();
+                const { error } = await supabase.from('tasks').upsert(restoredTasks);
+                if (error) throw error;
+            },
+            redo: async () => {
+                setHiddenCodexChatImportIds(prev => {
+                    const next = new Set(prev);
+                    for (const task of capturedTasks) next.add(task.id);
+                    return next;
+                });
+                const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+                if (!response.ok && response.status !== 404) {
+                    throw new Error(`DELETE /api/tasks/${taskId} failed: ${response.status}`);
+                }
+            },
+        });
+    }, [pushUndoableAction, repoScopedTasksById]);
+
     const handleCustomDuplicateTasks = useCallback(async ({
         taskIds,
         targetId,
@@ -1757,30 +1949,31 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             onPasteCapture={handleContainerPasteCapture}
         >
             {/* Map toolbar buttons (Top Right) */}
-            <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="relative h-7 w-7 text-muted-foreground/70 transition-colors hover:bg-muted/50 hover:text-muted-foreground"
-                    onClick={() => setIsCodexChatImportSidebarOpen(open => !open)}
-                    aria-label="チャット取り込み"
-                    aria-pressed={isCodexChatImportSidebarOpen}
-                    title="チャット取り込み"
-                >
-                    <Bot className="h-4 w-4" />
-                    <span
-                        className={[
-                            "absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-1 ring-background",
-                            codexThreadImportEnabled && projectRepoPath ? "bg-emerald-500" : projectRepoPath ? "bg-muted-foreground/45" : "bg-amber-500",
-                        ].join(" ")}
+            {!isCodexChatImportSidebarOpen && (
+                <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="relative h-7 w-7 text-muted-foreground/70 transition-colors hover:bg-muted/50 hover:text-muted-foreground"
+                        onClick={() => setIsCodexChatImportSidebarOpen(true)}
+                        aria-label="チャット取り込み"
+                        title="チャット取り込み"
+                    >
+                        <Bot className="h-4 w-4" />
+                        <span
+                            className={[
+                                "absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+                                selectedRepoImportEnabled && selectedCodexImportRepoPath ? "bg-emerald-500" : selectedCodexImportRepoPath ? "bg-muted-foreground/45" : "bg-amber-500",
+                            ].join(" ")}
+                        />
+                    </Button>
+                    <MindMapDisplaySettingsPopover
+                        value={displaySettings}
+                        onChange={setDisplaySettings}
                     />
-                </Button>
-                <MindMapDisplaySettingsPopover
-                    value={displaySettings}
-                    onChange={setDisplaySettings}
-                />
-            </div>
+                </div>
+            )}
 
             <div className="flex h-full min-h-0 flex-col">
                 <div className="relative min-h-0 flex-1" onPointerDownCapture={closeKanbanFromMapInteraction}>
@@ -1816,29 +2009,30 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         generatingHeadingNodeIds={generatingHeadingNodeIds}
                         onRunCodex={handleRunCodex}
                         codexRunByNodeId={codexRunByNodeId}
-                        codexThreadImportEnabled={codexThreadImportEnabled}
-                        codexThreadImportAvailable={!!projectRepoPath}
+                        codexThreadImportEnabled={selectedRepoImportEnabled}
+                        codexThreadImportAvailable={!!selectedCodexImportRepoPath}
                         codexThreadImportPending={isCodexThreadImportSaving}
-                        codexThreadImportRepoPath={projectRepoPath || null}
+                        codexThreadImportRepoPath={selectedCodexImportRepoPath || null}
                         taskProgressByNodeId={taskProgressByNodeId}
                         onOpenTaskProgress={handleOpenTaskProgress}
                         onMoveTask={handleCustomMoveTask}
                         onMoveTasks={handleCustomMoveTasks}
                         onDuplicateTasks={handleCustomDuplicateTasks}
-                        onDropImportedChatNode={handleCustomMoveTask}
+                        onDropImportedChatNode={handleDropImportedChatNode}
                     />
                     {isCodexChatImportSidebarOpen && (
-                        <div className="absolute bottom-3 right-3 top-12 z-40">
+                        <div className="absolute inset-y-0 right-0 z-40 flex">
                             <CodexChatImportSidebar
                                 projectTitle={project?.title ?? 'Project'}
-                                repoPath={projectRepoPath || null}
-                                importEnabled={codexThreadImportEnabled}
+                                selectedRepoPath={selectedCodexImportRepoPath || null}
+                                importEnabled={selectedRepoImportEnabled}
+                                importOwnerLabel={selectedRepoImportOwnerLabel}
                                 importPending={isCodexThreadImportSaving}
-                                repoSaving={isCodexRepoSaving}
                                 chatItems={codexChatImportItems}
                                 onClose={() => setIsCodexChatImportSidebarOpen(false)}
-                                onSaveRepoPath={saveCodexRepoPath}
-                                onToggleImport={toggleCodexThreadImport}
+                                onSelectRepoPath={selectCodexImportRepoPath}
+                                onToggleImport={toggleSelectedRepoImport}
+                                onDeleteChatItem={handleDeleteCodexChatImportItem}
                             />
                         </div>
                     )}

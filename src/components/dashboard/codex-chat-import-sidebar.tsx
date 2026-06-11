@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Bot, Check, FolderGit2, FolderOpen, Loader2, RefreshCw, Search, X } from "lucide-react"
+import { Check, FolderGit2, FolderOpen, Loader2, RefreshCw, Search, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -17,6 +17,7 @@ export type CodexChatImportItem = {
   title: string
   snippet: string | null
   repoPath: string | null
+  projectTitle: string | null
   placementLabel: string
   statusLabel: string | null
   updatedLabel: string | null
@@ -25,14 +26,15 @@ export type CodexChatImportItem = {
 
 type CodexChatImportSidebarProps = {
   projectTitle: string
-  repoPath: string | null
+  selectedRepoPath: string | null
   importEnabled: boolean
+  importOwnerLabel?: string | null
   importPending?: boolean
-  repoSaving?: boolean
   chatItems: CodexChatImportItem[]
   onClose: () => void
-  onSaveRepoPath: (repoPath: string | null) => Promise<void> | void
+  onSelectRepoPath: (repoPath: string | null) => Promise<void> | void
   onToggleImport: () => Promise<void> | void
+  onDeleteChatItem?: (taskId: string) => Promise<void> | void
 }
 
 type DesktopFolderPickerResult = {
@@ -46,8 +48,20 @@ type FocusmapDesktopFolderBridge = {
   chooseFolder?: () => Promise<DesktopFolderPickerResult>
 }
 
+type ChatDetailState = {
+  loading: boolean
+  text: string | null
+  error: string | null
+}
+
 function normalizeRepoPath(value: string) {
   return value.trim().replace(/\/+$/, "")
+}
+
+function repoNameFromPath(value: string | null | undefined) {
+  const normalized = normalizeRepoPath(value ?? "")
+  if (!normalized) return "未選択"
+  return normalized.split("/").filter(Boolean).at(-1) ?? normalized
 }
 
 function focusmapDesktopFolderBridge() {
@@ -65,37 +79,44 @@ function canUseServerFolderPicker() {
     hostname.endsWith(".trycloudflare.com")
 }
 
+function readTaskDetailText(data: unknown, fallback: string | null) {
+  const task = (data as { task?: { memo?: unknown; title?: unknown } } | null)?.task
+  const memo = typeof task?.memo === "string" ? task.memo.trim() : ""
+  if (memo) return memo
+  const title = typeof task?.title === "string" ? task.title.trim() : ""
+  if (title) return title
+  return fallback?.trim() || "詳細はありません"
+}
+
 export function CodexChatImportSidebar({
   projectTitle,
-  repoPath,
+  selectedRepoPath,
   importEnabled,
+  importOwnerLabel = null,
   importPending = false,
-  repoSaving = false,
   chatItems,
   onClose,
-  onSaveRepoPath,
+  onSelectRepoPath,
   onToggleImport,
+  onDeleteChatItem,
 }: CodexChatImportSidebarProps) {
-  const [draftRepoPath, setDraftRepoPath] = React.useState(repoPath ?? "")
   const [pickerPending, setPickerPending] = React.useState(false)
+  const [repoPickerOpen, setRepoPickerOpen] = React.useState(false)
   const [repoError, setRepoError] = React.useState<string | null>(null)
   const [query, setQuery] = React.useState("")
+  const [expandedChatId, setExpandedChatId] = React.useState<string | null>(null)
+  const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const { repos, isLoading, error: reposError, refresh, requestRescan } = useAvailableRepos()
 
-  React.useEffect(() => {
-    setDraftRepoPath(repoPath ?? "")
-  }, [repoPath])
-
-  const currentRepoPath = normalizeRepoPath(repoPath ?? "")
-  const draftNormalized = normalizeRepoPath(draftRepoPath)
+  const currentRepoPath = normalizeRepoPath(selectedRepoPath ?? "")
   const hasRepoPath = currentRepoPath.length > 0
-  const isBusy = importPending || repoSaving || pickerPending
-  const hasDraftChanges = draftNormalized !== currentRepoPath
+  const isBusy = importPending || pickerPending
+  const currentRepoLabel = repos.find(repo => repo.absolute_path === currentRepoPath)?.display_name || repoNameFromPath(currentRepoPath)
   const normalizedQuery = query.trim().toLowerCase()
   const filteredChatItems = React.useMemo(() => {
     if (!normalizedQuery) return chatItems
     return chatItems.filter(item => {
-      const haystack = [item.title, item.snippet, item.repoPath, item.placementLabel, item.statusLabel]
+      const haystack = [item.title, item.snippet, item.repoPath, item.projectTitle, item.placementLabel, item.statusLabel]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -103,16 +124,16 @@ export function CodexChatImportSidebar({
     })
   }, [chatItems, normalizedQuery])
 
-  const saveRepoPath = React.useCallback(async (nextRepoPath: string | null) => {
+  const selectRepoPath = React.useCallback(async (nextRepoPath: string | null) => {
     const normalized = nextRepoPath ? normalizeRepoPath(nextRepoPath) : ""
     setRepoError(null)
     try {
-      await onSaveRepoPath(normalized || null)
-      setDraftRepoPath(normalized)
+      await onSelectRepoPath(normalized || null)
+      setRepoPickerOpen(false)
     } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "リポフォルダを保存できませんでした")
+      setRepoError(error instanceof Error ? error.message : "対象リポを選択できませんでした")
     }
-  }, [onSaveRepoPath])
+  }, [onSelectRepoPath])
 
   const chooseFolder = React.useCallback(async () => {
     setPickerPending(true)
@@ -127,13 +148,12 @@ export function CodexChatImportSidebar({
           return
         }
         const normalized = normalizeRepoPath(data.path)
-        setDraftRepoPath(normalized)
-        await saveRepoPath(normalized || null)
+        await selectRepoPath(normalized || null)
         return
       }
 
       if (!canUseServerFolderPicker()) {
-        setRepoError("Finder選択はMacアプリ更新後に利用できます。候補または手入力で保存してください")
+        setRepoError("Finder選択はMacアプリ更新後に利用できます。候補から選択してください")
         return
       }
 
@@ -145,19 +165,18 @@ export function CodexChatImportSidebar({
       }
       if (typeof data?.path === "string") {
         const normalized = normalizeRepoPath(data.path)
-        setDraftRepoPath(normalized)
-        await saveRepoPath(normalized || null)
+        await selectRepoPath(normalized || null)
       }
     } catch (error) {
       setRepoError(error instanceof Error ? error.message : "Finderを開けませんでした")
     } finally {
       setPickerPending(false)
     }
-  }, [saveRepoPath])
+  }, [selectRepoPath])
 
   const handleToggleImport = React.useCallback(async () => {
     if (!hasRepoPath || isBusy) {
-      if (!hasRepoPath) setRepoError("リポフォルダを保存してからONにできます")
+      if (!hasRepoPath) setRepoError("対象リポを選択してからONにできます")
       return
     }
     setRepoError(null)
@@ -178,104 +197,101 @@ export function CodexChatImportSidebar({
     }
   }, [refresh, requestRescan])
 
+  const handleChatItemClick = React.useCallback((item: CodexChatImportItem) => {
+    const willOpen = expandedChatId !== item.id
+    setExpandedChatId(willOpen ? item.id : null)
+    if (!willOpen) return
+
+    const currentDetail = chatDetailsById[item.id]
+    if (currentDetail?.loading || currentDetail?.text || currentDetail?.error) return
+
+    setChatDetailsById(prev => ({
+      ...prev,
+      [item.id]: { loading: true, text: null, error: null },
+    }))
+
+    void fetch(`/api/tasks/${encodeURIComponent(item.id)}`)
+      .then(async res => {
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || (data as { success?: boolean })?.success === false) {
+          const message = (data as { error?: { message?: string } })?.error?.message || "チャット詳細を取得できませんでした"
+          throw new Error(message)
+        }
+        setChatDetailsById(prev => ({
+          ...prev,
+          [item.id]: {
+            loading: false,
+            text: readTaskDetailText(data, item.snippet),
+            error: null,
+          },
+        }))
+      })
+      .catch(error => {
+        setChatDetailsById(prev => ({
+          ...prev,
+          [item.id]: {
+            loading: false,
+            text: null,
+            error: error instanceof Error ? error.message : "チャット詳細を取得できませんでした",
+          },
+        }))
+      })
+  }, [chatDetailsById, expandedChatId])
+
   return (
     <aside
-      className="flex h-full w-[340px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-lg border bg-background/95 shadow-2xl backdrop-blur"
+      className="flex h-full w-[340px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden border border-y-0 border-r-0 bg-background/95 shadow-2xl backdrop-blur"
       aria-label="チャット取り込み"
+      title={projectTitle}
     >
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Bot className="h-4 w-4 text-sky-500" />
-            チャット取り込み
+      <div className="space-y-2 border-b p-2.5">
+        <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="shrink-0 text-xs font-medium">リポ監視</span>
+            <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={hasRepoPath ? currentRepoPath : undefined}>
+              {hasRepoPath ? currentRepoLabel : "リポ未選択"}
+            </span>
+            {hasRepoPath && importOwnerLabel && (
+              <span className="max-w-[96px] shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={importOwnerLabel}>
+                監視: {importOwnerLabel}
+              </span>
+            )}
           </div>
-          <div className="truncate text-[11px] text-muted-foreground" title={projectTitle}>
-            {projectTitle}
-          </div>
+          <Switch
+            checked={importEnabled && hasRepoPath}
+            onCheckedChange={() => void handleToggleImport()}
+            disabled={!hasRepoPath || isBusy}
+            aria-label="リポ監視"
+            className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            aria-label="チャット取り込みを閉じる"
+            title="閉じる"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
-        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="チャット取り込みを閉じる">
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
 
-      <div className="space-y-3 border-b p-3">
-        <div className="rounded-lg border bg-muted/25 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">リポ監視</div>
-              <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                {hasRepoPath ? currentRepoPath : "リポフォルダ未設定"}
-              </div>
-            </div>
-            <Switch
-              checked={importEnabled && hasRepoPath}
-              onCheckedChange={() => void handleToggleImport()}
-              disabled={!hasRepoPath || isBusy}
-              aria-label="リポ監視"
-              className="h-7 w-12 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-6 [&>span]:w-6 [&>span[data-state=checked]]:translate-x-5"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-medium">リポフォルダ</div>
+        <div className="relative">
+          <div className="flex items-center gap-1.5">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={handleRefreshRepos}
+              className="h-8 px-2"
+              onClick={() => setRepoPickerOpen(open => !open)}
               disabled={isBusy}
+              aria-expanded={repoPickerOpen}
+              aria-controls="codex-repo-picker"
             >
-              <RefreshCw className={cn("mr-1 h-3 w-3", isLoading && "animate-spin")} />
-              更新
+              <FolderGit2 className="h-3.5 w-3.5" />
+              <span className="ml-1.5 text-xs">既存リポ選択</span>
             </Button>
-          </div>
-
-          {repos.length > 0 && (
-            <div className="max-h-32 space-y-1 overflow-auto rounded-lg border bg-muted/20 p-1">
-              {repos.slice(0, 5).map(repo => {
-                const selected = currentRepoPath === repo.absolute_path
-                return (
-                  <button
-                    key={repo.id}
-                    type="button"
-                    aria-label={`リポフォルダを選択 ${repo.display_name || repo.absolute_path}`}
-                    className={cn(
-                      "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-background",
-                      selected && "bg-background",
-                    )}
-                    onClick={() => void saveRepoPath(repo.absolute_path)}
-                    disabled={repoSaving}
-                    title={repo.absolute_path}
-                  >
-                    <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-xs font-medium">{repo.display_name || repo.absolute_path}</span>
-                      <span className="truncate font-mono text-[10px] text-muted-foreground">{repo.absolute_path}</span>
-                    </span>
-                    {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
-          <div className="flex items-center gap-1.5">
-            <Input
-              value={draftRepoPath}
-              onChange={event => setDraftRepoPath(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === "Enter" && (draftNormalized || currentRepoPath)) {
-                  event.preventDefault()
-                  void saveRepoPath(draftNormalized || null)
-                }
-              }}
-              placeholder="/Users/you/project"
-              className="h-8 font-mono text-xs"
-              aria-label="プロジェクトのリポフォルダ"
-            />
             <Button
               type="button"
               variant="outline"
@@ -287,19 +303,19 @@ export function CodexChatImportSidebar({
               title="Finderでリポフォルダを選択"
             >
               {pickerPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
+              <span className="ml-1.5 text-xs">Finder</span>
             </Button>
-          </div>
-
-          <div className="flex items-center gap-1.5">
             <Button
               type="button"
-              size="sm"
-              className="h-7 px-3 text-xs"
-              onClick={() => void saveRepoPath(draftNormalized || null)}
-              disabled={repoSaving || !hasDraftChanges}
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleRefreshRepos}
+              disabled={isBusy}
+              aria-label="リポ候補を更新"
+              title="リポ候補を更新"
             >
-              {repoSaving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-              保存
+              <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
             </Button>
             {currentRepoPath && (
               <Button
@@ -307,13 +323,51 @@ export function CodexChatImportSidebar({
                 variant="ghost"
                 size="sm"
                 className="h-7 px-2 text-xs text-muted-foreground"
-                onClick={() => void saveRepoPath(null)}
-                disabled={repoSaving}
+                onClick={() => void selectRepoPath(null)}
+                disabled={isBusy}
               >
-                解除
+                選択解除
               </Button>
             )}
           </div>
+
+          {repoPickerOpen && (
+            <div
+              id="codex-repo-picker"
+              className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover p-1 shadow-xl"
+            >
+              {repos.length === 0 ? (
+                <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                  リポ候補がありません
+                </div>
+              ) : (
+                repos.slice(0, 8).map(repo => {
+                  const selected = currentRepoPath === repo.absolute_path
+                  return (
+                    <button
+                      key={repo.id}
+                      type="button"
+                      aria-label={`対象リポを選択 ${repo.display_name || repoNameFromPath(repo.absolute_path)}`}
+                      className={cn(
+                        "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
+                        selected && "bg-muted",
+                      )}
+                      onClick={() => void selectRepoPath(repo.absolute_path)}
+                      disabled={isBusy}
+                      title={repo.absolute_path}
+                    >
+                      <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        {repo.display_name || repoNameFromPath(repo.absolute_path)}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">agent</span>
+                      {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          )}
         </div>
 
         {(repoError || reposError) && (
@@ -340,30 +394,56 @@ export function CodexChatImportSidebar({
         <div className="min-h-0 flex-1 overflow-auto p-2">
           {filteredChatItems.length === 0 ? (
             <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-              取り込み済みチャットはまだありません
+              未配置チャットはありません
             </div>
           ) : (
             <div className="space-y-1.5">
               {filteredChatItems.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  draggable
-                  className="group flex w-full cursor-grab flex-col gap-1 rounded-lg border bg-card/80 px-2.5 py-2 text-left shadow-sm transition-colors hover:border-sky-400/60 hover:bg-card active:cursor-grabbing"
-                  data-testid={`codex-chat-import-row-${item.id}`}
-                  onDragStart={event => {
-                    event.dataTransfer.effectAllowed = "move"
-                    event.dataTransfer.setData(
-                      CODEX_CHAT_IMPORT_DRAG_TYPE,
-                      encodeCodexChatImportDragPayload({ taskId: item.id }),
-                    )
-                    event.dataTransfer.setData("text/plain", item.title)
-                  }}
-                  title={item.snippet ?? item.title}
-                >
+                <div key={item.id}>
+                  <div
+                    draggable
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={expandedChatId === item.id}
+                    className="group flex w-full cursor-grab flex-col gap-1 rounded-lg border bg-card/80 px-2.5 py-2 text-left shadow-sm transition-colors hover:border-sky-400/60 hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+                    data-testid={`codex-chat-import-row-${item.id}`}
+                    onClick={() => handleChatItemClick(item)}
+                    onKeyDown={event => {
+                      if (event.key !== "Enter" && event.key !== " ") return
+                      event.preventDefault()
+                      handleChatItemClick(item)
+                    }}
+                    onDragStart={event => {
+                      event.dataTransfer.effectAllowed = "move"
+                      event.dataTransfer.setData(
+                        CODEX_CHAT_IMPORT_DRAG_TYPE,
+                        encodeCodexChatImportDragPayload({ taskId: item.id }),
+                      )
+                      event.dataTransfer.setData("text/plain", item.title)
+                    }}
+                    title={item.snippet ?? item.title}
+                  >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1 truncate text-xs font-semibold">{item.title}</div>
-                    {item.updatedLabel && <span className="shrink-0 text-[10px] text-muted-foreground">{item.updatedLabel}</span>}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {item.updatedLabel && <span className="text-[10px] text-muted-foreground">{item.updatedLabel}</span>}
+                      {onDeleteChatItem && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                          aria-label={`チャットを削除 ${item.title}`}
+                          onClick={event => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            void onDeleteChatItem(item.id)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   {item.snippet && (
                     <div className="line-clamp-2 text-[11px] leading-snug text-muted-foreground">
@@ -382,13 +462,30 @@ export function CodexChatImportSidebar({
                         {item.statusLabel}
                       </span>
                     )}
-                    {item.repoPath && (
-                      <span className="min-w-0 truncate rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        {item.repoPath}
+                    {item.projectTitle && (
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {item.projectTitle}
                       </span>
                     )}
                   </div>
-                </button>
+                    {expandedChatId === item.id && (
+                      <div className="mt-1 rounded-md border bg-muted/25 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                        {chatDetailsById[item.id]?.loading ? (
+                          <div className="flex items-center gap-1.5">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            詳細を取得中
+                          </div>
+                        ) : chatDetailsById[item.id]?.error ? (
+                          <div className="text-destructive">{chatDetailsById[item.id]?.error}</div>
+                        ) : (
+                          <div className="max-h-32 overflow-auto whitespace-pre-wrap">
+                            {chatDetailsById[item.id]?.text ?? item.snippet ?? "詳細はありません"}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
           )}

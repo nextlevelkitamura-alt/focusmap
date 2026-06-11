@@ -656,6 +656,7 @@ export function useMindMapSync({
             deleted_at: null,
             google_event_fingerprint: null,
             node_width: null,
+            mindmap_collapsed: false,
         }
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask)
@@ -1008,6 +1009,7 @@ export function useMindMapSync({
             deleted_at: null,
             google_event_fingerprint: null,
             node_width: null,
+            mindmap_collapsed: false,
         };
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask);
@@ -1139,7 +1141,14 @@ export function useMindMapSync({
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(updatesWithStage),
                     })
-                    if (!response.ok) console.error('[Sync] updateTask direct API error:', await response.text())
+                    if (!response.ok) {
+                        console.error('[Sync] updateTask direct API error:', await response.text())
+                        return
+                    }
+                    const data = await response.json().catch(() => null) as { task?: Task } | null
+                    if (data?.task?.project_id === projectIdRef.current) {
+                        applyRealtimeTask(data.task)
+                    }
                 } catch (e) {
                     console.error('[Sync] updateTask direct API failed:', e)
                 }
@@ -1352,7 +1361,7 @@ export function useMindMapSync({
                 }
             },
         })
-    }, [pushAction, onSyncError, enqueueTaskSave])
+    }, [applyRealtimeTask, pushAction, onSyncError, enqueueTaskSave])
 
     const deleteTask = useCallback(async (taskId: string) => {
         const currentAll = allTasksRef.current;

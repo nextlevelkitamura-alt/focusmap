@@ -15,8 +15,24 @@ vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
 }))
 
 vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
-  CodexChatImportSidebar: ({ onClose }: { onClose: () => void }) => (
+  CodexChatImportSidebar: ({
+    chatItems,
+    onClose,
+    onDeleteChatItem,
+  }: {
+    chatItems?: Array<{ id: string; title: string }>
+    onClose: () => void
+    onDeleteChatItem?: (taskId: string) => void
+  }) => (
     <aside aria-label="チャット取り込み">
+      {chatItems?.map(item => (
+        <div key={item.id}>
+          <span>{item.title}</span>
+          <button type="button" onClick={() => onDeleteChatItem?.(item.id)}>
+            delete {item.title}
+          </button>
+        </div>
+      ))}
       <button type="button" onClick={onClose}>閉じる</button>
     </aside>
   ),
@@ -52,9 +68,11 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
   CustomMindMapView: ({
     onSelectNode,
     onGenerateHeadingFromLongNode,
+    onDropImportedChatNode,
   }: {
     onSelectNode: (nodeId: string) => void
     onGenerateHeadingFromLongNode?: (nodeId: string) => void
+    onDropImportedChatNode?: (payload: { taskId: string; targetId: string; position: "as-child" }) => void
   }) => (
     <>
       <button type="button" onClick={() => onSelectNode("root-1")}>
@@ -62,6 +80,12 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
       </button>
       <button type="button" onClick={() => onGenerateHeadingFromLongNode?.("root-1")}>
         長いノードの見出し生成
+      </button>
+      <button
+        type="button"
+        onClick={() => onDropImportedChatNode?.({ taskId: "chat-node-1", targetId: "root-1", position: "as-child" })}
+      >
+        取り込みチャットを配置
       </button>
     </>
   ),
@@ -87,6 +111,8 @@ import type { Project, Task } from "@/types/database"
 const project = {
   id: "project-1",
   title: "Project",
+  repo_path: "/Users/me/focusmap",
+  codex_thread_import_enabled: true,
 } as Project
 
 const task = {
@@ -134,6 +160,65 @@ describe("MindMap controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "MindMap表示設定" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
+
+    expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "チャット取り込み" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
+  })
+
+  test("shows repo-scoped unplaced chats from another project and moves them into the current map", async () => {
+    const onKanbanUpdateTask = vi.fn().mockResolvedValue(undefined)
+    const otherProject = {
+      id: "project-2",
+      title: "仕事",
+      repo_path: "/Users/me/focusmap",
+      codex_thread_import_enabled: true,
+    } as Project
+    const inboxGroup = {
+      ...task,
+      id: "inbox-1",
+      title: "Codex Inbox",
+      project_id: "project-2",
+      source: "codex_inbox",
+    } as Task
+    const importedChat = {
+      ...task,
+      id: "chat-node-1",
+      title: "SNS運用の相談",
+      project_id: "project-2",
+      parent_task_id: "inbox-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      deleted_at: null,
+      updated_at: "2026-06-11T00:00:00.000Z",
+    } as Task
+
+    render(
+      <MindMap
+        project={project}
+        projects={[project, otherProject]}
+        groups={[task]}
+        tasks={[]}
+        allTasks={[task, inboxGroup, importedChat]}
+        onKanbanUpdateTask={onKanbanUpdateTask}
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
+    expect(screen.getByText("SNS運用の相談")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "取り込みチャットを配置" }))
+
+    await waitFor(() => {
+      expect(onKanbanUpdateTask).toHaveBeenCalledWith("chat-node-1", {
+        parent_task_id: "root-1",
+        project_id: "project-1",
+      })
+    })
   })
 
   test("turns a long node title into memo detail and saves the generated heading", async () => {

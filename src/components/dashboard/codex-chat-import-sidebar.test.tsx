@@ -31,6 +31,7 @@ const chatItems: CodexChatImportItem[] = [
     title: "Codexスレッド連携UI",
     snippet: "右側サイドバーにチャット一覧を表示する",
     repoPath: "/Users/me/focusmap",
+    projectTitle: "仕事",
     placementLabel: "未配置",
     statusLabel: "確認待ち",
     updatedLabel: "3時間",
@@ -39,23 +40,26 @@ const chatItems: CodexChatImportItem[] = [
 ]
 
 function renderSidebar() {
-  const onSaveRepoPath = vi.fn().mockResolvedValue(undefined)
+  const onSelectRepoPath = vi.fn().mockResolvedValue(undefined)
   const onToggleImport = vi.fn().mockResolvedValue(undefined)
+  const onDeleteChatItem = vi.fn().mockResolvedValue(undefined)
   const onClose = vi.fn()
 
   render(
     <CodexChatImportSidebar
       projectTitle="仕事"
-      repoPath="/Users/me/focusmap"
+      selectedRepoPath="/Users/me/focusmap"
       importEnabled
+      importOwnerLabel="仕事"
       chatItems={chatItems}
       onClose={onClose}
-      onSaveRepoPath={onSaveRepoPath}
+      onSelectRepoPath={onSelectRepoPath}
       onToggleImport={onToggleImport}
+      onDeleteChatItem={onDeleteChatItem}
     />,
   )
 
-  return { onSaveRepoPath, onToggleImport, onClose }
+  return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onClose }
 }
 
 beforeEach(() => {
@@ -68,28 +72,61 @@ afterEach(() => {
 })
 
 describe("CodexChatImportSidebar", () => {
-  test("renders chat import wording, repo monitor switch, and project chats", () => {
+  test("renders chat import wording, repo monitor switch, selected repo, and unplaced chats", () => {
     renderSidebar()
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByRole("switch", { name: "リポ監視" })).toBeChecked()
-    expect(screen.getByText("リポフォルダ")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /既存リポ選択/ })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "対象リポを選択 focusmap" })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
     expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
   })
 
-  test("saves a repo selected from Focusmap agent repo candidates", async () => {
-    const { onSaveRepoPath } = renderSidebar()
+  test("selects a repo from Focusmap agent repo candidates", async () => {
+    const { onSelectRepoPath } = renderSidebar()
 
-    fireEvent.click(screen.getByRole("button", { name: "リポフォルダを選択 focusmap" }))
+    fireEvent.click(screen.getByRole("button", { name: /既存リポ選択/ }))
+    fireEvent.click(screen.getByRole("button", { name: "対象リポを選択 focusmap" }))
 
     await waitFor(() => {
-      expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/focusmap")
+      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/focusmap")
     })
   })
 
-  test("saves a repo folder picked from Finder immediately", async () => {
-    const { onSaveRepoPath } = renderSidebar()
+  test("fetches chat detail only when a chat row is opened", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        task: {
+          title: "Codexスレッド連携UI",
+          memo: "取得したチャット詳細\n2行目",
+        },
+      }),
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
+
+    await waitFor(() => {
+      expect(screen.getByText("取得したチャット詳細", { exact: false })).toBeInTheDocument()
+    })
+    expect(fetchMock).toHaveBeenCalledWith("/api/tasks/chat-node-1")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("selects a repo folder picked from Finder immediately", async () => {
+    const { onSelectRepoPath } = renderSidebar()
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ path: "/Users/me/new-repo/" }),
@@ -98,12 +135,12 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Finderでリポフォルダを選択" }))
 
     await waitFor(() => {
-      expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/new-repo")
+      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/new-repo")
     })
   })
 
   test("uses the Focusmap Mac app folder picker before falling back to the server API", async () => {
-    const { onSaveRepoPath } = renderSidebar()
+    const { onSelectRepoPath } = renderSidebar()
     const chooseFolder = vi.fn().mockResolvedValue({
       ok: true,
       path: "/Users/me/mac-picked-repo/",
@@ -118,7 +155,7 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Finderでリポフォルダを選択" }))
 
     await waitFor(() => {
-      expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/mac-picked-repo")
+      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/mac-picked-repo")
     })
     expect(chooseFolder).toHaveBeenCalledTimes(1)
     expect(fetchMock).not.toHaveBeenCalled()
@@ -136,5 +173,15 @@ describe("CodexChatImportSidebar", () => {
 
     expect(dataTransfer.setData).toHaveBeenCalledWith(CODEX_CHAT_IMPORT_DRAG_TYPE, expect.any(String))
     expect(JSON.parse(data.get(CODEX_CHAT_IMPORT_DRAG_TYPE) ?? "{}")).toEqual({ taskId: "chat-node-1" })
+  })
+
+  test("deletes a chat row from the repo inbox", async () => {
+    const { onDeleteChatItem } = renderSidebar()
+
+    fireEvent.click(screen.getByRole("button", { name: "チャットを削除 Codexスレッド連携UI" }))
+
+    await waitFor(() => {
+      expect(onDeleteChatItem).toHaveBeenCalledWith("chat-node-1")
+    })
   })
 })
