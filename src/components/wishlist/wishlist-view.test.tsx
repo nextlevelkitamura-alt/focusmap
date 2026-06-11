@@ -666,6 +666,7 @@ describe('WishlistView calendar D&D', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'メモにメモを追加' }))
     await screen.findByText('メモを追加')
+    expect(screen.queryByRole('button', { name: /クリップボードから貼り付け/ })).not.toBeInTheDocument()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
     const imageFile = new File(['image'], 'memo.png', { type: 'image/png' })
@@ -823,5 +824,98 @@ describe('WishlistView calendar D&D', () => {
       })
       expect(createBody).not.toHaveProperty('display_order')
     })
+  })
+
+  test('スマホ表示では完了カラムからの追加先をメモに戻す', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist' && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}')
+        return jsonResponse({ item: createMemoItem({ id: 'created-memo', title: body.title, ...body }) }, { status: 201 })
+      }
+      if (url === '/api/wishlist') return jsonResponse({ items: [] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView />)
+
+    await screen.findByRole('button', { name: '完了0' })
+    fireEvent.click(screen.getByRole('button', { name: '完了0' }))
+    fireEvent.change(screen.getByPlaceholderText('話した内容やメモを入力'), {
+      target: { value: '完了表示から追加' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'メモを追加' }))
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([input, init]) =>
+        requestUrl(input) === '/api/wishlist' && init?.method === 'POST',
+      )
+      expect(createCall).toBeDefined()
+      const createBody = JSON.parse(createCall?.[1]?.body as string)
+      expect(createBody).toMatchObject({
+        title: '完了表示から追加',
+        memo_status: 'unsorted',
+        is_today: false,
+        is_completed: false,
+      })
+    })
+  })
+
+  test('スマホ表示ではAI生成後に保存前の詳細シートを開く', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>(async input => {
+      const url = requestUrl(input)
+      if (url === '/api/ai-ingest') {
+        return jsonResponse({
+          suggestion: {
+            title: '商談内容の整理',
+            description: 'AI summary should not replace original',
+            tags: [],
+            time_candidates: [],
+            subtask_suggestions: [],
+          },
+        })
+      }
+      if (url === '/api/wishlist') return jsonResponse({ items: [] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView />)
+
+    await screen.findByPlaceholderText('話した内容やメモを入力')
+    fireEvent.change(screen.getByPlaceholderText('話した内容やメモを入力'), {
+      target: { value: '商談で話した内容を整理したい' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'AIで整理して生成' }))
+
+    expect(await screen.findByTestId('memo-detail')).toHaveTextContent('商談内容の整理')
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      requestUrl(input) === '/api/wishlist' && init?.method === 'POST',
+    )).toBe(false)
   })
 })

@@ -215,13 +215,14 @@ describe('WishlistCardDetail', () => {
 
   test('スマホ表示ではモック型の下部編集シートを表示する', async () => {
     vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
+    const onUpdate = vi.fn(async () => undefined)
 
     render(
       <WishlistCardDetail
         item={createMemoItem({ category: '未完了', project_id: 'project-1' })}
         open
         onOpenChange={vi.fn()}
-        onUpdate={vi.fn()}
+        onUpdate={onUpdate}
         onCalendarAdd={vi.fn()}
         tagOptions={[]}
         projects={[{
@@ -249,7 +250,16 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByText('所要時間')).toBeInTheDocument()
     expect(screen.getByText('画像')).toBeInTheDocument()
     expect(screen.queryByText('見出し生成')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '見出しを生成' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '見出しを生成' })).not.toBeInTheDocument()
+    const destinationSelect = screen.getByRole('combobox', { name: '追加先' })
+    expect(destinationSelect).toHaveValue('memo')
+    expect(within(destinationSelect).queryByRole('option', { name: '完了' })).not.toBeInTheDocument()
+    fireEvent.change(destinationSelect, { target: { value: 'today' } })
+    expect(onUpdate).toHaveBeenCalledWith('memo-1', expect.objectContaining({
+      memo_status: 'unsorted',
+      is_today: true,
+      is_completed: false,
+    }))
     expect(screen.getByRole('button', { name: '本文から見出し生成' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '本文を音声入力' })).toBeInTheDocument()
     expect(screen.getByText('写真を選択')).toBeInTheDocument()

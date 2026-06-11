@@ -15,7 +15,7 @@ import {
   type SensorAPI,
 } from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clipboard, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Send, Settings, Sparkles, Square, Terminal, X } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Send, Settings, Sparkles, Square, Terminal, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -156,7 +156,7 @@ const DESKTOP_DRAFT_DURATION_OPTIONS = [
   { label: "3時間", minutes: 180 },
   { label: "カスタム", minutes: null },
 ]
-const DESKTOP_DRAFT_COLUMNS: ColumnKey[] = ["unsorted", "today", "completed"]
+const MEMO_CREATE_DESTINATION_COLUMNS: ColumnKey[] = ["unsorted", "today"]
 const DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS = 600
 const DESKTOP_MEMO_CODEX_ACTIVITY_INTERVAL_MS = 10_000
 
@@ -519,6 +519,14 @@ function getMobileColumnCreateOverrides(column: ColumnKey, payload?: unknown): R
   }
 }
 
+function getMemoCreateDestinationColumn(column: ColumnKey): ColumnKey {
+  return column === "today" ? "today" : "unsorted"
+}
+
+function getMemoDestinationLabel(column: ColumnKey) {
+  return column === "today" ? "今日" : "メモ"
+}
+
 function buildOptimisticMemoItem({
   id,
   title,
@@ -718,30 +726,6 @@ function combineDateTime(dateValue: string, timeValue: string) {
   const date = new Date(year, month - 1, day, hour, minute)
   if (Number.isNaN(date.getTime())) return null
   return date.toISOString()
-}
-
-function buildClipboardImageFile(blob: Blob, index: number) {
-  const normalizedType = blob.type || "image/png"
-  const extension = normalizedType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png"
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
-  return new File([blob], `clipboard-image-${timestamp}-${index + 1}.${extension}`, { type: normalizedType })
-}
-
-function getImageFilesFromClipboardData(clipboardData: DataTransfer | null | undefined) {
-  if (!clipboardData) return []
-  const files = Array.from(clipboardData.files ?? []).filter(file => file.type.startsWith("image/"))
-  const itemFiles = Array.from(clipboardData.items ?? [])
-    .filter(item => item.kind === "file" && item.type.startsWith("image/"))
-    .map(item => item.getAsFile())
-    .filter((file): file is File => file instanceof File)
-
-  const seen = new Set<string>()
-  return [...files, ...itemFiles].filter(file => {
-    const key = `${file.name}:${file.type}:${file.size}:${file.lastModified}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 function createDesktopDraftImageId(file: File, index: number) {
@@ -951,7 +935,6 @@ export function WishlistView({
   const [isLoadingDesktopCodexActivity, setIsLoadingDesktopCodexActivity] = useState(false)
   const [isSavingDesktopDraft, setIsSavingDesktopDraft] = useState(false)
   const [isGeneratingDesktopTitle, setIsGeneratingDesktopTitle] = useState(false)
-  const [isReadingDesktopClipboard, setIsReadingDesktopClipboard] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
   const [showMindmapDialog, setShowMindmapDialog] = useState(false)
@@ -1932,7 +1915,7 @@ export function WishlistView({
 
   const beginDesktopMemoEdit = useCallback((item: MemoItem) => {
     const column = getColumn(item, todayRange.start, todayRange.end)
-    const draftColumn = DESKTOP_DRAFT_COLUMNS.includes(column) ? column : "unsorted"
+    const draftColumn = MEMO_CREATE_DESTINATION_COLUMNS.includes(column) ? column : "unsorted"
     const duration = item.duration_minutes ?? null
     const presetDuration = DESKTOP_DRAFT_DURATION_OPTIONS.some(option => option.minutes === duration)
     setSelectedItem(item)
@@ -1971,44 +1954,6 @@ export function WishlistView({
 
   const handleDesktopDraftFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     addDesktopDraftImageFiles(Array.from(event.target.files ?? []))
-  }, [addDesktopDraftImageFiles])
-
-  const handleDesktopDraftPaste = useCallback((event: React.ClipboardEvent<HTMLElement>) => {
-    const files = getImageFilesFromClipboardData(event.clipboardData)
-    if (files.length === 0) return
-    event.preventDefault()
-    addDesktopDraftImageFiles(files)
-  }, [addDesktopDraftImageFiles])
-
-  const handlePasteDesktopClipboardImage = useCallback(async () => {
-    if (typeof navigator === "undefined") return
-    const clipboard = navigator.clipboard as (Clipboard & { read?: () => Promise<ClipboardItem[]> }) | undefined
-    if (!clipboard?.read) {
-      setDesktopDraftNotice("画像をコピーした状態で、このパネル内に Cmd+V で貼り付けできます")
-      return
-    }
-
-    setIsReadingDesktopClipboard(true)
-    setDesktopDraftNotice(null)
-    try {
-      const clipboardItems = await clipboard.read()
-      const files: File[] = []
-      for (const clipboardItem of clipboardItems) {
-        const imageType = clipboardItem.types.find(type => type.startsWith("image/"))
-        if (!imageType) continue
-        const blob = await clipboardItem.getType(imageType)
-        files.push(buildClipboardImageFile(blob, files.length))
-      }
-      if (files.length === 0) {
-        setDesktopDraftNotice("クリップボードに画像が見つかりません。画像をコピーしてからもう一度押してください")
-        return
-      }
-      addDesktopDraftImageFiles(files)
-    } catch {
-      setDesktopDraftNotice("直接読み取れない場合があります。このパネル内に Cmd+V で貼り付けてください")
-    } finally {
-      setIsReadingDesktopClipboard(false)
-    }
   }, [addDesktopDraftImageFiles])
 
   const uploadDesktopDraftImages = useCallback(async (memoId: string, images: DesktopMemoDraftImage[]) => {
@@ -2079,7 +2024,7 @@ export function WishlistView({
         ? Math.min(Math.round(customDuration), 720)
         : null
       : desktopDraftDuration
-    const columnOverrides = getMobileColumnCreateOverrides(desktopDraftColumn)
+    const columnOverrides = getMobileColumnCreateOverrides(getMemoCreateDestinationColumn(desktopDraftColumn))
     setIsSavingDesktopDraft(true)
     setDesktopDraftNotice(null)
     setIntakeError(null)
@@ -2175,7 +2120,7 @@ export function WishlistView({
         ? Math.min(Math.round(customDuration), 720)
         : null
       : desktopDraftDuration
-    const columnOverrides = getMobileColumnCreateOverrides(desktopDraftColumn, item.ai_source_payload)
+    const columnOverrides = getMobileColumnCreateOverrides(getMemoCreateDestinationColumn(desktopDraftColumn), item.ai_source_payload)
     const draftItem = {
       ...item,
       title: title || "無題",
@@ -2230,7 +2175,7 @@ export function WishlistView({
   const handleCreate = async () => {
     setIntakeError(null)
     const mobileColumnOverrides = isMobileMemoLayout
-      ? getMobileColumnCreateOverrides(activeMobileColumn)
+      ? getMobileColumnCreateOverrides(getMemoCreateDestinationColumn(activeMobileColumn))
       : {}
     const draftItem = buildOptimisticMemoItem({
       id: createClientMemoId(),
@@ -2254,7 +2199,7 @@ export function WishlistView({
     const title = firstLine.trim().slice(0, 80) || "新しいメモ"
     const description = rest.join("\n").trim() || (text.length > title.length ? text : "")
     const mobileColumnOverrides = isMobileMemoLayout
-      ? getMobileColumnCreateOverrides(activeMobileColumn)
+      ? getMobileColumnCreateOverrides(getMemoCreateDestinationColumn(activeMobileColumn))
       : {}
     const draftItem = buildOptimisticMemoItem({
       id: createClientMemoId(),
@@ -2337,6 +2282,26 @@ export function WishlistView({
         setIntakeError(data.error || "整理に失敗しました")
         return
       }
+      if (isMobileMemoLayout && !linkedMemoFocus) {
+        const sourceText = intakeText.trim()
+        const suggestedTitle = typeof data.suggestion?.title === "string" ? data.suggestion.title.trim() : ""
+        const mobileTargetColumn = getMemoCreateDestinationColumn(activeMobileColumn)
+        const draftItem = buildOptimisticMemoItem({
+          id: createClientMemoId(),
+          title: suggestedTitle || deriveDraftMemoTitle(sourceText),
+          projectId: selectedProjectId,
+          description: sourceText,
+          overrides: getMobileColumnCreateOverrides(mobileTargetColumn, { suggestion: data.suggestion, intakeText: sourceText }),
+        })
+        setMemoCreating(draftItem.id, true)
+        invalidateWishlistItemsCache()
+        setItems(prev => [draftItem, ...prev])
+        setIntakeText("")
+        setTagFilter("all")
+        setSelectedItem(draftItem)
+        setDetailOpen(true)
+        return
+      }
       const suggestedCategory = ""
       setSuggestion({
         ...data.suggestion,
@@ -2385,7 +2350,7 @@ export function WishlistView({
     const baseAiSourcePayload = { suggestion, intakeText }
     const mobileTargetColumn = addToCalendar
       ? "scheduled"
-      : activeMobileColumn
+      : getMemoCreateDestinationColumn(activeMobileColumn)
     const mobileColumnOverrides = isMobileMemoLayout
       ? getMobileColumnCreateOverrides(mobileTargetColumn, baseAiSourcePayload)
       : {}
@@ -2673,6 +2638,15 @@ export function WishlistView({
 
     const item = selectedItem
     if (item && creatingMemoIdsRef.current.has(item.id)) {
+      if (isMobileMemoLayout && !linkedMemoFocus) {
+        pendingCreateUpdatesRef.current.delete(item.id)
+        setMemoCreating(item.id, false)
+        setItems(prev => prev.filter(existing => existing.id !== item.id))
+        setSelectedItem(null)
+        setDetailOpen(false)
+        return
+      }
+
       const pendingUpdates = pendingCreateUpdatesRef.current.get(item.id) ?? {}
       const draftCandidate = { ...item, ...pendingUpdates } as MemoItem
       const hasPendingCreate = creatingMemoPromisesRef.current.has(item.id)
@@ -2693,7 +2667,7 @@ export function WishlistView({
     }
 
     setDetailOpen(false)
-  }, [createDraftMemoIfNeeded, selectedItem, setMemoCreating])
+  }, [createDraftMemoIfNeeded, isMobileMemoLayout, linkedMemoFocus, selectedItem, setMemoCreating])
 
   useEffect(() => {
     if (!mindmapMemoFocus) return
@@ -3503,7 +3477,6 @@ export function WishlistView({
               {desktopComposerOpen && (
                 <section
                   className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/70 shadow-sm"
-                  onPaste={handleDesktopDraftPaste}
                 >
                   <>
                     <div className="flex min-h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -3518,9 +3491,9 @@ export function WishlistView({
                         className="h-8 max-w-24 rounded-md border bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-primary/30"
                         aria-label="追加先"
                       >
-                        {DESKTOP_DRAFT_COLUMNS.map(column => (
+                        {MEMO_CREATE_DESTINATION_COLUMNS.map(column => (
                           <option key={column} value={column}>
-                            {column === "unsorted" ? "メモ" : column === "today" ? "今日" : COLUMN_LABEL[column]}
+                            {getMemoDestinationLabel(column)}
                           </option>
                         ))}
                       </select>
@@ -3653,16 +3626,6 @@ export function WishlistView({
                           画像を追加
                         </div>
                         <div className="grid gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => { void handlePasteDesktopClipboardImage() }}
-                            disabled={isReadingDesktopClipboard}
-                            className="min-h-10 justify-start gap-2 rounded-md px-3 text-xs"
-                          >
-                            {isReadingDesktopClipboard ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clipboard className="h-4 w-4" />}
-                            クリップボードから貼り付け
-                          </Button>
                           <Button
                             type="button"
                             variant="outline"
@@ -3816,8 +3779,8 @@ export function WishlistView({
                           onClick={() => { void handleSaveDesktopDraft() }}
                           disabled={!desktopDraftCanSave || isSavingDesktopDraft}
                           className={cn(
-                            "min-h-11 w-full gap-2 rounded-md bg-lime-400 font-semibold text-lime-950 hover:bg-lime-300 disabled:bg-muted disabled:text-muted-foreground",
-                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(163,230,53,0.22)]",
+                            "min-h-11 w-full gap-2 rounded-md bg-[#19e85f] font-semibold text-black hover:bg-[#22f06a] disabled:bg-muted disabled:text-muted-foreground",
+                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(25,232,95,0.24)]",
                           )}
                         >
                           {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}

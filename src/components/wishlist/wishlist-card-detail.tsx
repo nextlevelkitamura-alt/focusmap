@@ -30,7 +30,7 @@ import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 import { copyCodexImageToClipboard } from "@/lib/codex-app-launch"
 
-const QUICK_MINUTES = [5, 15, 30, 45, 60, 120]
+const QUICK_MINUTES = [5, 15, 30, 45, 60, 120, 180]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
@@ -100,6 +100,22 @@ interface MemoImage {
 
 type PendingMemoImage = MemoImage & {
   is_pending: true
+}
+
+type MemoDestination = "memo" | "today"
+
+function getMemoDestination(item: IdealGoalWithItems): MemoDestination {
+  return item.is_today && !item.is_completed && item.memo_status !== "completed" ? "today" : "memo"
+}
+
+function buildMemoDestinationUpdates(destination: MemoDestination): Record<string, unknown> {
+  return {
+    memo_status: "unsorted",
+    is_today: destination === "today",
+    is_completed: false,
+    scheduled_at: null,
+    google_event_id: null,
+  }
 }
 
 interface WishlistCardDetailProps {
@@ -1292,7 +1308,9 @@ export function WishlistCardDetail({
     draftSourceIdRef.current = itemId
     setDraftTitle(itemTitle)
     setDraftDescription(itemDescription)
-    lastSubmittedDraftRef.current = { title: itemTitle.trim(), description: itemDescription.trim() }
+    lastSubmittedDraftRef.current = item?.user_id === "local"
+      ? { title: "", description: "" }
+      : { title: itemTitle.trim(), description: itemDescription.trim() }
     const scheduled = itemScheduledAt ? new Date(itemScheduledAt) : null
     setCalendarMonth(getMonthStart(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : new Date()))
     previewTimePartsRef.current = null
@@ -1307,7 +1325,7 @@ export function WishlistCardDetail({
       prev.forEach(releasePendingImage)
       return []
     })
-  }, [itemId, itemTitle, itemDescription, itemScheduledAt, open, releasePendingImage])
+  }, [item?.user_id, itemId, itemTitle, itemDescription, itemScheduledAt, open, releasePendingImage])
 
   const handleCopyCodexImage = useCallback(async (image: MemoImage) => {
     if (!image.file_url.trim() || copyingCodexImageId) return
@@ -1352,17 +1370,22 @@ export function WishlistCardDetail({
   }, [draftDescription, draftTitle, item?.memo_status, itemId, onUpdate, open])
 
   useEffect(() => {
+    if (isMobile) return
     if (!open || !itemId) return
     const timeoutId = window.setTimeout(() => {
       void flushMemoDraft()
     }, 700)
     return () => window.clearTimeout(timeoutId)
-  }, [draftDescription, draftTitle, flushMemoDraft, itemId, open])
+  }, [draftDescription, draftTitle, flushMemoDraft, isMobile, itemId, open])
 
   const handleRequestClose = useCallback(async () => {
+    if (isMobile) {
+      onOpenChange(false)
+      return
+    }
     await flushMemoDraft()
     onOpenChange(false)
-  }, [flushMemoDraft, onOpenChange])
+  }, [flushMemoDraft, isMobile, onOpenChange])
 
   useEffect(() => {
     if (!open) return
@@ -1531,6 +1554,11 @@ export function WishlistCardDetail({
     setSaveError(null)
     const nextMinutes = minutes !== null && item.duration_minutes === minutes ? null : minutes
     await update({ duration_minutes: nextMinutes })
+  }
+  const selectedMemoDestination = getMemoDestination(item)
+  const handleMemoDestinationChange = async (destination: MemoDestination) => {
+    setSaveError(null)
+    await update(buildMemoDestinationUpdates(destination))
   }
 
   const handleGenerateTitle = async () => {
@@ -2117,8 +2145,17 @@ export function WishlistCardDetail({
 
           <div className="flex min-h-14 items-center justify-between gap-3 px-5 pb-2 pt-3">
             <SheetTitle className="text-left text-xl font-bold tracking-normal text-neutral-50">メモを追加</SheetTitle>
-            <div className="mr-11 rounded-full border border-white/10 bg-white/[0.08] px-5 py-2 text-sm font-medium text-neutral-300">
-              メモ
+            <div className="relative mr-11">
+              <select
+                value={selectedMemoDestination}
+                onChange={event => { void handleMemoDestinationChange(event.target.value as MemoDestination) }}
+                className="h-10 appearance-none rounded-full border border-white/10 bg-white/[0.08] pl-5 pr-9 text-sm font-medium text-neutral-100 outline-none focus:ring-2 focus:ring-white/15"
+                aria-label="追加先"
+              >
+                <option value="memo">メモ</option>
+                <option value="today">今日</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             </div>
           </div>
 
@@ -2134,18 +2171,8 @@ export function WishlistCardDetail({
                     value={draftTitle}
                     onChange={e => setDraftTitle(e.target.value)}
                     placeholder="メモの見出し"
-                    className="h-14 rounded-xl border-white/10 bg-[#171717] pr-14 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
+                    className="h-12 rounded-xl border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
                   />
-                  <button
-                    type="button"
-                    onClick={() => void handleGenerateTitle()}
-                    disabled={isGeneratingTitle || !draftDescription.trim()}
-                    className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-neutral-200 transition hover:bg-white/10 disabled:opacity-35"
-                    aria-label="見出しを生成"
-                    title="見出しを生成"
-                  >
-                    {isGeneratingTitle ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-6 w-6" />}
-                  </button>
                 </div>
               </label>
 
@@ -2161,39 +2188,41 @@ export function WishlistCardDetail({
                         void flushMemoDraft()
                       }
                     }}
-                    rows={4}
+                    rows={3}
                     placeholder="本文を入力"
-                    className="min-h-[128px] w-full resize-none bg-transparent px-4 py-4 pr-14 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500"
+                    className="min-h-[112px] w-full resize-none bg-transparent px-4 py-4 pb-24 pr-16 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500"
                   />
-                  <button
-                    type="button"
-                    onClick={() => void handleGenerateTitle()}
-                    disabled={isGeneratingTitle || !draftDescription.trim()}
-                    className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-lg text-neutral-200 transition hover:bg-white/10 disabled:opacity-35"
-                    aria-label="本文から見出し生成"
-                    title="本文から見出し生成"
-                  >
-                    {isGeneratingTitle ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-6 w-6" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleMemoVoiceToggle()}
-                    disabled={isMemoTranscribing}
-                    className={cn(
-                      "absolute bottom-2 right-2 flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-50",
-                      isMemoRecording && "border-red-400/40 bg-red-500/20 text-red-100",
-                    )}
-                    aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
-                    title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
-                  >
-                    {isMemoTranscribing ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : isMemoRecording ? (
-                      <Square className="h-5 w-5" />
-                    ) : (
-                      <Mic className="h-5 w-5" />
-                    )}
-                  </button>
+                  <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleGenerateTitle()}
+                      disabled={isGeneratingTitle || !draftDescription.trim()}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-35"
+                      aria-label="本文から見出し生成"
+                      title="本文から見出し生成"
+                    >
+                      {isGeneratingTitle ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleMemoVoiceToggle()}
+                      disabled={isMemoTranscribing}
+                      className={cn(
+                        "flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-50",
+                        isMemoRecording && "border-red-400/40 bg-red-500/20 text-red-100",
+                      )}
+                      aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                      title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                    >
+                      {isMemoTranscribing ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : isMemoRecording ? (
+                        <Square className="h-5 w-5" />
+                      ) : (
+                        <Mic className="h-5 w-5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </label>
 
@@ -2328,7 +2357,7 @@ export function WishlistCardDetail({
                 type="button"
                 onClick={() => void handleMobileSave()}
                 disabled={isSavingMemo || isUploadingImage || isPastingClipboardImage}
-                className="h-14 w-full rounded-xl bg-[#32d354] text-lg font-bold text-white shadow-[0_12px_28px_rgba(50,211,84,0.28)] hover:bg-[#38df5c] disabled:opacity-60"
+                className="h-14 w-full rounded-xl bg-[#19e85f] text-lg font-bold text-black shadow-[0_12px_28px_rgba(25,232,95,0.28)] hover:bg-[#22f06a] disabled:opacity-60"
               >
                 {isSavingMemo ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
                 保存
