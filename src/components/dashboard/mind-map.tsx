@@ -1,8 +1,11 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
+import { Bot } from "lucide-react";
 import { Task, Project, Space } from "@/types/database";
+import { Button } from "@/components/ui/button";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
+import { CodexChatImportSidebar, type CodexChatImportItem } from "@/components/dashboard/codex-chat-import-sidebar";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { CodexNodePanel } from "@/components/codex/codex-node-panel";
@@ -20,6 +23,7 @@ import {
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
+import { codexMonitorUiLabel } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
@@ -97,6 +101,20 @@ const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ['running', 'awaiting_approval', 'completed', 'failed'];
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input']);
 
+function formatChatImportUpdatedLabel(value: string | null | undefined) {
+    if (!value) return null;
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms)) return null;
+    const diffMs = Date.now() - ms;
+    if (diffMs < 60_000) return "今";
+    const minutes = Math.floor(diffMs / 60_000);
+    if (minutes < 60) return `${minutes}分`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}時間`;
+    const days = Math.floor(hours / 24);
+    return `${days}日`;
+}
+
 type MindMapClipboardNode = {
     title: string;
     status: string;
@@ -170,8 +188,11 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     // MindMap Display Settings
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
     const [kanbanCloseSignal, setKanbanCloseSignal] = useState(0);
+    const [codexRepoPathOverride, setCodexRepoPathOverride] = useState<string | null | undefined>(undefined);
     const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null);
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false);
+    const [isCodexRepoSaving, setIsCodexRepoSaving] = useState(false);
+    const [isCodexChatImportSidebarOpen, setIsCodexChatImportSidebarOpen] = useState(false);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -189,11 +210,54 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     useEffect(() => {
         setKanbanSpaceId(project?.space_id ?? null);
         setKanbanProjectId(project?.id ?? null);
+        setCodexRepoPathOverride(undefined);
         setCodexThreadImportOverride(null);
+        setIsCodexChatImportSidebarOpen(false);
     }, [project?.id, project?.space_id]);
 
-    const projectRepoPath = useMemo(() => (project?.repo_path ?? '').trim(), [project?.repo_path]);
+    const projectRepoPath = useMemo(() => (
+        (codexRepoPathOverride !== undefined ? codexRepoPathOverride ?? '' : project?.repo_path ?? '').trim()
+    ), [codexRepoPathOverride, project?.repo_path]);
     const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project?.codex_thread_import_enabled);
+
+    const saveCodexRepoPath = useCallback(async (repoPath: string | null) => {
+        if (!project?.id || isCodexRepoSaving) return;
+        const normalizedRepoPath = repoPath?.trim().replace(/\/+$/, '') || null;
+        const previousRepoPathOverride = codexRepoPathOverride;
+        const previousImportOverride = codexThreadImportOverride;
+        const previousImportEnabled = codexThreadImportEnabled;
+        const currentPersistedRepoPath = (project?.repo_path ?? '').trim() || null;
+
+        setCodexRepoPathOverride(normalizedRepoPath);
+        if (normalizedRepoPath !== currentPersistedRepoPath) {
+            setCodexThreadImportOverride(false);
+        }
+        setIsCodexRepoSaving(true);
+        try {
+            const updates: Partial<Project> = { repo_path: normalizedRepoPath };
+            if (onPatchProject) {
+                await onPatchProject(project.id, updates);
+            } else {
+                const res = await fetch(`/api/projects/${project.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(typeof data.error === 'string' ? data.error : 'Project repo update failed');
+                }
+            }
+        } catch (error) {
+            setCodexRepoPathOverride(previousRepoPathOverride);
+            setCodexThreadImportOverride(previousImportOverride ?? previousImportEnabled);
+            console.error('[MindMap] Failed to save project repo path:', error);
+            throw error;
+        } finally {
+            setIsCodexRepoSaving(false);
+        }
+    }, [codexRepoPathOverride, codexThreadImportEnabled, codexThreadImportOverride, isCodexRepoSaving, onPatchProject, project?.id, project?.repo_path]);
+
     const toggleCodexThreadImport = useCallback(async () => {
         if (!project?.id || !projectRepoPath || isCodexThreadImportSaving) return;
         const nextEnabled = !codexThreadImportEnabled;
@@ -465,6 +529,29 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         }
         return result;
     }, [allTasksByIdForCodex, getAiTaskBySourceId, taskProgressDisplayTasks]);
+    const codexInboxGroupId = useMemo(() => {
+        return groups.find(group => group.source === 'codex_inbox' || group.title === 'Codex Inbox')?.id ?? null;
+    }, [groups]);
+    const codexChatImportItems = useMemo<CodexChatImportItem[]>(() => {
+        return [...groups, ...tasks]
+            .filter(task => task.source === 'codex_app_thread' && task.deleted_at === null)
+            .map(task => {
+                const progressTask = taskProgressByNodeId[task.id];
+                const codexRun = codexRunByNodeId[task.id];
+                const placed = codexInboxGroupId ? task.parent_task_id !== codexInboxGroupId : true;
+                return {
+                    id: task.id,
+                    title: task.title,
+                    snippet: task.memo?.trim() || null,
+                    repoPath: task.codex_work_dir?.trim() || null,
+                    placementLabel: placed ? '配置済み' : '未配置',
+                    statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
+                    updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
+                    placed,
+                };
+            })
+            .sort((a, b) => Number(a.placed) - Number(b.placed));
+    }, [codexInboxGroupId, codexRunByNodeId, groups, taskProgressByNodeId, tasks]);
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null;
         return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ?? null;
@@ -1603,8 +1690,26 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             onKeyDown={handleContainerKeyDown}
             onPasteCapture={handleContainerPasteCapture}
         >
-            {/* MindMap Display Settings Button (Top Right) */}
+            {/* Map toolbar buttons (Top Right) */}
             <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="relative h-7 w-7 text-muted-foreground/70 transition-colors hover:bg-muted/50 hover:text-muted-foreground"
+                    onClick={() => setIsCodexChatImportSidebarOpen(open => !open)}
+                    aria-label="チャット取り込み"
+                    aria-pressed={isCodexChatImportSidebarOpen}
+                    title="チャット取り込み"
+                >
+                    <Bot className="h-4 w-4" />
+                    <span
+                        className={[
+                            "absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+                            codexThreadImportEnabled && projectRepoPath ? "bg-emerald-500" : projectRepoPath ? "bg-muted-foreground/45" : "bg-amber-500",
+                        ].join(" ")}
+                    />
+                </Button>
                 <MindMapDisplaySettingsPopover
                     value={displaySettings}
                     onChange={setDisplaySettings}
@@ -1649,12 +1754,27 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         codexThreadImportAvailable={!!projectRepoPath}
                         codexThreadImportPending={isCodexThreadImportSaving}
                         codexThreadImportRepoPath={projectRepoPath || null}
-                        onToggleCodexThreadImport={toggleCodexThreadImport}
                         taskProgressByNodeId={taskProgressByNodeId}
                         onOpenTaskProgress={handleOpenTaskProgress}
                         onMoveTask={handleCustomMoveTask}
                         onMoveTasks={handleCustomMoveTasks}
+                        onDropImportedChatNode={handleCustomMoveTask}
                     />
+                    {isCodexChatImportSidebarOpen && (
+                        <div className="absolute bottom-3 right-3 top-12 z-40">
+                            <CodexChatImportSidebar
+                                projectTitle={project?.title ?? 'Project'}
+                                repoPath={projectRepoPath || null}
+                                importEnabled={codexThreadImportEnabled}
+                                importPending={isCodexThreadImportSaving}
+                                repoSaving={isCodexRepoSaving}
+                                chatItems={codexChatImportItems}
+                                onClose={() => setIsCodexChatImportSidebarOpen(false)}
+                                onSaveRepoPath={saveCodexRepoPath}
+                                onToggleImport={toggleCodexThreadImport}
+                            />
+                        </div>
+                    )}
                 </div>
                 <TaskProgressKanban
                     tasks={taskProgressDisplayTasks}

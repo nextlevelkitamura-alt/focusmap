@@ -41,6 +41,10 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
 
 import { CustomMindMapView } from "./custom-mind-map-view"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
+import {
+  CODEX_CHAT_IMPORT_DRAG_TYPE,
+  encodeCodexChatImportDragPayload,
+} from "@/lib/codex-chat-import-dnd"
 import type { Project, Task } from "@/types/database"
 
 const project = {
@@ -213,6 +217,31 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(enabledButton).toHaveAttribute("aria-pressed", "true")
     fireEvent.click(enabledButton)
     expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
+  test("drops an imported Codex chat onto a map node as a child", () => {
+    const onDropImportedChatNode = vi.fn()
+    renderMap({ onDropImportedChatNode })
+
+    const node = getNode("Root task", "root-1")
+    const dataTransfer = {
+      types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: vi.fn((type: string) => (
+        type === CODEX_CHAT_IMPORT_DRAG_TYPE
+          ? encodeCodexChatImportDragPayload({ taskId: "chat-node-1" })
+          : ""
+      )),
+    }
+
+    fireEvent.dragOver(node, { dataTransfer })
+    fireEvent.drop(node, { dataTransfer })
+
+    expect(onDropImportedChatNode).toHaveBeenCalledWith({
+      taskId: "chat-node-1",
+      targetId: "root-1",
+      position: "as-child",
+    })
   })
 
   test("prioritizes ai task status over stale task progress on node badge", () => {
