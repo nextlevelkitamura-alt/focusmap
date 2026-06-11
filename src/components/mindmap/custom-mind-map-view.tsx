@@ -2978,7 +2978,7 @@ export function CustomMindMapView({
         }
         : null;
     const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
-    const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
+    const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
     const codexThreadImportTitle = codexThreadImportAvailable
         ? codexThreadImportEnabled
             ? `Codex thread取り込み: ON (${codexThreadImportRepoPath ?? "repo設定済み"})`
@@ -3042,11 +3042,6 @@ export function CustomMindMapView({
                                 <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
                                     <Loader2 className="h-3 w-3 animate-spin" />
                                     実行中{codexSummary.running}
-                                </span>
-                            )}
-                            {codexSummary.promptWaiting > 0 && (
-                                <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
-                                    未送信{codexSummary.promptWaiting}
                                 </span>
                             )}
                             {codexSummary.awaitingApproval > 0 && (

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   importedThreadResult,
   isThreadWithinProjectImportScope,
+  memoFromImportedThread,
   promptFromImportedThread,
   threadUpdatedAtIso,
   titleFromImportedThread,
@@ -54,6 +55,18 @@ describe('codex orphan thread import helpers', () => {
     expect(result.codex_source_task_id).toBe('source-task-1')
     expect(result.codex_review_reason).toBe('external_thread_import')
     expect(result.last_activity_at).toBe('2026-06-10T10:00:00.000Z')
+  })
+
+  test('builds task memo with thread metadata, first request, and preview', () => {
+    const memo = memoFromImportedThread(thread)
+
+    expect(memo).toContain('# Codexが作ったスレッド')
+    expect(memo).toContain(`Thread ID: ${thread.id}`)
+    expect(memo).toContain('Repository: /Users/me/project')
+    expect(memo).toContain('## 初回依頼')
+    expect(memo).toContain('最初の依頼です\n詳細')
+    expect(memo).toContain('## 最新プレビュー')
+    expect(memo).toContain('preview')
   })
 
   test('uses fallback timestamp when thread updated_at_ms is missing', () => {

@@ -69,7 +69,7 @@ type RunnerConnectionState = {
   activeTaskSeenAtById: ReadonlyMap<string, string>
 }
 
-type CodexKanbanLaneId = "unsent" | "running" | "review" | "connection_failed" | "done"
+type CodexKanbanLaneId = "running" | "review" | "connection_failed" | "done"
 
 type TaskProgressKanbanProps = {
   tasks: TaskProgressSnapshotTask[]
@@ -80,7 +80,6 @@ type TaskProgressKanbanProps = {
   selectedProjectId?: string | null
   onSelectSpace?: (id: string | null) => void
   onSelectProject?: (id: string | null) => void
-  includeUnsentSourceTasks?: boolean
   closeSignal?: number
   isMobile?: boolean
   isLoading?: boolean
@@ -101,13 +100,6 @@ const LANES: Array<{
   icon: typeof Loader2
   className: string
 }> = [
-  {
-    id: "unsent",
-    label: "未送信",
-    description: "Codex.appで開始待ち",
-    icon: Clock,
-    className: "border-sky-400/50 bg-sky-500/10",
-  },
   {
     id: "running",
     label: "実行中",
@@ -276,48 +268,11 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
   }
 
   const uiStatus = getCodexMonitorUiStatus(task.status)
-  if (uiStatus === "unsent") return "unsent"
+  if (uiStatus === "unsent") return null
   if (uiStatus === "running") return "running"
   if (uiStatus === "connection_failed") return "connection_failed"
   if (uiStatus === "done") return "done"
   return "review"
-}
-
-function unsentProgressTaskForSourceTask(sourceTask: SourceTaskInfo): TaskProgressSnapshotTask {
-  return {
-    id: `source:${sourceTask.id}`,
-    title: sourceTask.title,
-    status: "pending",
-    executor: "codex_app",
-    codex_thread_id: null,
-    current_step: "Codex.appで開始待ち",
-    progress_percent: null,
-    summary: "このマップノードからCodexを実行できます",
-    updated_at: sourceTask.updated_at || new Date(0).toISOString(),
-    source_type: "mindmap",
-    source_id: sourceTask.id,
-  }
-}
-
-function isSourceOnlyProgressTask(task: TaskProgressSnapshotTask) {
-  return task.id.startsWith("source:")
-}
-
-function withUnsentSourceTasks(
-  tasks: TaskProgressSnapshotTask[],
-  sourceTasksById: ReadonlyMap<string, SourceTaskInfo>,
-) {
-  const coveredSourceIds = new Set<string>()
-  const result = [...tasks]
-  for (const task of tasks) {
-    if (task.source_type !== "mindmap" || !task.source_id) continue
-    coveredSourceIds.add(task.source_id)
-  }
-  for (const sourceTask of sourceTasksById.values()) {
-    if (!sourceTask?.id || sourceTask.deleted_at || coveredSourceIds.has(sourceTask.id)) continue
-    result.push(unsentProgressTaskForSourceTask(sourceTask))
-  }
-  return result
 }
 
 function RunnerChip({ state }: { state: RunnerConnectionState }) {
@@ -420,10 +375,6 @@ function KanbanCard({
   const sourceTaskDone = sourceTask?.status === "done"
   const shortTitle = task.title || "Codexタスク"
   const openPrimary = () => {
-    if (sourceTaskId && isSourceOnlyProgressTask(task) && onRunSourceTask) {
-      onRunSourceTask(sourceTaskId)
-      return
-    }
     onOpen(task)
   }
 
@@ -452,7 +403,7 @@ function KanbanCard({
         <button
           type="button"
           className="min-h-11 min-w-0 flex-1 rounded-md text-left focus:outline-none focus:ring-2 focus:ring-ring"
-          aria-label={`「${shortTitle}」の${isSourceOnlyProgressTask(task) ? "Codex実行を開く" : "詳細を開く"}`}
+          aria-label={`「${shortTitle}」の詳細を開く`}
           onClick={openPrimary}
         >
           <div className="flex min-w-0 items-start justify-between gap-2">
@@ -614,7 +565,7 @@ function KanbanLanes({
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
 }) {
   return (
-    <div className={cn("grid gap-3", isMobile ? "grid-cols-1" : "grid-cols-5")}>
+    <div className={cn("grid gap-3", isMobile ? "grid-cols-1" : "grid-cols-4")}>
       {LANES.map(lane => {
         const tasks = lanes[lane.id]
         return (
@@ -741,7 +692,6 @@ export function TaskProgressKanban({
   selectedProjectId,
   onSelectSpace,
   onSelectProject,
-  includeUnsentSourceTasks = false,
   closeSignal = 0,
   isMobile = false,
   isLoading = false,
@@ -815,21 +765,14 @@ export function TaskProgressKanban({
     return next
   }, [hiddenSourceTaskIds, sourceTaskStatusOverrides, sourceTasksById])
 
-  const displayTasks = useMemo(() => (
-    includeUnsentSourceTasks
-      ? withUnsentSourceTasks(tasks, effectiveSourceTasksById)
-      : tasks
-  ), [effectiveSourceTasksById, includeUnsentSourceTasks, tasks])
-
   const lanes = useMemo(() => {
     const grouped: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]> = {
-      unsent: [],
       running: [],
       review: [],
       connection_failed: [],
       done: [],
     }
-    for (const task of displayTasks) {
+    for (const task of tasks) {
       const laneId = laneForTask(task, effectiveSourceTasksById)
       if (!laneId) continue
       grouped[laneId].push(task)
@@ -838,15 +781,15 @@ export function TaskProgressKanban({
       laneTasks.sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0))
     }
     return grouped
-  }, [displayTasks, effectiveSourceTasksById])
+  }, [effectiveSourceTasksById, tasks])
 
   const counts = useMemo(() => {
     return LANES.reduce<Record<CodexKanbanLaneId, number>>((acc, lane) => {
       acc[lane.id] = lanes[lane.id].length
       return acc
-    }, { unsent: 0, running: 0, review: 0, connection_failed: 0, done: 0 })
+    }, { running: 0, review: 0, connection_failed: 0, done: 0 })
   }, [lanes])
-  const total = counts.unsent + counts.running + counts.review + counts.connection_failed + counts.done
+  const total = counts.running + counts.review + counts.connection_failed + counts.done
 
   const refreshAll = useCallback(async () => {
     await Promise.all([

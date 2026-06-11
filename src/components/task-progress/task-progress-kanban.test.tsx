@@ -64,7 +64,6 @@ function renderMobileKanban(
 function renderDesktopKanban({
   tasks = [progressTask({ title: '看板操作テスト' })],
   sourceTasksById = new Map([['node-1', sourceTask('node-1')]]),
-  includeUnsentSourceTasks = false,
   spaces,
   projects,
   selectedSpaceId,
@@ -79,7 +78,6 @@ function renderDesktopKanban({
 }: {
   tasks?: TaskProgressSnapshotTask[]
   sourceTasksById?: Map<string, ReturnType<typeof sourceTask>>
-  includeUnsentSourceTasks?: boolean
   spaces?: Array<{ id: string; title: string; user_id: string; description: string | null; status: string; default_calendar_id: string | null; icon: string | null; color: string | null; created_at: string }>
   projects?: Array<{ id: string; user_id: string; space_id: string; title: string; description: string; purpose: string | null; category_tag: string | null; priority: number; status: string; color_theme: string; repo_path: string | null; created_at: string }>
   selectedSpaceId?: string | null
@@ -102,7 +100,6 @@ function renderDesktopKanban({
       selectedProjectId={selectedProjectId}
       onSelectSpace={onSelectSpace}
       onSelectProject={onSelectProject}
-      includeUnsentSourceTasks={includeUnsentSourceTasks}
       closeSignal={nextCloseSignal}
       pollIntervalMs={3000}
       onRefresh={vi.fn()}
@@ -365,23 +362,30 @@ describe('TaskProgressKanban', () => {
     expect(screen.queryByText('看板操作テスト')).not.toBeInTheDocument()
   })
 
-  test('進捗がないマップノードを未送信カードとして出しCodex実行を開ける', async () => {
+  test('未送信のCodex taskと進捗がないマップノードは看板に出さない', async () => {
     const callbacks = renderDesktopKanban({
-      tasks: [],
+      tasks: [
+        progressTask({
+          id: 'pending-task',
+          title: '未送信タスク',
+          status: 'pending',
+          source_id: 'node-pending',
+        }),
+      ],
       sourceTasksById: new Map([
-        ['node-unsent', sourceTask('node-unsent', { title: '未送信ノード' })],
+        ['node-pending', sourceTask('node-pending', { title: '未送信タスク' })],
+        ['node-without-progress', sourceTask('node-without-progress', { title: '進捗なしノード' })],
       ]),
-      includeUnsentSourceTasks: true,
     })
     await screen.findByText('Mac offline')
 
     fireEvent.click(screen.getByRole('button', { expanded: false }))
 
-    expect(screen.getByText('未送信ノード')).toBeInTheDocument()
-    expect(screen.getByText('Codex.appで開始待ち')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /未送信ノード.+Codexで実行/ }))
-
-    expect(callbacks.onRunSourceTask).toHaveBeenCalledWith('node-unsent')
+    expect(screen.queryByText('未送信タスク')).not.toBeInTheDocument()
+    expect(screen.queryByText('進捗なしノード')).not.toBeInTheDocument()
+    expect(screen.queryByText('未送信')).not.toBeInTheDocument()
+    expect(screen.getByText('確認待ち 0')).toBeInTheDocument()
+    expect(callbacks.onRunSourceTask).not.toHaveBeenCalled()
     expect(callbacks.onOpenTask).not.toHaveBeenCalled()
   })
 

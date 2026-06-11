@@ -17,6 +17,7 @@ export type CodexChatImportItem = {
   title: string
   snippet: string | null
   repoPath: string | null
+  threadId?: string | null
   projectTitle: string | null
   placementLabel: string
   statusLabel: string | null
@@ -460,6 +461,16 @@ export function CodexChatImportSidebar({
                     {item.statusLabel && (
                       <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         {item.statusLabel}
+                      </span>
+                    )}
+                    {item.repoPath && (
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={item.repoPath}>
+                        {repoNameFromPath(item.repoPath)}
+                      </span>
+                    )}
+                    {item.threadId && (
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground" title={item.threadId}>
+                        {item.threadId.slice(0, 8)}
                       </span>
                     )}
                     {item.projectTitle && (

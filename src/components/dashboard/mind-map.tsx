@@ -23,7 +23,7 @@ import {
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
-import { codexMonitorUiLabel } from "@/lib/task-progress-ui";
+import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { createClient } from "@/utils/supabase/client";
@@ -594,20 +594,23 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
             .filter(task => !selectedCodexImportRepoPath || (task.codex_work_dir ?? '').trim() === selectedCodexImportRepoPath)
             .filter(task => !!task.parent_task_id && codexInboxGroupIds.has(task.parent_task_id))
-            .map(task => {
+            .flatMap(task => {
                 const progressTask = taskProgressByNodeId[task.id];
                 const codexRun = codexRunByNodeId[task.id];
-                return {
+                if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
+                if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
+                return [{
                     id: task.id,
                     title: task.title,
                     snippet: task.memo?.trim() || null,
                     repoPath: task.codex_work_dir?.trim() || null,
+                    threadId: task.codex_thread_id?.trim() || null,
                     projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
                     placementLabel: '未配置',
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
                     updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
                     placed: false,
-                };
+                }];
             })
             .sort((a, b) => {
                 const updatedA = repoScopedTasksById.get(a.id)?.updated_at ?? '';
@@ -2025,7 +2028,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     selectedProjectId={kanbanProject?.id ?? kanbanProjectId}
                     onSelectSpace={setKanbanSpaceId}
                     onSelectProject={setKanbanProjectId}
-                    includeUnsentSourceTasks
                     closeSignal={kanbanCloseSignal}
                     isMobile={isNarrow}
                     isLoading={isTaskProgressSnapshotLoading}

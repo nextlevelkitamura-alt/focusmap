@@ -297,7 +297,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.queryByText("確認待ち2")).not.toBeInTheDocument()
   })
 
-  test("shows prompt waiting state separately from review waiting", () => {
+  test("does not include prompt waiting in the Codex summary", () => {
     renderMap({
       codexRunByNodeId: {
         "root-1": {
@@ -313,7 +313,7 @@ describe("CustomMindMapView keyboard operations", () => {
       },
     })
 
-    expect(screen.getByText("未送信1")).toBeInTheDocument()
+    expect(screen.queryByText("未送信1")).not.toBeInTheDocument()
     expect(screen.getAllByText("未送信")).toHaveLength(1)
     expect(screen.getByText("確認待ち1")).toBeInTheDocument()
   })

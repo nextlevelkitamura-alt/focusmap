@@ -804,7 +804,6 @@ export function MobileMindMap({
                 selectedProjectId={kanbanProject?.id ?? kanbanProjectId}
                 onSelectSpace={setKanbanSpaceId}
                 onSelectProject={setKanbanProjectId}
-                includeUnsentSourceTasks
                 isMobile
                 isLoading={isTaskProgressSnapshotLoading}
                 isRefreshing={isRefreshingTaskProgressSnapshot}

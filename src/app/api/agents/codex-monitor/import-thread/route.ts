@@ -82,6 +82,26 @@ export function promptFromImportedThread(thread: ImportedCodexThread) {
     ?? `Codex thread ${thread.id}`
 }
 
+export function memoFromImportedThread(thread: ImportedCodexThread) {
+  const lines = [
+    `# ${titleFromImportedThread(thread)}`,
+    '',
+    '## 取り込み情報',
+    `- Thread ID: ${thread.id}`,
+    `- Repository: ${thread.cwd ?? 'unknown'}`,
+    `- 最終更新: ${threadUpdatedAtIso(thread)}`,
+  ]
+  const firstUserMessage = compactString(thread.first_user_message, MAX_PROMPT_CHARS)
+  if (firstUserMessage) {
+    lines.push('', '## 初回依頼', firstUserMessage)
+  }
+  const preview = compactString(thread.preview, MAX_PROMPT_CHARS)
+  if (preview && preview !== firstUserMessage) {
+    lines.push('', '## 最新プレビュー', preview)
+  }
+  return lines.join('\n')
+}
+
 export function threadUpdatedAtIso(thread: ImportedCodexThread, fallback = new Date()) {
   if (typeof thread.updated_at_ms === 'number' && Number.isFinite(thread.updated_at_ms) && thread.updated_at_ms > 0) {
     return new Date(thread.updated_at_ms).toISOString()
@@ -353,7 +373,7 @@ export async function POST(request: NextRequest) {
           actual_time_minutes: 0,
           estimated_time: 0,
           source: 'codex_app_thread',
-          memo: promptFromImportedThread(thread),
+          memo: memoFromImportedThread(thread),
           codex_thread_id: thread.id,
           codex_status: 'running',
           codex_work_dir: thread.cwd ?? null,
