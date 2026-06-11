@@ -136,6 +136,50 @@ describe('PATCH /api/projects/:id', () => {
       expect(json.error).toBe('repo_path is required before enabling Codex thread import')
       expect(mockUpdate).not.toHaveBeenCalled()
     })
+
+    test('repo_path解除と同時にCodex thread取り込みONは許可しない', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+
+      const req = createRequest({ repo_path: null, codex_thread_import_enabled: true })
+      const res = await PATCH(req, { params: mockParams })
+      const json = await res.json()
+
+      expect(res.status).toBe(400)
+      expect(json.error).toBe('repo_path is required before enabling Codex thread import')
+      expect(mockUpdate).not.toHaveBeenCalled()
+    })
+
+    test('repo_pathを解除したらCodex thread取り込みもOFFにする', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      mockMaybeSingle.mockResolvedValue({
+        data: { repo_path: '/Users/me/project' },
+        error: null,
+      })
+      mockSingle.mockResolvedValue({
+        data: {
+          id: 'proj-1',
+          repo_path: null,
+          codex_thread_import_enabled: false,
+          codex_thread_import_enabled_since: null,
+        },
+        error: null,
+      })
+      mockSupabase.from.mockReturnValue({
+        select: mockSelectProject,
+        update: mockUpdate,
+        delete: mockDelete,
+      })
+
+      const req = createRequest({ repo_path: null })
+      const res = await PATCH(req, { params: mockParams })
+
+      expect(res.status).toBe(200)
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        repo_path: null,
+        codex_thread_import_enabled: false,
+        codex_thread_import_enabled_since: null,
+      }))
+    })
   })
 
   describe('異常系', () => {

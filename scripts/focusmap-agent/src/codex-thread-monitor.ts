@@ -17,6 +17,7 @@ const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 10_000;
 const ORPHAN_IMPORT_LIMIT = 20;
+const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
 const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
   ? configuredOrphanImportWindowMs
@@ -560,15 +561,22 @@ async function readRollout(row: CodexThreadRow): Promise<string> {
   return await readFile(row.rollout_path, 'utf-8').catch(() => '');
 }
 
-async function readRecentThreads(dbPath: string, sinceMs: number): Promise<CodexThreadRow[]> {
+function importScopeRepoPaths(importScopes: CodexThreadImportScope[]): string[] {
+  return Array.from(new Set(importScopes.map(scope => scope.repo_path?.trim()).filter(Boolean)));
+}
+
+async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: string[] = []): Promise<CodexThreadRow[]> {
+  const cwdCondition = repoPaths.length > 0
+    ? ` AND cwd IN (${repoPaths.map(sqlString).join(', ')})`
+    : '';
   return sqliteJson<CodexThreadRow>(
     dbPath,
     [
       'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, cwd, first_user_message',
       'FROM threads',
-      `WHERE updated_at_ms >= ${Math.max(0, Math.floor(sinceMs))}`,
+      `WHERE updated_at_ms >= ${Math.max(0, Math.floor(sinceMs))}${cwdCondition}`,
       'ORDER BY updated_at_ms DESC',
-      `LIMIT ${ORPHAN_IMPORT_LIMIT}`,
+      `LIMIT ${ORPHAN_IMPORT_SCAN_LIMIT}`,
     ].join(' '),
   );
 }
@@ -611,11 +619,14 @@ async function importOrphanThreads(
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
   if (importScopes.length === 0) return 0;
+  const repoPaths = importScopeRepoPaths(importScopes);
+  if (repoPaths.length === 0) return 0;
   const knownThreadIds = knownCodexThreadIds(tasks);
-  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now));
+  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now), repoPaths);
   let imported = 0;
 
   for (const row of rows) {
+    if (imported >= ORPHAN_IMPORT_LIMIT) break;
     if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now)) continue;
     const cachedAt = orphanImportCache.get(row.id) ?? 0;
     if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;

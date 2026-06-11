@@ -41,6 +41,7 @@ export async function PATCH(
         const { id } = await params
         const body = await request.json()
         const updates = isRecord(body) ? { ...body } : {}
+        let repoPathFromBody: string | null | undefined
 
         if (hasOwn(updates, "repo_path")) {
             const resolvedRepo = await resolveProjectRepoPath(supabase, user.id, updates.repo_path)
@@ -48,6 +49,7 @@ export async function PATCH(
                 return NextResponse.json({ error: resolvedRepo.error }, { status: 400 })
             }
             updates.repo_path = resolvedRepo.repoPath
+            repoPathFromBody = resolvedRepo.repoPath
         }
 
         if (hasOwn(updates, "codex_thread_import_enabled")) {
@@ -55,8 +57,8 @@ export async function PATCH(
             updates.codex_thread_import_enabled = enabled
 
             if (enabled) {
-                const repoPath = typeof updates.repo_path === "string" && updates.repo_path.trim()
-                    ? updates.repo_path.trim()
+                const repoPath = repoPathFromBody !== undefined
+                    ? repoPathFromBody
                     : await currentProjectRepoPath(supabase, user.id, id)
                 if (!repoPath) {
                     return NextResponse.json(
@@ -66,6 +68,12 @@ export async function PATCH(
                 }
                 updates.codex_thread_import_enabled_since = new Date().toISOString()
             } else {
+                updates.codex_thread_import_enabled_since = null
+            }
+        } else if (repoPathFromBody !== undefined) {
+            const currentRepoPath = await currentProjectRepoPath(supabase, user.id, id)
+            if (currentRepoPath !== repoPathFromBody) {
+                updates.codex_thread_import_enabled = false
                 updates.codex_thread_import_enabled_since = null
             }
         }
