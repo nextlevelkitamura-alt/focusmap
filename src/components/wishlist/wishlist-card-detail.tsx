@@ -1088,15 +1088,15 @@ export function WishlistCardDetail({
   }, [])
 
   const loadImages = useCallback(async () => {
-    if (!item?.id || !open) return
+    if (!item?.id || item.user_id === "local" || !open) return
     const res = await fetch(`/api/wishlist/${item.id}/attachments`)
     if (!res.ok) return
     const { attachments } = await res.json()
     setImages((attachments ?? []).filter((attachment: MemoImage) => attachment.file_type?.startsWith("image/")))
-  }, [item?.id, open])
+  }, [item?.id, item?.user_id, open])
 
   const loadStructuredItems = useCallback(async () => {
-    if (!item?.id || !open) return
+    if (!item?.id || item.user_id === "local" || !open) return
     setIsLoadingStructure(true)
     setStructureError(null)
     try {
@@ -1125,7 +1125,7 @@ export function WishlistCardDetail({
     } finally {
       setIsLoadingStructure(false)
     }
-  }, [item?.id, open])
+  }, [item?.id, item?.user_id, open])
 
   const loadPlacementCandidates = useCallback(async (items: StructuredMemoItem[]) => {
     const activeItems = items.filter(structuredItem => !getActiveMindmapLink(structuredItem))

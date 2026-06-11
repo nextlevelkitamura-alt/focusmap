@@ -261,6 +261,32 @@ describe('WishlistCardDetail', () => {
     expect(screen.queryByRole('button', { name: /クリップボード画像を貼り付け/ })).not.toBeInTheDocument()
   })
 
+  test('未保存のスマホ下書きでは画像と構造化項目を取得しない', async () => {
+    vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ attachments: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ id: 'draft-memo-1', user_id: 'local', title: '', description: null })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'メモを追加' })
+
+    await waitFor(() => {
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+  })
+
   test('保存済み画像があるメモではCodex画像コピーをすぐ押せる', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       attachments: [{
