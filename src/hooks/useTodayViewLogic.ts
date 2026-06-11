@@ -1431,6 +1431,7 @@ export function useTodayViewLogic({
             memo: null,
             memo_images: null,
             node_width: null,
+            mindmap_collapsed: false,
         }
         setLocalTasks(prev => [...prev, optimisticTask])
 

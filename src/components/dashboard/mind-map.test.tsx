@@ -67,16 +67,24 @@ vi.mock("@/hooks/useTaskProgressSnapshot", () => ({
 vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
   CustomMindMapView: ({
     onSelectNode,
+    collapsedTaskIds,
+    onToggleCollapse,
     onGenerateHeadingFromLongNode,
     onDropImportedChatNode,
   }: {
     onSelectNode: (nodeId: string) => void
+    collapsedTaskIds: Set<string>
+    onToggleCollapse: (nodeId: string) => void
     onGenerateHeadingFromLongNode?: (nodeId: string) => void
     onDropImportedChatNode?: (payload: { taskId: string; targetId: string; position: "as-child" }) => void
   }) => (
     <>
+      <div data-testid="root-collapse-state">{collapsedTaskIds.has("root-1") ? "collapsed" : "expanded"}</div>
       <button type="button" onClick={() => onSelectNode("root-1")}>
         Root task
+      </button>
+      <button type="button" onClick={() => onToggleCollapse("root-1")}>
+        折りたたみ切替
       </button>
       <button type="button" onClick={() => onGenerateHeadingFromLongNode?.("root-1")}>
         長いノードの見出し生成
@@ -129,6 +137,7 @@ const task = {
   memo_images: null,
   source: "manual",
   node_width: null,
+  mindmap_collapsed: false,
   is_habit: false,
   habit_end_date: null,
 } as Task
@@ -168,6 +177,20 @@ describe("MindMap controls", () => {
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
+  })
+
+  test("restores and saves collapsed node state through the task record", async () => {
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+    render(<MindMap project={project} groups={[{ ...task, mindmap_collapsed: true }]} tasks={[]} onUpdateTask={onUpdateTask} />)
+
+    expect(screen.getByTestId("root-collapse-state")).toHaveTextContent("collapsed")
+
+    fireEvent.click(screen.getByRole("button", { name: "折りたたみ切替" }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId("root-collapse-state")).toHaveTextContent("expanded")
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: false })
+    })
   })
 
   test("shows repo-scoped unplaced chats from another project and moves them into the current map", async () => {

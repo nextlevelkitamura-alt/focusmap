@@ -134,6 +134,7 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     memo: null,
     memo_images: null,
     node_width: null,
+    mindmap_collapsed: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,

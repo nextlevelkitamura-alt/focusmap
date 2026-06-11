@@ -112,7 +112,7 @@ export function buildMindMapModel({
     project,
     groups,
     tasks,
-    collapsedTaskIds = new Set(),
+    collapsedTaskIds,
     isMobile = false,
     projectNodeId = 'project-root',
 }: BuildMindMapModelParams): MindMapModel {
@@ -136,6 +136,12 @@ export function buildMindMapModel({
         if (!task?.id || rawTaskById.has(task.id)) continue;
         rawTaskById.set(task.id, task);
     }
+
+    const effectiveCollapsedTaskIds = collapsedTaskIds ?? new Set(
+        [...groups, ...tasks]
+            .filter(task => task.mindmap_collapsed === true)
+            .map(task => task.id)
+    );
 
     for (const task of tasks) {
         if (!task?.id || !task.parent_task_id) continue;
@@ -251,7 +257,7 @@ export function buildMindMapModel({
             isDone: isTaskDone(task),
             hasChildren: taskHasChildren,
             childCount,
-            collapsed: collapsedTaskIds.has(task.id),
+            collapsed: effectiveCollapsedTaskIds.has(task.id),
             priority: task.priority ?? null,
             scheduledAt: task.scheduled_at ?? null,
             calendarId: task.calendar_id ?? null,
@@ -271,7 +277,7 @@ export function buildMindMapModel({
         taskById.set(node.id, node);
         edges.push({ id: `e-${parentId}-${task.id}`, source: parentId, target: task.id });
 
-        if (collapsedTaskIds.has(task.id)) return;
+        if (effectiveCollapsedTaskIds.has(task.id)) return;
         for (const child of children) {
             addTask(child, task.id, depth + 1);
         }

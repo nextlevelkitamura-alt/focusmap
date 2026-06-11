@@ -22,6 +22,7 @@ const makeTask = (overrides: Partial<Task>): Task => ({
     memo_images: null,
     source: "manual",
     node_width: null,
+    mindmap_collapsed: false,
     is_habit: false,
     habit_end_date: null,
     ...overrides,
@@ -276,6 +277,31 @@ describe("buildMindMapModel", () => {
         expect(model.taskById.get("parent")?.childCount).toBe(4);
         expect(model.taskById.get("child-a")?.childCount).toBe(1);
         expect(model.taskById.get("child-b")?.childCount).toBe(1);
+    });
+
+    test("uses persisted collapsed state when no override set is provided", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "親",
+            mindmap_collapsed: true,
+            order_index: 0,
+        });
+        const child = makeTask({
+            id: "child",
+            title: "子",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [child],
+            isMobile: false,
+        });
+
+        expect(model.taskById.get("parent")?.collapsed).toBe(true);
+        expect(model.taskById.has("child")).toBe(false);
     });
 });
 

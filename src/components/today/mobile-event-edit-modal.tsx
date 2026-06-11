@@ -239,6 +239,7 @@ export function MobileEventEditModal({
             memo: null,
             memo_images: null,
             node_width: null,
+            mindmap_collapsed: false,
         }
 
         setLocalChildTasks(prev => [...prev, optimisticTask])

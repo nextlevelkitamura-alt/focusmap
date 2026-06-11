@@ -266,6 +266,7 @@ export interface Database {
                     memo_images: string[] | null
                     // Mindmap layout
                     node_width: number | null
+                    mindmap_collapsed: boolean
                     // Codex relay（任意: 既存の楽観更新リテラルを壊さないため optional）
                     codex_work_dir?: string | null
                     codex_thread_id?: string | null
@@ -309,6 +310,7 @@ export interface Database {
                     memo_images?: string[] | null
                     // Mindmap layout
                     node_width?: number | null
+                    mindmap_collapsed?: boolean
                     codex_work_dir?: string | null
                 }
                 Update: {
@@ -349,6 +351,7 @@ export interface Database {
                     memo_images?: string[] | null
                     // Mindmap layout
                     node_width?: number | null
+                    mindmap_collapsed?: boolean
                     codex_work_dir?: string | null
                 }
             }

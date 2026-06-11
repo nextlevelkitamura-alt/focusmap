@@ -66,6 +66,7 @@ const makeTask = (overrides: Partial<Task>): Task => ({
   memo_images: null,
   source: "manual",
   node_width: null,
+  mindmap_collapsed: false,
   is_habit: false,
   habit_end_date: null,
   ...overrides,

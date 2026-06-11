@@ -38,6 +38,14 @@ const waitForTaskStateFlush = () => new Promise<void>(resolve => {
     window.requestAnimationFrame(() => resolve());
 });
 
+const areSetsEqual = <T,>(first: Set<T>, second: Set<T>) => {
+    if (first.size !== second.size) return false;
+    for (const value of first) {
+        if (!second.has(value)) return false;
+    }
+    return true;
+};
+
 type MindMapCallbacks = {
     saveTaskTitle: (taskId: string, newTitle: string) => Promise<void>;
     addChildTask: (taskId: string) => Promise<void>;
@@ -661,33 +669,22 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [clipboardFeedback, setClipboardFeedback] = useState<string | null>(null);
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null);
-    const collapsedStorageKey = projectId ? `focusmap:collapsed:${projectId}` : '';
-    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(() => {
-        if (typeof window === 'undefined' || !collapsedStorageKey) return new Set();
-        try {
-            const raw = window.localStorage.getItem(collapsedStorageKey);
-            if (!raw) return new Set();
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) return new Set(parsed as string[]);
-        } catch (err) {
-            console.warn('[MindMap] Failed to restore collapsed state:', err);
-        }
-        return new Set();
-    });
+    const persistedCollapsedTaskIds = useMemo(
+        () => [...groups, ...tasks]
+            .filter(task => task.mindmap_collapsed === true)
+            .map(task => task.id)
+            .sort(),
+        [groups, tasks]
+    );
+    const persistedCollapsedTaskSignature = persistedCollapsedTaskIds.join('|');
+    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
+        () => new Set(persistedCollapsedTaskIds)
+    );
 
-    // localStorage 永続化: collapsedTaskIds 変化時に保存
     useEffect(() => {
-        if (typeof window === 'undefined' || !collapsedStorageKey) return;
-        try {
-            if (collapsedTaskIds.size === 0) {
-                window.localStorage.removeItem(collapsedStorageKey);
-            } else {
-                window.localStorage.setItem(collapsedStorageKey, JSON.stringify(Array.from(collapsedTaskIds)));
-            }
-        } catch (err) {
-            console.warn('[MindMap] Failed to persist collapsed state:', err);
-        }
-    }, [collapsedTaskIds, collapsedStorageKey]);
+        const next = new Set(persistedCollapsedTaskIds);
+        setCollapsedTaskIds(prev => areSetsEqual(prev, next) ? prev : next);
+    }, [projectId, persistedCollapsedTaskIds, persistedCollapsedTaskSignature]);
     const selectedNodeIdRef = useRef<string | null>(null);
     const clipboardFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1100,6 +1097,25 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         return null;
     }, []);
 
+    const setTaskCollapsed = useCallback((taskId: string, collapsed: boolean) => {
+        setCollapsedTaskIds(prev => {
+            const isCollapsed = prev.has(taskId);
+            if (isCollapsed === collapsed) return prev;
+            const next = new Set(prev);
+            if (collapsed) {
+                next.add(taskId);
+            } else {
+                next.delete(taskId);
+            }
+            return next;
+        });
+
+        const savePromise = onUpdateTask?.(taskId, { mindmap_collapsed: collapsed });
+        void savePromise?.catch(error => {
+            console.error('[MindMap] Failed to persist collapsed state:', error);
+        });
+    }, [onUpdateTask]);
+
     const pasteClipboardTree = useCallback(async (payload: MindMapClipboardPayload, placement?: MindMapClipboardPlacement) => {
         if (payload.roots.length === 0) return;
         const targetPlacement: MindMapClipboardPlacement = placement ?? {
@@ -1173,31 +1189,18 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
 
         if (createdRootIds.length > 0) {
             if (targetPlacement.position === 'as-child' && targetId) {
-                setCollapsedTaskIds(prev => {
-                    if (!prev.has(targetId)) return prev;
-                    const next = new Set(prev);
-                    next.delete(targetId);
-                    return next;
-                });
+                setTaskCollapsed(targetId, false);
             }
             const primaryId = createdRootIds[0];
             applySelection(new Set(createdRootIds), primaryId);
             focusNodeWithPollingV2(primaryId, 300, false);
             flashClipboardFeedback(`${createdRootIds.length}件のノードを貼り付けました`);
         }
-    }, [selectedNodeId, getTaskById, groups, onCreateGroup, onCreateTask, onUpdateTask, onReorderGroup, onReorderTask, applySelection, focusNodeWithPollingV2, flashClipboardFeedback]);
+    }, [selectedNodeId, getTaskById, groups, onCreateGroup, onCreateTask, onUpdateTask, onReorderGroup, onReorderTask, applySelection, focusNodeWithPollingV2, flashClipboardFeedback, setTaskCollapsed]);
 
     const toggleTaskCollapse = useCallback((taskId: string) => {
-        setCollapsedTaskIds(prev => {
-            const next = new Set(prev);
-            if (next.has(taskId)) {
-                next.delete(taskId);
-            } else {
-                next.add(taskId);
-            }
-            return next;
-        });
-    }, []);
+        setTaskCollapsed(taskId, !collapsedTaskIds.has(taskId));
+    }, [collapsedTaskIds, setTaskCollapsed]);
 
     const createRootTaskAndFocus = useCallback(async (title: string) => {
         if (!onCreateGroup) return;
@@ -1243,12 +1246,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         if (!onCreateTask) return;
 
         // Auto-expand parent when adding a child
-        setCollapsedTaskIds(prev => {
-            if (!prev.has(parentTaskId)) return prev;
-            const next = new Set(prev);
-            next.delete(parentTaskId);
-            return next;
-        });
+        setTaskCollapsed(parentTaskId, false);
 
         const newTask = await onCreateTask(parentTaskId, "", parentTaskId);
         if (newTask) {
@@ -1256,7 +1254,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             applySelection(new Set([newTask.id]), newTask.id);
             focusNodeWithPollingV2(newTask.id);
         }
-    }, [onCreateTask, focusNodeWithPollingV2, applySelection]);
+    }, [onCreateTask, focusNodeWithPollingV2, applySelection, setTaskCollapsed]);
 
     // Add sibling task（統一版：ルートタスクなら新しいルートを作成）
     const addSiblingTask = useCallback(async (taskId: string) => {
@@ -1287,12 +1285,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         if (!task || !onCreateTask || !task.parent_task_id) return;
 
         // Auto-expand parent when adding a sibling under a collapsed parent
-        setCollapsedTaskIds(prev => {
-            if (!prev.has(task.parent_task_id!)) return prev;
-            const next = new Set(prev);
-            next.delete(task.parent_task_id!);
-            return next;
-        });
+        setTaskCollapsed(task.parent_task_id, false);
 
         const newTask = await onCreateTask(task.parent_task_id, "", task.parent_task_id);
         if (newTask) {
@@ -1306,7 +1299,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 console.error('[MindMap] Failed to reorder sibling after create:', error);
             });
         }
-    }, [groups, getTaskById, onCreateGroup, onCreateTask, onReorderGroup, onReorderTask, focusNodeWithPollingV2, applySelection]);
+    }, [groups, getTaskById, onCreateGroup, onCreateTask, onReorderGroup, onReorderTask, focusNodeWithPollingV2, applySelection, setTaskCollapsed]);
 
     // Promote task (Shift+Tab: 子タスクを親の兄弟に昇格、ルート直下ならルートに昇格)
     const promoteTask = useCallback(async (taskId: string) => {
@@ -1672,12 +1665,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 return;
             }
 
-            setCollapsedTaskIds(prev => {
-                if (!prev.has(targetTask.id)) return prev;
-                const next = new Set(prev);
-                next.delete(targetTask.id);
-                return next;
-            });
+            setTaskCollapsed(targetTask.id, false);
 
             const updates: Partial<Task> = { parent_task_id: targetTask.id };
             if (isRootDragged) updates.project_id = null;
@@ -1690,7 +1678,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         } else {
             await onReorderTask?.(draggedTask.id, targetTask.id, position);
         }
-    }, [getTaskById, groups, isDescendant, onReorderGroup, onReorderTask, onUpdateTask, project?.id]);
+    }, [getTaskById, groups, isDescendant, onReorderGroup, onReorderTask, onUpdateTask, project?.id, setTaskCollapsed]);
 
     const handleCustomMoveTasks = useCallback(async ({
         taskIds,
@@ -1745,12 +1733,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         if (!targetTask) return;
 
         if (position === 'as-child') {
-            setCollapsedTaskIds(prev => {
-                if (!prev.has(targetTask.id)) return prev;
-                const next = new Set(prev);
-                next.delete(targetTask.id);
-                return next;
-            });
+            setTaskCollapsed(targetTask.id, false);
 
             await Promise.all(
                 moveRootIds.map(taskId => {
@@ -1778,7 +1761,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 return onUpdateTask(taskId, updates);
             })
         );
-    }, [groups, handleCustomMoveTask, isDescendant, onUpdateTask, project?.id, tasks]);
+    }, [groups, handleCustomMoveTask, isDescendant, onUpdateTask, project?.id, setTaskCollapsed, tasks]);
 
     const handleDropImportedChatNode = useCallback(async ({
         taskId,
@@ -1809,12 +1792,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
 
         try {
             if (parentTaskId) {
-                setCollapsedTaskIds(prev => {
-                    if (!prev.has(parentTaskId)) return prev;
-                    const next = new Set(prev);
-                    next.delete(parentTaskId);
-                    return next;
-                });
+                setTaskCollapsed(parentTaskId, false);
             }
             await updateTaskForCodexScope(taskId, updates);
             if (position === 'as-child') {
@@ -1835,6 +1813,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         getTaskById,
         project?.id,
         repoScopedTasksById,
+        setTaskCollapsed,
         updateTaskForCodexScope,
     ]);
 

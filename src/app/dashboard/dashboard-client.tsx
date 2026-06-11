@@ -643,6 +643,7 @@ export function DashboardClient({
             memo: taskData.memo ?? null,
             memo_images: null,
             node_width: null,
+            mindmap_collapsed: false,
         }
 
         // 時間指定がある予定は即時にタイムラインへ反映（カレンダー選択有無に依存しない）
@@ -1009,6 +1010,7 @@ export function DashboardClient({
             memo: null,
             memo_images: null,
             node_width: null,
+            mindmap_collapsed: false,
         }
 
         // quickTasks に追加 → allTasksMerged に反映 → TodayView の allTasks prop に伝播

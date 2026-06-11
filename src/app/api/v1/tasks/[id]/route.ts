@@ -62,6 +62,7 @@ export async function PATCH(
     order_index?: number
     project_id?: string | null
     parent_task_id?: string | null
+    mindmap_collapsed?: boolean
     sync_calendar?: boolean
     calendar_id?: string
   }
@@ -75,6 +76,7 @@ export async function PATCH(
     'title', 'status', 'stage', 'priority',
     'scheduled_at', 'estimated_time', 'memo',
     'order_index', 'project_id', 'parent_task_id',
+    'mindmap_collapsed',
   ]
 
   const updateData: Record<string, unknown> = {}
