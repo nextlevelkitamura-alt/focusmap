@@ -64,6 +64,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  delete (window as Window & { focusmapDesktop?: unknown }).focusmapDesktop
 })
 
 describe("CodexChatImportSidebar", () => {
@@ -99,6 +100,28 @@ describe("CodexChatImportSidebar", () => {
     await waitFor(() => {
       expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/new-repo")
     })
+  })
+
+  test("uses the Focusmap Mac app folder picker before falling back to the server API", async () => {
+    const { onSaveRepoPath } = renderSidebar()
+    const chooseFolder = vi.fn().mockResolvedValue({
+      ok: true,
+      path: "/Users/me/mac-picked-repo/",
+    })
+    Object.defineProperty(window, "focusmapDesktop", {
+      configurable: true,
+      value: { chooseFolder },
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+
+    fireEvent.click(screen.getByRole("button", { name: "Finderでリポフォルダを選択" }))
+
+    await waitFor(() => {
+      expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/mac-picked-repo")
+    })
+    expect(chooseFolder).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   test("exposes a drag payload for a chat row", () => {

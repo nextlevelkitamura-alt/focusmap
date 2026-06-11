@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard, nativeImage, session } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard, nativeImage, session, dialog } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -875,6 +875,25 @@ function openExternalSafely(urlString) {
   }
   rememberDesktopAuthNonceFromUrl(urlString);
   return shell.openExternal(urlString);
+}
+
+async function chooseFolderFromBridge() {
+  const options = {
+    title: 'リポフォルダを選択',
+    message: 'Codexチャットを取り込むリポフォルダを選択',
+    buttonLabel: '選択',
+    properties: ['openDirectory', 'dontAddToRecent'],
+  };
+  const owner = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow
+    : BrowserWindow.getFocusedWindow();
+  const result = owner
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths?.[0]) {
+    return { ok: false, canceled: true };
+  }
+  return { ok: true, path: result.filePaths[0].replace(/\/+$/, '') };
 }
 
 function resolveDesktopAuthOrigin(value) {
@@ -2183,6 +2202,7 @@ handleDesktopIpc('focusmap-desktop:openDashboardExternal', openDashboardExternal
 handleDesktopIpc('focusmap-desktop:getAutomationStatus', getAutomationStatus);
 handleDesktopIpc('focusmap-desktop:connectAutomation', connectAutomation);
 handleDesktopIpc('focusmap-desktop:disconnectAutomation', disconnectAutomation);
+handleDesktopIpc('focusmap-desktop:chooseFolder', chooseFolderFromBridge);
 handleDesktopIpc('focusmap-desktop:copyText', copyTextFromBridge);
 handleDesktopIpc('focusmap-desktop:copyCodexImage', copyCodexImageFromBridge);
 handleDesktopIpc('focusmap-desktop:launchCodex', launchCodexFromBridge);

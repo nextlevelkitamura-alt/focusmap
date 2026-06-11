@@ -35,8 +35,34 @@ type CodexChatImportSidebarProps = {
   onToggleImport: () => Promise<void> | void
 }
 
+type DesktopFolderPickerResult = {
+  ok?: boolean
+  path?: string
+  canceled?: boolean
+  error?: string
+}
+
+type FocusmapDesktopFolderBridge = {
+  chooseFolder?: () => Promise<DesktopFolderPickerResult>
+}
+
 function normalizeRepoPath(value: string) {
   return value.trim().replace(/\/+$/, "")
+}
+
+function focusmapDesktopFolderBridge() {
+  if (typeof window === "undefined") return null
+  return (window as Window & { focusmapDesktop?: FocusmapDesktopFolderBridge }).focusmapDesktop ?? null
+}
+
+function canUseServerFolderPicker() {
+  if (typeof window === "undefined") return false
+  const { hostname } = window.location
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".trycloudflare.com")
 }
 
 export function CodexChatImportSidebar({
@@ -92,6 +118,25 @@ export function CodexChatImportSidebar({
     setPickerPending(true)
     setRepoError(null)
     try {
+      const bridge = focusmapDesktopFolderBridge()
+      if (bridge?.chooseFolder) {
+        const data = await bridge.chooseFolder()
+        if (data?.canceled) return
+        if (!data?.ok || typeof data.path !== "string") {
+          setRepoError(data?.error || "Finderでリポフォルダを選択できませんでした")
+          return
+        }
+        const normalized = normalizeRepoPath(data.path)
+        setDraftRepoPath(normalized)
+        await saveRepoPath(normalized || null)
+        return
+      }
+
+      if (!canUseServerFolderPicker()) {
+        setRepoError("Finder選択はMacアプリ更新後に利用できます。候補または手入力で保存してください")
+        return
+      }
+
       const res = await fetch("/api/codex/choose-folder")
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {

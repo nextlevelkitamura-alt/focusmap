@@ -1734,9 +1734,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         if (rootIds.length === 0) return;
 
         const roots = rootIds
-            .map(id => getTaskById(id))
-            .filter((task): task is Task => !!task)
-            .map(task => buildClipboardNode(task));
+            .map(id => buildClipboardNode(id))
+            .filter((node): node is MindMapClipboardNode => !!node);
         if (roots.length === 0) return;
 
         await pasteClipboardTree({
@@ -1748,7 +1747,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             targetId,
             position,
         });
-    }, [buildClipboardNode, getTaskById, getTopLevelCopyNodeIds, pasteClipboardTree]);
+    }, [buildClipboardNode, getTopLevelCopyNodeIds, pasteClipboardTree]);
 
     return (
         <div
