@@ -357,7 +357,7 @@ describe('WishlistView calendar D&D', () => {
     await renderVisibleWishlist('Mapped memo')
 
     expect(screen.queryByText('マップ追加済み')).not.toBeInTheDocument()
-    expect(screen.getAllByText('未予定').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
     expect(screen.getByText('Mapped memo')).toBeInTheDocument()
     expect(screen.getByText('Unsorted memo')).toBeInTheDocument()
   })
@@ -585,6 +585,46 @@ describe('WishlistView calendar D&D', () => {
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
     )).toBe(false)
+  })
+
+  test('デスクトップ左パネルは閉じられ、メモ列の追加から再表示できる', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>(async input => {
+      const url = requestUrl(input)
+      if (url.startsWith('/api/wishlist')) return jsonResponse({ items: [] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView selectedProjectId="project-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '追加パネルを閉じる' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'メモにメモを追加' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
+    })
   })
 
   test('スマホ表示では選択中カラムに合わせて追加メモの保存先を変える', async () => {
