@@ -30,7 +30,7 @@ import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 import { copyCodexImageToClipboard } from "@/lib/codex-app-launch"
 
-const QUICK_MINUTES = [5, 15, 30, 60, 120]
+const QUICK_MINUTES = [5, 15, 30, 45, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
@@ -1529,7 +1529,8 @@ export function WishlistCardDetail({
 
   const handleDurationChange = async (minutes: number | null) => {
     setSaveError(null)
-    await update({ duration_minutes: minutes })
+    const nextMinutes = minutes !== null && item.duration_minutes === minutes ? null : minutes
+    await update({ duration_minutes: nextMinutes })
   }
 
   const handleGenerateTitle = async () => {
@@ -2373,6 +2374,7 @@ export function WishlistCardDetail({
             <div className="order-1 min-w-0 space-y-1 xl:col-start-1 xl:row-start-2 xl:row-span-2">
               <div className="flex items-center justify-between gap-2">
                 <Label>メモ詳細</Label>
+                {!isMobile && (
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     type="button"
@@ -2419,6 +2421,7 @@ export function WishlistCardDetail({
                     </Button>
                   )}
                 </div>
+                )}
               </div>
               <div className="overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring">
                 <textarea
@@ -2438,6 +2441,39 @@ export function WishlistCardDetail({
                   <div className="flex min-w-0 items-center text-xs text-muted-foreground">
                     {isSavingMemo && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   </div>
+                  {isMobile && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleGenerateTitle()}
+                        disabled={isGeneratingTitle || !draftDescription.trim()}
+                        className="h-8 w-8 rounded-md bg-background/90 p-0"
+                        aria-label="本文から見出し生成"
+                        title="本文から見出し生成"
+                      >
+                        {isGeneratingTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={isMemoRecording ? "destructive" : "outline"}
+                        size="icon"
+                        onClick={() => void handleMemoVoiceToggle()}
+                        disabled={isMemoTranscribing}
+                        className="h-8 w-8 rounded-md bg-background/90"
+                        aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                        title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                      >
+                        {isMemoTranscribing ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : isMemoRecording ? (
+                          <Square className="h-3.5 w-3.5" />
+                        ) : (
+                          <Mic className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
               {(isMemoRecording || isMemoTranscribing || memoVoiceError) && (
@@ -2585,9 +2621,9 @@ export function WishlistCardDetail({
                         {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
                       </div>
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground">画像を追加</div>
+                        <div className="text-sm font-semibold text-foreground">{isMobile ? "写真を選択" : "画像を追加"}</div>
                         <p className="text-xs leading-4">
-                          {isMobile ? "写真を選択 / 撮影" : "フォルダー選択 / ドラッグ&ドロップ"}
+                          {isMobile ? "ライブラリ / 撮影" : "フォルダー選択 / ドラッグ&ドロップ"}
                         </p>
                       </div>
                     </button>

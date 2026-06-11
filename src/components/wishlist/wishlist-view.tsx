@@ -164,7 +164,7 @@ const COLUMN_LABEL: Record<ColumnKey, string> = {
   completed: "完了",
 }
 
-const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "mapped", "scheduled", "completed"]
+const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "completed"]
 const SHOW_MEMO_TAG_FILTER_ENTRY = false
 const SHOW_MEMO_MINDMAP_ENTRY = false
 const POSTGRES_INTEGER_MIN = -2147483648
@@ -1340,17 +1340,17 @@ export function WishlistView({
   const mobileSections = useMemo(() => ({
     unsorted: {
       columnKey: "unsorted" as const,
-      title: COLUMN_LABEL.unsorted,
-      count: unscheduledItems.length,
-      items: unscheduledItems,
-      emptyText: "未予定のメモはありません",
+      title: "メモ",
+      count: desktopUnscheduledItems.length,
+      items: desktopUnscheduledItems,
+      emptyText: "メモはありません",
     },
     today: {
       columnKey: "today" as const,
-      title: COLUMN_LABEL.today,
+      title: "今日",
       count: todayItems.length,
       items: todayItems,
-      emptyText: "今日するメモはありません",
+      emptyText: "今日のメモはありません",
     },
     scheduled: {
       columnKey: "scheduled" as const,
@@ -1373,7 +1373,7 @@ export function WishlistView({
       items: completedItems,
       emptyText: "完了したメモはありません",
     },
-  }), [completedItems, mappedItems, scheduledItems, todayItems, unscheduledItems])
+  }), [completedItems, desktopUnscheduledItems, mappedItems, scheduledItems, todayItems])
 
   const selectedMemosProjectId = useMemo(() => {
     const ids = new Set(
@@ -2779,7 +2779,6 @@ export function WishlistView({
         <>
           <div className="flex min-w-0 items-center gap-1.5">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <h1 className="shrink-0 text-lg font-semibold leading-none tracking-normal">メモ</h1>
               {onSelectSpace && onSelectProject && (
                 <SpaceProjectSwitcher
                   spaces={spaces}
@@ -2794,7 +2793,7 @@ export function WishlistView({
                   onSpaceSaved={onSpaceSaved}
                   showAllProjectsOption
                   variant="memoHeaderCompact"
-                  className="ml-6"
+                  className="min-w-0"
                 />
               )}
             </div>
@@ -2852,6 +2851,7 @@ export function WishlistView({
             </Button>
             <Button
               type="button"
+              variant="outline"
               onClick={handleAddMemoFromComposer}
               disabled={disableMemoAdd}
               size="icon"

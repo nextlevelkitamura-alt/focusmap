@@ -678,10 +678,13 @@ describe('WishlistView calendar D&D', () => {
     render(<WishlistView />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '今日する0' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '今日0' })).toBeInTheDocument()
     })
+    expect(screen.getByRole('button', { name: 'メモ0' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /マップ追加済み/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /予定済み/ })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '今日する0' }))
+    fireEvent.click(screen.getByRole('button', { name: '今日0' }))
     fireEvent.change(screen.getByPlaceholderText('音声またはテキストで入力'), {
       target: { value: '新しいメモ' },
     })
