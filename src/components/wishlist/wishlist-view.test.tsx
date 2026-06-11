@@ -481,10 +481,18 @@ describe('WishlistView calendar D&D', () => {
     render(<WishlistView selectedProjectId="project-1" />)
 
     await waitFor(() => {
-      expect(screen.getByText('メモを追加')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'メモにメモを追加' }))
+
+    const descriptionField = await screen.findByPlaceholderText('本文を入力')
+    await waitFor(() => {
+      expect(descriptionField).toHaveFocus()
     })
 
-    fireEvent.change(screen.getByPlaceholderText('本文を入力'), {
+    fireEvent.change(descriptionField, {
       target: { value: 'あ' },
     })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
@@ -534,8 +542,11 @@ describe('WishlistView calendar D&D', () => {
     const { container } = render(<WishlistView selectedProjectId="project-1" />)
 
     await waitFor(() => {
-      expect(screen.getByText('メモを追加')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
     })
+
+    fireEvent.click(screen.getByRole('button', { name: 'メモにメモを追加' }))
+    await screen.findByText('メモを追加')
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
     const imageFile = new File(['image'], 'memo.png', { type: 'image/png' })
@@ -579,6 +590,11 @@ describe('WishlistView calendar D&D', () => {
     render(<WishlistView selectedProjectId="project-1" />)
 
     await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'メモにメモを追加' }))
+
+    await waitFor(() => {
       expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
     })
     expect(screen.queryByRole('button', { name: '完了にメモを追加' })).not.toBeInTheDocument()
@@ -611,6 +627,14 @@ describe('WishlistView calendar D&D', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'メモにメモを追加' }))
+
+    const descriptionField = await screen.findByPlaceholderText('本文を入力')
+    await waitFor(() => {
+      expect(descriptionField).toHaveFocus()
       expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
     })
 

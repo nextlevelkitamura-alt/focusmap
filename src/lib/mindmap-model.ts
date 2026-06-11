@@ -163,6 +163,15 @@ export function buildMindMapModel({
     const getTaskAutoMinutes = (taskId: string) =>
         getChildren(taskId).reduce((sum, child) => sum + getTaskEffectiveMinutes(child.id), 0);
 
+    const getTaskDescendantCount = (taskId: string, seen = new Set<string>()): number => {
+        if (seen.has(taskId)) return 0;
+        seen.add(taskId);
+        return getChildren(taskId).reduce(
+            (sum, child) => sum + 1 + getTaskDescendantCount(child.id, new Set(seen)),
+            0
+        );
+    };
+
     const projectTitle = project?.title ?? 'Project';
     const projectNode: MindMapModelNode = {
         id: projectNodeId,
@@ -215,7 +224,7 @@ export function buildMindMapModel({
             taskHasMemoImages ||
             task.source === 'memo' ||
             task.source === 'wishlist';
-        const childCount = children.length;
+        const childCount = getTaskDescendantCount(task.id);
         const nodeWidth = task.node_width ?? estimateTaskNodeWidth(task.title || '', isMobile, {
             hasChildren: taskHasChildren,
             childCount,
