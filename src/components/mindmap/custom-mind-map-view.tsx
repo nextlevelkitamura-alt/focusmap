@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Loader2, MoreVertical, Sparkles } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Loader2, MoreVertical, Sparkles } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -29,6 +29,10 @@ import {
     type MindMapNodeCalendarDragEventDetail,
     type MindMapNodeCalendarDragPayload,
 } from "@/lib/calendar-constants";
+import {
+    hasCodexChatImportDragPayload,
+    readCodexChatImportDragPayload,
+} from "@/lib/codex-chat-import-dnd";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -58,6 +62,11 @@ type CustomMindMapViewProps = {
     generatingHeadingNodeIds?: Set<string>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexRunByNodeId?: Record<string, CodexNodeState>;
+    codexThreadImportEnabled?: boolean;
+    codexThreadImportAvailable?: boolean;
+    codexThreadImportPending?: boolean;
+    codexThreadImportRepoPath?: string | null;
+    onToggleCodexThreadImport?: () => void | Promise<void>;
     taskProgressByNodeId?: Record<string, TaskProgressSnapshotTask>;
     onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
     onMoveTask?: (params: {
@@ -67,6 +76,11 @@ type CustomMindMapViewProps = {
     }) => void | Promise<void>;
     onMoveTasks?: (params: {
         taskIds: string[];
+        targetId: string;
+        position: CustomDropPosition;
+    }) => void | Promise<void>;
+    onDropImportedChatNode?: (params: {
+        taskId: string;
         targetId: string;
         position: CustomDropPosition;
     }) => void | Promise<void>;
@@ -376,6 +390,7 @@ function CustomTaskNode({
     onRegisterEditController,
     onRequestEdit,
     onPreviewTitleChange,
+    onDropImportedChatNode,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -410,6 +425,7 @@ function CustomTaskNode({
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
     onPreviewTitleChange?: (taskId: string, title: string | null) => void;
+    onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -419,6 +435,7 @@ function CustomTaskNode({
     const selectAllOnFocusRef = useRef(true);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
+    const [externalDropActive, setExternalDropActive] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const baseNodeCodexBadge = buildCodexBadge(codexState, taskProgress);
     const nodeCodexBadge = node.isDone && baseNodeCodexBadge
@@ -721,6 +738,36 @@ function CustomTaskNode({
         target.addEventListener("pointercancel", cleanup);
     }, [isEditing, isMobile, node.id, node.width, onResize, resizeScale]);
 
+    const handleExternalDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        setExternalDropActive(true);
+    }, []);
+
+    const handleExternalDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        setExternalDropActive(false);
+    }, []);
+
+    const handleExternalDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setExternalDropActive(false);
+        const payload = readCodexChatImportDragPayload(event.dataTransfer);
+        if (!payload) return;
+        void Promise.resolve(onDropImportedChatNode?.({
+            taskId: payload.taskId,
+            targetId: node.id,
+            position: "as-child",
+        })).catch(error => {
+            console.error("[CustomMindMap] Failed to drop imported Codex chat:", error);
+        });
+    }, [node.id, onDropImportedChatNode]);
+
     return (
         <div
             ref={wrapperRef}
@@ -746,6 +793,7 @@ function CustomTaskNode({
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 !dragging && "cursor-grab",
+                externalDropActive && "z-40 border-sky-400 bg-sky-500/15 ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dropPosition === "as-child" && !dragging && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
             style={{ left: node.x, top: node.y, width: node.width, height: node.height, minHeight: node.height }}
@@ -764,6 +812,9 @@ function CustomTaskNode({
                 beginEditing();
             }}
             onKeyDown={handleNodeKeyDown}
+            onDragOver={handleExternalDragOver}
+            onDragLeave={handleExternalDragLeave}
+            onDrop={handleExternalDrop}
         >
             {dropPosition === "above" && !dragging && (
                 <div className="absolute -top-1.5 left-0 right-0 h-1 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
@@ -979,6 +1030,7 @@ function CustomProjectNode({
     onEditingChange,
     onRegisterEditController,
     onRequestEdit,
+    onDropImportedChatNode,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -993,6 +1045,7 @@ function CustomProjectNode({
     onEditingChange?: (nodeId: string, isEditing: boolean) => void;
     onRegisterEditController?: (nodeId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
+    onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1002,6 +1055,7 @@ function CustomProjectNode({
     const selectAllOnFocusRef = useRef(true);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(node.title);
+    const [externalDropActive, setExternalDropActive] = useState(false);
 
     useLayoutEffect(() => {
         if (!primarySelected || isEditing) return;
@@ -1203,6 +1257,36 @@ function CustomProjectNode({
         void finishEditing();
     }, [finishEditing, isEditing]);
 
+    const handleExternalDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        setExternalDropActive(true);
+    }, []);
+
+    const handleExternalDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        setExternalDropActive(false);
+    }, []);
+
+    const handleExternalDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setExternalDropActive(false);
+        const payload = readCodexChatImportDragPayload(event.dataTransfer);
+        if (!payload) return;
+        void Promise.resolve(onDropImportedChatNode?.({
+            taskId: payload.taskId,
+            targetId: "project-root",
+            position: "as-child",
+        })).catch(error => {
+            console.error("[CustomMindMap] Failed to drop imported Codex chat:", error);
+        });
+    }, [onDropImportedChatNode]);
+
     return (
         <div
             ref={wrapperRef}
@@ -1214,6 +1298,7 @@ function CustomProjectNode({
                 "absolute z-10 flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm outline-none",
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                externalDropActive && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]",
                 dropPosition === "as-child" && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
             style={{ left: node.x, top: node.y, width: node.width, height: node.height, minHeight: node.height }}
@@ -1229,6 +1314,9 @@ function CustomProjectNode({
                 beginEditing();
             }}
             onKeyDown={handleKeyDown}
+            onDragOver={handleExternalDragOver}
+            onDragLeave={handleExternalDragLeave}
+            onDrop={handleExternalDrop}
         >
             {dropPosition === "as-child" && (
                 <div className="pointer-events-none absolute inset-0 rounded-lg bg-sky-400/10" />
@@ -1282,10 +1370,16 @@ export function CustomMindMapView({
     generatingHeadingNodeIds = new Set(),
     onRunCodex,
     codexRunByNodeId = {},
+    codexThreadImportEnabled = false,
+    codexThreadImportAvailable = false,
+    codexThreadImportPending = false,
+    codexThreadImportRepoPath,
+    onToggleCodexThreadImport,
     taskProgressByNodeId = {},
     onOpenTaskProgress,
     onMoveTask,
     onMoveTasks,
+    onDropImportedChatNode,
 }: CustomMindMapViewProps) {
     const [zoom, setZoom] = useState(() => isMobile ? 0.85 : 0.9);
     const [panOffset, setPanOffset] = useState<Point>(() => isMobile ? { x: -20, y: 4 } : { x: 0, y: 0 });
@@ -2865,6 +2959,12 @@ export function CustomMindMapView({
         }
         : null;
     const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
+    const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
+    const codexThreadImportTitle = codexThreadImportAvailable
+        ? codexThreadImportEnabled
+            ? `Codex thread取り込み: ON (${codexThreadImportRepoPath ?? "repo設定済み"})`
+            : `Codex thread取り込み: OFF (${codexThreadImportRepoPath ?? "repo設定済み"})`
+        : "プロジェクトにリポジトリを設定するとCodex threadを取り込めます";
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
@@ -2885,28 +2985,62 @@ export function CustomMindMapView({
                     className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
                 />
             )}
-            {(codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0) && (
-                <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
-                    {codexSummary.running > 0 && (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            実行中{codexSummary.running}
-                        </span>
+            {(onToggleCodexThreadImport || shouldShowCodexSummary) && (
+                <div className="absolute left-12 top-3 z-30 flex max-w-[calc(100%-6rem)] items-center gap-2">
+                    {onToggleCodexThreadImport && (
+                        <button
+                            type="button"
+                            className={cn(
+                                "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-55",
+                                codexThreadImportEnabled && codexThreadImportAvailable && "border-sky-400/70 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+                            )}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                void onToggleCodexThreadImport();
+                            }}
+                            disabled={!codexThreadImportAvailable || codexThreadImportPending}
+                            aria-label={codexThreadImportEnabled ? "Codex thread取り込みをOFFにする" : "Codex thread取り込みをONにする"}
+                            aria-pressed={codexThreadImportEnabled}
+                            title={codexThreadImportTitle}
+                        >
+                            {codexThreadImportPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Bot className="h-5 w-5" />
+                            )}
+                            <span
+                                className={cn(
+                                    "absolute bottom-2 right-2 h-2 w-2 rounded-full border border-background bg-muted-foreground/50",
+                                    codexThreadImportEnabled && codexThreadImportAvailable && "bg-sky-500",
+                                    !codexThreadImportAvailable && "bg-amber-500",
+                                )}
+                            />
+                        </button>
                     )}
-                    {codexSummary.promptWaiting > 0 && (
-                        <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
-                            未送信{codexSummary.promptWaiting}
-                        </span>
-                    )}
-                    {codexSummary.awaitingApproval > 0 && (
-                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
-                            確認待ち{codexSummary.awaitingApproval}
-                        </span>
-                    )}
-                    {codexSummary.connectionFailed > 0 && (
-                        <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
-                            接続失敗{codexSummary.connectionFailed}
-                        </span>
+                    {shouldShowCodexSummary && (
+                        <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
+                            {codexSummary.running > 0 && (
+                                <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    実行中{codexSummary.running}
+                                </span>
+                            )}
+                            {codexSummary.promptWaiting > 0 && (
+                                <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
+                                    未送信{codexSummary.promptWaiting}
+                                </span>
+                            )}
+                            {codexSummary.awaitingApproval > 0 && (
+                                <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                                    確認待ち{codexSummary.awaitingApproval}
+                                </span>
+                            )}
+                            {codexSummary.connectionFailed > 0 && (
+                                <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
+                                    接続失敗{codexSummary.connectionFailed}
+                                </span>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -2989,6 +3123,7 @@ export function CustomMindMapView({
                                     onEditingChange={handleEditingChange}
                                     onRegisterEditController={handleRegisterEditController}
                                     onRequestEdit={startFloatingEdit}
+                                    onDropImportedChatNode={onDropImportedChatNode}
                                 />
                             );
                         }
@@ -3028,6 +3163,7 @@ export function CustomMindMapView({
                                 onRegisterEditController={handleRegisterEditController}
                                 onRequestEdit={startFloatingEdit}
                                 onPreviewTitleChange={handlePreviewTitleChange}
+                                onDropImportedChatNode={onDropImportedChatNode}
                             />
                         );
                     })}

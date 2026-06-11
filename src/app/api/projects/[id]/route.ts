@@ -2,6 +2,30 @@ import { createClient } from "@/utils/supabase/server"
 import { resolveProjectRepoPath } from "@/lib/project-repo-path"
 import { NextResponse } from "next/server"
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function hasOwn(record: Record<string, unknown>, key: string) {
+    return Object.prototype.hasOwnProperty.call(record, key)
+}
+
+async function currentProjectRepoPath(
+    supabase: Awaited<ReturnType<typeof createClient>>,
+    userId: string,
+    projectId: string,
+) {
+    const { data, error } = await supabase
+        .from("projects")
+        .select("repo_path")
+        .eq("id", projectId)
+        .eq("user_id", userId)
+        .maybeSingle()
+    if (error) throw error
+    const repoPath = typeof data?.repo_path === "string" ? data.repo_path.trim() : ""
+    return repoPath || null
+}
+
 export async function PATCH(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -16,14 +40,42 @@ export async function PATCH(
 
         const { id } = await params
         const body = await request.json()
-        const updates = { ...body }
+        const updates = isRecord(body) ? { ...body } : {}
+        let repoPathFromBody: string | null | undefined
 
-        if (Object.prototype.hasOwnProperty.call(updates, "repo_path")) {
+        if (hasOwn(updates, "repo_path")) {
             const resolvedRepo = await resolveProjectRepoPath(supabase, user.id, updates.repo_path)
             if (resolvedRepo.error) {
                 return NextResponse.json({ error: resolvedRepo.error }, { status: 400 })
             }
             updates.repo_path = resolvedRepo.repoPath
+            repoPathFromBody = resolvedRepo.repoPath
+        }
+
+        if (hasOwn(updates, "codex_thread_import_enabled")) {
+            const enabled = updates.codex_thread_import_enabled === true
+            updates.codex_thread_import_enabled = enabled
+
+            if (enabled) {
+                const repoPath = repoPathFromBody !== undefined
+                    ? repoPathFromBody
+                    : await currentProjectRepoPath(supabase, user.id, id)
+                if (!repoPath) {
+                    return NextResponse.json(
+                        { error: "repo_path is required before enabling Codex thread import" },
+                        { status: 400 },
+                    )
+                }
+                updates.codex_thread_import_enabled_since = new Date().toISOString()
+            } else {
+                updates.codex_thread_import_enabled_since = null
+            }
+        } else if (repoPathFromBody !== undefined) {
+            const currentRepoPath = await currentProjectRepoPath(supabase, user.id, id)
+            if (currentRepoPath !== repoPathFromBody) {
+                updates.codex_thread_import_enabled = false
+                updates.codex_thread_import_enabled_since = null
+            }
         }
 
         const { data, error } = await supabase

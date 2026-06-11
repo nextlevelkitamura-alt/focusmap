@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'vitest';
-import { hasPendingArchiveRequest, parseRollout, taskStateForSummary } from './src/codex-thread-monitor';
+import {
+  hasPendingArchiveRequest,
+  isOrphanImportApiUnavailable,
+  isOrphanThreadImportCandidate,
+  knownCodexThreadIds,
+  matchingThreadImportScope,
+  parseRollout,
+  taskStateForSummary,
+} from './src/codex-thread-monitor';
+import { AgentApiError } from './src/api-client';
 
 const threadRow = {
   id: 'thread-1',
@@ -146,5 +155,63 @@ describe('codex-thread-monitor state detection', () => {
     }), summary);
 
     expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
+  });
+
+  test('builds known thread ids from column and result before orphan import', () => {
+    const ids = knownCodexThreadIds([
+      task({ codex_thread_id: 'thread-column' }),
+      task({ result: { codex_thread_id: 'thread-result' } }),
+      task({ result: {} }),
+    ] as never);
+
+    expect([...ids].sort()).toEqual(['thread-column', 'thread-result']);
+  });
+
+  test('imports only recent user-created threads that are not already known', () => {
+    const nowMs = Date.parse('2026-06-10T10:00:00.000Z');
+    const importScopes = [{
+      project_id: 'project-1',
+      repo_path: '/Users/me/project',
+      enabled_since: '2026-06-10T09:00:00.000Z',
+    }];
+    const base = {
+      ...threadRow,
+      id: 'thread-new',
+      cwd: '/Users/me/project',
+      has_user_event: 0,
+      archived: 0,
+      first_user_message: 'Codexから直接始めた依頼',
+      updated_at_ms: nowMs - 60_000,
+    };
+
+    expect(isOrphanThreadImportCandidate(base, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
+    expect(isOrphanThreadImportCandidate(base, new Set(['thread-new']), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, cwd: '/Users/me/other' }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, updated_at_ms: Date.parse('2026-06-10T08:59:59.000Z') }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({
+      ...base,
+      first_user_message: '# AGENTS.md instructions\n<environment_context>',
+    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+  });
+
+  test('matches import scope by repo path and enabled time', () => {
+    const updatedMs = Date.parse('2026-06-10T10:00:00.000Z');
+    const scopes = [{
+      project_id: 'project-1',
+      repo_path: '/Users/me/project',
+      enabled_since: '2026-06-10T09:30:00.000Z',
+    }];
+
+    expect(matchingThreadImportScope({ cwd: '/Users/me/project' }, scopes, updatedMs)?.project_id).toBe('project-1');
+    expect(matchingThreadImportScope({ cwd: '/Users/me/project' }, scopes, Date.parse('2026-06-10T09:00:00.000Z'))).toBeNull();
+    expect(matchingThreadImportScope({ cwd: '/Users/me/other' }, scopes, updatedMs)).toBeNull();
+  });
+
+  test('treats missing orphan import endpoint as temporarily unavailable', () => {
+    expect(isOrphanImportApiUnavailable(new AgentApiError('not found', 404, '/agents/codex-monitor/import-thread'))).toBe(true);
+    expect(isOrphanImportApiUnavailable(new AgentApiError('method not allowed', 405, '/agents/codex-monitor/import-thread'))).toBe(true);
+    expect(isOrphanImportApiUnavailable(new AgentApiError('unauthorized', 401, '/agents/codex-monitor/import-thread'))).toBe(false);
+    expect(isOrphanImportApiUnavailable(new AgentApiError('server error', 500, '/agents/codex-monitor/import-thread'))).toBe(false);
   });
 });

@@ -30,7 +30,7 @@ import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 import { copyCodexImageToClipboard } from "@/lib/codex-app-launch"
 
-const QUICK_MINUTES = [5, 15, 30, 60, 120]
+const QUICK_MINUTES = [5, 15, 30, 45, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
@@ -1529,7 +1529,8 @@ export function WishlistCardDetail({
 
   const handleDurationChange = async (minutes: number | null) => {
     setSaveError(null)
-    await update({ duration_minutes: minutes })
+    const nextMinutes = minutes !== null && item.duration_minutes === minutes ? null : minutes
+    await update({ duration_minutes: nextMinutes })
   }
 
   const handleGenerateTitle = async () => {
@@ -1970,7 +1971,7 @@ export function WishlistCardDetail({
   }
 
   const organizationSection = (
-    <div className={cn("min-w-0 space-y-2", isMobile ? "order-7 pt-1" : "xl:col-start-2 xl:row-start-1")}>
+    <div className={cn("min-w-0 space-y-2", isMobile ? "order-7 pt-1" : "order-5")}>
       <label className="block min-w-0 space-y-1">
         <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
         <div className="relative">
@@ -2087,7 +2088,8 @@ export function WishlistCardDetail({
       }}
     >
       <SheetContent
-        side={isMobile ? "bottom" : "center"}
+        side={isMobile ? "bottom" : "right"}
+        data-testid="memo-detail-sheet"
         className={cn(
           isMobile
             ? [
@@ -2097,8 +2099,8 @@ export function WishlistCardDetail({
                 "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5",
               ]
             : [
-                "h-[min(920px,calc(100dvh-32px))] w-[min(1280px,calc(100vw-32px))] gap-2 overflow-y-auto px-6",
-                "border-neutral-800 bg-neutral-950/98 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
+                "h-full w-[min(520px,calc(100vw-20px))] max-w-none gap-2 overflow-hidden px-5 pb-0 sm:max-w-none",
+                "border-l border-neutral-800 bg-neutral-950/98 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
                 "[&>button]:right-5 [&>button]:top-5 [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:text-neutral-100",
               ]
         )}
@@ -2124,9 +2126,9 @@ export function WishlistCardDetail({
           className={cn(
           isMobile
             ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none px-4 pb-0 [touch-action:pan-y]"
-            : "grid gap-4 pb-6 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start"
+            : "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-0 pb-6 pr-1"
         )}>
-          <div className={cn("min-w-0 max-w-full", isMobile ? "flex w-full flex-col gap-3" : "contents")}>
+          <div className={cn("min-w-0 max-w-full", isMobile ? "flex w-full flex-col gap-3" : "flex w-full flex-col gap-4")}>
           <div className="order-0 min-w-0 space-y-1 xl:col-start-1 xl:row-start-1">
             <label className="block min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
@@ -2373,6 +2375,7 @@ export function WishlistCardDetail({
             <div className="order-1 min-w-0 space-y-1 xl:col-start-1 xl:row-start-2 xl:row-span-2">
               <div className="flex items-center justify-between gap-2">
                 <Label>メモ詳細</Label>
+                {!isMobile && (
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     type="button"
@@ -2419,6 +2422,7 @@ export function WishlistCardDetail({
                     </Button>
                   )}
                 </div>
+                )}
               </div>
               <div className="overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring">
                 <textarea
@@ -2438,6 +2442,39 @@ export function WishlistCardDetail({
                   <div className="flex min-w-0 items-center text-xs text-muted-foreground">
                     {isSavingMemo && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   </div>
+                  {isMobile && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleGenerateTitle()}
+                        disabled={isGeneratingTitle || !draftDescription.trim()}
+                        className="h-8 w-8 rounded-md bg-background/90 p-0"
+                        aria-label="本文から見出し生成"
+                        title="本文から見出し生成"
+                      >
+                        {isGeneratingTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={isMemoRecording ? "destructive" : "outline"}
+                        size="icon"
+                        onClick={() => void handleMemoVoiceToggle()}
+                        disabled={isMemoTranscribing}
+                        className="h-8 w-8 rounded-md bg-background/90"
+                        aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                        title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                      >
+                        {isMemoTranscribing ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : isMemoRecording ? (
+                          <Square className="h-3.5 w-3.5" />
+                        ) : (
+                          <Mic className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
               {(isMemoRecording || isMemoTranscribing || memoVoiceError) && (
@@ -2585,9 +2622,9 @@ export function WishlistCardDetail({
                         {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
                       </div>
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground">画像を追加</div>
+                        <div className="text-sm font-semibold text-foreground">{isMobile ? "写真を選択" : "画像を追加"}</div>
                         <p className="text-xs leading-4">
-                          {isMobile ? "写真を選択 / 撮影" : "フォルダー選択 / ドラッグ&ドロップ"}
+                          {isMobile ? "ライブラリ / 撮影" : "フォルダー選択 / ドラッグ&ドロップ"}
                         </p>
                       </div>
                     </button>
@@ -2641,7 +2678,7 @@ export function WishlistCardDetail({
 
             {organizationSection}
 
-              <div className={cn("min-w-0", isMobile ? "order-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-4")}>
+              <div className={cn("min-w-0", isMobile ? "order-3 space-y-3" : "order-3 space-y-4")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">

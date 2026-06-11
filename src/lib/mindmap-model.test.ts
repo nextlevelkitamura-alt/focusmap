@@ -234,6 +234,49 @@ describe("buildMindMapModel", () => {
         expect(childNode).toBeDefined();
         expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(20);
     });
+
+    test("shows the total descendant count on parent nodes", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "親",
+            order_index: 0,
+        });
+        const childA = makeTask({
+            id: "child-a",
+            title: "子A",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+        const childB = makeTask({
+            id: "child-b",
+            title: "子B",
+            parent_task_id: "parent",
+            order_index: 1,
+        });
+        const grandchildA = makeTask({
+            id: "grandchild-a",
+            title: "孫A",
+            parent_task_id: "child-a",
+            order_index: 0,
+        });
+        const grandchildB = makeTask({
+            id: "grandchild-b",
+            title: "孫B",
+            parent_task_id: "child-b",
+            order_index: 0,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [childA, childB, grandchildA, grandchildB],
+            isMobile: false,
+        });
+
+        expect(model.taskById.get("parent")?.childCount).toBe(4);
+        expect(model.taskById.get("child-a")?.childCount).toBe(1);
+        expect(model.taskById.get("child-b")?.childCount).toBe(1);
+    });
 });
 
 describe("mindmap geometry", () => {

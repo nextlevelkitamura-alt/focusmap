@@ -173,6 +173,46 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
   })
 
+  test('デスクトップ表示では選択メモを右サイドバーで開き、写真の下にCodexを置く', async () => {
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ category: '未完了', project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={vi.fn(async () => undefined)}
+      />,
+    )
+
+    const sheet = await screen.findByTestId('memo-detail-sheet')
+    expect(sheet).toHaveClass('right-0')
+    expect(sheet).not.toHaveClass('left-1/2')
+
+    const imageSection = screen.getByText('画像')
+    const codexButton = screen.getByRole('button', { name: /Codexに送る/ })
+    const scheduleSection = screen.getByText('時間・予定')
+
+    expectVisualOrder(imageSection, 'order-2')
+    expectVisualOrder(codexButton, 'order-3')
+    expectVisualOrder(scheduleSection, 'order-4')
+  })
+
   test('スマホ表示ではメモ詳細と画像を上に置き、タグを最後に回す', async () => {
     vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
 
@@ -215,6 +255,11 @@ describe('WishlistCardDetail', () => {
     expectVisualOrder(codexButton, 'order-3')
     expectVisualOrder(scheduleSection, 'order-4')
     expectVisualOrder(tagSection, 'order-7')
+    expect(screen.queryByText('見出し生成')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '本文から見出し生成' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '本文を音声入力' })).toBeInTheDocument()
+    expect(screen.getByText('写真を選択')).toBeInTheDocument()
+    expect(screen.getByText('ライブラリ / 撮影')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /クリップボード画像を貼り付け/ })).not.toBeInTheDocument()
   })
 
@@ -433,6 +478,25 @@ describe('WishlistCardDetail', () => {
       expect(screen.getByText('1時間20分')).toBeInTheDocument()
     })
     expect(promptSpy).not.toHaveBeenCalled()
+  })
+
+  test('所要時間プリセットは同じ値を再タップすると未設定に戻る', async () => {
+    render(<DetailHarness />)
+
+    const fifteenMinuteButton = await screen.findByRole('button', { name: '15分' })
+    expect(screen.getAllByText('15分')).toHaveLength(1)
+
+    fireEvent.click(fifteenMinuteButton)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('15分')).toHaveLength(2)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '15分' }))
+
+    await waitFor(() => {
+      expect(screen.getAllByText('15分')).toHaveLength(1)
+    })
   })
 
   test('Codex送信は追加依頼文を編集せず見出しと本文だけ渡す', async () => {

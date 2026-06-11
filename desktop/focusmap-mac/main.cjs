@@ -115,6 +115,7 @@ const CODEX_DOWNLOAD_URL = (
   DESKTOP_ENV.FOCUSMAP_CODEX_DOWNLOAD_URL ||
   'https://openai.com/codex/'
 ).trim();
+const CODEX_THREAD_IMPORT_API_PATH = '/api/agents/codex-monitor/import-thread';
 const AGENT_CLI = app.isPackaged
   ? path.join(RESOURCE_ROOT, 'focusmap-agent', 'dist', 'cli.js')
   : path.join(REPO_ROOT, 'scripts', 'focusmap-agent', 'dist', 'cli.js');
@@ -124,7 +125,7 @@ const CODEX_SERVER_SCRIPT = app.isPackaged
 const TASK_RUNNER_SCRIPT = path.join(REPO_ROOT, 'scripts', 'run-task-runner.sh');
 const TASK_RUNNER_PAUSE_FILE = path.join(REPO_ROOT, 'scripts', 'task-runner.paused');
 const APP_ICON_PATH = app.isPackaged
-  ? path.join(process.resourcesPath, 'icon.icns')
+  ? path.join(process.resourcesPath, 'icon.png')
   : path.join(__dirname, 'assets', 'icon.png');
 const FALLBACK_APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'oauth2.googleapis.com']);
@@ -468,6 +469,50 @@ function httpRequest(url, timeoutMs = 1000, headers = {}) {
       resolve({ statusCode: 0, body: '' });
     });
     req.once('error', () => resolve({ statusCode: 0, body: '' }));
+  });
+}
+
+function httpRequestWithBody(url, options = {}) {
+  return new Promise((resolve) => {
+    let req = null;
+    let resolved = false;
+    const method = options.method || 'GET';
+    const timeoutMs = options.timeoutMs || 1000;
+    const headers = { ...(options.headers || {}) };
+    const body = options.body == null ? null : Buffer.from(String(options.body));
+    if (body && !Object.keys(headers).some((key) => key.toLowerCase() === 'content-length')) {
+      headers['content-length'] = String(body.byteLength);
+    }
+
+    function finish(response) {
+      if (resolved) return;
+      resolved = true;
+      resolve(response);
+    }
+
+    try {
+      const client = String(url).startsWith('https:') ? https : http;
+      req = client.request(url, { method, timeout: timeoutMs, headers }, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          finish({
+            statusCode: res.statusCode || 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      });
+    } catch {
+      finish({ statusCode: 0, body: '' });
+      return;
+    }
+    req.once('timeout', () => {
+      req.destroy();
+      finish({ statusCode: 0, body: '' });
+    });
+    req.once('error', () => finish({ statusCode: 0, body: '' }));
+    if (body) req.write(body);
+    req.end();
   });
 }
 
@@ -1133,6 +1178,82 @@ async function desktopHealthReady(timeoutMs = 1200) {
   }
 }
 
+async function codexThreadImportApiStatus(appReady, timeoutMs = 1200) {
+  const url = new URL(CODEX_THREAD_IMPORT_API_PATH, APP_ORIGIN).toString();
+  const mode = isLocalAppOrigin() ? 'local' : 'remote';
+  if (!appReady && isLocalAppOrigin()) {
+    return {
+      ready: false,
+      checked: false,
+      statusCode: 0,
+      url,
+      path: CODEX_THREAD_IMPORT_API_PATH,
+      mode,
+      reason: 'app_not_ready',
+      message: 'FocusmapローカルWebの起動後に確認します。',
+    };
+  }
+
+  const response = await httpRequestWithBody(url, {
+    method: 'POST',
+    timeoutMs,
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: '{}',
+  });
+  const statusCode = response.statusCode || 0;
+  if (statusCode === 401 || statusCode === 400 || statusCode === 403 || statusCode === 409 || (statusCode >= 200 && statusCode < 300)) {
+    return {
+      ready: true,
+      checked: true,
+      statusCode,
+      url,
+      path: CODEX_THREAD_IMPORT_API_PATH,
+      mode,
+      reason: null,
+      message: 'Codex.app起点threadの取り込みAPIを確認済みです。',
+    };
+  }
+  if (statusCode === 404) {
+    return {
+      ready: false,
+      checked: true,
+      statusCode,
+      url,
+      path: CODEX_THREAD_IMPORT_API_PATH,
+      mode,
+      reason: 'not_deployed',
+      message: 'このWeb/APIにはCodex.app起点thread取り込みAPIがまだ入っていません。',
+    };
+  }
+  if (statusCode >= 500) {
+    return {
+      ready: false,
+      checked: true,
+      statusCode,
+      url,
+      path: CODEX_THREAD_IMPORT_API_PATH,
+      mode,
+      reason: 'server_error',
+      message: 'Codex.app起点thread取り込みAPIはありますが、サーバー側でエラーです。',
+    };
+  }
+  return {
+    ready: false,
+    checked: statusCode !== 0,
+    statusCode,
+    url,
+    path: CODEX_THREAD_IMPORT_API_PATH,
+    mode,
+    reason: statusCode === 0 ? 'unreachable' : 'unexpected_status',
+    message: statusCode === 0
+      ? 'Codex.app起点thread取り込みAPIに到達できません。'
+      : `Codex.app起点thread取り込みAPIの応答が想定外です (${statusCode})。`,
+  };
+}
+
 function startNextServer() {
   if (!isLocalAppOrigin() || EXPLICIT_APP_ORIGIN) return null;
   if (isChildRunning(managedProcesses.next)) return managedProcesses.next;
@@ -1790,6 +1911,16 @@ async function getAutomationStatus() {
     commandExists('codex'),
     processRunning('focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start').catch(() => false),
   ]);
+  const codexThreadImportApi = await codexThreadImportApiStatus(appReady, 1200).catch((error) => ({
+    ready: false,
+    checked: false,
+    statusCode: 0,
+    url: new URL(CODEX_THREAD_IMPORT_API_PATH, APP_ORIGIN).toString(),
+    path: CODEX_THREAD_IMPORT_API_PATH,
+    mode: isLocalAppOrigin() ? 'local' : 'remote',
+    reason: 'check_failed',
+    message: error instanceof Error ? error.message : String(error),
+  }));
   const codexAppInstalled = fs.existsSync(CODEX_APP_BIN);
   const agentManaged = isChildRunning(managedProcesses.agent);
   const codexManaged = isChildRunning(managedProcesses.codex);
@@ -1839,6 +1970,7 @@ async function getAutomationStatus() {
       scriptAvailable: fs.existsSync(CODEX_SERVER_SCRIPT),
       scriptPath: CODEX_SERVER_SCRIPT,
       port: 7878,
+      threadImportApi: codexThreadImportApi,
     },
     runner,
     paths: {
@@ -1927,6 +2059,10 @@ async function createMainWindow() {
     title: 'Focusmap',
     icon: appIconPath(),
     backgroundColor: '#050505',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 14 } : undefined,
+    vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
+    visualEffectState: process.platform === 'darwin' ? 'active' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

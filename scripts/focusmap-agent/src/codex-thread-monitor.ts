@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { AgentApiClient } from './api-client.js';
-import type { AgentActivityMessage, AiTask, TaskResultJson } from './types.js';
+import { AgentApiError, type AgentApiClient } from './api-client.js';
+import type { AgentActivityMessage, AiTask, CodexThreadImportPayload, CodexThreadImportScope, TaskResultJson } from './types.js';
 import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
 import { debug, error as logError, info } from './logger.js';
 
@@ -14,7 +14,18 @@ const SQLITE_BIN = '/usr/bin/sqlite3';
 const MONITOR_LIMIT = 80;
 const MAX_VISIBLE_MESSAGES = 8;
 const syncCache = new Map<string, string>();
+const orphanImportCache = new Map<string, number>();
 const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 10_000;
+const ORPHAN_IMPORT_LIMIT = 20;
+const ORPHAN_IMPORT_SCAN_LIMIT = 200;
+const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
+const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
+  ? configuredOrphanImportWindowMs
+  : 2 * 60 * 60 * 1000;
+const ORPHAN_IMPORT_RETRY_MS = 5 * 60 * 1000;
+const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
+let orphanImportApiUnavailableUntil = 0;
+let importScopesApiUnavailableUntil = 0;
 
 type CodexThreadRow = {
   id: string;
@@ -23,6 +34,7 @@ type CodexThreadRow = {
   has_user_event?: number | boolean | null;
   archived?: number | boolean | null;
   updated_at_ms?: number | null;
+  created_at_ms?: number | null;
   preview?: string | null;
   rollout_path?: string | null;
   source?: string | null;
@@ -308,6 +320,70 @@ function taskThreadId(task: AiTask): string | null {
   return typeof resultThreadId === 'string' && resultThreadId.trim() ? resultThreadId.trim() : null;
 }
 
+function boolValue(value: unknown): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
+export function knownCodexThreadIds(tasks: AiTask[]): Set<string> {
+  const ids = new Set<string>();
+  for (const task of tasks) {
+    const threadId = taskThreadId(task);
+    if (threadId) ids.add(threadId);
+  }
+  return ids;
+}
+
+export function isOrphanThreadImportCandidate(
+  row: CodexThreadRow,
+  knownThreadIds: Set<string>,
+  importScopes: CodexThreadImportScope[],
+  nowMs = Date.now(),
+  windowMs = ORPHAN_IMPORT_WINDOW_MS,
+): boolean {
+  if (!row.id || knownThreadIds.has(row.id)) return false;
+  if (boolValue(row.archived)) return false;
+  const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
+  if (updatedMs <= 0) return false;
+  const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs);
+  if (!matchingScope) return false;
+  if (!matchingScope.enabled_since && nowMs - updatedMs > windowMs) return false;
+  const firstUserMessage = compactText(row.first_user_message ?? '', 400);
+  if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
+  return true;
+}
+
+export function matchingThreadImportScope(
+  row: Pick<CodexThreadRow, 'cwd'>,
+  importScopes: CodexThreadImportScope[],
+  updatedMs = Date.now(),
+): CodexThreadImportScope | null {
+  const cwd = row.cwd?.trim();
+  if (!cwd) return null;
+  for (const scope of importScopes) {
+    const repoPath = scope.repo_path?.trim();
+    if (!repoPath || repoPath !== cwd) continue;
+    const enabledSinceMs = timeMs(scope.enabled_since);
+    if (enabledSinceMs !== null && updatedMs < enabledSinceMs) continue;
+    return scope;
+  }
+  return null;
+}
+
+export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiError {
+  return error instanceof AgentApiError && (error.status === 404 || error.status === 405);
+}
+
+function importPayloadFromThread(row: CodexThreadRow): CodexThreadImportPayload {
+  return {
+    id: row.id,
+    title: row.title ?? null,
+    preview: row.preview ?? null,
+    first_user_message: row.first_user_message ?? null,
+    cwd: row.cwd ?? null,
+    updated_at_ms: row.updated_at_ms ?? row.created_at_ms ?? null,
+  };
+}
+
 function taskHandoffToken(task: AiTask): string | null {
   const result = isRecord(task.result) ? task.result : {};
   const resultToken = result.codex_handoff_token;
@@ -485,6 +561,102 @@ async function readRollout(row: CodexThreadRow): Promise<string> {
   return await readFile(row.rollout_path, 'utf-8').catch(() => '');
 }
 
+function importScopeRepoPaths(importScopes: CodexThreadImportScope[]): string[] {
+  return Array.from(new Set(importScopes.map(scope => scope.repo_path?.trim()).filter(Boolean)));
+}
+
+async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: string[] = []): Promise<CodexThreadRow[]> {
+  const cwdCondition = repoPaths.length > 0
+    ? ` AND cwd IN (${repoPaths.map(sqlString).join(', ')})`
+    : '';
+  return sqliteJson<CodexThreadRow>(
+    dbPath,
+    [
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, cwd, first_user_message',
+      'FROM threads',
+      `WHERE updated_at_ms >= ${Math.max(0, Math.floor(sinceMs))}${cwdCondition}`,
+      'ORDER BY updated_at_ms DESC',
+      `LIMIT ${ORPHAN_IMPORT_SCAN_LIMIT}`,
+    ].join(' '),
+  );
+}
+
+function orphanImportSinceMs(importScopes: CodexThreadImportScope[], now = Date.now()): number {
+  const windowSinceMs = Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS);
+  const scopeSinceMs = importScopes
+    .map(scope => timeMs(scope.enabled_since))
+    .filter((value): value is number => value !== null && value > 0);
+  if (scopeSinceMs.length === 0) return windowSinceMs;
+  return Math.max(0, Math.min(windowSinceMs, ...scopeSinceMs));
+}
+
+async function listThreadImportScopes(
+  api: AgentApiClient,
+  runnerId: string,
+): Promise<CodexThreadImportScope[]> {
+  const now = Date.now();
+  if (now < importScopesApiUnavailableUntil) return [];
+  try {
+    return await api.listCodexThreadImportScopes(runnerId);
+  } catch (error) {
+    if (isOrphanImportApiUnavailable(error)) {
+      importScopesApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+      info(`codex import scopes API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      return [];
+    }
+    logError('codex import scopes refresh failed', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+async function importOrphanThreads(
+  api: AgentApiClient,
+  runnerId: string,
+  dbPath: string,
+  tasks: AiTask[],
+  importScopes: CodexThreadImportScope[],
+): Promise<number> {
+  const now = Date.now();
+  if (now < orphanImportApiUnavailableUntil) return 0;
+  if (importScopes.length === 0) return 0;
+  const repoPaths = importScopeRepoPaths(importScopes);
+  if (repoPaths.length === 0) return 0;
+  const knownThreadIds = knownCodexThreadIds(tasks);
+  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now), repoPaths);
+  let imported = 0;
+
+  for (const row of rows) {
+    if (imported >= ORPHAN_IMPORT_LIMIT) break;
+    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now)) continue;
+    const cachedAt = orphanImportCache.get(row.id) ?? 0;
+    if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;
+    orphanImportCache.set(row.id, now);
+
+    try {
+      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row));
+      if (result.imported) {
+        imported += 1;
+        knownThreadIds.add(row.id);
+        info(`codex orphan thread imported thread=${row.id.slice(0, 8)} task=${result.ai_task_id ?? 'unknown'}`);
+      } else if (result.reason === 'already_imported') {
+        knownThreadIds.add(row.id);
+      } else {
+        debug(`codex orphan thread skipped thread=${row.id.slice(0, 8)} reason=${result.reason ?? 'unknown'}`);
+      }
+    } catch (error) {
+      if (isOrphanImportApiUnavailable(error)) {
+        orphanImportApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+        info(`codex orphan import API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+        return imported;
+      }
+      logError(`codex orphan import failed thread=${row.id.slice(0, 8)}`, error instanceof Error ? error.message : error);
+    }
+    await sleep(20);
+  }
+
+  return imported;
+}
+
 type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
 
 async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_deleted' | 'archived'): Promise<void> {
@@ -619,6 +791,7 @@ export function startCodexThreadMonitorLoop(
   let targetsLoaded = false;
   let nextTargetRefreshAt = 0;
   let tasks: AiTask[] = [];
+  let importScopes: CodexThreadImportScope[] = [];
   const dbPath = join(homedir(), '.codex', 'state_5.sqlite');
 
   const tick = async () => {
@@ -629,7 +802,12 @@ export function startCodexThreadMonitorLoop(
     try {
       const now = Date.now();
       if (!targetsLoaded || now >= nextTargetRefreshAt) {
-        tasks = await api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT);
+        const [nextTasks, nextImportScopes] = await Promise.all([
+          api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT),
+          listThreadImportScopes(api, runnerId),
+        ]);
+        tasks = nextTasks;
+        importScopes = nextImportScopes;
         targetsLoaded = true;
         nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
       }
@@ -644,6 +822,7 @@ export function startCodexThreadMonitorLoop(
           logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
         }
       }
+      await importOrphanThreads(api, runnerId, dbPath, tasks, importScopes);
     } catch (error) {
       logError('codex monitor loop error', error instanceof Error ? error.message : error);
     } finally {

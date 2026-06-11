@@ -195,14 +195,6 @@ export function DashboardClient({
         return () => clearTimeout(handle)
     }, [activeView, isViewReady, selectedProjectId, selectedSpaceId])
 
-    // STABLE reference for filtered projects using useMemo
-    const filteredProjects = useMemo(() =>
-        selectedSpaceId === null
-            ? projects  // "全体" shows all projects
-            : projects.filter(p => p.space_id === selectedSpaceId),
-        [projects, selectedSpaceId]
-    )
-
     // Auto-select first project when space changes (NOTE: deps are primitives only)
     const allowsAllProjects = activeView === 'today' || activeView === 'long-term'
 
@@ -458,14 +450,23 @@ export function DashboardClient({
     }, [selectedSpaceId, spaces])
 
     const handleUpdateProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
-        // Optimistic update
+        const previousProjects = projects
         setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...updates } : p))
-        await fetch(`/api/projects/${projectId}`, {
+        const res = await fetch(`/api/projects/${projectId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updates),
         })
-    }, [])
+        if (!res.ok) {
+            setProjects(previousProjects)
+            const data = await res.json().catch(() => ({}))
+            throw new Error(typeof data.error === 'string' ? data.error : 'Project update failed')
+        }
+        const savedProject = await res.json().catch(() => null) as Project | null
+        if (savedProject?.id) {
+            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...savedProject } : p))
+        }
+    }, [projects])
 
     const handleDeleteProject = useCallback(async (projectId: string) => {
         const previousProjects = projects
@@ -553,6 +554,7 @@ export function DashboardClient({
     }, [])
     // タスク更新のローカルオーバーライド（タイマー等の変更を即座に反映）
     const [taskOverrides, setTaskOverrides] = useState<Record<string, Partial<Task>>>({})
+    const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<string>>(new Set())
 
     // Debounced calendar refresh (2s after last call) + optimistic event add
     const calendarRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -870,6 +872,12 @@ export function DashboardClient({
 
     // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
     const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        setHiddenTaskIds(prev => {
+            if (!prev.has(taskId)) return prev
+            const next = new Set(prev)
+            next.delete(taskId)
+            return next
+        })
         // ローカルオーバーライドを即座に適用（UI即時反映）
         setTaskOverrides(prev => ({
             ...prev,
@@ -883,6 +891,31 @@ export function DashboardClient({
         // DB保存
         await updateTask(taskId, updates)
     }, [updateTask])
+
+    const handleDeleteTaskWithQuickSync = useCallback(async (taskId: string) => {
+        setHiddenTaskIds(prev => {
+            const next = new Set(prev)
+            next.add(taskId)
+            return next
+        })
+        setQuickTasks(prev => prev.filter(t => t.id !== taskId))
+        setTaskOverrides(prev => {
+            const next = { ...prev }
+            delete next[taskId]
+            return next
+        })
+        try {
+            const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            if (!response.ok) throw new Error(`DELETE /api/tasks/${taskId} failed: ${response.status}`)
+        } catch (err) {
+            console.error('[Dashboard] Failed to delete task:', err)
+            setHiddenTaskIds(prev => {
+                const next = new Set(prev)
+                next.delete(taskId)
+                return next
+            })
+        }
+    }, [])
 
     // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
     const allTasksMerged = useMemo(() => {
@@ -912,8 +945,8 @@ export function DashboardClient({
         for (const qt of quickTasks) {
             if (!existingIds.has(qt.id)) merged.push(qt)
         }
-        return dedupeGoogleEventTasks(merged)
-    }, [initialTasks, currentTasks, currentGroups, quickTasks, taskOverrides])
+        return dedupeGoogleEventTasks(merged).filter(task => !hiddenTaskIds.has(task.id))
+    }, [currentGroups, currentTasks, hiddenTaskIds, initialTasks, quickTasks, taskOverrides])
 
     // Save daily timer for habit child tasks
     const handleTimerSessionEnd = useCallback((taskId: string, sessionSeconds: number) => {
@@ -1031,6 +1064,11 @@ export function DashboardClient({
 
     // タスク削除（今日のビュー用）— quickTasks + taskOverrides からも削除
     const handleDeleteTaskFromToday = useCallback(async (taskId: string) => {
+        setHiddenTaskIds(prev => {
+            const next = new Set(prev)
+            next.add(taskId)
+            return next
+        })
         setQuickTasks(prev => prev.filter(t => t.id !== taskId))
         setTaskOverrides(prev => {
             const next = { ...prev }
@@ -1039,9 +1077,15 @@ export function DashboardClient({
         })
 
         try {
-            await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            if (!response.ok) throw new Error(`DELETE /api/tasks/${taskId} failed: ${response.status}`)
         } catch (err) {
             console.error('[Dashboard] Failed to delete task:', err)
+            setHiddenTaskIds(prev => {
+                const next = new Set(prev)
+                next.delete(taskId)
+                return next
+            })
         }
     }, [])
 
@@ -1295,7 +1339,7 @@ export function DashboardClient({
                 {isViewReady && isMobileViewport && activeView === 'map' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <MobileAiMapView
-                            projects={filteredProjects}
+                            projects={projects}
                             spaces={spaces}
                             selectedProjectId={selectedProjectId}
                             selectedSpaceId={selectedSpaceId}
@@ -1304,14 +1348,18 @@ export function DashboardClient({
                             selectedProject={selectedProject}
                             groups={currentGroups}
                             tasks={currentTasks}
+                            allTasks={allTasksMerged}
                             onCreateGroup={handleCreateGroup}
                             onDeleteGroup={handleDeleteGroup}
                             onUpdateProject={handleUpdateProjectTitle}
+                            onPatchProject={handleUpdateProject}
                             onCreateTask={createTask}
                             onUpdateTask={updateTask}
                             onDeleteTask={handleDeleteTask}
                             onReorderTask={reorderTask}
                             onOpenLinkedMemos={openMindmapLinkedMemos}
+                            onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
+                            onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                             refreshFromServer={refreshFromServer}
                         />
                     </div>
@@ -1371,12 +1419,16 @@ export function DashboardClient({
                                 <div className="min-w-0 flex-1 overflow-hidden">
                                     <CenterPane
                                         project={selectedProject}
+                                        spaces={spaces}
+                                        projects={projects}
                                         groups={currentGroups}
                                         tasks={currentTasks}
+                                        allTasks={allTasksMerged}
                                         onUpdateProject={handleUpdateProjectTitle}
                                         onCreateGroup={handleCreateGroup}
                                         onDeleteGroup={handleDeleteGroup}
                                         onCreateTask={createTask}
+                                        onPatchProject={handleUpdateProject}
                                         onUpdateTask={updateTask}
                                         onDeleteTask={handleDeleteTask}
                                         onBulkDelete={bulkDelete}
@@ -1386,6 +1438,8 @@ export function DashboardClient({
                                         onAddOptimisticEvent={handleAddOptimisticEvent}
                                         onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
                                         onOpenLinkedMemos={openMindmapLinkedMemos}
+                                        onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
+                                        onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                                     />
                                 </div>
                             </div>
@@ -1594,12 +1648,16 @@ export function DashboardClient({
                             <div className="min-w-0 flex-1 overflow-hidden">
                                 <CenterPane
                                     project={selectedProject}
+                                    spaces={spaces}
+                                    projects={projects}
                                     groups={currentGroups}
                                     tasks={currentTasks}
+                                    allTasks={allTasksMerged}
                                     onUpdateProject={handleUpdateProjectTitle}
                                     onCreateGroup={handleCreateGroup}
                                     onDeleteGroup={handleDeleteGroup}
                                     onCreateTask={createTask}
+                                    onPatchProject={handleUpdateProject}
                                     onUpdateTask={updateTask}
                                     onDeleteTask={handleDeleteTask}
                                     onBulkDelete={bulkDelete}
@@ -1609,18 +1667,24 @@ export function DashboardClient({
                                     onAddOptimisticEvent={handleAddOptimisticEvent}
                                     onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
                                     onOpenLinkedMemos={openMindmapLinkedMemos}
+                                    onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
+                                    onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                                 />
                             </div>
                         </div>
                     ) : (
                         <CenterPane
                             project={selectedProject}
+                            spaces={spaces}
+                            projects={projects}
                             groups={currentGroups}
                             tasks={currentTasks}
+                            allTasks={allTasksMerged}
                             onUpdateProject={handleUpdateProjectTitle}
                             onCreateGroup={handleCreateGroup}
                             onDeleteGroup={handleDeleteGroup}
                             onCreateTask={createTask}
+                            onPatchProject={handleUpdateProject}
                             onUpdateTask={updateTask}
                             onDeleteTask={handleDeleteTask}
                             onBulkDelete={bulkDelete}
@@ -1630,6 +1694,8 @@ export function DashboardClient({
                             onAddOptimisticEvent={handleAddOptimisticEvent}
                             onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
                             onOpenLinkedMemos={openMindmapLinkedMemos}
+                            onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
+                            onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                         />
                     )}
                     </div>

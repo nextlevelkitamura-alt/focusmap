@@ -15,7 +15,7 @@ import {
   type SensorAPI,
 } from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clock, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clipboard, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Send, Settings, Sparkles, Square, Terminal, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -50,6 +50,7 @@ import {
   invalidateCalendarCache,
 } from "@/hooks/useCalendarEvents"
 import { IdealGoalWithItems, Project, Space } from "@/types/database"
+import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
 import { colorToRgba, getTagColor } from "@/lib/color-utils"
@@ -73,6 +74,8 @@ import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
+import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type ColumnKey = "unsorted" | "mapped" | "today" | "scheduled" | "completed"
@@ -86,6 +89,12 @@ type MemoAttachmentResponse = {
   attachments?: Array<MemoCodexImageAttachment & {
     id?: string
   }>
+}
+
+type DesktopMemoDraftImage = {
+  id: string
+  file: File
+  file_url: string
 }
 
 type LinkedStructuredItem = {
@@ -137,6 +146,19 @@ const DURATION_OPTIONS = [
   { label: "30分", minutes: 30 },
   { label: "60分", minutes: 60 },
 ]
+const DESKTOP_DRAFT_DURATION_OPTIONS = [
+  { label: "5分", minutes: 5 },
+  { label: "15分", minutes: 15 },
+  { label: "30分", minutes: 30 },
+  { label: "45分", minutes: 45 },
+  { label: "1時間", minutes: 60 },
+  { label: "2時間", minutes: 120 },
+  { label: "3時間", minutes: 180 },
+  { label: "カスタム", minutes: null },
+]
+const DESKTOP_DRAFT_COLUMNS: ColumnKey[] = ["unsorted", "today", "completed"]
+const DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS = 600
+const DESKTOP_MEMO_CODEX_ACTIVITY_INTERVAL_MS = 10_000
 
 const COLUMN_LABEL: Record<ColumnKey, string> = {
   unsorted: "未予定",
@@ -146,10 +168,21 @@ const COLUMN_LABEL: Record<ColumnKey, string> = {
   completed: "完了",
 }
 
-const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "mapped", "scheduled", "completed"]
+const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "completed"]
 const SHOW_MEMO_TAG_FILTER_ENTRY = false
 const SHOW_MEMO_MINDMAP_ENTRY = false
 const POSTGRES_INTEGER_MIN = -2147483648
+
+type MemoCodexState = "not_sent" | "sent" | "running" | "awaiting_approval" | "completed" | "failed"
+
+const MEMO_CODEX_STATE_LABEL: Record<MemoCodexState, string> = {
+  not_sent: "未送信",
+  sent: "送信済み",
+  running: "実行中",
+  awaiting_approval: "確認待ち",
+  completed: "完了",
+  failed: "失敗",
+}
 const POSTGRES_INTEGER_MAX = 2147483647
 const CREATE_MEMO_TIMEOUT_MS = 15_000
 const MEMO_TOUCH_DRAG_DELAY_MS = 420
@@ -157,6 +190,7 @@ const MEMO_TOUCH_SCROLL_CANCEL_PX = 10
 const MEMO_HORIZONTAL_COLUMN_DRAG_PX = 76
 const MEMO_COLUMN_AUTO_MOVE_HOLD_MS = 320
 const MEMO_COLUMN_AUTO_MOVE_EDGE_PX = 72
+const DESKTOP_DRAFT_IMAGE_UPLOAD_TIMEOUT_MS = 60_000
 
 type DragPoint = { x: number; y: number }
 type MemoColumnDragState = {
@@ -166,7 +200,7 @@ type MemoColumnDragState = {
 }
 type ColumnAutoMoveTimer = {
   target: ColumnKey
-  timerId: ReturnType<typeof setTimeout>
+  timerId: number
 }
 type DelayedTouchPhase =
   | { type: "IDLE" }
@@ -360,6 +394,49 @@ function actionLabel(actionType: LinkedStructuredItem["actionType"]) {
   if (actionType === "research") return "リサーチ"
   if (actionType === "decision") return "判断"
   return "実行"
+}
+
+function formatMemoCodexActivityTime(value: string | null | undefined) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return new Intl.DateTimeFormat("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+}
+
+function memoCodexActivityLabel(message: AiTaskActivityMessage) {
+  if (message.role === "user" || message.kind === "user_answer") return "送信内容"
+  if (message.role === "status") return "状態"
+  if (message.kind === "question") return "Codexから質問"
+  if (message.kind === "approval") return "確認"
+  return "Codex"
+}
+
+function getMemoCodexState(task: AiTask | null | undefined): MemoCodexState {
+  if (!task) return "not_sent"
+  const codexState = task.executor === "codex" || task.executor === "codex_app"
+    ? getCodexTaskUiState(task)?.state
+    : null
+  if (task.status === "failed" || codexState === "connection_failed") return "failed"
+  if (task.status === "completed") return "completed"
+  if (task.status === "awaiting_approval" || task.status === "needs_input" || codexState === "awaiting_approval") return "awaiting_approval"
+  if (task.status === "running" || codexState === "running") return "running"
+  return "sent"
+}
+
+function memoCodexStateTone(state: MemoCodexState) {
+  if (state === "failed") return "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300"
+  if (state === "completed") return "border-lime-500/35 bg-lime-500/10 text-lime-700 dark:text-lime-300"
+  if (state === "awaiting_approval") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+  if (state === "running") return "border-lime-500/35 bg-lime-500/10 text-lime-700 dark:text-lime-300"
+  if (state === "sent") return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+  return "border-border bg-background/70 text-muted-foreground"
 }
 
 function extractMindmapTaskIds(item: MemoItem | null | undefined): string[] {
@@ -643,6 +720,34 @@ function combineDateTime(dateValue: string, timeValue: string) {
   return date.toISOString()
 }
 
+function buildClipboardImageFile(blob: Blob, index: number) {
+  const normalizedType = blob.type || "image/png"
+  const extension = normalizedType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png"
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+  return new File([blob], `clipboard-image-${timestamp}-${index + 1}.${extension}`, { type: normalizedType })
+}
+
+function getImageFilesFromClipboardData(clipboardData: DataTransfer | null | undefined) {
+  if (!clipboardData) return []
+  const files = Array.from(clipboardData.files ?? []).filter(file => file.type.startsWith("image/"))
+  const itemFiles = Array.from(clipboardData.items ?? [])
+    .filter(item => item.kind === "file" && item.type.startsWith("image/"))
+    .map(item => item.getAsFile())
+    .filter((file): file is File => file instanceof File)
+
+  const seen = new Set<string>()
+  return [...files, ...itemFiles].filter(file => {
+    const key = `${file.name}:${file.type}:${file.size}:${file.lastModified}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function createDesktopDraftImageId(file: File, index: number) {
+  return `desktop-draft-image-${Date.now()}-${index}-${file.name}`
+}
+
 function buildMemoUpdatePayload(item: MemoItem): Record<string, unknown> {
   return {
     title: item.title,
@@ -827,6 +932,26 @@ export function WishlistView({
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
+  const [desktopComposerOpen, setDesktopComposerOpen] = useState(false)
+  const [desktopDraftFocusRequest, setDesktopDraftFocusRequest] = useState(0)
+  const [desktopDraftColumn, setDesktopDraftColumn] = useState<ColumnKey>("unsorted")
+  const [desktopDraftTitle, setDesktopDraftTitle] = useState("")
+  const [desktopDraftDescription, setDesktopDraftDescription] = useState("")
+  const [desktopDraftDuration, setDesktopDraftDuration] = useState<number | null>(null)
+  const [desktopDraftCustomDuration, setDesktopDraftCustomDuration] = useState("")
+  const [desktopDraftUsesCustomDuration, setDesktopDraftUsesCustomDuration] = useState(false)
+  const [desktopDraftImages, setDesktopDraftImages] = useState<DesktopMemoDraftImage[]>([])
+  const [desktopDraftNotice, setDesktopDraftNotice] = useState<string | null>(null)
+  const [desktopEditingItemId, setDesktopEditingItemId] = useState<string | null>(null)
+  const [desktopCodexChatOpen, setDesktopCodexChatOpen] = useState(false)
+  const [isLaunchingDesktopCodex, setIsLaunchingDesktopCodex] = useState(false)
+  const [desktopCodexLaunchError, setDesktopCodexLaunchError] = useState<string | null>(null)
+  const [desktopCodexActivityMessages, setDesktopCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [desktopCodexActivityError, setDesktopCodexActivityError] = useState<string | null>(null)
+  const [isLoadingDesktopCodexActivity, setIsLoadingDesktopCodexActivity] = useState(false)
+  const [isSavingDesktopDraft, setIsSavingDesktopDraft] = useState(false)
+  const [isGeneratingDesktopTitle, setIsGeneratingDesktopTitle] = useState(false)
+  const [isReadingDesktopClipboard, setIsReadingDesktopClipboard] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
   const [showMindmapDialog, setShowMindmapDialog] = useState(false)
@@ -845,6 +970,10 @@ export function WishlistView({
   const pointerStartPointRef = useRef<DragPoint | null>(null)
   const memoColumnDragRef = useRef<MemoColumnDragState | null>(null)
   const columnAutoMoveTimerRef = useRef<ColumnAutoMoveTimer | null>(null)
+  const desktopDraftFileInputRef = useRef<HTMLInputElement>(null)
+  const desktopDraftDescriptionRef = useRef<HTMLTextAreaElement>(null)
+  const desktopDraftImagesRef = useRef<DesktopMemoDraftImage[]>([])
+  const voiceTargetRef = useRef<"intake" | "desktopDraft">("intake")
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const creatingMemoIdsRef = useRef(new Set<string>())
@@ -852,9 +981,88 @@ export function WishlistView({
   const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { calendars } = useCalendars()
-  const { refresh: refreshMemoAiTasks } = useMemoAiTasks()
+  const { refresh: refreshMemoAiTasks, getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const { pushAction } = useUndoRedo()
   const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
+  const desktopEditingItem = desktopEditingItemId ? items.find(item => item.id === desktopEditingItemId) ?? null : null
+  const desktopMemoAiTask = desktopEditingItemId ? getMemoAiTask(desktopEditingItemId) : null
+  const desktopMemoAiTaskId = desktopMemoAiTask?.id ?? null
+  const desktopMemoAiTaskStatus = desktopMemoAiTask?.status ?? null
+  const desktopMemoCodexState = getMemoCodexState(desktopMemoAiTask)
+
+  useEffect(() => {
+    if (!desktopComposerOpen || desktopDraftFocusRequest === 0) return
+
+    const focusDescription = () => {
+      desktopDraftDescriptionRef.current?.focus()
+    }
+
+    if (typeof window.requestAnimationFrame === "function") {
+      const frameId = window.requestAnimationFrame(focusDescription)
+      return () => window.cancelAnimationFrame(frameId)
+    }
+
+    const timeoutId = window.setTimeout(focusDescription, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [desktopComposerOpen, desktopDraftFocusRequest])
+
+  const loadDesktopCodexActivity = useCallback(async () => {
+    if (!desktopEditingItemId || !desktopMemoAiTaskId) {
+      setDesktopCodexActivityMessages([])
+      setDesktopCodexActivityError(null)
+      return
+    }
+
+    setIsLoadingDesktopCodexActivity(true)
+    try {
+      await fetch("/api/codex/sync-node", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ai_task_id: desktopMemoAiTaskId,
+          include_visible_activity: true,
+        }),
+      }).catch(() => undefined)
+
+      const res = await fetch(`/api/ai-tasks/${encodeURIComponent(desktopMemoAiTaskId)}/activity`, { cache: "no-store" })
+      const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+      if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+      setDesktopCodexActivityMessages(Array.isArray(data.messages)
+        ? data.messages.filter(message => message.body.trim() && !isGenericCodexPulseText(message.body))
+        : [])
+      setDesktopCodexActivityError(null)
+    } catch (err) {
+      setDesktopCodexActivityError(err instanceof Error ? err.message : "Codexチャットを取得できません")
+    } finally {
+      setIsLoadingDesktopCodexActivity(false)
+    }
+  }, [desktopEditingItemId, desktopMemoAiTaskId])
+
+  useEffect(() => {
+    if (!desktopComposerOpen || !desktopEditingItemId || !desktopMemoAiTaskId) {
+      setDesktopCodexActivityMessages([])
+      setDesktopCodexActivityError(null)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void loadDesktopCodexActivity()
+    }, DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [desktopComposerOpen, desktopEditingItemId, desktopMemoAiTaskId, desktopMemoAiTaskStatus, loadDesktopCodexActivity])
+
+  useEffect(() => {
+    if (
+      !desktopComposerOpen ||
+      !desktopEditingItemId ||
+      !desktopMemoAiTaskId ||
+      !desktopCodexChatOpen ||
+      !["pending", "running", "awaiting_approval", "needs_input"].includes(desktopMemoAiTaskStatus ?? "")
+    ) return
+    const timer = window.setInterval(() => {
+      void loadDesktopCodexActivity()
+    }, DESKTOP_MEMO_CODEX_ACTIVITY_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [desktopCodexChatOpen, desktopComposerOpen, desktopEditingItemId, desktopMemoAiTaskId, desktopMemoAiTaskStatus, loadDesktopCodexActivity])
 
   const openCodexHandoff = useCallback(async (
     prompt: string,
@@ -990,6 +1198,10 @@ export function WishlistView({
   }, [buildMemoCodexHandoffContent])
 
   const handleTranscribed = useCallback((text: string) => {
+    if (voiceTargetRef.current === "desktopDraft") {
+      setDesktopDraftDescription(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
+      return
+    }
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
   const {
@@ -1001,6 +1213,20 @@ export function WishlistView({
     startRecording,
     stopRecording,
   } = useVoiceRecorder(handleTranscribed)
+
+  useEffect(() => {
+    desktopDraftImagesRef.current = desktopDraftImages
+  }, [desktopDraftImages])
+
+  useEffect(() => {
+    return () => {
+      for (const image of desktopDraftImagesRef.current) {
+        if (image.file_url && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(image.file_url)
+        }
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return
@@ -1235,20 +1461,24 @@ export function WishlistView({
     )
   }, [filteredItems, todayRange])
 
+  const desktopUnscheduledItems = useMemo(() => {
+    return [...unscheduledItems, ...scheduledItems, ...mappedItems]
+  }, [mappedItems, scheduledItems, unscheduledItems])
+
   const mobileSections = useMemo(() => ({
     unsorted: {
       columnKey: "unsorted" as const,
-      title: COLUMN_LABEL.unsorted,
-      count: unscheduledItems.length,
-      items: unscheduledItems,
-      emptyText: "未予定のメモはありません",
+      title: "メモ",
+      count: desktopUnscheduledItems.length,
+      items: desktopUnscheduledItems,
+      emptyText: "メモはありません",
     },
     today: {
       columnKey: "today" as const,
-      title: COLUMN_LABEL.today,
+      title: "今日",
       count: todayItems.length,
       items: todayItems,
-      emptyText: "今日するメモはありません",
+      emptyText: "今日のメモはありません",
     },
     scheduled: {
       columnKey: "scheduled" as const,
@@ -1271,7 +1501,7 @@ export function WishlistView({
       items: completedItems,
       emptyText: "完了したメモはありません",
     },
-  }), [completedItems, mappedItems, scheduledItems, todayItems, unscheduledItems])
+  }), [completedItems, desktopUnscheduledItems, mappedItems, scheduledItems, todayItems])
 
   const selectedMemosProjectId = useMemo(() => {
     const ids = new Set(
@@ -1607,6 +1837,11 @@ export function WishlistView({
     const previousSelectedItem = selectedItem
     setItems(prev => prev.filter(item => item.id !== id))
     if (selectedItem?.id === id) setDetailOpen(false)
+    if (desktopEditingItemId === id) {
+      setDesktopComposerOpen(false)
+      setDesktopEditingItemId(null)
+      setDesktopCodexChatOpen(false)
+    }
     setIntakeError(null)
     try {
       await removeMemoItemFromServer(id)
@@ -1647,7 +1882,350 @@ export function WishlistView({
       }
       setIntakeError(err instanceof Error ? err.message : "メモの削除に失敗しました")
     }
-  }, [items, pushAction, refreshTags, removeMemoItemFromServer, restoreMemoItem, selectedItem])
+  }, [desktopEditingItemId, items, pushAction, refreshTags, removeMemoItemFromServer, restoreMemoItem, selectedItem])
+
+  const clearDesktopDraftImages = useCallback(() => {
+    setDesktopDraftImages(prev => {
+      for (const image of prev) {
+        if (image.file_url && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(image.file_url)
+        }
+      }
+      return []
+    })
+    if (desktopDraftFileInputRef.current) desktopDraftFileInputRef.current.value = ""
+  }, [])
+
+  const resetDesktopDraft = useCallback((column: ColumnKey = "unsorted") => {
+    setDesktopComposerOpen(true)
+    setDesktopDraftFocusRequest(prev => prev + 1)
+    setDesktopEditingItemId(null)
+    setDesktopDraftColumn(column)
+    setDesktopDraftTitle("")
+    setDesktopDraftDescription("")
+    setDesktopDraftDuration(null)
+    setDesktopDraftCustomDuration("")
+    setDesktopDraftUsesCustomDuration(false)
+    setDesktopDraftNotice(null)
+    setDesktopCodexChatOpen(false)
+    setDesktopCodexLaunchError(null)
+    setDesktopCodexActivityMessages([])
+    setDesktopCodexActivityError(null)
+    clearDesktopDraftImages()
+  }, [clearDesktopDraftImages])
+
+  const handleCloseDesktopComposer = useCallback(() => {
+    setDesktopComposerOpen(false)
+    setDesktopEditingItemId(null)
+    setDesktopDraftTitle("")
+    setDesktopDraftDescription("")
+    setDesktopDraftDuration(null)
+    setDesktopDraftCustomDuration("")
+    setDesktopDraftUsesCustomDuration(false)
+    setDesktopDraftNotice(null)
+    setDesktopCodexChatOpen(false)
+    setDesktopCodexLaunchError(null)
+    setDesktopCodexActivityMessages([])
+    setDesktopCodexActivityError(null)
+    clearDesktopDraftImages()
+  }, [clearDesktopDraftImages])
+
+  const beginDesktopMemoEdit = useCallback((item: MemoItem) => {
+    const column = getColumn(item, todayRange.start, todayRange.end)
+    const draftColumn = DESKTOP_DRAFT_COLUMNS.includes(column) ? column : "unsorted"
+    const duration = item.duration_minutes ?? null
+    const presetDuration = DESKTOP_DRAFT_DURATION_OPTIONS.some(option => option.minutes === duration)
+    setSelectedItem(item)
+    setDetailOpen(false)
+    setDesktopComposerOpen(true)
+    setDesktopDraftFocusRequest(prev => prev + 1)
+    setDesktopEditingItemId(item.id)
+    setDesktopDraftColumn(draftColumn)
+    setDesktopDraftTitle(item.title ?? "")
+    setDesktopDraftDescription(item.description ?? "")
+    setDesktopDraftDuration(presetDuration ? duration : null)
+    setDesktopDraftCustomDuration(!presetDuration && duration ? String(duration) : "")
+    setDesktopDraftUsesCustomDuration(!presetDuration && !!duration)
+    setDesktopDraftNotice(null)
+    setDesktopCodexLaunchError(null)
+    setDesktopCodexChatOpen(!!getMemoAiTask(item.id))
+    clearDesktopDraftImages()
+  }, [clearDesktopDraftImages, getMemoAiTask, todayRange.end, todayRange.start])
+
+  const addDesktopDraftImageFiles = useCallback((files: File[]) => {
+    const imageFiles = files.filter(file => file.type.startsWith("image/"))
+    if (imageFiles.length === 0) {
+      setDesktopDraftNotice("画像ファイルを選択してください")
+      return
+    }
+    const nextImages = imageFiles.map((file, index): DesktopMemoDraftImage => ({
+      id: createDesktopDraftImageId(file, index),
+      file,
+      file_url: typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : "",
+    }))
+    setDesktopDraftImages(prev => [...prev, ...nextImages])
+    setDesktopDraftNotice(null)
+  }, [])
+
+  const handleDesktopDraftFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    addDesktopDraftImageFiles(Array.from(event.target.files ?? []))
+  }, [addDesktopDraftImageFiles])
+
+  const handleDesktopDraftPaste = useCallback((event: React.ClipboardEvent<HTMLElement>) => {
+    const files = getImageFilesFromClipboardData(event.clipboardData)
+    if (files.length === 0) return
+    event.preventDefault()
+    addDesktopDraftImageFiles(files)
+  }, [addDesktopDraftImageFiles])
+
+  const handlePasteDesktopClipboardImage = useCallback(async () => {
+    if (typeof navigator === "undefined") return
+    const clipboard = navigator.clipboard as (Clipboard & { read?: () => Promise<ClipboardItem[]> }) | undefined
+    if (!clipboard?.read) {
+      setDesktopDraftNotice("画像をコピーした状態で、このパネル内に Cmd+V で貼り付けできます")
+      return
+    }
+
+    setIsReadingDesktopClipboard(true)
+    setDesktopDraftNotice(null)
+    try {
+      const clipboardItems = await clipboard.read()
+      const files: File[] = []
+      for (const clipboardItem of clipboardItems) {
+        const imageType = clipboardItem.types.find(type => type.startsWith("image/"))
+        if (!imageType) continue
+        const blob = await clipboardItem.getType(imageType)
+        files.push(buildClipboardImageFile(blob, files.length))
+      }
+      if (files.length === 0) {
+        setDesktopDraftNotice("クリップボードに画像が見つかりません。画像をコピーしてからもう一度押してください")
+        return
+      }
+      addDesktopDraftImageFiles(files)
+    } catch {
+      setDesktopDraftNotice("直接読み取れない場合があります。このパネル内に Cmd+V で貼り付けてください")
+    } finally {
+      setIsReadingDesktopClipboard(false)
+    }
+  }, [addDesktopDraftImageFiles])
+
+  const uploadDesktopDraftImages = useCallback(async (memoId: string, images: DesktopMemoDraftImage[]) => {
+    if (images.length === 0) return
+    const compressedFiles = await Promise.all(images.map(image => compressImageFileForUpload(image.file)))
+    const oversizedFile = compressedFiles.find(file => file.size > MAX_UPLOAD_IMAGE_BYTES)
+    if (oversizedFile) {
+      throw new Error("画像を300KB以下に圧縮できませんでした。小さい画像を選んでください")
+    }
+    await Promise.all(compressedFiles.map(async file => {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetchWithTimeout(`/api/wishlist/${memoId}/attachments`, {
+        method: "POST",
+        body: formData,
+      }, DESKTOP_DRAFT_IMAGE_UPLOAD_TIMEOUT_MS)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "画像の保存に失敗しました")
+      }
+    }))
+  }, [])
+
+  const handleGenerateDesktopDraftTitle = useCallback(async () => {
+    const body = desktopDraftDescription.trim()
+    if (!body || isGeneratingDesktopTitle) return
+    setIsGeneratingDesktopTitle(true)
+    setDesktopDraftNotice(null)
+    try {
+      const res = await fetch("/api/ai/generate-memo-heading", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          detail: body,
+          currentHeading: desktopDraftTitle.trim(),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "見出し生成に失敗しました")
+      const heading = typeof data.heading === "string" ? data.heading.trim() : ""
+      if (!heading) throw new Error("見出し生成に失敗しました")
+      setDesktopDraftTitle(heading)
+    } catch (err) {
+      setDesktopDraftNotice(err instanceof Error ? err.message : "見出し生成に失敗しました")
+    } finally {
+      setIsGeneratingDesktopTitle(false)
+    }
+  }, [desktopDraftDescription, desktopDraftTitle, isGeneratingDesktopTitle])
+
+  const handleDesktopDraftVoiceToggle = useCallback(async () => {
+    if (isTranscribing) return
+    voiceTargetRef.current = "desktopDraft"
+    if (isRecording) {
+      stopRecording()
+      return
+    }
+    await startRecording()
+  }, [isRecording, isTranscribing, startRecording, stopRecording])
+
+  const handleSaveDesktopDraft = useCallback(async () => {
+    const description = desktopDraftDescription.trim()
+    const title = desktopDraftTitle.trim() || (description ? deriveDraftMemoTitle(description) : "")
+    if (!title && !description) return
+
+    const customDuration = Number(desktopDraftCustomDuration)
+    const durationMinutes = desktopDraftUsesCustomDuration
+      ? Number.isFinite(customDuration) && customDuration > 0
+        ? Math.min(Math.round(customDuration), 720)
+        : null
+      : desktopDraftDuration
+    const columnOverrides = getMobileColumnCreateOverrides(desktopDraftColumn)
+    setIsSavingDesktopDraft(true)
+    setDesktopDraftNotice(null)
+    setIntakeError(null)
+    try {
+      if (desktopEditingItemId) {
+        const updates = {
+          title: title || "無題",
+          description,
+          duration_minutes: durationMinutes,
+          ...columnOverrides,
+        }
+        await handleUpdate(desktopEditingItemId, updates)
+        let imageUploadFailed = false
+        try {
+          await uploadDesktopDraftImages(desktopEditingItemId, desktopDraftImages)
+        } catch (err) {
+          imageUploadFailed = true
+          setIntakeError(`メモは保存しました。${err instanceof Error ? err.message : "画像の保存に失敗しました"}`)
+        }
+        clearDesktopDraftImages()
+        setDesktopDraftNotice(imageUploadFailed ? "メモは保存済みです。画像は詳細から追加し直してください" : "保存しました")
+        return
+      }
+
+      const item = await createWishlistMemo({
+        title: title || "無題",
+        project_id: selectedProjectId,
+        description,
+        category: null,
+        tags: [],
+        duration_minutes: durationMinutes,
+        ...columnOverrides,
+      }) as MemoItem
+      invalidateWishlistItemsCache()
+      setItems(prev => prev.some(existing => existing.id === item.id) ? prev : [item, ...prev])
+      await refreshTags()
+      let imageUploadFailed = false
+      try {
+        await uploadDesktopDraftImages(item.id, desktopDraftImages)
+      } catch (err) {
+        imageUploadFailed = true
+        setIntakeError(`メモは保存しました。${err instanceof Error ? err.message : "画像の保存に失敗しました"}`)
+      }
+      pushAction({
+        description: `「${item.title}」を追加`,
+        undo: async () => {
+          setItems(prev => prev.filter(existing => existing.id !== item.id))
+          await removeMemoItemFromServer(item.id)
+          await refreshTags()
+        },
+        redo: async () => {
+          const restored = await restoreMemoItem(item)
+          setItems(prev => prev.some(existing => existing.id === restored.id) ? prev : [restored, ...prev])
+          await refreshTags()
+        },
+      })
+      window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+      resetDesktopDraft(desktopDraftColumn)
+      setDesktopDraftNotice(imageUploadFailed ? "メモは保存済みです。画像は詳細から追加し直してください" : "保存しました")
+    } catch (err) {
+      setDesktopDraftNotice(err instanceof Error ? err.message : "メモの保存に失敗しました")
+    } finally {
+      setIsSavingDesktopDraft(false)
+    }
+  }, [
+    clearDesktopDraftImages,
+    desktopDraftColumn,
+    desktopDraftCustomDuration,
+    desktopDraftDescription,
+    desktopDraftDuration,
+    desktopDraftImages,
+    desktopDraftTitle,
+    desktopDraftUsesCustomDuration,
+    desktopEditingItemId,
+    handleUpdate,
+    pushAction,
+    refreshTags,
+    removeMemoItemFromServer,
+    resetDesktopDraft,
+    restoreMemoItem,
+    selectedProjectId,
+    uploadDesktopDraftImages,
+  ])
+
+  const handleLaunchDesktopCodex = useCallback(async () => {
+    const item = desktopEditingItem
+    if (!item || isLaunchingDesktopCodex) return
+    const description = desktopDraftDescription.trim()
+    const title = desktopDraftTitle.trim() || (description ? deriveDraftMemoTitle(description) : item.title)
+    const customDuration = Number(desktopDraftCustomDuration)
+    const durationMinutes = desktopDraftUsesCustomDuration
+      ? Number.isFinite(customDuration) && customDuration > 0
+        ? Math.min(Math.round(customDuration), 720)
+        : null
+      : desktopDraftDuration
+    const columnOverrides = getMobileColumnCreateOverrides(desktopDraftColumn, item.ai_source_payload)
+    const draftItem = {
+      ...item,
+      title: title || "無題",
+      description,
+      duration_minutes: durationMinutes,
+      ...columnOverrides,
+    } as MemoItem
+
+    setIsLaunchingDesktopCodex(true)
+    setDesktopCodexLaunchError(null)
+    setDesktopDraftNotice(null)
+    setIntakeError(null)
+    try {
+      await handleUpdate(item.id, {
+        title: draftItem.title,
+        description: draftItem.description,
+        duration_minutes: draftItem.duration_minutes,
+        ...columnOverrides,
+      })
+      await uploadDesktopDraftImages(item.id, desktopDraftImages)
+      clearDesktopDraftImages()
+      setDesktopCodexChatOpen(true)
+      await launchCodexForMemo(draftItem)
+      await refreshMemoAiTasks?.()
+      setDesktopDraftNotice("Codexに送りました")
+      window.setTimeout(() => {
+        void loadDesktopCodexActivity()
+      }, DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS)
+    } catch (err) {
+      setDesktopCodexLaunchError(err instanceof Error ? err.message : "Codexの起動に失敗しました")
+    } finally {
+      setIsLaunchingDesktopCodex(false)
+    }
+  }, [
+    clearDesktopDraftImages,
+    desktopDraftColumn,
+    desktopDraftCustomDuration,
+    desktopDraftDescription,
+    desktopDraftDuration,
+    desktopDraftImages,
+    desktopDraftTitle,
+    desktopDraftUsesCustomDuration,
+    desktopEditingItem,
+    handleUpdate,
+    isLaunchingDesktopCodex,
+    launchCodexForMemo,
+    loadDesktopCodexActivity,
+    refreshMemoAiTasks,
+    uploadDesktopDraftImages,
+  ])
 
   const handleCreate = async () => {
     setIntakeError(null)
@@ -1786,6 +2364,7 @@ export function WishlistView({
 
   const handleVoiceToggle = async () => {
     if (isTranscribing) return
+    voiceTargetRef.current = "intake"
     if (isRecording) {
       stopRecording()
       return
@@ -2078,9 +2657,13 @@ export function WishlistView({
   }, [handleCalendarAdd, todayRemovalDialog])
 
   const openDetail = useCallback((item: MemoItem) => {
+    if (!compactComposer && !isMobileMemoLayout && !linkedMemoFocus) {
+      beginDesktopMemoEdit(item)
+      return
+    }
     setSelectedItem(item)
     setDetailOpen(true)
-  }, [])
+  }, [beginDesktopMemoEdit, compactComposer, isMobileMemoLayout, linkedMemoFocus])
 
   const handleDetailOpenChange = useCallback((open: boolean) => {
     if (open) {
@@ -2370,6 +2953,24 @@ export function WishlistView({
 
   const hasIntakeText = intakeText.trim().length > 0
   const disableMemoAdd = isRecording || isAnalyzing || isTranscribing
+  const useDesktopMemoBoard = !compactComposer && !isMobileMemoLayout && !linkedMemoFocus
+  const desktopDraftHasBody = desktopDraftDescription.trim().length > 0
+  const desktopDraftCanSave = desktopDraftTitle.trim().length > 0 || desktopDraftHasBody
+  const desktopDraftDurationLabel = desktopDraftUsesCustomDuration
+    ? desktopDraftCustomDuration.trim()
+      ? `${desktopDraftCustomDuration.trim()}分`
+      : "カスタム"
+    : desktopDraftDuration
+      ? formatDuration(desktopDraftDuration)
+      : "未設定"
+  const isDesktopEditingMemo = !!desktopEditingItem
+  const desktopEditingProject = desktopEditingItem?.project_id
+    ? projects.find(project => project.id === desktopEditingItem.project_id)
+    : null
+  const desktopCodexNeedsRepo = isDesktopEditingMemo && (!desktopEditingItem?.project_id || !desktopEditingProject?.repo_path)
+  const desktopCodexActive = desktopMemoAiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(desktopMemoAiTask.status)
+  const desktopCanLaunchCodex = isDesktopEditingMemo && desktopDraftCanSave && !desktopCodexNeedsRepo && !desktopCodexActive && !isSavingDesktopDraft
+  const showDesktopCodexHistory = !!desktopMemoAiTask || desktopCodexChatOpen || !!desktopCodexLaunchError || desktopCodexActivityMessages.length > 0 || isLaunchingDesktopCodex
   const handleAddMemoFromComposer = async () => {
     if (disableMemoAdd) return
     if (hasIntakeText) {
@@ -2381,6 +2982,7 @@ export function WishlistView({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
+      {!useDesktopMemoBoard && (
       <div className={cn("shrink-0 border-b px-3 py-2", compactComposer ? "space-y-2 md:px-3" : "space-y-2 md:px-5")}>
         {compactComposer ? (
           <div className="flex items-center gap-2">
@@ -2440,7 +3042,6 @@ export function WishlistView({
         <>
           <div className="flex min-w-0 items-center gap-1.5">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <h1 className="shrink-0 text-lg font-semibold leading-none tracking-normal">メモ</h1>
               {onSelectSpace && onSelectProject && (
                 <SpaceProjectSwitcher
                   spaces={spaces}
@@ -2455,7 +3056,7 @@ export function WishlistView({
                   onSpaceSaved={onSpaceSaved}
                   showAllProjectsOption
                   variant="memoHeaderCompact"
-                  className="ml-6"
+                  className="min-w-0"
                 />
               )}
             </div>
@@ -2513,6 +3114,7 @@ export function WishlistView({
             </Button>
             <Button
               type="button"
+              variant="outline"
               onClick={handleAddMemoFromComposer}
               disabled={disableMemoAdd}
               size="icon"
@@ -2777,9 +3379,13 @@ export function WishlistView({
           />
         )}
       </div>
+      )}
 
       <div className="flex-1 overflow-hidden">
-        <div className="h-full overflow-y-auto px-4 py-4 pb-24 md:px-6">
+        <div className={cn(
+          "h-full",
+          useDesktopMemoBoard ? "overflow-hidden p-3" : "overflow-y-auto px-4 py-4 pb-24 md:px-6",
+        )}>
           {linkedMemoFocus && (
             <div className="mb-3 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs">
               <div className="min-w-0 flex-1">
@@ -2810,7 +3416,7 @@ export function WishlistView({
               <Loader2 className="h-4 w-4 animate-spin" />
               関連メモを読み込み中...
             </div>
-          ) : filteredItems.length === 0 && (!linkedMemoFocus || linkedMemoFocus.structuredItems.length === 0) && !(isMobileMemoLayout && !linkedMemoFocus) ? (
+          ) : filteredItems.length === 0 && (!linkedMemoFocus || linkedMemoFocus.structuredItems.length === 0) && !(isMobileMemoLayout && !linkedMemoFocus) && !useDesktopMemoBoard ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <p>{linkedMemoFocus ? "このノードに紐付くメモはありません" : "メモはまだありません"}</p>
               {!linkedMemoFocus && (
@@ -2882,6 +3488,428 @@ export function WishlistView({
                   />
                 </DragDropContext>
               )}
+            </div>
+          ) : useDesktopMemoBoard ? (
+            <div
+              className={cn(
+                "grid h-full min-h-0 gap-3",
+                desktopComposerOpen
+                  ? "lg:grid-cols-[minmax(19rem,22rem)_minmax(0,1fr)] xl:grid-cols-[22rem_minmax(0,1fr)]"
+                  : "grid-cols-1",
+              )}
+            >
+              {desktopComposerOpen && (
+                <section
+                  className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/70 shadow-sm"
+                  onPaste={handleDesktopDraftPaste}
+                >
+                  <>
+                    <div className="flex min-h-12 shrink-0 items-center gap-2 border-b px-3">
+                      <div className="min-w-0 flex-1">
+                        <h1 className="truncate text-sm font-semibold">{isDesktopEditingMemo ? "メモを編集" : "メモを追加"}</h1>
+                      </div>
+                      <label className="sr-only" htmlFor="desktop-memo-target-column">追加先</label>
+                      <select
+                        id="desktop-memo-target-column"
+                        value={desktopDraftColumn}
+                        onChange={event => setDesktopDraftColumn(event.target.value as ColumnKey)}
+                        className="h-8 max-w-24 rounded-md border bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-primary/30"
+                        aria-label="追加先"
+                      >
+                        {DESKTOP_DRAFT_COLUMNS.map(column => (
+                          <option key={column} value={column}>
+                            {column === "unsorted" ? "メモ" : column === "today" ? "今日" : COLUMN_LABEL[column]}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleCloseDesktopComposer}
+                        className="h-8 w-8 shrink-0"
+                        aria-label="追加パネルを閉じる"
+                        title="閉じる"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">見出し</span>
+                        <Input
+                          value={desktopDraftTitle}
+                          onChange={event => setDesktopDraftTitle(event.target.value)}
+                          placeholder="メモの見出し"
+                          className="h-10 bg-background"
+                        />
+                      </label>
+
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">メモの内容</span>
+                        <div className="relative">
+                          <textarea
+                            ref={desktopDraftDescriptionRef}
+                            value={desktopDraftDescription}
+                            onChange={event => setDesktopDraftDescription(event.target.value)}
+                            placeholder="本文を入力"
+                            rows={5}
+                            className="min-h-32 w-full resize-none rounded-md border bg-background px-3 py-2 pb-12 pr-12 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                          />
+                          <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
+                            {desktopDraftHasBody && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => { void handleGenerateDesktopDraftTitle() }}
+                                disabled={isGeneratingDesktopTitle}
+                                className="h-8 w-8 rounded-md bg-background/95"
+                                aria-label="本文から見出し生成"
+                                title="本文から見出し生成"
+                              >
+                                {isGeneratingDesktopTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant={isRecording ? "destructive" : "outline"}
+                              size="icon"
+                              onClick={() => { void handleDesktopDraftVoiceToggle() }}
+                              disabled={isTranscribing}
+                              className="h-8 w-8 rounded-md bg-background/95"
+                              aria-label={isRecording ? "録音を停止" : "本文を音声入力"}
+                              title={isRecording ? "録音を停止" : "本文を音声入力"}
+                            >
+                              {isTranscribing ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : isRecording ? (
+                                <Square className="h-3.5 w-3.5" />
+                              ) : (
+                                <Mic className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      </label>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-muted-foreground">所要時間</span>
+                          <span className="text-xs text-muted-foreground">{desktopDraftDurationLabel}</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {DESKTOP_DRAFT_DURATION_OPTIONS.map(option => {
+                            const selected = option.minutes === null
+                              ? desktopDraftUsesCustomDuration
+                              : !desktopDraftUsesCustomDuration && desktopDraftDuration === option.minutes
+                            return (
+                              <button
+                                key={option.label}
+                                type="button"
+                                onClick={() => {
+                                  if (option.minutes === null) {
+                                    setDesktopDraftUsesCustomDuration(true)
+                                    return
+                                  }
+                                  setDesktopDraftUsesCustomDuration(false)
+                                  setDesktopDraftDuration(option.minutes)
+                                }}
+                                className={cn(
+                                  "min-h-9 rounded-md border px-2 text-xs transition-colors",
+                                  selected
+                                    ? "border-primary bg-primary text-primary-foreground"
+                                    : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground",
+                                )}
+                                aria-pressed={selected}
+                              >
+                                {option.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        {desktopDraftUsesCustomDuration && (
+                          <label className="flex h-10 items-center gap-2 rounded-md border bg-background px-3 text-xs text-muted-foreground">
+                            <span className="shrink-0">カスタム</span>
+                            <input
+                              value={desktopDraftCustomDuration}
+                              onChange={event => setDesktopDraftCustomDuration(event.target.value.replace(/[^\d]/g, "").slice(0, 3))}
+                              inputMode="numeric"
+                              placeholder="分"
+                              className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
+                              aria-label="カスタム所要時間"
+                            />
+                            <span>分</span>
+                          </label>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          画像を追加
+                        </div>
+                        <div className="grid gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => { void handlePasteDesktopClipboardImage() }}
+                            disabled={isReadingDesktopClipboard}
+                            className="min-h-10 justify-start gap-2 rounded-md px-3 text-xs"
+                          >
+                            {isReadingDesktopClipboard ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clipboard className="h-4 w-4" />}
+                            クリップボードから貼り付け
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => desktopDraftFileInputRef.current?.click()}
+                            className="min-h-10 justify-start gap-2 rounded-md px-3 text-xs"
+                          >
+                            <FolderOpen className="h-4 w-4" />
+                            フォルダから選択
+                          </Button>
+                          <input
+                            ref={desktopDraftFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={handleDesktopDraftFileChange}
+                          />
+                        </div>
+                        {desktopDraftImages.length > 0 && (
+                          <div className="grid grid-cols-3 gap-2">
+                            {desktopDraftImages.map(image => (
+                              <div key={image.id} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
+                                {image.file_url ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={image.file_url} alt={image.file.name} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground">画像</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {isDesktopEditingMemo && (
+                        <div className="space-y-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => { void handleLaunchDesktopCodex() }}
+                            disabled={!desktopCanLaunchCodex || isLaunchingDesktopCodex}
+                            className="min-h-10 w-full justify-center gap-2 rounded-md border-white/15 bg-white text-xs font-semibold text-black hover:bg-white/90 disabled:bg-muted disabled:text-muted-foreground dark:bg-white dark:text-black dark:hover:bg-white/90"
+                          >
+                            {isLaunchingDesktopCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                            Codexに送る
+                          </Button>
+                          {desktopCodexNeedsRepo && (
+                            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+                              プロジェクトのリポジトリパスを設定すると送れます。
+                            </div>
+                          )}
+                          {showDesktopCodexHistory && (
+                            <div className="overflow-hidden rounded-md border bg-background/70">
+                              <button
+                                type="button"
+                                onClick={() => setDesktopCodexChatOpen(open => !open)}
+                                className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-xs transition-colors hover:bg-muted/50"
+                                aria-expanded={desktopCodexChatOpen}
+                              >
+                                <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className="min-w-0 flex-1 font-medium">Codexチャット</span>
+                                {isLoadingDesktopCodexActivity && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                                <span className={cn(
+                                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                                  memoCodexStateTone(desktopCodexLaunchError ? "failed" : desktopMemoCodexState),
+                                )}>
+                                  {MEMO_CODEX_STATE_LABEL[desktopCodexLaunchError ? "failed" : desktopMemoCodexState]}
+                                </span>
+                                {desktopCodexActivityMessages.length > 0 && (
+                                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                    {desktopCodexActivityMessages.length}件
+                                  </span>
+                                )}
+                                <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", desktopCodexChatOpen && "rotate-180")} />
+                              </button>
+                              {desktopCodexChatOpen && (
+                                <div className="max-h-52 space-y-2 overflow-y-auto border-t p-2">
+                                  {desktopCodexLaunchError && (
+                                    <div className="rounded-md border border-red-500/25 bg-red-500/10 px-2 py-1.5 text-[11px] leading-4 text-red-700 dark:text-red-300">
+                                      {desktopCodexLaunchError}
+                                    </div>
+                                  )}
+                                  {desktopCodexActivityMessages.length > 0 ? (
+                                    desktopCodexActivityMessages.slice(-6).map(message => {
+                                      const isUser = message.role === "user" || message.kind === "user_answer"
+                                      const isStatus = message.role === "status"
+                                      return (
+                                        <article
+                                          key={message.id}
+                                          className={cn(
+                                            "min-w-0 rounded-md border px-2 py-1.5 text-[11px] leading-4",
+                                            isUser && "ml-5 border-sky-500/25 bg-sky-500/10",
+                                            isStatus && "border-muted bg-muted/25 text-muted-foreground",
+                                            !isUser && !isStatus && "mr-5 border-lime-500/25 bg-lime-500/10",
+                                          )}
+                                        >
+                                          <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                                            <span className="font-medium text-foreground">{memoCodexActivityLabel(message)}</span>
+                                            <span className="shrink-0 tabular-nums">{formatMemoCodexActivityTime(message.created_at)}</span>
+                                          </div>
+                                          <p className="whitespace-pre-wrap break-words text-foreground/90">{message.body}</p>
+                                        </article>
+                                      )
+                                    })
+                                  ) : (
+                                    <div className="rounded-md border border-dashed px-3 py-4 text-center text-[11px] leading-4 text-muted-foreground">
+                                      {desktopCodexActivityError ? "チャット内容を取得できません" : "Codexの履歴はここに表示されます"}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {(desktopDraftNotice || intakeError || voiceError || isRecording || isTranscribing) && (
+                        <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                          {isRecording && (
+                            <div className="mb-1.5 flex items-center gap-2 text-destructive">
+                              <span className="font-medium">録音中</span>
+                              <VoiceWaveform analyserRef={analyserRef} height={18} barCount={18} />
+                            </div>
+                          )}
+                          {isTranscribing && (
+                            <div className="mb-1.5 flex items-center gap-2">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <span>文字起こし中...</span>
+                            </div>
+                          )}
+                          {desktopDraftNotice && <div>{desktopDraftNotice}</div>}
+                          {intakeError && <div className="text-destructive">{intakeError}</div>}
+                          {voiceError && <div className="text-destructive">{voiceError}</div>}
+                          {permissionState === "denied" && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleOpenMicrophoneSettings}
+                              className="mt-2 h-8 gap-1 text-xs"
+                            >
+                              <Settings className="h-3.5 w-3.5" /> 設定を開く
+                            </Button>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="sticky bottom-0 z-10 -mx-3 border-t bg-background/95 p-3">
+                        <Button
+                          type="button"
+                          onClick={() => { void handleSaveDesktopDraft() }}
+                          disabled={!desktopDraftCanSave || isSavingDesktopDraft}
+                          className={cn(
+                            "min-h-11 w-full gap-2 rounded-md bg-lime-400 font-semibold text-lime-950 hover:bg-lime-300 disabled:bg-muted disabled:text-muted-foreground",
+                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(163,230,53,0.22)]",
+                          )}
+                        >
+                          {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}
+                          保存
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                </section>
+              )}
+
+              <DragDropContext
+                enableDefaultSensors={false}
+                sensors={memoDndSensors}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              >
+                <div className="flex h-full min-h-0 flex-col gap-2">
+                  {intakeError && !isAnalyzing && (
+                    <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                      <span>{intakeError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setIntakeError(null)}
+                        className="shrink-0 rounded px-2 py-1 hover:bg-destructive/10"
+                      >
+                        閉じる
+                      </button>
+                    </div>
+                  )}
+                  <div className={cn(
+                    "grid min-h-0 flex-1 gap-3",
+                    desktopComposerOpen
+                      ? "lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]"
+                      : "lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)_minmax(16rem,1fr)] xl:grid-cols-[minmax(0,3.2fr)_minmax(17rem,1fr)_minmax(17rem,1fr)]",
+                  )}>
+                  <MemoSection
+                    columnKey="unsorted"
+                    title="メモ"
+                    count={desktopUnscheduledItems.length}
+                    items={desktopUnscheduledItems}
+                    emptyText="メモはありません"
+                    onUpdate={handleUpdate}
+                    onDelete={handleDelete}
+                    onOpen={openDetail}
+                    onAdd={() => resetDesktopDraft("unsorted")}
+                    projectById={projectById}
+                    tagColors={tagColors}
+                    nativeMemoDrag={isCalendarSplitVisible}
+                    nativeMemoDragForItem={item => isCalendarSplitVisible && getColumn(item, todayRange.start, todayRange.end) === "unsorted"}
+                    className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
+                    listClassName={desktopComposerOpen ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3"}
+                    selectMode={selectMode}
+                    selectedMemoIds={selectedMemoIds}
+                    onToggleSelect={toggleMemoSelection}
+                  />
+                  <MemoSection
+                    columnKey="today"
+                    title="今日"
+                    count={todayItems.length}
+                    items={todayItems}
+                    emptyText="今日のメモはありません"
+                    onUpdate={handleUpdate}
+                    onDelete={handleDelete}
+                    onOpen={openDetail}
+                    onAdd={() => resetDesktopDraft("today")}
+                    projectById={projectById}
+                    tagColors={tagColors}
+                    nativeMemoDrag={isCalendarSplitVisible}
+                    className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
+                    selectMode={selectMode}
+                    selectedMemoIds={selectedMemoIds}
+                    onToggleSelect={toggleMemoSelection}
+                  />
+                  <MemoSection
+                    columnKey="completed"
+                    title="完了"
+                    count={completedItems.length}
+                    items={completedItems}
+                    emptyText="完了したメモはありません"
+                    onUpdate={handleUpdate}
+                    onDelete={handleDelete}
+                    onOpen={openDetail}
+                    projectById={projectById}
+                    tagColors={tagColors}
+                    nativeMemoDrag={false}
+                    className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
+                    selectMode={selectMode}
+                    selectedMemoIds={selectedMemoIds}
+                    onToggleSelect={toggleMemoSelection}
+                  />
+                  </div>
+                </div>
+              </DragDropContext>
             </div>
           ) : isMobileMemoLayout ? (
             <DragDropContext
@@ -3272,11 +4300,13 @@ function MemoSection({
   onUpdate,
   onDelete,
   onOpen,
+  onAdd,
   projectById,
   tagColors,
   className,
   listClassName,
   nativeMemoDrag = false,
+  nativeMemoDragForItem,
   selectMode = false,
   selectedMemoIds,
   onToggleSelect,
@@ -3289,20 +4319,35 @@ function MemoSection({
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onOpen: (item: MemoItem) => void
+  onAdd?: () => void
   projectById: Map<string, Project>
   tagColors: Record<string, string>
   className?: string
   listClassName?: string
   nativeMemoDrag?: boolean
+  nativeMemoDragForItem?: (item: MemoItem) => boolean
   selectMode?: boolean
   selectedMemoIds?: Set<string>
   onToggleSelect?: (memoId: string) => void
 }) {
   return (
     <section className={cn("min-w-0", className)}>
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="text-sm font-medium">{title}</h2>
+      <div className="mb-2 flex min-h-8 items-center gap-2">
+        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
+        {onAdd && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onAdd}
+            className="ml-auto h-8 w-8 shrink-0 rounded-md"
+            aria-label={`${title}にメモを追加`}
+            title={`${title}にメモを追加`}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        )}
       </div>
       <Droppable droppableId={columnKey}>
         {(provided, snapshot) => (
@@ -3310,7 +4355,7 @@ function MemoSection({
             ref={provided.innerRef}
             {...provided.droppableProps}
             className={cn(
-              "rounded-lg transition-colors",
+              "min-h-0 flex-1 overflow-y-auto rounded-lg transition-colors",
               snapshot.isDraggingOver && "bg-primary/5 ring-1 ring-primary/30",
             )}
           >
@@ -3340,7 +4385,7 @@ function MemoSection({
                           onClick={() => selectMode ? onToggleSelect?.(item.id) : onOpen(item)}
                           project={item.project_id ? projectById.get(item.project_id) ?? null : null}
                           tagColors={tagColors}
-                          nativeMemoDrag={nativeMemoDrag}
+                          nativeMemoDrag={nativeMemoDragForItem ? nativeMemoDragForItem(item) : nativeMemoDrag}
                         />
                         {selectMode && (
                           <>

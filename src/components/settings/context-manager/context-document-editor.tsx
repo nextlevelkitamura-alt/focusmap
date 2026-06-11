@@ -63,8 +63,8 @@ export function ContextDocumentEditor({
   return (
     <div className="flex h-full flex-col">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
-        <button onClick={onBack} className="flex min-h-9 items-center gap-1 rounded-md text-sm text-zinc-500 transition-colors hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 dark:border-white/10">
+        <button onClick={onBack} className="flex min-h-9 items-center gap-1 rounded-md text-sm text-zinc-500 transition-colors hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:hover:text-zinc-100">
           <ArrowLeft className="h-4 w-4" />
           <span className="hidden md:inline">戻る</span>
         </button>
@@ -73,7 +73,7 @@ export function ContextDocumentEditor({
             variant="ghost"
             size="icon"
             onClick={handleTogglePin}
-            className="h-8 w-8 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
+            className="h-8 w-8 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100"
             title={doc.is_pinned ? 'ピン解除' : 'ピン留め（AIが優先的に読み込み）'}
           >
             {doc.is_pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
@@ -98,7 +98,7 @@ export function ContextDocumentEditor({
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          className="w-full border-none bg-transparent text-lg font-semibold text-zinc-100 outline-none placeholder:text-zinc-600"
+          className="w-full border-none bg-transparent text-lg font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-600"
           placeholder="タイトル"
           readOnly={isSystemDoc}
         />
@@ -113,7 +113,7 @@ export function ContextDocumentEditor({
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value.slice(0, doc.max_length))}
-          className="min-h-[320px] w-full resize-y rounded-xl border border-white/10 bg-[#171717] p-4 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-600 focus:ring-2 focus:ring-blue-400/50"
+          className="min-h-[320px] w-full resize-y rounded-xl border border-zinc-200 bg-white p-4 text-sm leading-6 text-zinc-950 outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-blue-400/50 dark:border-white/10 dark:bg-[#171717] dark:text-zinc-100 dark:placeholder:text-zinc-600"
           placeholder="ここに内容を入力..."
         />
         <div className="text-right text-xs text-zinc-500">
@@ -129,7 +129,7 @@ export function ContextDocumentEditor({
             variant="outline"
             size="sm"
             onClick={() => onReview(doc.id)}
-            className="border-white/10 bg-white/[0.04] text-xs text-zinc-200 hover:bg-white/[0.08]"
+            className="border-zinc-200 bg-white text-xs text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
           >
             <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
             最新です

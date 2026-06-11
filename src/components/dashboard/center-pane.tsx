@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Task, Project } from "@/types/database"
+import { Task, Project, Space } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Check, ChevronRight, ChevronDown, Plus, Trash2, Timer, Calendar as CalendarIcon, X, Target, Clock } from "lucide-react"
@@ -19,9 +19,13 @@ import { MiniProgress, TaskItem } from "./center-pane-task-item"
 
 interface CenterPaneProps {
     project?: Project
+    spaces?: Space[]
+    projects?: Project[]
     groups: Task[]
     tasks: Task[]
+    allTasks?: Task[]
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
+    onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
     onCreateGroup?: (title: string) => Promise<Task | null>
     onDeleteGroup?: (groupId: string) => Promise<void>
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
@@ -34,14 +38,20 @@ interface CenterPaneProps {
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
+    onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+    onKanbanDeleteTask?: (taskId: string) => Promise<void>
     isTaskListVisible?: boolean
 }
 
 export function CenterPane({
     project,
+    spaces,
+    projects,
     groups,
     tasks,
+    allTasks,
     onUpdateProject,
+    onPatchProject,
     onCreateGroup,
     onDeleteGroup,
     onCreateTask,
@@ -54,6 +64,8 @@ export function CenterPane({
     onAddOptimisticEvent,
     onRemoveOptimisticEvent,
     onOpenLinkedMemos,
+    onKanbanUpdateTask,
+    onKanbanDeleteTask,
     isTaskListVisible = false,
 }: CenterPaneProps) {
     // Splitter State
@@ -195,9 +207,13 @@ export function CenterPane({
             >
                 <MindMap
                     project={project}
+                    spaces={spaces}
+                    projects={projects}
                     groups={groups}
                     tasks={tasks}
+                    allTasks={allTasks}
                     onUpdateProject={onUpdateProject}
+                    onPatchProject={onPatchProject}
                     onCreateGroup={onCreateGroup}
                     onDeleteGroup={onDeleteGroup}
                     onCreateTask={onCreateTask}
@@ -210,6 +226,8 @@ export function CenterPane({
                     onAddOptimisticEvent={onAddOptimisticEvent}
                     onRemoveOptimisticEvent={onRemoveOptimisticEvent}
                     onOpenLinkedMemos={onOpenLinkedMemos}
+                    onKanbanUpdateTask={onKanbanUpdateTask}
+                    onKanbanDeleteTask={onKanbanDeleteTask}
                 />
             </div>
 

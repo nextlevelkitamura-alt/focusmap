@@ -130,12 +130,12 @@ export function PrioritySelect({
                     <span>{option.label}</span>
                 </SelectValue>
             </SelectTrigger>
-            <SelectContent className="border-zinc-800 bg-zinc-900">
+            <SelectContent className="border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
                 {Object.values(PRIORITY_OPTIONS).map((opt) => (
                     <SelectItem
                         key={opt.value}
                         value={opt.value.toString()}
-                        className="text-xs hover:bg-zinc-800 focus:bg-zinc-800"
+                        className="text-xs hover:bg-zinc-100 focus:bg-zinc-100 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800"
                     >
                         <div className="flex items-center gap-1.5">
                             <span className={opt.color}>{opt.label}</span>
@@ -187,7 +187,7 @@ export function PriorityPopover({
                 )}
             </PopoverTrigger>
             <PopoverContent
-                className="w-24 p-1 border border-zinc-800 bg-zinc-900 shadow-xl"
+                className="w-24 p-1 border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
                 align="start"
             >
                 <div className="flex flex-col gap-0.5">
@@ -198,13 +198,13 @@ export function PriorityPopover({
                             onClick={() => handleSelect(opt.value)}
                             className={cn(
                                 "flex items-center gap-1.5 px-2 py-1.5 rounded text-xs transition-colors text-left",
-                                "hover:bg-zinc-800",
-                                value === opt.value && "bg-zinc-800"
+                                "hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                                value === opt.value && "bg-zinc-100 dark:bg-zinc-800"
                             )}
                         >
                             <span className={opt.color}>{opt.label}</span>
                             {value === opt.value && (
-                                <span className="ml-auto text-zinc-400">✓</span>
+                                <span className="ml-auto text-zinc-500 dark:text-zinc-400">✓</span>
                             )}
                         </button>
                     ))}

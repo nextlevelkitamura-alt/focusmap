@@ -1533,8 +1533,9 @@ export function CodexNodePanel({
               />
             </section>
 
+            <div className="contents min-w-0 xl:col-start-2 xl:row-start-1 xl:block xl:space-y-4">
             <section
-              className="order-2 min-w-0 space-y-2 xl:col-start-2 xl:row-start-1"
+              className="order-2 min-w-0 space-y-2"
               data-testid="codex-node-image-section"
             >
               <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
@@ -1653,6 +1654,137 @@ export function CodexNodePanel({
                 )}
               </div>
             </section>
+
+            <section
+              className="order-4 min-w-0 space-y-2"
+              data-testid="codex-node-schedule-section"
+            >
+              <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
+                <Clock className="h-4 w-4" />
+                <span>時間・予定</span>
+                {isLoadingTaskDetail && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-500" />}
+              </div>
+              <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="space-y-1 text-xs text-neutral-400">
+                    <span>日付</span>
+                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
+                      <CalendarIcon className="h-4 w-4 shrink-0 text-neutral-500" />
+                      <input
+                        type="date"
+                        value={dateValue}
+                        onChange={handleDateChange}
+                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
+                      />
+                    </span>
+                  </label>
+                  <label className="space-y-1 text-xs text-neutral-400">
+                    <span>時刻</span>
+                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
+                      <Clock className="h-4 w-4 shrink-0 text-neutral-500" />
+                      <input
+                        type="time"
+                        value={timeValue}
+                        onChange={handleTimeChange}
+                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
+                      />
+                    </span>
+                  </label>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-xs text-neutral-400">
+                    <span>所要時間</span>
+                    <div className="flex items-center gap-2">
+                      <span>{formatDurationLabel(estimatedMinutes)}</span>
+                      {estimatedMinutes ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDurationChange(null)}
+                          className="min-h-7 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-[11px] font-medium text-neutral-400 transition-colors hover:text-neutral-100"
+                        >
+                          解除
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                    {QUICK_ESTIMATED_MINUTES.map(minutes => (
+                      <button
+                        key={minutes}
+                        type="button"
+                        onClick={() => handleDurationChange(minutes)}
+                        className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+                          estimatedMinutes === minutes
+                            ? "border-emerald-500 bg-emerald-500 text-emerald-950"
+                            : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
+                        }`}
+                      >
+                        {formatDurationLabel(minutes)}
+                      </button>
+                    ))}
+                    <DurationWheelPopover
+                      valueMinutes={estimatedMinutes}
+                      onChange={minutes => handleDurationChange(minutes)}
+                      side="top"
+                      align="end"
+                      trigger={(
+                        <button
+                          type="button"
+                          className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+                            estimatedMinutes && !(QUICK_ESTIMATED_MINUTES as readonly number[]).includes(estimatedMinutes)
+                              ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
+                              : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
+                          }`}
+                        >
+                          カスタム
+                        </button>
+                      )}
+                    />
+                  </div>
+                </div>
+                <label className="space-y-1 text-xs text-neutral-400">
+                  <span>カレンダー</span>
+                  <span className="relative flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+                    />
+                    <select
+                      value={calendarId}
+                      onChange={handleCalendarChange}
+                      className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
+                    >
+                      {calendarOptions.map(calendar => (
+                        <option key={calendar.id} value={calendar.id}>
+                          {calendar.name}{calendar.primary ? "（主）" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                  </span>
+                </label>
+                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <p className="min-w-0 text-xs leading-5 text-neutral-500">
+                    日時・所要時間・カレンダーが揃うと登録できます。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleRegisterSchedule()}
+                    disabled={!canRegisterSchedule || isRegisteringSchedule}
+                    className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600 sm:w-auto"
+                  >
+                    {isRegisteringSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarIcon className="h-3.5 w-3.5" />}
+                    {googleEventId ? "予定を更新" : "予定を登録"}
+                  </button>
+                </div>
+                {scheduleNotice && (
+                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                    {scheduleNotice}
+                  </p>
+                )}
+              </div>
+            </section>
+            </div>
 
             <section
               className="order-3 min-w-0 space-y-2 xl:col-start-1 xl:row-start-2"
@@ -1872,136 +2004,6 @@ export function CodexNodePanel({
                   </p>
                 </div>
               )}
-            </section>
-
-            <section
-              className="order-4 min-w-0 space-y-2 xl:col-start-2 xl:row-start-2"
-              data-testid="codex-node-schedule-section"
-            >
-              <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
-                <Clock className="h-4 w-4" />
-                <span>時間・予定</span>
-                {isLoadingTaskDetail && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-500" />}
-              </div>
-              <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="space-y-1 text-xs text-neutral-400">
-                    <span>日付</span>
-                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
-                      <CalendarIcon className="h-4 w-4 shrink-0 text-neutral-500" />
-                      <input
-                        type="date"
-                        value={dateValue}
-                        onChange={handleDateChange}
-                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
-                      />
-                    </span>
-                  </label>
-                  <label className="space-y-1 text-xs text-neutral-400">
-                    <span>時刻</span>
-                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
-                      <Clock className="h-4 w-4 shrink-0 text-neutral-500" />
-                      <input
-                        type="time"
-                        value={timeValue}
-                        onChange={handleTimeChange}
-                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
-                      />
-                    </span>
-                  </label>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2 text-xs text-neutral-400">
-                    <span>所要時間</span>
-                    <div className="flex items-center gap-2">
-                      <span>{formatDurationLabel(estimatedMinutes)}</span>
-                      {estimatedMinutes ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDurationChange(null)}
-                          className="min-h-7 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-[11px] font-medium text-neutral-400 transition-colors hover:text-neutral-100"
-                        >
-                          解除
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                    {QUICK_ESTIMATED_MINUTES.map(minutes => (
-                      <button
-                        key={minutes}
-                        type="button"
-                        onClick={() => handleDurationChange(minutes)}
-                        className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
-                          estimatedMinutes === minutes
-                            ? "border-emerald-500 bg-emerald-500 text-emerald-950"
-                            : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
-                        }`}
-                      >
-                        {formatDurationLabel(minutes)}
-                      </button>
-                    ))}
-                    <DurationWheelPopover
-                      valueMinutes={estimatedMinutes}
-                      onChange={minutes => handleDurationChange(minutes)}
-                      side="top"
-                      align="end"
-                      trigger={(
-                        <button
-                          type="button"
-                          className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
-                            estimatedMinutes && !(QUICK_ESTIMATED_MINUTES as readonly number[]).includes(estimatedMinutes)
-                              ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
-                              : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
-                          }`}
-                        >
-                          カスタム
-                        </button>
-                      )}
-                    />
-                  </div>
-                </div>
-                <label className="space-y-1 text-xs text-neutral-400">
-                  <span>カレンダー</span>
-                  <span className="relative flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
-                    />
-                    <select
-                      value={calendarId}
-                      onChange={handleCalendarChange}
-                      className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
-                    >
-                      {calendarOptions.map(calendar => (
-                        <option key={calendar.id} value={calendar.id}>
-                          {calendar.name}{calendar.primary ? "（主）" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                  </span>
-                </label>
-                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                  <p className="min-w-0 text-xs leading-5 text-neutral-500">
-                    日時・所要時間・カレンダーが揃うと登録できます。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void handleRegisterSchedule()}
-                    disabled={!canRegisterSchedule || isRegisteringSchedule}
-                    className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600 sm:w-auto"
-                  >
-                    {isRegisteringSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarIcon className="h-3.5 w-3.5" />}
-                    {googleEventId ? "予定を更新" : "予定を登録"}
-                  </button>
-                </div>
-                {scheduleNotice && (
-                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-                    {scheduleNotice}
-                  </p>
-                )}
-              </div>
             </section>
 
             <section

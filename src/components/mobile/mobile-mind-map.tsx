@@ -18,7 +18,7 @@ import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
 import type { AiTask } from "@/types/ai-task"
-import type { Project, Task } from "@/types/database"
+import type { Project, Space, Task } from "@/types/database"
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
 
 type MobileCustomDropPosition = "above" | "below" | "as-child"
@@ -34,33 +34,44 @@ function shouldUseTaskProgressFixture() {
 
 interface MobileMindMapProps {
     project: Project
+    spaces?: Space[]
     projects?: Project[]
     groups: Task[]
     tasks: Task[]
+    allTasks?: Task[]
     onCreateGroup?: (title: string) => Promise<Task | null>
     onDeleteGroup?: (groupId: string) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
+    onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onReorderTask?: (taskId: string, referenceTaskId: string, position: "above" | "below") => Promise<void>
     onOpenLinkedMemos?: (taskId: string) => void
     focusEditNodeId?: string | null
+    onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+    onKanbanDeleteTask?: (taskId: string) => Promise<void>
 }
 
 export function MobileMindMap({
     project,
+    spaces = [],
+    projects = [],
     groups,
     tasks,
+    allTasks = [],
     onCreateGroup,
     onDeleteGroup,
     onUpdateProject,
+    onPatchProject,
     onCreateTask,
     onUpdateTask,
     onDeleteTask,
     onReorderTask,
     onOpenLinkedMemos,
     focusEditNodeId,
+    onKanbanUpdateTask,
+    onKanbanDeleteTask,
 }: MobileMindMapProps) {
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -69,6 +80,8 @@ export function MobileMindMap({
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
     const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set())
+    const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null)
+    const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false)
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
@@ -80,7 +93,64 @@ export function MobileMindMap({
         return map
     }, [groups, tasks])
     const allMindMapTasks = useMemo(() => [...groups, ...tasks], [groups, tasks])
-    const codexSourceTaskIds = useMemo(() => allMindMapTasks.map(task => task.id).filter(Boolean), [allMindMapTasks])
+    const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects])
+    const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project.space_id ?? null)
+    const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(() => project.id)
+
+    useEffect(() => {
+        setKanbanSpaceId(project.space_id ?? null)
+        setKanbanProjectId(project.id)
+        setCodexThreadImportOverride(null)
+    }, [project.id, project.space_id])
+
+    const projectRepoPath = useMemo(() => (project.repo_path ?? "").trim(), [project.repo_path])
+    const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project.codex_thread_import_enabled)
+    const toggleCodexThreadImport = useCallback(async () => {
+        if (!project.id || !projectRepoPath || isCodexThreadImportSaving) return
+        const nextEnabled = !codexThreadImportEnabled
+        const previous = codexThreadImportEnabled
+        setCodexThreadImportOverride(nextEnabled)
+        setIsCodexThreadImportSaving(true)
+        try {
+            const updates: Partial<Project> = { codex_thread_import_enabled: nextEnabled }
+            if (onPatchProject) {
+                await onPatchProject(project.id, updates)
+            } else {
+                const res = await fetch(`/api/projects/${project.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(updates),
+                })
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}))
+                    throw new Error(typeof data.error === "string" ? data.error : "Codex thread import update failed")
+                }
+            }
+        } catch (error) {
+            setCodexThreadImportOverride(previous)
+            console.error("[MobileMindMap] Failed to toggle Codex thread import:", error)
+        } finally {
+            setIsCodexThreadImportSaving(false)
+        }
+    }, [codexThreadImportEnabled, isCodexThreadImportSaving, onPatchProject, project.id, projectRepoPath])
+
+    const kanbanProject = useMemo(() => (
+        kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
+    ), [kanbanProjectId, kanbanProjects, project])
+    const kanbanTaskNodes = useMemo(() => {
+        if (!kanbanProject?.id) return allMindMapTasks
+        if (kanbanProject.id === project.id) return allMindMapTasks
+        return allTasks.filter(task => task.project_id === kanbanProject.id && task.deleted_at === null)
+    }, [allMindMapTasks, allTasks, kanbanProject?.id, project.id])
+    const knownCodexTaskNodes = useMemo(() => {
+        const map = new Map<string, Task>()
+        for (const task of allMindMapTasks) map.set(task.id, task)
+        for (const task of kanbanTaskNodes) map.set(task.id, task)
+        return Array.from(map.values())
+    }, [allMindMapTasks, kanbanTaskNodes])
+    const fallbackSourceTasksByIdForCodex = useMemo(() => new Map(knownCodexTaskNodes.map(task => [task.id, task])), [knownCodexTaskNodes])
+    const kanbanSourceTasksById = useMemo(() => new Map(kanbanTaskNodes.map(task => [task.id, task])), [kanbanTaskNodes])
+    const codexSourceTaskIds = useMemo(() => knownCodexTaskNodes.map(task => task.id).filter(Boolean), [knownCodexTaskNodes])
     const memoAiTasks = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds })
     const bySourceId = memoAiTasks.bySourceId ?? emptyAiTaskMap
     const getMemoAiTaskBySourceId = memoAiTasks.getBySourceId
@@ -150,9 +220,9 @@ export function MobileMindMap({
     const taskStatusByIdRef = useRef(new Map<string, string | null | undefined>())
     useEffect(() => {
         const next = new Map<string, string | null | undefined>()
-        for (const task of [...groups, ...tasks]) next.set(task.id, task.status)
+        for (const task of knownCodexTaskNodes) next.set(task.id, task.status)
         taskStatusByIdRef.current = next
-    }, [groups, tasks])
+    }, [knownCodexTaskNodes])
     useEffect(() => {
         const timers = codexArchiveRequestTimersRef.current
         return () => {
@@ -228,11 +298,19 @@ export function MobileMindMap({
         window.addEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus)
         return () => window.removeEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus)
     }, [syncCodexSourceTaskCompletion])
+    const updateTaskForCodexScope = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        const task = fallbackSourceTasksByIdForCodex.get(taskId)
+        const update = task?.project_id && task.project_id !== project.id
+            ? onKanbanUpdateTask ?? onUpdateTask
+            : onUpdateTask ?? onKanbanUpdateTask
+        if (!update) return
+        await update(taskId, updates)
+    }, [fallbackSourceTasksByIdForCodex, onKanbanUpdateTask, onUpdateTask, project.id])
+
     const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
-        if (!onUpdateTask) return
-        await onUpdateTask(taskId, { status })
+        await updateTaskForCodexScope(taskId, { status })
         await syncCodexSourceTaskCompletion(taskId, status)
-    }, [onUpdateTask, syncCodexSourceTaskCompletion])
+    }, [syncCodexSourceTaskCompletion, updateTaskForCodexScope])
     const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
         if (!onUpdateTask) return
         if (generatingHeadingNodeIds.has(taskId)) return
@@ -286,7 +364,7 @@ export function MobileMindMap({
         if (taskProgressFixtureEnabled) return []
         const fallbackTasks: TaskProgressSnapshotTask[] = []
         for (const [sourceId, aiTask] of bySourceId.entries()) {
-            const sourceTask = taskMap.get(sourceId)
+            const sourceTask = fallbackSourceTasksByIdForCodex.get(sourceId)
             if (!sourceTask) continue
             const fallbackTask = aiTaskToTaskProgressFallback(aiTask, {
                 id: sourceId,
@@ -295,7 +373,7 @@ export function MobileMindMap({
             if (fallbackTask) fallbackTasks.push(fallbackTask)
         }
         return fallbackTasks
-    }, [bySourceId, taskMap, taskProgressFixtureEnabled])
+    }, [bySourceId, fallbackSourceTasksByIdForCodex, taskProgressFixtureEnabled])
     const taskProgressDisplayTasks = useMemo(() => {
         const merged = new Map<string, TaskProgressSnapshotTask>()
         for (const task of taskProgressFallbackTasks) merged.set(task.id, task)
@@ -346,20 +424,30 @@ export function MobileMindMap({
         return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ?? null
     }, [getTaskProgressById, taskProgressDisplayTasks, taskProgressPanelTaskId])
 
+    const codexPanelTask = useMemo(() => {
+        if (!codexPanelTaskId) return null
+        return fallbackSourceTasksByIdForCodex.get(codexPanelTaskId) ?? null
+    }, [codexPanelTaskId, fallbackSourceTasksByIdForCodex])
+    const codexPanelProject = useMemo(() => {
+        if (!codexPanelTask?.project_id) return project
+        return kanbanProjects.find(candidate => candidate.id === codexPanelTask.project_id) ?? project
+    }, [codexPanelTask?.project_id, kanbanProjects, project])
+
     const codexDirCandidates = useMemo(() => {
         const set = new Set<string>()
+        const panelRepo = (codexPanelProject.repo_path ?? "").trim()
+        if (panelRepo) set.add(panelRepo)
         const repo = (project.repo_path ?? "").trim()
         if (repo) set.add(repo)
-        for (const task of allMindMapTasks) {
+        for (const task of knownCodexTaskNodes) {
             const dir = (task.codex_work_dir ?? "").trim()
             if (dir) set.add(dir)
         }
         return Array.from(set)
-    }, [allMindMapTasks, project.repo_path])
+    }, [codexPanelProject.repo_path, knownCodexTaskNodes, project.repo_path])
 
     const codexPanelNode = useMemo(() => {
-        if (!codexPanelTaskId) return null
-        const task = taskMap.get(codexPanelTaskId)
+        const task = codexPanelTask
         if (!task) return null
         const aiTask = getBySourceId(task.id)
         const aiResult = aiTask?.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
@@ -383,15 +471,15 @@ export function MobileMindMap({
             isDone: task.status === "done",
             hasMemo: !!(task.memo && task.memo.trim()),
         }
-    }, [codexPanelTaskId, getBySourceId, taskMap])
+    }, [codexPanelTask, getBySourceId])
 
     const persistCodexDir = useCallback(async (taskId: string, dir: string) => {
         try {
-            await onUpdateTask?.(taskId, { codex_work_dir: dir })
+            await updateTaskForCodexScope(taskId, { codex_work_dir: dir })
         } catch {
             // パネル上の選択は維持し、次回保存で復旧できるようにする。
         }
-    }, [onUpdateTask])
+    }, [updateTaskForCodexScope])
 
     const isDescendant = useCallback((ancestorId: string, childId: string) => {
         let current = taskMap.get(childId)
@@ -586,6 +674,15 @@ export function MobileMindMap({
         })
     }, [calculateDeleteFocus, onDeleteGroup, onDeleteTask, selectSingleTask, taskMap])
 
+    const handleDeleteTaskFromKanban = useCallback(async (taskId: string) => {
+        const sourceTask = fallbackSourceTasksByIdForCodex.get(taskId)
+        if (sourceTask?.project_id && sourceTask.project_id !== project.id && onKanbanDeleteTask) {
+            await onKanbanDeleteTask(taskId)
+            return
+        }
+        await handleDeleteNode(taskId)
+    }, [fallbackSourceTasksByIdForCodex, handleDeleteNode, onKanbanDeleteTask, project.id])
+
     const handleSaveTitle = useCallback(async (taskId: string, title: string) => {
         const trimmed = title.trim()
         if (!trimmed || !onUpdateTask) return
@@ -689,13 +786,25 @@ export function MobileMindMap({
                 generatingHeadingNodeIds={generatingHeadingNodeIds}
                 onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
                 codexRunByNodeId={codexRunByNodeId}
+                codexThreadImportEnabled={codexThreadImportEnabled}
+                codexThreadImportAvailable={!!projectRepoPath}
+                codexThreadImportPending={isCodexThreadImportSaving}
+                codexThreadImportRepoPath={projectRepoPath || null}
+                onToggleCodexThreadImport={toggleCodexThreadImport}
                 taskProgressByNodeId={taskProgressByNodeId}
                 onOpenTaskProgress={(task) => setTaskProgressPanelTaskId(task.id)}
                 onMoveTask={handleMoveTask}
             />
             <TaskProgressKanban
                 tasks={taskProgressDisplayTasks}
-                sourceTasksById={taskMap}
+                sourceTasksById={kanbanSourceTasksById}
+                spaces={spaces}
+                projects={kanbanProjects}
+                selectedSpaceId={kanbanSpaceId}
+                selectedProjectId={kanbanProject?.id ?? kanbanProjectId}
+                onSelectSpace={setKanbanSpaceId}
+                onSelectProject={setKanbanProjectId}
+                includeUnsentSourceTasks
                 isMobile
                 isLoading={isTaskProgressSnapshotLoading}
                 isRefreshing={isRefreshingTaskProgressSnapshot}
@@ -703,8 +812,9 @@ export function MobileMindMap({
                 pollIntervalMs={taskProgressPollIntervalMs}
                 onRefresh={handleRefreshTaskProgressSnapshot}
                 onOpenTask={(task) => setTaskProgressPanelTaskId(task.id)}
+                onRunSourceTask={(taskId) => setCodexPanelTaskId(taskId)}
                 onToggleSourceTaskComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
-                onDeleteSourceTask={(taskId) => { void handleDeleteNode(taskId) }}
+                onDeleteSourceTask={(taskId) => { void handleDeleteTaskFromKanban(taskId) }}
             />
             <TaskProgressDetailPanel
                 open={!!taskProgressPanelTask}
@@ -721,8 +831,8 @@ export function MobileMindMap({
                     candidates={codexDirCandidates}
                     onClose={() => setCodexPanelTaskId(null)}
                     onPersistDir={persistCodexDir}
-                    onSaveHeading={(taskId, heading) => onUpdateTask?.(taskId, { title: heading })}
-                    onSaveDraft={(taskId, draft) => onUpdateTask?.(taskId, { title: draft.title, memo: draft.memo })}
+                    onSaveHeading={(taskId, heading) => updateTaskForCodexScope(taskId, { title: heading })}
+                    onSaveDraft={(taskId, draft) => updateTaskForCodexScope(taskId, { title: draft.title, memo: draft.memo })}
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
                     onAddChild={(taskId) => { void handleAddChildNode(taskId) }}

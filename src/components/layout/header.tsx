@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, type CSSProperties } from "react"
 import { createClient } from "@/utils/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { useRouter } from "next/navigation"
@@ -22,6 +22,7 @@ import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
+import { isFocusmapDesktopShell } from "@/lib/external-auth-launch"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -100,6 +101,14 @@ export function Header({
     const { activeView, setActiveView } = useView()
     const forceDesktopDashboard = useForceDesktopDashboard()
     const desktopFlexClass = forceDesktopDashboard ? "flex" : "hidden md:flex"
+    const [isDesktopShell, setIsDesktopShell] = useState(false)
+
+    useEffect(() => {
+        setIsDesktopShell(isFocusmapDesktopShell())
+    }, [])
+
+    const desktopDragStyle = isDesktopShell ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined
+    const desktopNoDragStyle = isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined
 
     const handleLogoClick = () => {
         if (onLogoClick) {
@@ -167,26 +176,38 @@ export function Header({
     }
 
     return (
-        <header className={cn(
+        <header
+            className={cn(
             "relative h-14 border-b items-center justify-between px-4 bg-background z-50 flex-shrink-0",
+            isDesktopShell && "h-[52px] border-white/10 bg-background/95 pl-[76px] pr-5 shadow-[0_1px_0_rgba(255,255,255,0.04)]",
             desktopFlexClass,
             forceDesktopDashboard && "min-w-[1120px]",
-        )}>
+        )}
+            style={desktopDragStyle}
+        >
             {/* Left: Logo & current workspace */}
-            <div className="flex min-w-0 max-w-[440px] items-center gap-3">
-                <button
-                    type="button"
-                    onClick={handleLogoClick}
-                    className="inline-flex min-h-11 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label="Todayボードへ移動"
-                    title="Today"
-                >
-                    <FocusmapLogo className="h-9 w-auto text-foreground" />
-                </button>
+            <div
+                className={cn(
+                    "flex min-w-0 max-w-[440px] items-center gap-3",
+                    isDesktopShell && "max-w-[460px] gap-4",
+                )}
+                style={desktopNoDragStyle}
+            >
+                {!isDesktopShell && (
+                    <button
+                        type="button"
+                        onClick={handleLogoClick}
+                        className="inline-flex min-h-11 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Todayボードへ移動"
+                        title="Today"
+                    >
+                        <FocusmapLogo className="h-9 w-auto text-foreground" />
+                    </button>
+                )}
 
                 {onSelectSpace && onSelectProject && (
                     <>
-                        <div className="h-6 w-px bg-border" />
+                        {!isDesktopShell && <div className="h-6 w-px bg-border" />}
                         <SpaceProjectSwitcher
                             spaces={spaces}
                             projects={projects}
@@ -199,15 +220,26 @@ export function Header({
                             onProjectDeleted={onProjectDeleted}
                             onSpaceSaved={onSpaceSaved}
                             showAllProjectsOption={activeView === 'today' || activeView === 'long-term'}
-                            className="max-w-[280px] border-b-0 bg-transparent px-0 py-0"
+                            className={cn(
+                                "max-w-[280px] border-b-0 bg-transparent px-0 py-0",
+                                isDesktopShell && "max-w-[360px]",
+                            )}
                         />
                     </>
                 )}
             </div>
 
             {/* Center: View Tabs */}
-            <div className={cn("items-center gap-2 absolute left-1/2 -translate-x-1/2", desktopFlexClass)}>
-                <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+            <div
+                className={cn("items-center gap-2 absolute left-1/2 -translate-x-1/2", desktopFlexClass)}
+                style={desktopDragStyle}
+            >
+                <div className={cn(
+                    "flex items-center gap-1 bg-muted/50 rounded-lg p-0.5",
+                    isDesktopShell && "gap-1.5 rounded-xl bg-muted/45 p-1",
+                )}
+                    style={desktopDragStyle}
+                >
                     {viewTabs.map(tab => (
                         <Button
                             key={tab.id}
@@ -215,11 +247,13 @@ export function Header({
                             size="sm"
                             className={cn(
                                 "gap-1.5 h-7 px-2.5 text-xs font-medium transition-all",
+                                isDesktopShell && "h-8 gap-2 px-3.5",
                                 activeView === tab.id
                                     ? "bg-background shadow-sm"
                                     : "text-muted-foreground hover:text-foreground"
                             )}
                             onClick={() => setActiveView(tab.id)}
+                            style={desktopNoDragStyle}
                         >
                             {tab.icon}
                             {tab.label}
@@ -236,6 +270,7 @@ export function Header({
                         )}
                         onClick={handleOpenAiOrganize}
                         disabled={isLoadingOrganizeMemos || !selectedProjectId}
+                        style={desktopNoDragStyle}
                     >
                         <Sparkles className={cn("h-3.5 w-3.5", isLoadingOrganizeMemos && "animate-spin")} />
                         AIで整理
@@ -244,7 +279,10 @@ export function Header({
             </div>
 
             {/* Right: User Profile & Settings */}
-            <div className="flex items-center gap-2">
+            <div
+                className="flex items-center gap-2"
+                style={desktopNoDragStyle}
+            >
                 {showMapSplitToggle && onToggleMapSplit && (
                     <Button
                         variant={isMapSplitVisible ? "secondary" : "ghost"}

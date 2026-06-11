@@ -109,8 +109,8 @@ function statusChip(ok: boolean, label: string) {
       className={cn(
         'inline-flex h-7 shrink-0 items-center rounded-full px-3 text-xs font-medium',
         ok
-          ? 'bg-emerald-500/12 text-emerald-300 ring-1 ring-emerald-400/30'
-          : 'bg-zinc-800 text-zinc-400 ring-1 ring-white/[0.08]',
+          ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:ring-emerald-400/30'
+          : 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-white/[0.08]',
       )}
     >
       {label}
@@ -132,18 +132,18 @@ function StatusRow({
   ok: boolean;
 }) {
   return (
-    <div className="flex min-h-[64px] items-center gap-3 rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
+    <div className="flex min-h-[64px] items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-white/[0.08] dark:bg-black/30">
       <span
         className={cn(
           'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
-          ok ? 'bg-emerald-500/10 text-emerald-300' : 'bg-zinc-800 text-zinc-400',
+          ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
         )}
       >
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-medium text-zinc-100">{label}</p>
+          <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</p>
           {statusChip(ok, value)}
         </div>
         <p className="mt-1 truncate text-xs text-zinc-500">{detail}</p>
@@ -227,7 +227,7 @@ export function AgentStatusBadge() {
 
   if (loading) {
     return (
-      <section className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-[#1c1c1e] px-4 py-3 text-sm text-zinc-400">
+      <section className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:text-zinc-400 dark:shadow-none">
         <Loader2 className="h-4 w-4 animate-spin" />
         AIエージェント状態を取得中...
       </section>
@@ -246,8 +246,8 @@ export function AgentStatusBadge() {
   return (
     <section
       className={cn(
-        'rounded-lg border bg-[#1c1c1e] p-4 md:p-5',
-        isOnline ? 'border-emerald-400/30' : 'border-white/[0.08]',
+        'rounded-lg border bg-white p-4 shadow-sm md:p-5 dark:bg-[#1c1c1e] dark:shadow-none',
+        isOnline ? 'border-emerald-200 dark:border-emerald-400/30' : 'border-zinc-200 dark:border-white/[0.08]',
       )}
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -255,17 +255,17 @@ export function AgentStatusBadge() {
           <span
             className={cn(
               'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg',
-              isOnline ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400',
+              isOnline ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
             )}
           >
             {isOnline ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">AI Agent</p>
-            <h2 className="text-lg font-semibold text-zinc-50">
+            <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               {isOnline ? 'Macエージェント オンライン' : primary ? 'Macエージェント オフライン' : 'Macエージェント未接続'}
             </h2>
-            <p className="mt-1 text-sm leading-6 text-zinc-400">
+            <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
               {primary
                 ? `${primary.display_name ?? primary.hostname} がFocusmapのAI実行とCodex連携を巡回します。`
                 : 'まだMacエージェントが登録されていません。'}
@@ -293,7 +293,7 @@ export function AgentStatusBadge() {
       </div>
 
       {error && (
-        <p className="mt-3 rounded-md border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-200">
           取得エラー: {error}
         </p>
       )}
@@ -335,12 +335,12 @@ export function AgentStatusBadge() {
       </div>
 
       {!isOnline && primary && (
-        <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-100">
           <div className="flex items-center gap-1.5 font-medium">
             <TriangleAlert className="h-3.5 w-3.5" />
             Macエージェントから最近の更新が届いていません。
           </div>
-          <p className="mt-1 text-amber-100/80">Macが起動しているか、Focusmap Macアプリを開いて再接続してください。</p>
+          <p className="mt-1 text-amber-700 dark:text-amber-100/80">Macが起動しているか、Focusmap Macアプリを開いて再接続してください。</p>
         </div>
       )}
     </section>

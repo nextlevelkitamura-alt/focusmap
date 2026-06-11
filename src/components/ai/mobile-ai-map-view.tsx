@@ -20,14 +20,18 @@ interface MobileAiMapViewProps {
   selectedProject: Project | null | undefined
   groups: Task[]
   tasks: Task[]
+  allTasks?: Task[]
   onCreateGroup?: (title: string) => Promise<Task | null>
   onDeleteGroup?: (groupId: string) => Promise<void>
   onUpdateProject?: (projectId: string, title: string) => Promise<void>
+  onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
   onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
   onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
   onDeleteTask?: (taskId: string) => Promise<void>
   onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
   onOpenLinkedMemos?: (taskId: string) => void
+  onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+  onKanbanDeleteTask?: (taskId: string) => Promise<void>
   refreshFromServer: () => Promise<void>
 }
 
@@ -69,14 +73,18 @@ export function MobileAiMapView({
   selectedProject,
   groups,
   tasks,
+  allTasks,
   onCreateGroup,
   onDeleteGroup,
   onUpdateProject,
+  onPatchProject,
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
   onReorderTask,
   onOpenLinkedMemos,
+  onKanbanUpdateTask,
+  onKanbanDeleteTask,
   refreshFromServer,
 }: MobileAiMapViewProps) {
   const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
@@ -178,17 +186,22 @@ export function MobileAiMapView({
         {selectedProject ? (
           <MobileMindMap
             project={selectedProject}
+            spaces={spaces}
+            projects={projects}
             groups={groups}
             tasks={tasks}
+            allTasks={allTasks}
             onCreateGroup={onCreateGroup}
             onDeleteGroup={onDeleteGroup}
             onUpdateProject={onUpdateProject}
+            onPatchProject={onPatchProject}
             onCreateTask={onCreateTask}
             onUpdateTask={onUpdateTask}
             onDeleteTask={onDeleteTask}
             onReorderTask={onReorderTask}
             onOpenLinkedMemos={onOpenLinkedMemos}
-            projects={projects}
+            onKanbanUpdateTask={onKanbanUpdateTask}
+            onKanbanDeleteTask={onKanbanDeleteTask}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">

@@ -64,28 +64,63 @@ function renderMobileKanban(
 function renderDesktopKanban({
   tasks = [progressTask({ title: '看板操作テスト' })],
   sourceTasksById = new Map([['node-1', sourceTask('node-1')]]),
+  includeUnsentSourceTasks = false,
+  spaces,
+  projects,
+  selectedSpaceId,
+  selectedProjectId,
+  onSelectSpace,
+  onSelectProject,
+  closeSignal = 0,
   onOpenTask = vi.fn(),
+  onRunSourceTask = vi.fn(),
   onToggleSourceTaskComplete = vi.fn(),
   onDeleteSourceTask = vi.fn(),
 }: {
   tasks?: TaskProgressSnapshotTask[]
   sourceTasksById?: Map<string, ReturnType<typeof sourceTask>>
+  includeUnsentSourceTasks?: boolean
+  spaces?: Array<{ id: string; title: string; user_id: string; description: string | null; status: string; default_calendar_id: string | null; icon: string | null; color: string | null; created_at: string }>
+  projects?: Array<{ id: string; user_id: string; space_id: string; title: string; description: string; purpose: string | null; category_tag: string | null; priority: number; status: string; color_theme: string; repo_path: string | null; created_at: string }>
+  selectedSpaceId?: string | null
+  selectedProjectId?: string | null
+  onSelectSpace?: ReturnType<typeof vi.fn>
+  onSelectProject?: ReturnType<typeof vi.fn>
+  closeSignal?: number
   onOpenTask?: ReturnType<typeof vi.fn>
+  onRunSourceTask?: ReturnType<typeof vi.fn>
   onToggleSourceTaskComplete?: ReturnType<typeof vi.fn>
   onDeleteSourceTask?: ReturnType<typeof vi.fn>
 } = {}) {
-  render(
+  const renderKanban = (nextCloseSignal = closeSignal) => (
     <TaskProgressKanban
       tasks={tasks}
       sourceTasksById={sourceTasksById}
+      spaces={spaces}
+      projects={projects}
+      selectedSpaceId={selectedSpaceId}
+      selectedProjectId={selectedProjectId}
+      onSelectSpace={onSelectSpace}
+      onSelectProject={onSelectProject}
+      includeUnsentSourceTasks={includeUnsentSourceTasks}
+      closeSignal={nextCloseSignal}
       pollIntervalMs={3000}
       onRefresh={vi.fn()}
       onOpenTask={onOpenTask}
+      onRunSourceTask={onRunSourceTask}
       onToggleSourceTaskComplete={onToggleSourceTaskComplete}
       onDeleteSourceTask={onDeleteSourceTask}
-    />,
+    />
   )
-  return { onOpenTask, onToggleSourceTaskComplete, onDeleteSourceTask }
+  const view = render(renderKanban())
+  return {
+    ...view,
+    rerenderKanban: (nextCloseSignal: number) => view.rerender(renderKanban(nextCloseSignal)),
+    onOpenTask,
+    onRunSourceTask,
+    onToggleSourceTaskComplete,
+    onDeleteSourceTask,
+  }
 }
 
 describe('TaskProgressKanban', () => {
@@ -268,6 +303,30 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
   })
 
+  test('現在のマップノードに紐づかないCodex taskは看板に出さない', async () => {
+    renderMobileKanban([
+      progressTask({
+        id: 'visible-task',
+        title: '現在ノードのCodexタスク',
+        source_id: 'node-visible',
+      }),
+      progressTask({
+        id: 'unscoped-task',
+        title: '紐付かない古いCodexタスク',
+        source_type: null,
+        source_id: null,
+      }),
+    ], new Map([
+      ['node-visible', sourceTask('node-visible')],
+    ]))
+
+    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+
+    expect(screen.getByText('現在ノードのCodexタスク')).toBeInTheDocument()
+    expect(screen.queryByText('紐付かない古いCodexタスク')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
+  })
+
   test('デスクトップ看板カードから元ノードを完了チェック・削除できる', async () => {
     const callbacks = renderDesktopKanban()
     await screen.findByText('Mac offline')
@@ -278,12 +337,109 @@ describe('TaskProgressKanban', () => {
     expect(callbacks.onToggleSourceTaskComplete).toHaveBeenCalledWith('node-1', true)
     expect(callbacks.onOpenTask).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+削除/ }))
-    expect(callbacks.onDeleteSourceTask).toHaveBeenCalledWith('node-1')
-    expect(callbacks.onOpenTask).not.toHaveBeenCalled()
-
     fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+詳細を開く/ }))
     expect(callbacks.onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1' }))
+
+    fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+削除/ }))
+    expect(callbacks.onDeleteSourceTask).toHaveBeenCalledWith('node-1')
+    expect(callbacks.onOpenTask).toHaveBeenCalledTimes(1)
+  })
+
+  test('デスクトップ看板カードの完了チェックと削除はAPI完了前に即時反映する', async () => {
+    const onToggleSourceTaskComplete = vi.fn(() => new Promise<void>(() => undefined))
+    const onDeleteSourceTask = vi.fn(() => new Promise<void>(() => undefined))
+    renderDesktopKanban({
+      onToggleSourceTaskComplete,
+      onDeleteSourceTask,
+    })
+    await screen.findByText('Mac offline')
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /看板操作テスト.+完了にする/ }))
+    expect(onToggleSourceTaskComplete).toHaveBeenCalledWith('node-1', true)
+    expect(screen.getByRole('checkbox', { name: /看板操作テスト.+未完了に戻す/ })).toBeChecked()
+
+    fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+削除/ }))
+    expect(onDeleteSourceTask).toHaveBeenCalledWith('node-1')
+    expect(screen.queryByText('看板操作テスト')).not.toBeInTheDocument()
+  })
+
+  test('進捗がないマップノードを未送信カードとして出しCodex実行を開ける', async () => {
+    const callbacks = renderDesktopKanban({
+      tasks: [],
+      sourceTasksById: new Map([
+        ['node-unsent', sourceTask('node-unsent', { title: '未送信ノード' })],
+      ]),
+      includeUnsentSourceTasks: true,
+    })
+    await screen.findByText('Mac offline')
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+
+    expect(screen.getByText('未送信ノード')).toBeInTheDocument()
+    expect(screen.getByText('Codex.appで開始待ち')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /未送信ノード.+Codexで実行/ }))
+
+    expect(callbacks.onRunSourceTask).toHaveBeenCalledWith('node-unsent')
+    expect(callbacks.onOpenTask).not.toHaveBeenCalled()
+  })
+
+  test('デスクトップ看板の展開中にスペースとプロジェクト切替を表示する', async () => {
+    renderDesktopKanban({
+      spaces: [
+        {
+          id: 'space-1',
+          title: '仕事',
+          user_id: 'user-1',
+          description: null,
+          status: 'active',
+          default_calendar_id: null,
+          icon: null,
+          color: null,
+          created_at: '2026-06-10T00:00:00.000Z',
+        },
+      ],
+      projects: [
+        {
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: '採用改善',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: '#22c55e',
+          repo_path: null,
+          created_at: '2026-06-10T00:00:00.000Z',
+        },
+      ],
+      selectedSpaceId: 'space-1',
+      selectedProjectId: 'project-1',
+      onSelectSpace: vi.fn(),
+      onSelectProject: vi.fn(),
+    })
+    await screen.findByText('Mac offline')
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+
+    expect(screen.getByTitle('スペースを切替')).toHaveTextContent('仕事')
+    expect(screen.getByTitle('プロジェクトを切替')).toHaveTextContent('採用改善')
+  })
+
+  test('デスクトップ看板は外部クローズシグナルで折りたたまれる', async () => {
+    const view = renderDesktopKanban()
+    await screen.findByText('Mac offline')
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByTestId('codex-kanban-desktop-body')).toBeInTheDocument()
+
+    view.rerenderKanban(1)
+
+    expect(screen.queryByTestId('codex-kanban-desktop-body')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { expanded: false })).toBeInTheDocument()
   })
 
   test('デスクトップ看板は上端ドラッグで表示高さを広げられる', async () => {

@@ -1,4 +1,4 @@
-import type { AgentActivityMessage, AgentCommand, AgentConfig, AiTask, TaskResultJson } from './types.js';
+import type { AgentActivityMessage, AgentCommand, AgentConfig, AiTask, CodexThreadImportPayload, CodexThreadImportScope, TaskResultJson } from './types.js';
 import type { ScreenshotPreviewBundle } from './screenshot-preview.js';
 
 function normalizeApiUrl(value: string | undefined): string {
@@ -8,6 +8,17 @@ function normalizeApiUrl(value: string | undefined): string {
 
 export function webOriginFromApiUrl(apiUrl: string | undefined): string {
   return normalizeApiUrl(apiUrl).replace(/\/api$/, '');
+}
+
+export class AgentApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly path: string,
+  ) {
+    super(message);
+    this.name = 'AgentApiError';
+  }
 }
 
 export class AgentApiClient {
@@ -31,7 +42,11 @@ export class AgentApiClient {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`);
+      throw new AgentApiError(
+        typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`,
+        res.status,
+        path,
+      );
     }
     return data as T;
   }
@@ -207,6 +222,23 @@ export class AgentApiClient {
       limit,
     });
     return Array.isArray(data.tasks) ? data.tasks : [];
+  }
+
+  async listCodexThreadImportScopes(runnerId: string): Promise<CodexThreadImportScope[]> {
+    const data = await this.request<{ scopes: CodexThreadImportScope[] }>('/agents/codex-monitor/import-scopes', {
+      runner_id: runnerId,
+    });
+    return Array.isArray(data.scopes) ? data.scopes : [];
+  }
+
+  async importCodexThread(
+    runnerId: string,
+    thread: CodexThreadImportPayload,
+  ): Promise<{ imported: boolean; reason?: string; ai_task_id?: string; source_task_id?: string }> {
+    return this.request('/agents/codex-monitor/import-thread', {
+      runner_id: runnerId,
+      thread,
+    });
   }
 
   async updateTaskState(

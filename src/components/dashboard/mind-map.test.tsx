@@ -14,6 +14,14 @@ vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
   ),
 }))
 
+vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
+  CodexChatImportSidebar: ({ onClose }: { onClose: () => void }) => (
+    <aside aria-label="チャット取り込み">
+      <button type="button" onClick={onClose}>閉じる</button>
+    </aside>
+  ),
+}))
+
 vi.mock("@/hooks/useMultiTaskCalendarSync", () => ({
   useMultiTaskCalendarSync: () => undefined,
 }))
@@ -60,7 +68,9 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
 }))
 
 vi.mock("@/components/task-progress/task-progress-kanban", () => ({
-  TaskProgressKanban: () => <div data-testid="task-progress-kanban" />,
+  TaskProgressKanban: ({ closeSignal }: { closeSignal?: number }) => (
+    <div data-testid="task-progress-kanban" data-close-signal={closeSignal ?? 0} />
+  ),
 }))
 
 vi.mock("@/components/task-progress/task-progress-detail-panel", () => ({
@@ -102,9 +112,10 @@ afterEach(() => {
 })
 
 describe("MindMap controls", () => {
-  test("keeps only display settings in the map corner and hides node shortcut help", () => {
+  test("keeps map settings in the corner and hides node shortcut help", () => {
     render(<MindMap project={project} groups={[task]} tasks={[]} />)
 
+    expect(screen.getByRole("button", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Codex監視snapshotを更新" })).not.toBeInTheDocument()
 
@@ -113,6 +124,16 @@ describe("MindMap controls", () => {
     expect(screen.queryByText("子追加")).not.toBeInTheDocument()
     expect(screen.queryByText("兄弟追加")).not.toBeInTheDocument()
     expect(screen.queryByText("複製")).not.toBeInTheDocument()
+  })
+
+  test("opens the chat import sidebar from the map corner", () => {
+    render(<MindMap project={project} groups={[task]} tasks={[]} />)
+
+    expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
+
+    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
   })
 
   test("turns a long node title into memo detail and saves the generated heading", async () => {
@@ -154,6 +175,18 @@ describe("MindMap controls", () => {
     expect(JSON.parse(String(requestInit.body))).toEqual({
       detail: `${longTitle}\n\n既存メモ`,
       currentHeading: "プロンプトに関して",
+    })
+  })
+
+  test("notifies the Codex board to close when the map side is pressed", async () => {
+    render(<MindMap project={project} groups={[task]} tasks={[]} />)
+
+    expect(screen.getByTestId("task-progress-kanban")).toHaveAttribute("data-close-signal", "0")
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Root task" }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-progress-kanban")).toHaveAttribute("data-close-signal", "1")
     })
   })
 })

@@ -221,7 +221,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   // Full mode (for settings page)
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-white/10 bg-[#202020] p-6">
+      <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-[#202020] dark:shadow-none">
         <div className="flex min-h-28 items-center justify-center gap-2 text-sm text-zinc-400">
           <RefreshCw className="h-4 w-4 animate-spin" />
           読み込み中...
@@ -232,21 +232,21 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
 
   return (
     <div className="space-y-5">
-      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#202020]">
+      <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#202020] dark:shadow-none">
         <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
           <div className="flex min-h-[220px] flex-col justify-between gap-6">
             <div className="flex items-start gap-4">
               <GoogleCalendarIcon className="h-14 w-14 shrink-0 rounded-xl shadow-sm" />
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-semibold text-zinc-50">Google Calendar</h2>
+                  <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">Google Calendar</h2>
                   <span className={cn(
                     "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
                     status.isConnected && !status.tokenExpired
-                      ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-200"
                       : status.tokenExpired
-                        ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
-                        : "border-white/10 bg-white/[0.04] text-zinc-400"
+                        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-200"
+                        : "border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-400"
                   )}>
                     {status.isConnected && !status.tokenExpired ? <CheckCircle2 className="h-3 w-3" /> : <Unlink className="h-3 w-3" />}
                     {!status.isConnected && '未連携'}
@@ -254,7 +254,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                     {status.isConnected && status.tokenExpired && '再連携が必要'}
                   </span>
                 </div>
-                <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-400">
+                <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-600 dark:text-zinc-400">
                   予定をTodayに表示し、選択したカレンダーのイベントをタスクとして取り込めます。
                 </p>
               </div>
@@ -267,7 +267,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                   size="sm"
                   variant="outline"
                   disabled={isSyncing}
-                  className="border-white/10 bg-white/[0.04] text-zinc-100 hover:bg-white/[0.08]"
+                  className="border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-100 dark:hover:bg-white/[0.08]"
                 >
                   <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
                   更新
@@ -293,7 +293,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
             )}
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-[#171717] p-4">
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-white/10 dark:bg-[#171717]">
             <p className="text-xs font-medium text-zinc-500">連携アカウント</p>
             {status.isConnected ? (
               <div className="mt-4 flex flex-col gap-4">
@@ -304,17 +304,17 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                       alt="Google account avatar"
                       width={48}
                       height={48}
-                      className="h-12 w-12 rounded-full border border-white/10 object-cover"
+                      className="h-12 w-12 rounded-full border border-zinc-200 object-cover dark:border-white/10"
                       referrerPolicy="no-referrer"
                       unoptimized
                     />
                   ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-zinc-100">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm font-semibold text-zinc-900 dark:border-white/10 dark:bg-white/[0.06] dark:text-zinc-100">
                       {(status.linkedAccount?.name || status.linkedAccount?.email || "G").charAt(0).toUpperCase()}
                     </div>
                   )}
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-zinc-100">
+                    <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
                       {status.linkedAccount?.name || 'Googleアカウント'}
                     </p>
                     {status.linkedAccount?.email ? (
@@ -331,15 +331,15 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                   onClick={handleDisconnect}
                   size="sm"
                   variant="outline"
-                  className="w-full border-red-400/25 bg-red-400/10 text-red-200 hover:bg-red-400/15 hover:text-red-100"
+                  className="w-full border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-400/25 dark:bg-red-400/10 dark:text-red-200 dark:hover:bg-red-400/15 dark:hover:text-red-100"
                 >
                   <Unlink className="h-4 w-4" />
                   Googleカレンダーの連携を解除
                 </Button>
               </div>
             ) : (
-              <div className="mt-4 rounded-lg border border-dashed border-white/10 p-4">
-                <p className="text-sm font-medium text-zinc-200">未連携です</p>
+              <div className="mt-4 rounded-lg border border-dashed border-zinc-200 p-4 dark:border-white/10">
+                <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">未連携です</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-500">
                   Googleアカウントを接続すると、予定表示とイベント取り込みを使えます。
                 </p>
@@ -351,7 +351,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
 
       {status.isConnected && status.tokenExpired && (
         <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 p-4">
-          <p className="text-sm text-amber-100">
+          <p className="text-sm text-amber-800 dark:text-amber-100">
             Googleカレンダーのアクセストークンが期限切れです。再連携してください。
           </p>
         </div>
@@ -359,14 +359,14 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
 
       {status.isConnected && !status.tokenExpired && (
         <section className="grid gap-5 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]">
-          <div className="rounded-xl border border-white/10 bg-[#202020] p-5">
+          <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#202020] dark:shadow-none">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-400/10 text-blue-200">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-400/10 dark:text-blue-200">
                   <Download className="h-4 w-4" />
                 </span>
                 <div>
-                  <h2 className="text-sm font-semibold text-zinc-100">イベント取り込み</h2>
+                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">イベント取り込み</h2>
                   <p className="mt-1 text-xs leading-5 text-zinc-500">Googleカレンダーの予定をタスクとして取り込みます。</p>
                 </div>
               </div>
@@ -378,10 +378,10 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
             </div>
 
             <div className={cn("mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-1", !autoImportEnabled && "opacity-50")}>
-              <div className="rounded-lg border border-white/10 bg-[#171717] p-4">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-white/10 dark:bg-[#171717]">
                 <p className="text-xs text-zinc-500">取り込み期間</p>
                 <Select value={importPeriod} onValueChange={handlePeriodChange} disabled={!autoImportEnabled}>
-                  <SelectTrigger className="mt-3 h-9 w-full border-0 bg-white/[0.07] text-zinc-100 shadow-none focus:ring-blue-400">
+                  <SelectTrigger className="mt-3 h-9 w-full border border-zinc-200 bg-white text-zinc-950 shadow-none focus:ring-blue-400 dark:border-0 dark:bg-white/[0.07] dark:text-zinc-100">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -394,9 +394,9 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                 </Select>
               </div>
 
-              <div className="rounded-lg border border-white/10 bg-[#171717] p-4">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-white/10 dark:bg-[#171717]">
                 <p className="text-xs text-zinc-500">取り込み対象</p>
-                <p className="mt-3 text-2xl font-semibold text-zinc-100">
+                <p className="mt-3 text-2xl font-semibold text-zinc-950 dark:text-zinc-100">
                   {calendarsLoading ? '-' : selectedCalendarCount}
                   <span className="ml-1 text-sm font-normal text-zinc-500">/ {calendars.length}件</span>
                 </p>
@@ -404,10 +404,10 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
             </div>
           </div>
 
-          <div className={cn("rounded-xl border border-white/10 bg-[#202020] p-5", !autoImportEnabled && "opacity-60")}>
+          <div className={cn("rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#202020] dark:shadow-none", !autoImportEnabled && "opacity-60")}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">取り込むカレンダー</h2>
+                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">取り込むカレンダー</h2>
                 <p className="mt-1 text-xs leading-5 text-zinc-500">チェックを外したカレンダーの予定はTodayタイムラインに表示されません。</p>
               </div>
               <div className="flex shrink-0 gap-2">
@@ -417,7 +417,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                   variant="outline"
                   disabled={!autoImportEnabled || calendarsLoading || calendars.length === 0}
                   onClick={() => toggleAll(true)}
-                  className="border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
+                  className="border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
                 >
                   全選択
                 </Button>
@@ -427,7 +427,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                   variant="outline"
                   disabled={!autoImportEnabled || calendarsLoading || calendars.length === 0}
                   onClick={() => toggleAll(false)}
-                  className="border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
+                  className="border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
                 >
                   全解除
                 </Button>
@@ -436,12 +436,12 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
 
             <div className="mt-4">
               {calendarsLoading ? (
-                <div className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-white/10 bg-[#171717] text-xs text-zinc-500">
+                <div className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 text-xs text-zinc-500 dark:border-white/10 dark:bg-[#171717]">
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   カレンダー一覧を読み込み中...
                 </div>
               ) : calendars.length === 0 ? (
-                <div className="rounded-lg border border-white/10 bg-[#171717] p-4 text-xs text-zinc-500">
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-xs text-zinc-500 dark:border-white/10 dark:bg-[#171717]">
                   取り込めるカレンダーがまだありません。
                 </div>
               ) : (
@@ -450,7 +450,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                     <label
                       key={cal.id}
                       className={cn(
-                        "flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border border-white/10 bg-[#171717] px-3 py-2 transition hover:bg-white/[0.05]",
+                        "flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-[#171717] dark:hover:bg-white/[0.05]",
                         !autoImportEnabled && "pointer-events-none"
                       )}
                     >
@@ -463,17 +463,17 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                             console.error('Failed to toggle calendar:', err)
                           })
                         }}
-                        className="h-4 w-4 rounded border-zinc-600 bg-zinc-900 accent-blue-500"
+                        className="h-4 w-4 rounded border-zinc-300 bg-white accent-blue-500 dark:border-zinc-600 dark:bg-zinc-900"
                       />
                       <div
                         className="h-3 w-3 shrink-0 rounded-full"
                         style={{ backgroundColor: cal.background_color || cal.color || '#039BE5' }}
                       />
-                      <span className="min-w-0 flex-1 truncate text-sm text-zinc-200">
+                      <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">
                         {cal.name}
                       </span>
                       {cal.is_primary && (
-                        <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-zinc-400">メイン</span>
+                        <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-600 dark:bg-white/[0.06] dark:text-zinc-400">メイン</span>
                       )}
                     </label>
                   ))}

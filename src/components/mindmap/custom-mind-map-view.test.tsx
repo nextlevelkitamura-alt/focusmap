@@ -41,6 +41,10 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
 
 import { CustomMindMapView } from "./custom-mind-map-view"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
+import {
+  CODEX_CHAT_IMPORT_DRAG_TYPE,
+  encodeCodexChatImportDragPayload,
+} from "@/lib/codex-chat-import-dnd"
 import type { Project, Task } from "@/types/database"
 
 const project = {
@@ -178,6 +182,66 @@ describe("CustomMindMapView keyboard operations", () => {
 
     expect(screen.getByText("実行中1")).toBeInTheDocument()
     expect(screen.getByLabelText("Codex 実行中")).toHaveClass("codex-node-running-orbit")
+  })
+
+  test("renders Codex thread import toggle with repo guard", () => {
+    const onToggle = vi.fn()
+    const { rerender } = renderMap({
+      codexThreadImportAvailable: false,
+      codexThreadImportEnabled: false,
+      onToggleCodexThreadImport: onToggle,
+    })
+
+    const disabledButton = screen.getByRole("button", { name: "Codex thread取り込みをONにする" })
+    expect(disabledButton).toBeDisabled()
+
+    rerender(
+      <CustomMindMapView
+        project={{ ...project, repo_path: "/Users/me/project", codex_thread_import_enabled: true } as Project}
+        groups={[makeTask({ id: "root-1", title: "Root task" })]}
+        tasks={[makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1" })]}
+        collapsedTaskIds={new Set()}
+        selectedNodeId={null}
+        selectedNodeIds={new Set()}
+        onSelectNode={vi.fn()}
+        onSelectNodes={vi.fn()}
+        onToggleCollapse={vi.fn()}
+        codexThreadImportAvailable
+        codexThreadImportEnabled
+        codexThreadImportRepoPath="/Users/me/project"
+        onToggleCodexThreadImport={onToggle}
+      />
+    )
+
+    const enabledButton = screen.getByRole("button", { name: "Codex thread取り込みをOFFにする" })
+    expect(enabledButton).toHaveAttribute("aria-pressed", "true")
+    fireEvent.click(enabledButton)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
+  test("drops an imported Codex chat onto a map node as a child", () => {
+    const onDropImportedChatNode = vi.fn()
+    renderMap({ onDropImportedChatNode })
+
+    const node = getNode("Root task", "root-1")
+    const dataTransfer = {
+      types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: vi.fn((type: string) => (
+        type === CODEX_CHAT_IMPORT_DRAG_TYPE
+          ? encodeCodexChatImportDragPayload({ taskId: "chat-node-1" })
+          : ""
+      )),
+    }
+
+    fireEvent.dragOver(node, { dataTransfer })
+    fireEvent.drop(node, { dataTransfer })
+
+    expect(onDropImportedChatNode).toHaveBeenCalledWith({
+      taskId: "chat-node-1",
+      targetId: "root-1",
+      position: "as-child",
+    })
   })
 
   test("prioritizes ai task status over stale task progress on node badge", () => {

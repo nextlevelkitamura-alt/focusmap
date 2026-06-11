@@ -51,9 +51,9 @@ export function ContentHint({ documentType }: ContentHintProps) {
   const hints = HINTS[documentType] || HINTS.note
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#171717] p-4 text-xs text-zinc-500">
-      <div className="mb-2 flex items-center gap-1.5 font-medium text-zinc-300">
-        <Lightbulb className="h-3.5 w-3.5 text-amber-300" />
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-xs text-zinc-600 dark:border-white/10 dark:bg-[#171717] dark:text-zinc-500">
+      <div className="mb-2 flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-300">
+        <Lightbulb className="h-3.5 w-3.5 text-amber-500 dark:text-amber-300" />
         こんな内容を書くとAIが活用できます
       </div>
       <ul className="ml-5 list-disc space-y-1">

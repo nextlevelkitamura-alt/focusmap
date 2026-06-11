@@ -24,7 +24,7 @@ export async function updateSession(request: NextRequest) {
 
     const localDevAuth = getLocalDevAuthForRequest(request)
     if (localDevAuth) {
-        if (request.nextUrl.pathname === '/' || request.nextUrl.pathname === '/login') {
+        if (request.nextUrl.pathname === '/login') {
             const url = request.nextUrl.clone()
             url.pathname = '/dashboard'
             return NextResponse.redirect(url)
