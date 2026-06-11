@@ -26,6 +26,14 @@ type MobileCustomDropPosition = "above" | "below" | "as-child"
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiting_approval", "completed", "failed"]
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input"])
 
+const areSetsEqual = <T,>(first: Set<T>, second: Set<T>) => {
+    if (first.size !== second.size) return false
+    for (const value of first) {
+        if (!second.has(value)) return false
+    }
+    return true
+}
+
 function formatChatImportUpdatedLabel(value: string | null | undefined) {
     if (!value) return "更新不明"
     const date = new Date(value)
@@ -83,7 +91,17 @@ export function MobileMindMap({
     onKanbanDeleteTask,
     codexOpenSignal,
 }: MobileMindMapProps) {
-    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
+    const persistedCollapsedTaskIds = useMemo(
+        () => [...groups, ...tasks]
+            .filter(task => task.mindmap_collapsed === true)
+            .map(task => task.id)
+            .sort(),
+        [groups, tasks]
+    )
+    const persistedCollapsedTaskSignature = persistedCollapsedTaskIds.join("|")
+    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
+        () => new Set(persistedCollapsedTaskIds)
+    )
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
@@ -108,6 +126,11 @@ export function MobileMindMap({
     const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects])
     const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project.space_id ?? null)
     const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(() => project.id)
+
+    useEffect(() => {
+        const next = new Set(persistedCollapsedTaskIds)
+        setCollapsedTaskIds(prev => areSetsEqual(prev, next) ? prev : next)
+    }, [project.id, persistedCollapsedTaskIds, persistedCollapsedTaskSignature])
 
     useEffect(() => {
         setKanbanSpaceId(project.space_id ?? null)
@@ -321,6 +344,24 @@ export function MobileMindMap({
         if (!update) return
         await update(taskId, updates)
     }, [fallbackSourceTasksByIdForCodex, onKanbanUpdateTask, onUpdateTask, project.id])
+
+    const setTaskCollapsed = useCallback((taskId: string, collapsed: boolean) => {
+        setCollapsedTaskIds(prev => {
+            const isCollapsed = prev.has(taskId)
+            if (isCollapsed === collapsed) return prev
+            const next = new Set(prev)
+            if (collapsed) {
+                next.add(taskId)
+            } else {
+                next.delete(taskId)
+            }
+            return next
+        })
+
+        void updateTaskForCodexScope(taskId, { mindmap_collapsed: collapsed }).catch(error => {
+            console.error("[MobileMindMap] Failed to persist collapsed state:", error)
+        })
+    }, [updateTaskForCodexScope])
 
     const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
         await updateTaskForCodexScope(taskId, { status })
@@ -571,12 +612,7 @@ export function MobileMindMap({
             return next
         })
         setPlacingCodexImportTaskId(null)
-        setCollapsedTaskIds(prev => {
-            if (!prev.has(targetId)) return prev
-            const next = new Set(prev)
-            next.delete(targetId)
-            return next
-        })
+        setTaskCollapsed(targetId, false)
 
         try {
             await updateTaskForCodexScope(taskId, {
@@ -594,7 +630,7 @@ export function MobileMindMap({
             setPlacingCodexImportTaskId(taskId)
             console.error("[MobileMindMap] Failed to place imported Codex chat:", error)
         }
-    }, [isDescendant, onKanbanUpdateTask, onUpdateTask, placingCodexImportTaskId, project.id, updateTaskForCodexScope])
+    }, [isDescendant, onKanbanUpdateTask, onUpdateTask, placingCodexImportTaskId, project.id, setTaskCollapsed, updateTaskForCodexScope])
 
     const handleSelectNode = useCallback((nodeId: string | null) => {
         if (nodeId && placingCodexImportTaskId && taskMap.has(nodeId)) {
@@ -616,13 +652,8 @@ export function MobileMindMap({
     }, [taskMap])
 
     const handleToggleCollapse = useCallback((taskId: string) => {
-        setCollapsedTaskIds(prev => {
-            const next = new Set(prev)
-            if (next.has(taskId)) next.delete(taskId)
-            else next.add(taskId)
-            return next
-        })
-    }, [])
+        setTaskCollapsed(taskId, !collapsedTaskIds.has(taskId))
+    }, [collapsedTaskIds, setTaskCollapsed])
 
     useEffect(() => {
         if (!pendingEditNodeId) return
@@ -699,18 +730,13 @@ export function MobileMindMap({
 
     const handleAddChildNode = useCallback(async (parentTaskId: string) => {
         if (!onCreateTask) return
-        setCollapsedTaskIds(prev => {
-            if (!prev.has(parentTaskId)) return prev
-            const next = new Set(prev)
-            next.delete(parentTaskId)
-            return next
-        })
+        setTaskCollapsed(parentTaskId, false)
 
         const newTask = await onCreateTask(findRootTaskId(parentTaskId), "", parentTaskId)
         if (!newTask?.id) return
         setPendingEditNodeId(newTask.id)
         selectSingleTask(newTask.id)
-    }, [findRootTaskId, onCreateTask, selectSingleTask])
+    }, [findRootTaskId, onCreateTask, selectSingleTask, setTaskCollapsed])
 
     const handleAddSiblingNode = useCallback(async (taskId: string) => {
         const task = taskMap.get(taskId)
@@ -836,12 +862,7 @@ export function MobileMindMap({
                 return
             }
 
-            setCollapsedTaskIds(prev => {
-                if (!prev.has(targetTask.id)) return prev
-                const next = new Set(prev)
-                next.delete(targetTask.id)
-                return next
-            })
+            setTaskCollapsed(targetTask.id, false)
 
             const updates: Partial<Task> = { parent_task_id: targetTask.id }
             if (draggedIsRoot) updates.project_id = null
@@ -859,7 +880,7 @@ export function MobileMindMap({
         } else if (nextParentId !== null && draggedIsRoot) {
             await onUpdateTask(draggedTask.id, { project_id: null })
         }
-    }, [groups, isDescendant, onReorderTask, onUpdateTask, project.id, taskMap])
+    }, [groups, isDescendant, onReorderTask, onUpdateTask, project.id, setTaskCollapsed, taskMap])
 
     return (
         <>

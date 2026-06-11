@@ -35,7 +35,9 @@ vi.mock("@/hooks/useCalendars", () => ({
 
 vi.mock("@/hooks/useMemoAiTasks", () => ({
   useMemoAiTasks: () => ({
+    bySourceId: new Map(),
     getBySourceId: () => null,
+    refreshStatus: vi.fn(),
   }),
 }))
 
@@ -767,6 +769,60 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(onSelectNode).toHaveBeenCalledWith("root-1")
     expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
     expect(screen.queryByTestId("floating-mind-map-editor")).not.toBeInTheDocument()
+  })
+
+  test("restores and saves mobile collapsed node state through the task record", async () => {
+    const rootTask = makeTask({ id: "root-1", title: "Root task", mindmap_collapsed: true })
+    const childTask = makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1" })
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask]}
+        tasks={[childTask]}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    const rootNode = getNode("Root task", "root-1")
+    expect(within(rootNode).getByTitle("1件の子を展開")).toBeInTheDocument()
+    expect(screen.queryByText("Child task")).not.toBeInTheDocument()
+
+    fireEvent.click(within(rootNode).getByTitle("1件の子を展開"))
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: false })
+      expect(screen.getByText("Child task")).toBeInTheDocument()
+    })
+  })
+
+  test("saves mobile auto-expand when adding a child under a collapsed node", async () => {
+    installOpenKeyboardViewport()
+    const rootTask = makeTask({ id: "root-1", title: "Root task", mindmap_collapsed: true })
+    const existingChild = makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1" })
+    const newChild = makeTask({ id: "child-new", title: "", parent_task_id: "root-1" })
+    const onCreateTask = vi.fn().mockResolvedValue(newChild)
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask]}
+        tasks={[existingChild]}
+        focusEditNodeId="root-1"
+        onCreateTask={onCreateTask}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    await screen.findByDisplayValue("Root task")
+    fireEvent.click(await screen.findByRole("button", { name: "子ノード追加" }))
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: false })
+      expect(onCreateTask).toHaveBeenCalledWith("root-1", "", "root-1")
+    })
   })
 
   test("focuses an externally requested first mobile root node", async () => {
