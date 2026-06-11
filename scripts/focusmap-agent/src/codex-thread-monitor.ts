@@ -94,6 +94,26 @@ function compactStep(value: string, maxChars = 240): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
 }
 
+function oneLineTitle(value: unknown, maxChars = 80): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const text = value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
+  return text || null;
+}
+
+function looksLikeRawPromptTitle(value: string): boolean {
+  const text = value.trim();
+  if (!text) return false;
+  if (text.includes('\n')) return true;
+  if (text.length > 90) return true;
+  return text.startsWith('# AGENTS.md instructions') || text.includes('<environment_context>');
+}
+
+export function codexThreadGeneratedTitle(row: Pick<CodexThreadRow, 'title'>): string | null {
+  const title = oneLineTitle(row.title);
+  if (!title || looksLikeRawPromptTitle(String(row.title ?? ''))) return null;
+  return title;
+}
+
 function textFingerprint(value: string): string {
   return compactText(value, 500).toLowerCase().replace(/\s+/g, ' ').slice(0, 180);
 }
@@ -428,6 +448,11 @@ function taskResult(task: AiTask): Record<string, unknown> {
   return isRecord(task.result) ? task.result : {};
 }
 
+function importedThreadSourceTitleSuggestion(task: AiTask, row: CodexThreadRow): string | null {
+  if (!task.source_task_id) return null;
+  return codexThreadGeneratedTitle(row);
+}
+
 function shouldBackfillImportedThreadMessages(task: AiTask): boolean {
   const result = taskResult(task);
   if (result.codex_external_origin !== 'codex_app_thread_import') return false;
@@ -535,6 +560,8 @@ function resultSnapshot(
   const result = taskResult(task);
   const nowIso = new Date().toISOString();
   const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? nowIso;
+  const codexExternalOrigin = typeof result.codex_external_origin === 'string' ? result.codex_external_origin : undefined;
+  const sourceTaskTitleSuggestion = importedThreadSourceTitleSuggestion(task, row);
   return {
     executor: task.executor === 'codex' ? 'codex' : 'codex_app',
     steps: Array.isArray(result.steps) ? result.steps as TaskResultJson['steps'] : [],
@@ -544,8 +571,12 @@ function resultSnapshot(
       : 'Codex セッションは確認待ちです。内容を確認してください。',
     codex_thread_id: threadId,
     codex_thread_url: `codex://threads/${threadId}`,
+    codex_external_origin: codexExternalOrigin,
     codex_run_state: status === 'running' ? 'running' : 'awaiting_approval',
     codex_review_reason: status === 'running' ? 'started' : summary.reviewReason,
+    codex_source_task_id: typeof result.codex_source_task_id === 'string'
+      ? result.codex_source_task_id
+      : task.source_task_id ?? null,
     current_step: summary.currentStep,
     last_activity_at: lastActivityAt,
     awaiting_approval_at: status === 'awaiting_approval'
@@ -555,6 +586,7 @@ function resultSnapshot(
     meta: {
       monitor: 'focusmap-agent',
       thread_title: row.title ?? null,
+      source_task_title: sourceTaskTitleSuggestion ?? undefined,
       thread_updated_at_ms: row.updated_at_ms ?? null,
       thread_archived: Boolean(row.archived),
       preview_chars: typeof row.preview === 'string' ? row.preview.length : 0,
@@ -751,6 +783,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   const summary = parseRollout(rolloutRaw, row);
   const { status, resumed } = taskStateForSummary(task, summary);
   const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? '';
+  const sourceTaskTitleSuggestion = importedThreadSourceTitleSuggestion(task, row);
   const cacheKey = [
     status,
     resumed ? 'resumed' : 'steady',
@@ -758,6 +791,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     summary.currentStep,
     summary.latestUserMessageAt ?? '',
     summary.latestTaskCompleteAt ?? '',
+    sourceTaskTitleSuggestion ?? '',
   ].join('\u001f');
 
   const previousResult = taskResult(task);
@@ -775,6 +809,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   await api.updateTaskState(runnerId, task.id, status, {
     result: nextResult,
     activity_messages: activityMessages(task, threadId, summary, resumed),
+    source_task_title: sourceTaskTitleSuggestion,
   });
   task.status = status;
   task.result = nextResult as unknown as Record<string, unknown>;

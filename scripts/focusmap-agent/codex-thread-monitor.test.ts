@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   activityMessages,
+  codexThreadGeneratedTitle,
   hasPendingArchiveRequest,
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
@@ -49,6 +50,12 @@ function task(overrides: Record<string, unknown> = {}) {
 }
 
 describe('codex-thread-monitor state detection', () => {
+  test('normalizes generated Codex thread titles and ignores raw prompt titles', () => {
+    expect(codexThreadGeneratedTitle({ title: '  Codex   thread title  ' })).toBe('Codex thread title');
+    expect(codexThreadGeneratedTitle({ title: '# AGENTS.md instructions\n<environment_context>' })).toBeNull();
+    expect(codexThreadGeneratedTitle({ title: 'x'.repeat(91) })).toBeNull();
+  });
+
   test('only treats completed tasks with pending archive request as archive candidates', () => {
     expect(hasPendingArchiveRequest(task({
       status: 'completed',

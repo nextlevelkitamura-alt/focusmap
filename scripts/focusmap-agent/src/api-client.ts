@@ -245,7 +245,7 @@ export class AgentApiClient {
     runnerId: string,
     taskId: string,
     status: AiTask['status'],
-    payload: { result?: TaskResultJson; error?: string; activity_messages?: AgentActivityMessage[] } = {},
+    payload: { result?: TaskResultJson; error?: string; activity_messages?: AgentActivityMessage[]; source_task_title?: string | null } = {},
   ): Promise<void> {
     const result = this.stateResult(payload.result);
     const activityMessages = payload.activity_messages ?? payload.result?.activity_messages;
@@ -260,6 +260,7 @@ export class AgentApiClient {
       ...(result ? { result } : {}),
       ...(payload.error ? { error: payload.error } : {}),
       ...(activityMessages?.length ? { activity_messages: activityMessages } : {}),
+      ...(payload.source_task_title ? { source_task_title: payload.source_task_title } : {}),
     });
     await progress;
   }

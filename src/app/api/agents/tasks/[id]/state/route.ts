@@ -12,6 +12,7 @@ import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from '@/lib/tu
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
 const MAX_CURRENT_STEP_CHARS = 600
 const MAX_SUMMARY_CHARS = 1_200
+const MAX_SOURCE_TASK_TITLE_CHARS = 120
 const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12
 
 const VALID_ACTIVITY_ROLES = new Set<AiTaskActivityRole>(['system', 'codex', 'user', 'status'])
@@ -65,6 +66,83 @@ export function shouldCompleteSourceTaskFromAgentState(input: {
   return result.codex_review_reason === 'archived' &&
     result.codex_source_task_completed === true &&
     result.codex_source_task_completion_suppressed !== true
+}
+
+function normalizeSourceTaskTitle(value: unknown, max = MAX_SOURCE_TASK_TITLE_CHARS) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const text = value.replace(/\s+/g, ' ').trim().slice(0, max)
+  return text || null
+}
+
+function firstNonEmptyLine(value: unknown) {
+  if (typeof value !== 'string') return null
+  return value.split('\n').map(line => line.trim()).find(Boolean) ?? null
+}
+
+function looksLikeRawPromptTitle(value: unknown) {
+  if (typeof value !== 'string') return false
+  const text = value.trim()
+  if (!text) return false
+  if (text.includes('\n')) return true
+  if (text.length > 90) return true
+  return text.startsWith('# AGENTS.md instructions') || text.includes('<environment_context>')
+}
+
+function stringFromRecord(record: Record<string, unknown>, key: string) {
+  return normalizeSourceTaskTitle(record[key])
+}
+
+function sourceTitleCandidates(input: {
+  prompt?: unknown
+  previousResult?: Record<string, unknown> | null
+}) {
+  const result = isRecord(input.previousResult) ? input.previousResult : {}
+  const meta = isRecord(result.meta) ? result.meta : {}
+  const candidates = new Set<string>()
+  for (const value of [
+    firstNonEmptyLine(input.prompt),
+    stringFromRecord(meta, 'source_task_title'),
+    stringFromRecord(meta, 'source_task_title_suggestion'),
+    stringFromRecord(meta, 'thread_title'),
+  ]) {
+    const title = normalizeSourceTaskTitle(value)
+    if (title) candidates.add(title)
+  }
+  const threadId = typeof result.codex_thread_id === 'string' ? result.codex_thread_id.trim() : ''
+  if (threadId) candidates.add(`Codex thread ${threadId.slice(0, 8)}`)
+  return candidates
+}
+
+export function shouldApplyCodexThreadTitleToSourceTask(input: {
+  currentTitle?: unknown
+  nextTitle?: unknown
+  prompt?: unknown
+  previousResult?: Record<string, unknown> | null
+}) {
+  const currentTitle = normalizeSourceTaskTitle(input.currentTitle)
+  const nextTitle = normalizeSourceTaskTitle(input.nextTitle)
+  if (!currentTitle || !nextTitle || currentTitle === nextTitle) return false
+  if (looksLikeRawPromptTitle(input.currentTitle)) return true
+  return sourceTitleCandidates(input).has(currentTitle)
+}
+
+export function memoWithUpdatedImportedThreadTitle(input: {
+  memo?: unknown
+  currentTitle?: unknown
+  nextTitle?: unknown
+}) {
+  if (typeof input.memo !== 'string' || !input.memo.trim()) return null
+  const currentTitle = normalizeSourceTaskTitle(input.currentTitle)
+  const nextTitle = normalizeSourceTaskTitle(input.nextTitle)
+  if (!currentTitle || !nextTitle) return null
+  const lines = input.memo.split('\n')
+  const firstLine = lines[0] ?? ''
+  const currentHeading = firstLine.trim().startsWith('# ')
+    ? normalizeSourceTaskTitle(firstLine.trim().replace(/^#\s+/, ''))
+    : null
+  if (currentHeading !== currentTitle) return null
+  lines[0] = `# ${nextTitle}`
+  return lines.join('\n')
 }
 
 function compactLatestLine(value: unknown, max: number) {
@@ -126,7 +204,7 @@ export async function POST(
 
     const { data: task } = await supabase
       .from('ai_tasks')
-          .select('id, user_id, space_id, claimed_runner_id, claim_expires_at, status, source_task_id')
+      .select('id, user_id, space_id, prompt, result, claimed_runner_id, claim_expires_at, status, source_task_id')
       .eq('id', id)
       .maybeSingle()
     if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
@@ -146,6 +224,46 @@ export async function POST(
     if (status === 'completed' || status === 'failed') {
       updates.completed_at = new Date().toISOString()
       updates.claim_expires_at = null
+    }
+
+    const sourceTaskTitle = normalizeSourceTaskTitle(isRecord(body) ? body.source_task_title : null)
+    if (sourceTaskTitle && task.source_task_id) {
+      const { data: sourceTask, error: sourceTaskError } = await supabase
+        .from('tasks')
+        .select('id, title, memo, source')
+        .eq('id', String(task.source_task_id))
+        .eq('user_id', String(task.user_id))
+        .is('deleted_at', null)
+        .maybeSingle()
+
+      if (sourceTaskError) return NextResponse.json({ error: sourceTaskError.message }, { status: 500 })
+
+      if (sourceTask?.source === 'codex_app_thread' && shouldApplyCodexThreadTitleToSourceTask({
+        currentTitle: sourceTask.title,
+        nextTitle: sourceTaskTitle,
+        prompt: task.prompt,
+        previousResult: isRecord(task.result) ? task.result : null,
+      })) {
+        const taskUpdates: Record<string, unknown> = {
+          title: sourceTaskTitle,
+          updated_at: new Date().toISOString(),
+        }
+        const nextMemo = memoWithUpdatedImportedThreadTitle({
+          memo: sourceTask.memo,
+          currentTitle: sourceTask.title,
+          nextTitle: sourceTaskTitle,
+        })
+        if (nextMemo) taskUpdates.memo = nextMemo
+
+        const { error: titleUpdateError } = await supabase
+          .from('tasks')
+          .update(taskUpdates)
+          .eq('id', String(task.source_task_id))
+          .eq('user_id', String(task.user_id))
+          .is('deleted_at', null)
+
+        if (titleUpdateError) return NextResponse.json({ error: titleUpdateError.message }, { status: 500 })
+      }
     }
 
     const resultForSourceCompletion = isRecord(body.result) ? body.result : null

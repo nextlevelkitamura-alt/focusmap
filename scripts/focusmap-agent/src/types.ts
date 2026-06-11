@@ -96,6 +96,7 @@ export interface TaskResultJson {
   live_log?: string;
   message?: string;
   current_step?: string;
+  codex_external_origin?: string;
   codex_thread_id?: string;
   codex_thread_url?: string;
   codex_run_state?: 'running' | 'awaiting_approval';
