@@ -15,7 +15,7 @@ import {
   type SensorAPI,
 } from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clipboard, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clipboard, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Send, Settings, Sparkles, Square, Terminal, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -50,6 +50,7 @@ import {
   invalidateCalendarCache,
 } from "@/hooks/useCalendarEvents"
 import { IdealGoalWithItems, Project, Space } from "@/types/database"
+import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
 import { colorToRgba, getTagColor } from "@/lib/color-utils"
@@ -74,6 +75,7 @@ import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type ColumnKey = "unsorted" | "mapped" | "today" | "scheduled" | "completed"
@@ -155,6 +157,8 @@ const DESKTOP_DRAFT_DURATION_OPTIONS = [
   { label: "カスタム", minutes: null },
 ]
 const DESKTOP_DRAFT_COLUMNS: ColumnKey[] = ["unsorted", "today", "completed"]
+const DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS = 600
+const DESKTOP_MEMO_CODEX_ACTIVITY_INTERVAL_MS = 10_000
 
 const COLUMN_LABEL: Record<ColumnKey, string> = {
   unsorted: "未予定",
@@ -168,6 +172,17 @@ const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "completed"]
 const SHOW_MEMO_TAG_FILTER_ENTRY = false
 const SHOW_MEMO_MINDMAP_ENTRY = false
 const POSTGRES_INTEGER_MIN = -2147483648
+
+type MemoCodexState = "not_sent" | "sent" | "running" | "awaiting_approval" | "completed" | "failed"
+
+const MEMO_CODEX_STATE_LABEL: Record<MemoCodexState, string> = {
+  not_sent: "未送信",
+  sent: "送信済み",
+  running: "実行中",
+  awaiting_approval: "確認待ち",
+  completed: "完了",
+  failed: "失敗",
+}
 const POSTGRES_INTEGER_MAX = 2147483647
 const CREATE_MEMO_TIMEOUT_MS = 15_000
 const MEMO_TOUCH_DRAG_DELAY_MS = 420
@@ -379,6 +394,49 @@ function actionLabel(actionType: LinkedStructuredItem["actionType"]) {
   if (actionType === "research") return "リサーチ"
   if (actionType === "decision") return "判断"
   return "実行"
+}
+
+function formatMemoCodexActivityTime(value: string | null | undefined) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return new Intl.DateTimeFormat("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+}
+
+function memoCodexActivityLabel(message: AiTaskActivityMessage) {
+  if (message.role === "user" || message.kind === "user_answer") return "送信内容"
+  if (message.role === "status") return "状態"
+  if (message.kind === "question") return "Codexから質問"
+  if (message.kind === "approval") return "確認"
+  return "Codex"
+}
+
+function getMemoCodexState(task: AiTask | null | undefined): MemoCodexState {
+  if (!task) return "not_sent"
+  const codexState = task.executor === "codex" || task.executor === "codex_app"
+    ? getCodexTaskUiState(task)?.state
+    : null
+  if (task.status === "failed" || codexState === "connection_failed") return "failed"
+  if (task.status === "completed") return "completed"
+  if (task.status === "awaiting_approval" || task.status === "needs_input" || codexState === "awaiting_approval") return "awaiting_approval"
+  if (task.status === "running" || codexState === "running") return "running"
+  return "sent"
+}
+
+function memoCodexStateTone(state: MemoCodexState) {
+  if (state === "failed") return "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300"
+  if (state === "completed") return "border-lime-500/35 bg-lime-500/10 text-lime-700 dark:text-lime-300"
+  if (state === "awaiting_approval") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+  if (state === "running") return "border-lime-500/35 bg-lime-500/10 text-lime-700 dark:text-lime-300"
+  if (state === "sent") return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+  return "border-border bg-background/70 text-muted-foreground"
 }
 
 function extractMindmapTaskIds(item: MemoItem | null | undefined): string[] {
@@ -884,6 +942,13 @@ export function WishlistView({
   const [desktopDraftUsesCustomDuration, setDesktopDraftUsesCustomDuration] = useState(false)
   const [desktopDraftImages, setDesktopDraftImages] = useState<DesktopMemoDraftImage[]>([])
   const [desktopDraftNotice, setDesktopDraftNotice] = useState<string | null>(null)
+  const [desktopEditingItemId, setDesktopEditingItemId] = useState<string | null>(null)
+  const [desktopCodexChatOpen, setDesktopCodexChatOpen] = useState(false)
+  const [isLaunchingDesktopCodex, setIsLaunchingDesktopCodex] = useState(false)
+  const [desktopCodexLaunchError, setDesktopCodexLaunchError] = useState<string | null>(null)
+  const [desktopCodexActivityMessages, setDesktopCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [desktopCodexActivityError, setDesktopCodexActivityError] = useState<string | null>(null)
+  const [isLoadingDesktopCodexActivity, setIsLoadingDesktopCodexActivity] = useState(false)
   const [isSavingDesktopDraft, setIsSavingDesktopDraft] = useState(false)
   const [isGeneratingDesktopTitle, setIsGeneratingDesktopTitle] = useState(false)
   const [isReadingDesktopClipboard, setIsReadingDesktopClipboard] = useState(false)
@@ -910,6 +975,20 @@ export function WishlistView({
   const desktopDraftImagesRef = useRef<DesktopMemoDraftImage[]>([])
   const voiceTargetRef = useRef<"intake" | "desktopDraft">("intake")
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
+  const itemUpdateVersions = useRef(new Map<string, number>())
+  const creatingMemoIdsRef = useRef(new Set<string>())
+  const creatingMemoPromisesRef = useRef(new Map<string, Promise<void>>())
+  const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
+  const { tags: managedTags, tagColors, refreshTags } = useTagColors()
+  const { calendars } = useCalendars()
+  const { refresh: refreshMemoAiTasks, getBySourceId: getMemoAiTask } = useMemoAiTasks()
+  const { pushAction } = useUndoRedo()
+  const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
+  const desktopEditingItem = desktopEditingItemId ? items.find(item => item.id === desktopEditingItemId) ?? null : null
+  const desktopMemoAiTask = desktopEditingItemId ? getMemoAiTask(desktopEditingItemId) : null
+  const desktopMemoAiTaskId = desktopMemoAiTask?.id ?? null
+  const desktopMemoAiTaskStatus = desktopMemoAiTask?.status ?? null
+  const desktopMemoCodexState = getMemoCodexState(desktopMemoAiTask)
 
   useEffect(() => {
     if (!desktopComposerOpen || desktopDraftFocusRequest === 0) return
@@ -926,15 +1005,64 @@ export function WishlistView({
     const timeoutId = window.setTimeout(focusDescription, 0)
     return () => window.clearTimeout(timeoutId)
   }, [desktopComposerOpen, desktopDraftFocusRequest])
-  const itemUpdateVersions = useRef(new Map<string, number>())
-  const creatingMemoIdsRef = useRef(new Set<string>())
-  const creatingMemoPromisesRef = useRef(new Map<string, Promise<void>>())
-  const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
-  const { tags: managedTags, tagColors, refreshTags } = useTagColors()
-  const { calendars } = useCalendars()
-  const { refresh: refreshMemoAiTasks } = useMemoAiTasks()
-  const { pushAction } = useUndoRedo()
-  const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
+
+  const loadDesktopCodexActivity = useCallback(async () => {
+    if (!desktopEditingItemId || !desktopMemoAiTaskId) {
+      setDesktopCodexActivityMessages([])
+      setDesktopCodexActivityError(null)
+      return
+    }
+
+    setIsLoadingDesktopCodexActivity(true)
+    try {
+      await fetch("/api/codex/sync-node", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ai_task_id: desktopMemoAiTaskId,
+          include_visible_activity: true,
+        }),
+      }).catch(() => undefined)
+
+      const res = await fetch(`/api/ai-tasks/${encodeURIComponent(desktopMemoAiTaskId)}/activity`, { cache: "no-store" })
+      const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+      if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+      setDesktopCodexActivityMessages(Array.isArray(data.messages)
+        ? data.messages.filter(message => message.body.trim() && !isGenericCodexPulseText(message.body))
+        : [])
+      setDesktopCodexActivityError(null)
+    } catch (err) {
+      setDesktopCodexActivityError(err instanceof Error ? err.message : "Codexチャットを取得できません")
+    } finally {
+      setIsLoadingDesktopCodexActivity(false)
+    }
+  }, [desktopEditingItemId, desktopMemoAiTaskId])
+
+  useEffect(() => {
+    if (!desktopComposerOpen || !desktopEditingItemId || !desktopMemoAiTaskId) {
+      setDesktopCodexActivityMessages([])
+      setDesktopCodexActivityError(null)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void loadDesktopCodexActivity()
+    }, DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [desktopComposerOpen, desktopEditingItemId, desktopMemoAiTaskId, desktopMemoAiTaskStatus, loadDesktopCodexActivity])
+
+  useEffect(() => {
+    if (
+      !desktopComposerOpen ||
+      !desktopEditingItemId ||
+      !desktopMemoAiTaskId ||
+      !desktopCodexChatOpen ||
+      !["pending", "running", "awaiting_approval", "needs_input"].includes(desktopMemoAiTaskStatus ?? "")
+    ) return
+    const timer = window.setInterval(() => {
+      void loadDesktopCodexActivity()
+    }, DESKTOP_MEMO_CODEX_ACTIVITY_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [desktopCodexChatOpen, desktopComposerOpen, desktopEditingItemId, desktopMemoAiTaskId, desktopMemoAiTaskStatus, loadDesktopCodexActivity])
 
   const openCodexHandoff = useCallback(async (
     prompt: string,
@@ -1709,6 +1837,11 @@ export function WishlistView({
     const previousSelectedItem = selectedItem
     setItems(prev => prev.filter(item => item.id !== id))
     if (selectedItem?.id === id) setDetailOpen(false)
+    if (desktopEditingItemId === id) {
+      setDesktopComposerOpen(false)
+      setDesktopEditingItemId(null)
+      setDesktopCodexChatOpen(false)
+    }
     setIntakeError(null)
     try {
       await removeMemoItemFromServer(id)
@@ -1749,7 +1882,7 @@ export function WishlistView({
       }
       setIntakeError(err instanceof Error ? err.message : "メモの削除に失敗しました")
     }
-  }, [items, pushAction, refreshTags, removeMemoItemFromServer, restoreMemoItem, selectedItem])
+  }, [desktopEditingItemId, items, pushAction, refreshTags, removeMemoItemFromServer, restoreMemoItem, selectedItem])
 
   const clearDesktopDraftImages = useCallback(() => {
     setDesktopDraftImages(prev => {
@@ -1766,6 +1899,7 @@ export function WishlistView({
   const resetDesktopDraft = useCallback((column: ColumnKey = "unsorted") => {
     setDesktopComposerOpen(true)
     setDesktopDraftFocusRequest(prev => prev + 1)
+    setDesktopEditingItemId(null)
     setDesktopDraftColumn(column)
     setDesktopDraftTitle("")
     setDesktopDraftDescription("")
@@ -1773,19 +1907,50 @@ export function WishlistView({
     setDesktopDraftCustomDuration("")
     setDesktopDraftUsesCustomDuration(false)
     setDesktopDraftNotice(null)
+    setDesktopCodexChatOpen(false)
+    setDesktopCodexLaunchError(null)
+    setDesktopCodexActivityMessages([])
+    setDesktopCodexActivityError(null)
     clearDesktopDraftImages()
   }, [clearDesktopDraftImages])
 
   const handleCloseDesktopComposer = useCallback(() => {
     setDesktopComposerOpen(false)
+    setDesktopEditingItemId(null)
     setDesktopDraftTitle("")
     setDesktopDraftDescription("")
     setDesktopDraftDuration(null)
     setDesktopDraftCustomDuration("")
     setDesktopDraftUsesCustomDuration(false)
     setDesktopDraftNotice(null)
+    setDesktopCodexChatOpen(false)
+    setDesktopCodexLaunchError(null)
+    setDesktopCodexActivityMessages([])
+    setDesktopCodexActivityError(null)
     clearDesktopDraftImages()
   }, [clearDesktopDraftImages])
+
+  const beginDesktopMemoEdit = useCallback((item: MemoItem) => {
+    const column = getColumn(item, todayRange.start, todayRange.end)
+    const draftColumn = DESKTOP_DRAFT_COLUMNS.includes(column) ? column : "unsorted"
+    const duration = item.duration_minutes ?? null
+    const presetDuration = DESKTOP_DRAFT_DURATION_OPTIONS.some(option => option.minutes === duration)
+    setSelectedItem(item)
+    setDetailOpen(false)
+    setDesktopComposerOpen(true)
+    setDesktopDraftFocusRequest(prev => prev + 1)
+    setDesktopEditingItemId(item.id)
+    setDesktopDraftColumn(draftColumn)
+    setDesktopDraftTitle(item.title ?? "")
+    setDesktopDraftDescription(item.description ?? "")
+    setDesktopDraftDuration(presetDuration ? duration : null)
+    setDesktopDraftCustomDuration(!presetDuration && duration ? String(duration) : "")
+    setDesktopDraftUsesCustomDuration(!presetDuration && !!duration)
+    setDesktopDraftNotice(null)
+    setDesktopCodexLaunchError(null)
+    setDesktopCodexChatOpen(!!getMemoAiTask(item.id))
+    clearDesktopDraftImages()
+  }, [clearDesktopDraftImages, getMemoAiTask, todayRange.end, todayRange.start])
 
   const addDesktopDraftImageFiles = useCallback((files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
@@ -1919,6 +2084,26 @@ export function WishlistView({
     setDesktopDraftNotice(null)
     setIntakeError(null)
     try {
+      if (desktopEditingItemId) {
+        const updates = {
+          title: title || "無題",
+          description,
+          duration_minutes: durationMinutes,
+          ...columnOverrides,
+        }
+        await handleUpdate(desktopEditingItemId, updates)
+        let imageUploadFailed = false
+        try {
+          await uploadDesktopDraftImages(desktopEditingItemId, desktopDraftImages)
+        } catch (err) {
+          imageUploadFailed = true
+          setIntakeError(`メモは保存しました。${err instanceof Error ? err.message : "画像の保存に失敗しました"}`)
+        }
+        clearDesktopDraftImages()
+        setDesktopDraftNotice(imageUploadFailed ? "メモは保存済みです。画像は詳細から追加し直してください" : "保存しました")
+        return
+      }
+
       const item = await createWishlistMemo({
         title: title || "無題",
         project_id: selectedProjectId,
@@ -1960,6 +2145,7 @@ export function WishlistView({
       setIsSavingDesktopDraft(false)
     }
   }, [
+    clearDesktopDraftImages,
     desktopDraftColumn,
     desktopDraftCustomDuration,
     desktopDraftDescription,
@@ -1967,12 +2153,77 @@ export function WishlistView({
     desktopDraftImages,
     desktopDraftTitle,
     desktopDraftUsesCustomDuration,
+    desktopEditingItemId,
+    handleUpdate,
     pushAction,
     refreshTags,
     removeMemoItemFromServer,
     resetDesktopDraft,
     restoreMemoItem,
     selectedProjectId,
+    uploadDesktopDraftImages,
+  ])
+
+  const handleLaunchDesktopCodex = useCallback(async () => {
+    const item = desktopEditingItem
+    if (!item || isLaunchingDesktopCodex) return
+    const description = desktopDraftDescription.trim()
+    const title = desktopDraftTitle.trim() || (description ? deriveDraftMemoTitle(description) : item.title)
+    const customDuration = Number(desktopDraftCustomDuration)
+    const durationMinutes = desktopDraftUsesCustomDuration
+      ? Number.isFinite(customDuration) && customDuration > 0
+        ? Math.min(Math.round(customDuration), 720)
+        : null
+      : desktopDraftDuration
+    const columnOverrides = getMobileColumnCreateOverrides(desktopDraftColumn, item.ai_source_payload)
+    const draftItem = {
+      ...item,
+      title: title || "無題",
+      description,
+      duration_minutes: durationMinutes,
+      ...columnOverrides,
+    } as MemoItem
+
+    setIsLaunchingDesktopCodex(true)
+    setDesktopCodexLaunchError(null)
+    setDesktopDraftNotice(null)
+    setIntakeError(null)
+    try {
+      await handleUpdate(item.id, {
+        title: draftItem.title,
+        description: draftItem.description,
+        duration_minutes: draftItem.duration_minutes,
+        ...columnOverrides,
+      })
+      await uploadDesktopDraftImages(item.id, desktopDraftImages)
+      clearDesktopDraftImages()
+      setDesktopCodexChatOpen(true)
+      await launchCodexForMemo(draftItem)
+      await refreshMemoAiTasks?.()
+      setDesktopDraftNotice("Codexに送りました")
+      window.setTimeout(() => {
+        void loadDesktopCodexActivity()
+      }, DESKTOP_MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS)
+    } catch (err) {
+      setDesktopCodexLaunchError(err instanceof Error ? err.message : "Codexの起動に失敗しました")
+    } finally {
+      setIsLaunchingDesktopCodex(false)
+    }
+  }, [
+    clearDesktopDraftImages,
+    desktopDraftColumn,
+    desktopDraftCustomDuration,
+    desktopDraftDescription,
+    desktopDraftDuration,
+    desktopDraftImages,
+    desktopDraftTitle,
+    desktopDraftUsesCustomDuration,
+    desktopEditingItem,
+    handleUpdate,
+    isLaunchingDesktopCodex,
+    launchCodexForMemo,
+    loadDesktopCodexActivity,
+    refreshMemoAiTasks,
     uploadDesktopDraftImages,
   ])
 
@@ -2406,9 +2657,13 @@ export function WishlistView({
   }, [handleCalendarAdd, todayRemovalDialog])
 
   const openDetail = useCallback((item: MemoItem) => {
+    if (!compactComposer && !isMobileMemoLayout && !linkedMemoFocus) {
+      beginDesktopMemoEdit(item)
+      return
+    }
     setSelectedItem(item)
     setDetailOpen(true)
-  }, [])
+  }, [beginDesktopMemoEdit, compactComposer, isMobileMemoLayout, linkedMemoFocus])
 
   const handleDetailOpenChange = useCallback((open: boolean) => {
     if (open) {
@@ -2708,6 +2963,14 @@ export function WishlistView({
     : desktopDraftDuration
       ? formatDuration(desktopDraftDuration)
       : "未設定"
+  const isDesktopEditingMemo = !!desktopEditingItem
+  const desktopEditingProject = desktopEditingItem?.project_id
+    ? projects.find(project => project.id === desktopEditingItem.project_id)
+    : null
+  const desktopCodexNeedsRepo = isDesktopEditingMemo && (!desktopEditingItem?.project_id || !desktopEditingProject?.repo_path)
+  const desktopCodexActive = desktopMemoAiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(desktopMemoAiTask.status)
+  const desktopCanLaunchCodex = isDesktopEditingMemo && desktopDraftCanSave && !desktopCodexNeedsRepo && !desktopCodexActive && !isSavingDesktopDraft
+  const showDesktopCodexHistory = !!desktopMemoAiTask || desktopCodexChatOpen || !!desktopCodexLaunchError || desktopCodexActivityMessages.length > 0 || isLaunchingDesktopCodex
   const handleAddMemoFromComposer = async () => {
     if (disableMemoAdd) return
     if (hasIntakeText) {
@@ -3243,7 +3506,7 @@ export function WishlistView({
                   <>
                     <div className="flex min-h-12 shrink-0 items-center gap-2 border-b px-3">
                       <div className="min-w-0 flex-1">
-                        <h1 className="truncate text-sm font-semibold">メモを追加</h1>
+                        <h1 className="truncate text-sm font-semibold">{isDesktopEditingMemo ? "メモを編集" : "メモを追加"}</h1>
                       </div>
                       <label className="sr-only" htmlFor="desktop-memo-target-column">追加先</label>
                       <select
@@ -3291,8 +3554,8 @@ export function WishlistView({
                             value={desktopDraftDescription}
                             onChange={event => setDesktopDraftDescription(event.target.value)}
                             placeholder="本文を入力"
-                            rows={6}
-                            className="min-h-40 w-full resize-none rounded-md border bg-background px-3 py-2 pb-14 pr-12 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                            rows={5}
+                            className="min-h-32 w-full resize-none rounded-md border bg-background px-3 py-2 pb-12 pr-12 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                           />
                           <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
                             {desktopDraftHasBody && (
@@ -3432,6 +3695,88 @@ export function WishlistView({
                         )}
                       </div>
 
+                      {isDesktopEditingMemo && (
+                        <div className="space-y-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => { void handleLaunchDesktopCodex() }}
+                            disabled={!desktopCanLaunchCodex || isLaunchingDesktopCodex}
+                            className="min-h-10 w-full justify-center gap-2 rounded-md border-white/15 bg-white text-xs font-semibold text-black hover:bg-white/90 disabled:bg-muted disabled:text-muted-foreground dark:bg-white dark:text-black dark:hover:bg-white/90"
+                          >
+                            {isLaunchingDesktopCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                            Codexに送る
+                          </Button>
+                          {desktopCodexNeedsRepo && (
+                            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+                              プロジェクトのリポジトリパスを設定すると送れます。
+                            </div>
+                          )}
+                          {showDesktopCodexHistory && (
+                            <div className="overflow-hidden rounded-md border bg-background/70">
+                              <button
+                                type="button"
+                                onClick={() => setDesktopCodexChatOpen(open => !open)}
+                                className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-xs transition-colors hover:bg-muted/50"
+                                aria-expanded={desktopCodexChatOpen}
+                              >
+                                <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className="min-w-0 flex-1 font-medium">Codexチャット</span>
+                                {isLoadingDesktopCodexActivity && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                                <span className={cn(
+                                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                                  memoCodexStateTone(desktopCodexLaunchError ? "failed" : desktopMemoCodexState),
+                                )}>
+                                  {MEMO_CODEX_STATE_LABEL[desktopCodexLaunchError ? "failed" : desktopMemoCodexState]}
+                                </span>
+                                {desktopCodexActivityMessages.length > 0 && (
+                                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                    {desktopCodexActivityMessages.length}件
+                                  </span>
+                                )}
+                                <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", desktopCodexChatOpen && "rotate-180")} />
+                              </button>
+                              {desktopCodexChatOpen && (
+                                <div className="max-h-52 space-y-2 overflow-y-auto border-t p-2">
+                                  {desktopCodexLaunchError && (
+                                    <div className="rounded-md border border-red-500/25 bg-red-500/10 px-2 py-1.5 text-[11px] leading-4 text-red-700 dark:text-red-300">
+                                      {desktopCodexLaunchError}
+                                    </div>
+                                  )}
+                                  {desktopCodexActivityMessages.length > 0 ? (
+                                    desktopCodexActivityMessages.slice(-6).map(message => {
+                                      const isUser = message.role === "user" || message.kind === "user_answer"
+                                      const isStatus = message.role === "status"
+                                      return (
+                                        <article
+                                          key={message.id}
+                                          className={cn(
+                                            "min-w-0 rounded-md border px-2 py-1.5 text-[11px] leading-4",
+                                            isUser && "ml-5 border-sky-500/25 bg-sky-500/10",
+                                            isStatus && "border-muted bg-muted/25 text-muted-foreground",
+                                            !isUser && !isStatus && "mr-5 border-lime-500/25 bg-lime-500/10",
+                                          )}
+                                        >
+                                          <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                                            <span className="font-medium text-foreground">{memoCodexActivityLabel(message)}</span>
+                                            <span className="shrink-0 tabular-nums">{formatMemoCodexActivityTime(message.created_at)}</span>
+                                          </div>
+                                          <p className="whitespace-pre-wrap break-words text-foreground/90">{message.body}</p>
+                                        </article>
+                                      )
+                                    })
+                                  ) : (
+                                    <div className="rounded-md border border-dashed px-3 py-4 text-center text-[11px] leading-4 text-muted-foreground">
+                                      {desktopCodexActivityError ? "チャット内容を取得できません" : "Codexの履歴はここに表示されます"}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {(desktopDraftNotice || intakeError || voiceError || isRecording || isTranscribing) && (
                         <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                           {isRecording && (
@@ -3469,8 +3814,8 @@ export function WishlistView({
                           onClick={() => { void handleSaveDesktopDraft() }}
                           disabled={!desktopDraftCanSave || isSavingDesktopDraft}
                           className={cn(
-                            "min-h-11 w-full gap-2 rounded-md",
-                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(34,197,94,0.22)]",
+                            "min-h-11 w-full gap-2 rounded-md bg-lime-400 font-semibold text-lime-950 hover:bg-lime-300 disabled:bg-muted disabled:text-muted-foreground",
+                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(163,230,53,0.22)]",
                           )}
                         >
                           {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}

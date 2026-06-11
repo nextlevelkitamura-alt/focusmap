@@ -13,6 +13,11 @@ const calendarEvents = vi.hoisted(() => ({
   invalidateCalendarCache: vi.fn(),
 }))
 
+const memoAiTaskMock = vi.hoisted(() => ({
+  task: null as Record<string, unknown> | null,
+  refresh: vi.fn(),
+}))
+
 vi.mock('@hello-pangea/dnd', async () => {
   const React = await import('react')
   const noopRef = () => undefined
@@ -88,7 +93,8 @@ vi.mock('@/hooks/useCalendars', () => ({
 
 vi.mock('@/hooks/useMemoAiTasks', () => ({
   useMemoAiTasks: () => ({
-    getBySourceId: () => null,
+    getBySourceId: () => memoAiTaskMock.task,
+    refresh: memoAiTaskMock.refresh,
   }),
 }))
 
@@ -202,6 +208,8 @@ describe('WishlistView calendar D&D', () => {
     calendarEvents.broadcastCalendarOptimisticEventRemoval.mockClear()
     calendarEvents.broadcastCalendarSync.mockClear()
     calendarEvents.invalidateCalendarCache.mockClear()
+    memoAiTaskMock.task = null
+    memoAiTaskMock.refresh.mockClear()
     vi.mocked(compressImageFileForUpload).mockReset()
     vi.mocked(compressImageFileForUpload).mockImplementation(async (file: File) => file)
   })
@@ -370,9 +378,9 @@ describe('WishlistView calendar D&D', () => {
       mindmap_task_ids: ['task-1', 'task-2'],
     } as Partial<IdealGoalWithItems>)
     let serverItem = originalItem
-    const fetchMock = vi.fn<Window['fetch']>(async (input) => {
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
       const url = requestUrl(input)
-      if (url === '/api/wishlist') return jsonResponse({ items: [serverItem] })
+      if (url.startsWith('/api/wishlist') && init?.method !== 'PATCH') return jsonResponse({ items: [serverItem] })
       if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
       if (url === '/api/wishlist/memo-linked') {
         const [, init] = fetchMock.mock.calls.at(-1) ?? []
@@ -509,6 +517,117 @@ describe('WishlistView calendar D&D', () => {
         memo_status: 'unsorted',
       })
       expect(createBody).not.toHaveProperty('display_order')
+    })
+  })
+
+  test('デスクトップ表示ではカード選択を左編集パネルに開き、Codex履歴も同じパネルに収める', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+    memoAiTaskMock.task = {
+      id: 'ai-task-1',
+      executor: 'codex_app',
+      status: 'running',
+      created_at: '2026-06-11T00:00:00.000Z',
+      started_at: '2026-06-11T00:00:00.000Z',
+      completed_at: null,
+      result: {},
+    }
+
+    let serverItem = createMemoItem({
+      id: 'memo-existing',
+      title: 'Existing memo',
+      description: 'Existing body',
+      project_id: 'project-1',
+      duration_minutes: 15,
+    })
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url.startsWith('/api/wishlist') && init?.method !== 'PATCH') return jsonResponse({ items: [serverItem] })
+      if (url === '/api/wishlist/memo-existing' && init?.method === 'PATCH') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}')
+        serverItem = createMemoItem({ ...serverItem, ...body })
+        return jsonResponse({ item: serverItem })
+      }
+      if (url === '/api/codex/sync-node') return jsonResponse({ ok: true })
+      if (url === '/api/ai-tasks/ai-task-1/activity') {
+        return jsonResponse({
+          messages: [{
+            id: 'message-1',
+            task_id: 'ai-task-1',
+            user_id: 'user-1',
+            role: 'codex',
+            kind: 'message',
+            body: 'Codex response',
+            importance: 'normal',
+            metadata: {},
+            created_at: '2026-06-11T00:01:00.000Z',
+          }],
+        })
+      }
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <WishlistView
+        selectedProjectId="project-1"
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } as never]}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Existing memo')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('Existing memo'))
+
+    await waitFor(() => {
+      expect(screen.getByText('メモを編集')).toBeInTheDocument()
+      expect(screen.queryByTestId('memo-detail')).not.toBeInTheDocument()
+    })
+    expect(screen.getByDisplayValue('Existing memo')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Existing body')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Codexに送る' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Codexチャット/ })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByDisplayValue('Existing memo'), {
+      target: { value: 'Updated memo' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([input, init]) =>
+        requestUrl(input) === '/api/wishlist/memo-existing' && init?.method === 'PATCH',
+      )
+      expect(patchCall).toBeDefined()
+      const patchBody = JSON.parse(patchCall?.[1]?.body as string)
+      expect(patchBody).toMatchObject({
+        title: 'Updated memo',
+        description: 'Existing body',
+        duration_minutes: 15,
+      })
     })
   })
 
