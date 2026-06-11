@@ -3431,21 +3431,21 @@ export function WishlistView({
                           )}
                         </div>
                       )}
-                    </div>
 
-                    <div className="shrink-0 border-t bg-background/95 p-3">
-                      <Button
-                        type="button"
-                        onClick={() => { void handleSaveDesktopDraft() }}
-                        disabled={!desktopDraftCanSave || isSavingDesktopDraft}
-                        className={cn(
-                          "min-h-11 w-full gap-2 rounded-md",
-                          desktopDraftCanSave && "shadow-[0_0_20px_rgba(34,197,94,0.22)]",
-                        )}
-                      >
-                        {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}
-                        保存
-                      </Button>
+                      <div className="sticky bottom-0 z-10 -mx-3 border-t bg-background/95 p-3">
+                        <Button
+                          type="button"
+                          onClick={() => { void handleSaveDesktopDraft() }}
+                          disabled={!desktopDraftCanSave || isSavingDesktopDraft}
+                          className={cn(
+                            "min-h-11 w-full gap-2 rounded-md",
+                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(34,197,94,0.22)]",
+                          )}
+                        >
+                          {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}
+                          保存
+                        </Button>
+                      </div>
                     </div>
                 </>
               </section>
