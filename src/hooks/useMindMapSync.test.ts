@@ -561,6 +561,78 @@ describe('useMindMapSync', () => {
 
       expect(newTask!.parent_task_id).toBe('t1')
     })
+
+    test('作成中の親ノード配下へ子を作る時は親のINSERT完了後に子をINSERTする', async () => {
+      const requests: Array<{
+        url: string
+        body: Record<string, unknown>
+        resolve: (value: Response) => void
+      }> = []
+      mockFetch.mockImplementation((url, init) => new Promise<Response>(resolve => {
+        requests.push({
+          url: String(url),
+          body: JSON.parse(String((init as RequestInit).body)),
+          resolve,
+        })
+      }))
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: EMPTY_ROOT_TASKS,
+          initialTasks: EMPTY_TASKS,
+        })
+      )
+
+      let rootTask: Task | null = null
+      let childTask: Task | null = null
+      await act(async () => {
+        rootTask = await result.current.createGroup('Copied Root')
+        childTask = await result.current.createTask(rootTask!.id, 'Copied Child', rootTask!.id)
+        await Promise.resolve()
+      })
+
+      expect(rootTask?.id).toBe('test-uuid-1')
+      expect(childTask?.parent_task_id).toBe('test-uuid-1')
+      expect(result.current.groups.some(item => item.id === 'test-uuid-1')).toBe(true)
+      expect(result.current.tasks.some(item => item.id === 'test-uuid-2')).toBe(true)
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).toMatchObject({
+        url: '/api/tasks',
+        body: expect.objectContaining({
+          id: 'test-uuid-1',
+          parent_task_id: null,
+        }),
+      })
+
+      await act(async () => {
+        requests[0].resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        } as Response)
+      })
+
+      await waitFor(() => {
+        expect(requests).toHaveLength(2)
+      })
+      expect(requests[1]).toMatchObject({
+        url: '/api/tasks',
+        body: expect.objectContaining({
+          id: 'test-uuid-2',
+          parent_task_id: 'test-uuid-1',
+        }),
+      })
+
+      await act(async () => {
+        requests[1].resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        } as Response)
+      })
+    })
   })
 
   // ===========================

@@ -79,6 +79,11 @@ type CustomMindMapViewProps = {
         targetId: string;
         position: CustomDropPosition;
     }) => void | Promise<void>;
+    onDuplicateTasks?: (params: {
+        taskIds: string[];
+        targetId: string;
+        position: CustomDropPosition;
+    }) => void | Promise<void>;
     onDropImportedChatNode?: (params: {
         taskId: string;
         targetId: string;
@@ -1379,6 +1384,7 @@ export function CustomMindMapView({
     onOpenTaskProgress,
     onMoveTask,
     onMoveTasks,
+    onDuplicateTasks,
     onDropImportedChatNode,
 }: CustomMindMapViewProps) {
     const [zoom, setZoom] = useState(() => isMobile ? 0.85 : 0.9);
@@ -2573,21 +2579,34 @@ export function CustomMindMapView({
             const prev = dragStateRef.current;
             if (prev?.dragging) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
-                const dropElement = document.elementFromPoint(event.clientX, event.clientY);
+                const dropElement = typeof document.elementFromPoint === "function"
+                    ? document.elementFromPoint(event.clientX, event.clientY)
+                    : null;
                 const isCalendarDrop = !!dropElement?.closest?.('[data-focusmap-mindmap-node-calendar-target="true"]');
                 publishNodeCalendarDrag(isCalendarDrop ? "end" : "cancel", prev, event.clientX, event.clientY);
-                if (!isCalendarDrop && prev.target) {
-                    if (prev.nodeIds.length > 1 && onMoveTasks) {
+                if (!isCalendarDrop) {
+                    const fallbackDuplicateTarget: CustomDropTarget = {
+                        nodeId: prev.primaryNodeId,
+                        position: "below",
+                    };
+                    const target = prev.target ?? (event.altKey ? fallbackDuplicateTarget : null);
+                    if (event.altKey && target && onDuplicateTasks) {
+                        void onDuplicateTasks({
+                            taskIds: prev.nodeIds,
+                            targetId: target.nodeId,
+                            position: target.position,
+                        });
+                    } else if (target && prev.nodeIds.length > 1 && onMoveTasks) {
                         void onMoveTasks({
                             taskIds: prev.nodeIds,
-                            targetId: prev.target.nodeId,
-                            position: prev.target.position,
+                            targetId: target.nodeId,
+                            position: target.position,
                         });
-                    } else {
+                    } else if (target) {
                         void onMoveTask?.({
                             taskId: prev.primaryNodeId,
-                            targetId: prev.target.nodeId,
-                            position: prev.target.position,
+                            targetId: target.nodeId,
+                            position: target.position,
                         });
                     }
                 }
@@ -2604,7 +2623,7 @@ export function CustomMindMapView({
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, [dragState, getDropTarget, getStagePoint, onMoveTask, onMoveTasks, publishNodeCalendarDrag]);
+    }, [dragState, getDropTarget, getStagePoint, onDuplicateTasks, onMoveTask, onMoveTasks, publishNodeCalendarDrag]);
 
     useEffect(() => {
         if (!selectionBox) return;

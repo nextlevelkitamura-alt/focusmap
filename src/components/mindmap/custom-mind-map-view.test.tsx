@@ -359,6 +359,27 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(primaryId).toBe("root-1")
   })
 
+  test("duplicates a dragged node instead of moving it when Option is held on drop", async () => {
+    mockViewportRect({ width: 1600, height: 900, right: 1600, bottom: 900 })
+    const onDuplicateTasks = vi.fn()
+    const onMoveTask = vi.fn()
+    renderMap({ onDuplicateTasks, onMoveTask })
+
+    const rootNode = getNode("Root task", "root-1")
+    fireEvent.pointerDown(rootNode, { button: 0, pointerId: 1, pointerType: "mouse", clientX: 280, clientY: 280 })
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 360, clientY: 280 })
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 360, clientY: 280, altKey: true })
+
+    await waitFor(() => {
+      expect(onDuplicateTasks).toHaveBeenCalledWith({
+        taskIds: ["root-1"],
+        targetId: "root-1",
+        position: "below",
+      })
+    })
+    expect(onMoveTask).not.toHaveBeenCalled()
+  })
+
   test("adds a child with Tab and a sibling with Enter", async () => {
     const onAddChildNode = vi.fn()
     const onAddSiblingNode = vi.fn()

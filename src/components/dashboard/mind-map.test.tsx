@@ -178,6 +178,56 @@ describe("MindMap controls", () => {
     })
   })
 
+  test("copies a selected node with Cmd+C and pastes it under the selected node with Cmd+V", async () => {
+    const clipboard = {
+      text: "",
+      writeText: vi.fn(async (text: string) => {
+        clipboard.text = text
+      }),
+      readText: vi.fn(async () => clipboard.text),
+    }
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard,
+    })
+    const onCreateTask = vi.fn(async () => ({
+      ...task,
+      id: "copy-1",
+      parent_task_id: "root-1",
+    } as Task))
+    const onUpdateTask = vi.fn()
+
+    render(
+      <MindMap
+        project={project}
+        groups={[task]}
+        tasks={[]}
+        onCreateTask={onCreateTask}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    const rootButton = screen.getByRole("button", { name: "Root task" })
+    fireEvent.click(rootButton)
+    fireEvent.keyDown(rootButton, { key: "c", metaKey: true })
+
+    await waitFor(() => {
+      expect(clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("SHIKUMIKA_MINDMAP_NODE_V1:"))
+    })
+
+    fireEvent.keyDown(rootButton, { key: "v", metaKey: true })
+
+    await waitFor(() => {
+      expect(onCreateTask).toHaveBeenCalledWith("root-1", "Root task", "root-1")
+      expect(onUpdateTask).toHaveBeenCalledWith("copy-1", expect.objectContaining({
+        status: "todo",
+        calendar_id: null,
+        google_event_id: null,
+        calendar_event_id: null,
+      }))
+    })
+  })
+
   test("notifies the Codex board to close when the map side is pressed", async () => {
     render(<MindMap project={project} groups={[task]} tasks={[]} />)
 

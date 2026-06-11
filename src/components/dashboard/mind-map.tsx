@@ -147,6 +147,11 @@ type MindMapClipboardPayloadV1 = {
 
 type MindMapClipboardAnyPayload = MindMapClipboardPayload | MindMapClipboardPayloadV1;
 
+type MindMapClipboardPlacement = {
+    targetId: string | null;
+    position: 'above' | 'below' | 'as-child';
+};
+
 function shouldUseTaskProgressFixture() {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
@@ -977,12 +982,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         return serialize(rootTask);
     }, [groups, tasks]);
 
-    const getCopyRootNodeIds = useCallback((): string[] => {
-        const selectedIds = Array.from(selectedNodeIds).filter(id => id !== 'project-root');
-        if (selectedIds.length === 0) return [];
+    const getTopLevelCopyNodeIds = useCallback((nodeIds: string[], primaryNodeId?: string | null): string[] => {
+        const copyIds = Array.from(new Set(nodeIds)).filter(id => id !== 'project-root');
+        if (copyIds.length === 0) return [];
 
         const allById = new Map([...groups, ...tasks].map(task => [task.id, task]));
-        const selectedSet = new Set(selectedIds);
+        const selectedSet = new Set(copyIds);
 
         const isTopLevelSelected = (taskId: string): boolean => {
             let current = allById.get(taskId);
@@ -996,18 +1001,22 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             return true;
         };
 
-        const roots = selectedIds.filter(isTopLevelSelected);
+        const roots = copyIds.filter(isTopLevelSelected);
         roots.sort((a, b) => {
             const taskA = allById.get(a);
             const taskB = allById.get(b);
             return (taskA?.order_index ?? 0) - (taskB?.order_index ?? 0);
         });
 
-        if (selectedNodeId && selectedNodeId !== 'project-root' && roots.includes(selectedNodeId)) {
-            return [selectedNodeId, ...roots.filter(id => id !== selectedNodeId)];
+        if (primaryNodeId && primaryNodeId !== 'project-root' && roots.includes(primaryNodeId)) {
+            return [primaryNodeId, ...roots.filter(id => id !== primaryNodeId)];
         }
         return roots;
-    }, [selectedNodeIds, selectedNodeId, groups, tasks]);
+    }, [groups, tasks]);
+
+    const getCopyRootNodeIds = useCallback((): string[] => {
+        return getTopLevelCopyNodeIds(Array.from(selectedNodeIds), selectedNodeId);
+    }, [getTopLevelCopyNodeIds, selectedNodeIds, selectedNodeId]);
 
     const normalizeClipboardPayload = useCallback((raw: MindMapClipboardAnyPayload): MindMapClipboardPayload | null => {
         if (!raw || raw.type !== 'mindmap-node') return null;
@@ -1032,9 +1041,19 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         return null;
     }, []);
 
-    const pasteClipboardTree = useCallback(async (payload: MindMapClipboardPayload) => {
+    const pasteClipboardTree = useCallback(async (payload: MindMapClipboardPayload, placement?: MindMapClipboardPlacement) => {
         if (payload.roots.length === 0) return;
-        const anchorId = selectedNodeId && selectedNodeId !== 'project-root' ? selectedNodeId : null;
+        const targetPlacement: MindMapClipboardPlacement = placement ?? {
+            targetId: selectedNodeId && selectedNodeId !== 'project-root' ? selectedNodeId : null,
+            position: 'as-child',
+        };
+        const targetId = targetPlacement.targetId === 'project-root' ? null : targetPlacement.targetId;
+        const targetTask = targetId ? getTaskById(targetId) : null;
+        const targetIsRoot = !!targetId && groups.some(group => group.id === targetId);
+        const shouldCreateAtRoot = !targetId || (targetPlacement.position !== 'as-child' && targetIsRoot);
+        const parentId = targetPlacement.position === 'as-child'
+            ? targetId
+            : targetTask?.parent_task_id ?? null;
 
         const applyCopiedFields = async (nodeId: string, sourceNode: MindMapClipboardNode) => {
             if (!onUpdateTask) return;
@@ -1056,15 +1075,15 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             });
         };
 
-        const createNodeRecursive = async (sourceNode: MindMapClipboardNode, parentId: string | null, isRoot: boolean): Promise<string | null> => {
+        const createNodeRecursive = async (sourceNode: MindMapClipboardNode, nodeParentId: string | null, isRoot: boolean): Promise<string | null> => {
             const title = (sourceNode.title || '').trim() || 'New Task';
             let created: Task | null = null;
 
-            if (isRoot && parentId === null) {
+            if (isRoot && nodeParentId === null) {
                 created = await onCreateGroup?.(title) ?? null;
             } else {
-                if (!parentId) return null;
-                created = await onCreateTask?.(parentId, title, parentId) ?? null;
+                if (!nodeParentId) return null;
+                created = await onCreateTask?.(nodeParentId, title, nodeParentId) ?? null;
             }
 
             if (!created?.id) return null;
@@ -1077,18 +1096,37 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         };
 
         const createdRootIds: string[] = [];
+        let reorderReferenceId = targetId;
+        let reorderPosition: 'above' | 'below' = targetPlacement.position === 'above' ? 'above' : 'below';
         for (const root of payload.roots) {
-            const createdRootId = await createNodeRecursive(root, anchorId, anchorId === null);
+            const createdRootId = await createNodeRecursive(root, parentId, shouldCreateAtRoot);
             if (createdRootId) createdRootIds.push(createdRootId);
+            if (createdRootId && targetPlacement.position !== 'as-child' && reorderReferenceId) {
+                if (shouldCreateAtRoot) {
+                    await onReorderGroup?.(createdRootId, reorderReferenceId, reorderPosition);
+                } else {
+                    await onReorderTask?.(createdRootId, reorderReferenceId, reorderPosition);
+                }
+                reorderReferenceId = createdRootId;
+                reorderPosition = 'below';
+            }
         }
 
         if (createdRootIds.length > 0) {
+            if (targetPlacement.position === 'as-child' && targetId) {
+                setCollapsedTaskIds(prev => {
+                    if (!prev.has(targetId)) return prev;
+                    const next = new Set(prev);
+                    next.delete(targetId);
+                    return next;
+                });
+            }
             const primaryId = createdRootIds[0];
             applySelection(new Set(createdRootIds), primaryId);
             focusNodeWithPollingV2(primaryId, 300, false);
             flashClipboardFeedback(`${createdRootIds.length}件のノードを貼り付けました`);
         }
-    }, [selectedNodeId, onCreateGroup, onCreateTask, onUpdateTask, applySelection, focusNodeWithPollingV2, flashClipboardFeedback]);
+    }, [selectedNodeId, getTaskById, groups, onCreateGroup, onCreateTask, onUpdateTask, onReorderGroup, onReorderTask, applySelection, focusNodeWithPollingV2, flashClipboardFeedback]);
 
     const toggleTaskCollapse = useCallback((taskId: string) => {
         setCollapsedTaskIds(prev => {
@@ -1683,6 +1721,35 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         );
     }, [groups, handleCustomMoveTask, isDescendant, onUpdateTask, project?.id, tasks]);
 
+    const handleCustomDuplicateTasks = useCallback(async ({
+        taskIds,
+        targetId,
+        position,
+    }: {
+        taskIds: string[];
+        targetId: string;
+        position: 'above' | 'below' | 'as-child';
+    }) => {
+        const rootIds = getTopLevelCopyNodeIds(taskIds, taskIds[0] ?? null);
+        if (rootIds.length === 0) return;
+
+        const roots = rootIds
+            .map(id => getTaskById(id))
+            .filter((task): task is Task => !!task)
+            .map(task => buildClipboardNode(task));
+        if (roots.length === 0) return;
+
+        await pasteClipboardTree({
+            type: 'mindmap-node',
+            version: 2,
+            copiedAt: new Date().toISOString(),
+            roots,
+        }, {
+            targetId,
+            position,
+        });
+    }, [buildClipboardNode, getTaskById, getTopLevelCopyNodeIds, pasteClipboardTree]);
+
     return (
         <div
             className="w-full h-full bg-muted/5 relative outline-none"
@@ -1758,6 +1825,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         onOpenTaskProgress={handleOpenTaskProgress}
                         onMoveTask={handleCustomMoveTask}
                         onMoveTasks={handleCustomMoveTasks}
+                        onDuplicateTasks={handleCustomDuplicateTasks}
                         onDropImportedChatNode={handleCustomMoveTask}
                     />
                     {isCodexChatImportSidebarOpen && (
