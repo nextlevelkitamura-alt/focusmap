@@ -428,6 +428,12 @@ function taskResult(task: AiTask): Record<string, unknown> {
   return isRecord(task.result) ? task.result : {};
 }
 
+function shouldBackfillImportedThreadMessages(task: AiTask): boolean {
+  const result = taskResult(task);
+  if (result.codex_external_origin !== 'codex_app_thread_import') return false;
+  return !Array.isArray(result.codex_visible_messages) || result.codex_visible_messages.length === 0;
+}
+
 export function hasPendingArchiveRequest(task: AiTask): boolean {
   const result = taskResult(task);
   return task.status === 'completed' &&
@@ -488,8 +494,8 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary) {
   return { status: summary.state === 'awaiting_approval' ? 'awaiting_approval' as const : 'running' as const, resumed: false };
 }
 
-function activityMessages(task: AiTask, threadId: string, summary: RolloutSummary, resumed: boolean): AgentActivityMessage[] {
-  const checkpoint = checkpointMs(task) ?? 0;
+export function activityMessages(task: AiTask, threadId: string, summary: RolloutSummary, resumed: boolean): AgentActivityMessage[] {
+  const checkpoint = shouldBackfillImportedThreadMessages(task) ? 0 : checkpointMs(task) ?? 0;
   const messages: AgentActivityMessage[] = [];
   if (resumed) {
     messages.push({

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  activityMessages,
   hasPendingArchiveRequest,
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
@@ -155,6 +156,34 @@ describe('codex-thread-monitor state detection', () => {
     }), summary);
 
     expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
+  });
+
+  test('backfills visible Codex chat messages on the first sync after direct thread import', () => {
+    const raw = [
+      line('2026-06-08T15:49:15.264Z', { type: 'user_message', message: 'SNS投稿の改善案を作って' }),
+      line('2026-06-08T15:49:18.330Z', {
+        type: 'agent_message',
+        message: '投稿案を3パターン作りました。確認してください。',
+      }),
+      line('2026-06-08T15:49:18.368Z', {
+        type: 'task_complete',
+        completed_at: 1780933758,
+        last_agent_message: '投稿案を3パターン作りました。確認してください。',
+      }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const messages = activityMessages(task({
+      result: {
+        codex_external_origin: 'codex_app_thread_import',
+        codex_run_state: 'running',
+        last_activity_at: '2026-06-08T15:49:18.368Z',
+      },
+    }), 'thread-1', summary, false);
+
+    expect(messages.map(message => message.body)).toEqual([
+      'SNS投稿の改善案を作って',
+      '投稿案を3パターン作りました。確認してください。',
+    ]);
   });
 
   test('builds known thread ids from column and result before orphan import', () => {

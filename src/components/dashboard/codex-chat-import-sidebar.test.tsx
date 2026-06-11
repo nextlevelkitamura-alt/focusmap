@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { beforeEach, describe, expect, test, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { CODEX_CHAT_IMPORT_DRAG_TYPE } from "@/lib/codex-chat-import-dnd"
 import { CodexChatImportSidebar, type CodexChatImportItem } from "./codex-chat-import-sidebar"
 
@@ -62,12 +62,17 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe("CodexChatImportSidebar", () => {
   test("renders chat import wording, repo monitor switch, and project chats", () => {
     renderSidebar()
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByRole("switch", { name: "リポ監視" })).toBeChecked()
+    expect(screen.getByText("リポフォルダ")).toBeInTheDocument()
     expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
   })
@@ -75,10 +80,24 @@ describe("CodexChatImportSidebar", () => {
   test("saves a repo selected from Focusmap agent repo candidates", async () => {
     const { onSaveRepoPath } = renderSidebar()
 
-    fireEvent.click(screen.getByRole("button", { name: "リポを選択 focusmap" }))
+    fireEvent.click(screen.getByRole("button", { name: "リポフォルダを選択 focusmap" }))
 
     await waitFor(() => {
       expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/focusmap")
+    })
+  })
+
+  test("saves a repo folder picked from Finder immediately", async () => {
+    const { onSaveRepoPath } = renderSidebar()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ path: "/Users/me/new-repo/" }),
+    }))
+
+    fireEvent.click(screen.getByRole("button", { name: "Finderでリポフォルダを選択" }))
+
+    await waitFor(() => {
+      expect(onSaveRepoPath).toHaveBeenCalledWith("/Users/me/new-repo")
     })
   })
 

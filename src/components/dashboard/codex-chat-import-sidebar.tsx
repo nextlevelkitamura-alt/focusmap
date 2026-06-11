@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Bot, Check, FolderOpen, GitBranch, Loader2, RefreshCw, Search, X } from "lucide-react"
+import { Bot, Check, FolderGit2, FolderOpen, Loader2, RefreshCw, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -84,7 +84,7 @@ export function CodexChatImportSidebar({
       await onSaveRepoPath(normalized || null)
       setDraftRepoPath(normalized)
     } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "リポを保存できませんでした")
+      setRepoError(error instanceof Error ? error.message : "リポフォルダを保存できませんでした")
     }
   }, [onSaveRepoPath])
 
@@ -98,17 +98,21 @@ export function CodexChatImportSidebar({
         if (data?.error && data.error !== "canceled") setRepoError(String(data.error))
         return
       }
-      if (typeof data?.path === "string") setDraftRepoPath(normalizeRepoPath(data.path))
+      if (typeof data?.path === "string") {
+        const normalized = normalizeRepoPath(data.path)
+        setDraftRepoPath(normalized)
+        await saveRepoPath(normalized || null)
+      }
     } catch (error) {
       setRepoError(error instanceof Error ? error.message : "Finderを開けませんでした")
     } finally {
       setPickerPending(false)
     }
-  }, [])
+  }, [saveRepoPath])
 
   const handleToggleImport = React.useCallback(async () => {
     if (!hasRepoPath || isBusy) {
-      if (!hasRepoPath) setRepoError("リポを保存してからONにできます")
+      if (!hasRepoPath) setRepoError("リポフォルダを保存してからONにできます")
       return
     }
     setRepoError(null)
@@ -125,7 +129,7 @@ export function CodexChatImportSidebar({
       await requestRescan()
       await refresh()
     } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "リポ一覧を更新できませんでした")
+      setRepoError(error instanceof Error ? error.message : "リポフォルダ一覧を更新できませんでした")
     }
   }, [refresh, requestRescan])
 
@@ -150,12 +154,12 @@ export function CodexChatImportSidebar({
       </div>
 
       <div className="space-y-3 border-b p-3">
-        <div className="rounded-xl border bg-muted/25 p-3">
+        <div className="rounded-lg border bg-muted/25 p-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-medium">リポ監視</div>
               <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                {hasRepoPath ? currentRepoPath : "リポ未設定"}
+                {hasRepoPath ? currentRepoPath : "リポフォルダ未設定"}
               </div>
             </div>
             <Switch
@@ -170,7 +174,7 @@ export function CodexChatImportSidebar({
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-medium">リポ / 構成</div>
+            <div className="text-xs font-medium">リポフォルダ</div>
             <Button
               type="button"
               variant="ghost"
@@ -192,7 +196,7 @@ export function CodexChatImportSidebar({
                   <button
                     key={repo.id}
                     type="button"
-                    aria-label={`リポを選択 ${repo.display_name || repo.absolute_path}`}
+                    aria-label={`リポフォルダを選択 ${repo.display_name || repo.absolute_path}`}
                     className={cn(
                       "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-background",
                       selected && "bg-background",
@@ -201,7 +205,7 @@ export function CodexChatImportSidebar({
                     disabled={repoSaving}
                     title={repo.absolute_path}
                   >
-                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate text-xs font-medium">{repo.display_name || repo.absolute_path}</span>
                       <span className="truncate font-mono text-[10px] text-muted-foreground">{repo.absolute_path}</span>
@@ -223,9 +227,9 @@ export function CodexChatImportSidebar({
                   void saveRepoPath(draftNormalized || null)
                 }
               }}
-              placeholder="/Users/you/repo"
+              placeholder="/Users/you/project"
               className="h-8 font-mono text-xs"
-              aria-label="プロジェクトリポ"
+              aria-label="プロジェクトのリポフォルダ"
             />
             <Button
               type="button"
@@ -234,8 +238,8 @@ export function CodexChatImportSidebar({
               className="h-8 px-2"
               onClick={chooseFolder}
               disabled={isBusy}
-              aria-label="Finderでリポを選択"
-              title="Finderでリポを選択"
+              aria-label="Finderでリポフォルダを選択"
+              title="Finderでリポフォルダを選択"
             >
               {pickerPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
             </Button>
