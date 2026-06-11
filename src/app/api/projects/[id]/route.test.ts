@@ -6,6 +6,10 @@ const mockSelect = vi.fn(() => ({ single: mockSingle }))
 const mockEq2 = vi.fn(() => ({ select: mockSelect }))
 const mockEq1 = vi.fn(() => ({ eq: mockEq2 }))
 const mockUpdate = vi.fn(() => ({ eq: mockEq1 }))
+const mockMaybeSingle = vi.fn()
+const mockSelectEq2 = vi.fn(() => ({ maybeSingle: mockMaybeSingle }))
+const mockSelectEq1 = vi.fn(() => ({ eq: mockSelectEq2 }))
+const mockSelectProject = vi.fn(() => ({ eq: mockSelectEq1 }))
 
 const mockDeleteEq2 = vi.fn()
 const mockDeleteEq1 = vi.fn(() => ({ eq: mockDeleteEq2 }))
@@ -15,7 +19,7 @@ const mockGetUser = vi.fn()
 
 const mockSupabase = {
   auth: { getUser: mockGetUser },
-  from: vi.fn((table: string) => ({
+  from: vi.fn(() => ({
     update: mockUpdate,
     delete: mockDelete,
   })),
@@ -49,6 +53,10 @@ const mockParams = Promise.resolve({ id: 'proj-1' })
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockSupabase.from.mockImplementation(() => ({
+    update: mockUpdate,
+    delete: mockDelete,
+  }))
 })
 
 // ===========================
@@ -75,6 +83,58 @@ describe('PATCH /api/projects/:id', () => {
       // eq チェーン: .eq("id", "proj-1").eq("user_id", "user-1")
       expect(mockEq1).toHaveBeenCalledWith('id', 'proj-1')
       expect(mockEq2).toHaveBeenCalledWith('user_id', 'user-1')
+    })
+
+    test('Codex thread取り込みON時は既存repo_pathを確認して開始時刻を保存する', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      mockMaybeSingle.mockResolvedValue({
+        data: { repo_path: '/Users/me/project' },
+        error: null,
+      })
+      mockSingle.mockResolvedValue({
+        data: {
+          id: 'proj-1',
+          codex_thread_import_enabled: true,
+          codex_thread_import_enabled_since: '2026-06-11T00:00:00.000Z',
+        },
+        error: null,
+      })
+      mockSupabase.from.mockReturnValue({
+        select: mockSelectProject,
+        update: mockUpdate,
+        delete: mockDelete,
+      })
+
+      const req = createRequest({ codex_thread_import_enabled: true })
+      const res = await PATCH(req, { params: mockParams })
+
+      expect(res.status).toBe(200)
+      expect(mockSelectProject).toHaveBeenCalledWith('repo_path')
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        codex_thread_import_enabled: true,
+        codex_thread_import_enabled_since: expect.any(String),
+      }))
+    })
+
+    test('repo_path未設定ではCodex thread取り込みをONにしない', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      mockMaybeSingle.mockResolvedValue({
+        data: { repo_path: null },
+        error: null,
+      })
+      mockSupabase.from.mockReturnValue({
+        select: mockSelectProject,
+        update: mockUpdate,
+        delete: mockDelete,
+      })
+
+      const req = createRequest({ codex_thread_import_enabled: true })
+      const res = await PATCH(req, { params: mockParams })
+      const json = await res.json()
+
+      expect(res.status).toBe(400)
+      expect(json.error).toBe('repo_path is required before enabling Codex thread import')
+      expect(mockUpdate).not.toHaveBeenCalled()
     })
   })
 

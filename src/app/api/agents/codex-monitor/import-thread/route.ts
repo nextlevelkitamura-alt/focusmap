@@ -1,4 +1,3 @@
-import path from 'node:path'
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAgent, type AgentTokenRecord } from '@/lib/agent-auth'
 import { formatBillingCycle } from '@/lib/format'
@@ -24,6 +23,7 @@ type TargetProject = {
   space_id: string | null
   title?: string | null
   repo_path?: string | null
+  codex_thread_import_enabled_since?: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,15 +58,20 @@ function parseThread(input: unknown): ImportedCodexThread | null {
 }
 
 export function titleFromImportedThread(thread: ImportedCodexThread) {
-  const candidates = [
-    thread.title,
-    thread.first_user_message?.split('\n').find(line => line.trim()),
-    thread.preview,
-  ]
-  const title = candidates
-    .map(value => compactString(value, 120))
-    .find(Boolean)
-  if (title) return title.replace(/\s+/g, ' ').slice(0, 120)
+  const threadTitle = compactString(thread.title, 240)
+  if (threadTitle && !looksLikeRawPromptTitle(threadTitle)) {
+    const normalizedTitle = oneLineTitle(threadTitle)
+    if (normalizedTitle) return normalizedTitle
+  }
+
+  const promptTitle = oneLineTitle(firstNonEmptyLine(thread.first_user_message))
+  if (promptTitle) return promptTitle
+
+  const previewTitle = oneLineTitle(thread.preview)
+  if (previewTitle) return previewTitle
+
+  const fallbackTitle = oneLineTitle(threadTitle)
+  if (fallbackTitle) return fallbackTitle
   return `Codex thread ${thread.id.slice(0, 8)}`
 }
 
@@ -115,74 +120,77 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
   }
 }
 
-async function firstProjectByQuery(
-  supabase: SupabaseServiceClient,
-  token: AgentTokenRecord,
-  options: { cwd?: string | null; any?: boolean } = {},
-): Promise<TargetProject | null> {
-  let query = supabase
-    .from('projects')
-    .select('id, space_id, title, repo_path, created_at')
-    .eq('user_id', token.user_id)
-    .neq('status', 'archived')
-    .order('created_at', { ascending: true })
-    .limit(1)
-
-  if (token.space_id) query = query.eq('space_id', token.space_id)
-  if (options.cwd && !options.any) query = query.eq('repo_path', options.cwd)
-
-  const { data, error } = await query
-  if (error) throw error
-  const row = data?.[0] as TargetProject | undefined
-  return row ?? null
+function firstNonEmptyLine(value: unknown) {
+  if (typeof value !== 'string') return null
+  return value.split('\n').map(line => line.trim()).find(Boolean) ?? null
 }
 
-async function firstOwnedSpaceId(supabase: SupabaseServiceClient, userId: string) {
-  const { data, error } = await supabase
-    .from('spaces')
-    .select('id')
-    .eq('user_id', userId)
-    .neq('status', 'archived')
-    .order('created_at', { ascending: true })
-    .limit(1)
-  if (error) throw error
-  return typeof data?.[0]?.id === 'string' ? data[0].id : null
+function oneLineTitle(value: unknown, max = 80) {
+  const text = compactString(value, 240)
+  if (!text) return null
+  return text.replace(/\s+/g, ' ').slice(0, max)
 }
 
-async function ensureTargetProject(
+function looksLikeRawPromptTitle(value: string) {
+  const text = value.trim()
+  if (!text) return false
+  if (text.includes('\n')) return true
+  if (text.length > 90) return true
+  return text.startsWith('# AGENTS.md instructions') || text.includes('<environment_context>')
+}
+
+function timeMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : null
+  }
+  return null
+}
+
+export function isThreadWithinProjectImportScope(
+  thread: ImportedCodexThread,
+  project: TargetProject,
+  fallbackNowMs = Date.now(),
+) {
+  const cwd = compactString(thread.cwd, 500)
+  const repoPath = compactString(project.repo_path, 500)
+  if (!cwd || !repoPath || cwd !== repoPath) return false
+
+  const enabledSinceMs = timeMs(project.codex_thread_import_enabled_since)
+  if (enabledSinceMs === null) return true
+
+  const updatedMs = timeMs(thread.updated_at_ms) ?? fallbackNowMs
+  return updatedMs >= enabledSinceMs
+}
+
+async function findEnabledImportProject(
   supabase: SupabaseServiceClient,
   token: AgentTokenRecord,
   thread: ImportedCodexThread,
-): Promise<TargetProject | null> {
-  const cwd = thread.cwd ?? null
-  if (cwd) {
-    const exact = await firstProjectByQuery(supabase, token, { cwd })
-    if (exact) return exact
-  }
+): Promise<{ project: TargetProject | null; reason?: string }> {
+  const cwd = compactString(thread.cwd, 500)
+  if (!cwd) return { project: null, reason: 'missing_cwd' }
 
-  const existing = await firstProjectByQuery(supabase, token, { any: true })
-  if (existing) return existing
-
-  const spaceId = token.space_id ?? await firstOwnedSpaceId(supabase, token.user_id)
-  if (!spaceId) return null
-
-  const repoName = cwd ? path.basename(cwd) : null
-  const { data, error } = await supabase
+  let query = supabase
     .from('projects')
-    .insert({
-      user_id: token.user_id,
-      space_id: spaceId,
-      title: repoName ? `Codex Inbox: ${repoName}` : 'Codex Inbox',
-      description: 'Codex.appで直接開始したスレッドの取り込み先',
-      status: 'active',
-      priority: 0,
-      color_theme: 'slate',
-      repo_path: cwd,
-    })
-    .select('id, space_id, title, repo_path')
-    .single()
+    .select('id, space_id, title, repo_path, codex_thread_import_enabled_since, created_at')
+    .eq('user_id', token.user_id)
+    .neq('status', 'archived')
+    .eq('repo_path', cwd)
+    .eq('codex_thread_import_enabled', true)
+    .order('created_at', { ascending: true })
+    .limit(10)
+
+  if (token.space_id) query = query.eq('space_id', token.space_id)
+
+  const { data, error } = await query
   if (error) throw error
-  return data as TargetProject
+
+  const project = (Array.isArray(data) ? data : [])
+    .map(row => row as TargetProject)
+    .find(candidate => isThreadWithinProjectImportScope(thread, candidate))
+  return project ? { project } : { project: null, reason: 'repo_import_scope_disabled' }
 }
 
 async function nextOrderIndex(
@@ -321,9 +329,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ imported: false, reason: 'already_imported', ...imported })
     }
 
-    const project = await ensureTargetProject(supabase, token, thread)
+    const { project, reason } = await findEnabledImportProject(supabase, token, thread)
     if (!project) {
-      return NextResponse.json({ imported: false, reason: 'no_project_or_space' })
+      return NextResponse.json({ imported: false, reason: reason ?? 'repo_import_scope_disabled' })
     }
 
     const inboxGroupId = await ensureInboxGroup(supabase, token.user_id, project.id)

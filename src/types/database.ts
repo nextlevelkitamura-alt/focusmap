@@ -120,6 +120,8 @@ export interface Database {
                     status: string
                     color_theme: string
                     repo_path: string | null
+                    codex_thread_import_enabled: boolean
+                    codex_thread_import_enabled_since: string | null
                     created_at: string
                 }
                 Insert: {
@@ -134,6 +136,8 @@ export interface Database {
                     status?: string
                     color_theme?: string
                     repo_path?: string | null
+                    codex_thread_import_enabled?: boolean
+                    codex_thread_import_enabled_since?: string | null
                     created_at?: string
                 }
                 Update: {
@@ -148,6 +152,8 @@ export interface Database {
                     status?: string
                     color_theme?: string
                     repo_path?: string | null
+                    codex_thread_import_enabled?: boolean
+                    codex_thread_import_enabled_since?: string | null
                     created_at?: string
                 }
             }

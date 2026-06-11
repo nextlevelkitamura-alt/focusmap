@@ -147,6 +147,7 @@ interface MindMapProps {
     onDeleteGroup?: (groupId: string) => Promise<void>
     onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
+    onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
@@ -160,7 +161,7 @@ interface MindMapProps {
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
 }
 
-function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onPatchProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
     const projectId = project?.id ?? '';
 
     // 画面幅 767px 以下でモバイルレイアウト（コンパクト化）
@@ -169,6 +170,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     // MindMap Display Settings
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
     const [kanbanCloseSignal, setKanbanCloseSignal] = useState(0);
+    const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null);
+    const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -186,7 +189,39 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     useEffect(() => {
         setKanbanSpaceId(project?.space_id ?? null);
         setKanbanProjectId(project?.id ?? null);
+        setCodexThreadImportOverride(null);
     }, [project?.id, project?.space_id]);
+
+    const projectRepoPath = useMemo(() => (project?.repo_path ?? '').trim(), [project?.repo_path]);
+    const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project?.codex_thread_import_enabled);
+    const toggleCodexThreadImport = useCallback(async () => {
+        if (!project?.id || !projectRepoPath || isCodexThreadImportSaving) return;
+        const nextEnabled = !codexThreadImportEnabled;
+        const previous = codexThreadImportEnabled;
+        setCodexThreadImportOverride(nextEnabled);
+        setIsCodexThreadImportSaving(true);
+        try {
+            const updates: Partial<Project> = { codex_thread_import_enabled: nextEnabled };
+            if (onPatchProject) {
+                await onPatchProject(project.id, updates);
+            } else {
+                const res = await fetch(`/api/projects/${project.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(typeof data.error === 'string' ? data.error : 'Codex thread import update failed');
+                }
+            }
+        } catch (error) {
+            setCodexThreadImportOverride(previous);
+            console.error('[MindMap] Failed to toggle Codex thread import:', error);
+        } finally {
+            setIsCodexThreadImportSaving(false);
+        }
+    }, [codexThreadImportEnabled, isCodexThreadImportSaving, onPatchProject, project?.id, projectRepoPath]);
 
     const kanbanProject = useMemo(() => (
         kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
@@ -1610,6 +1645,11 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         generatingHeadingNodeIds={generatingHeadingNodeIds}
                         onRunCodex={handleRunCodex}
                         codexRunByNodeId={codexRunByNodeId}
+                        codexThreadImportEnabled={codexThreadImportEnabled}
+                        codexThreadImportAvailable={!!projectRepoPath}
+                        codexThreadImportPending={isCodexThreadImportSaving}
+                        codexThreadImportRepoPath={projectRepoPath || null}
+                        onToggleCodexThreadImport={toggleCodexThreadImport}
                         taskProgressByNodeId={taskProgressByNodeId}
                         onOpenTaskProgress={handleOpenTaskProgress}
                         onMoveTask={handleCustomMoveTask}

@@ -24,6 +24,7 @@ interface MobileAiMapViewProps {
   onCreateGroup?: (title: string) => Promise<Task | null>
   onDeleteGroup?: (groupId: string) => Promise<void>
   onUpdateProject?: (projectId: string, title: string) => Promise<void>
+  onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
   onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
   onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
   onDeleteTask?: (taskId: string) => Promise<void>
@@ -76,6 +77,7 @@ export function MobileAiMapView({
   onCreateGroup,
   onDeleteGroup,
   onUpdateProject,
+  onPatchProject,
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
@@ -192,6 +194,7 @@ export function MobileAiMapView({
             onCreateGroup={onCreateGroup}
             onDeleteGroup={onDeleteGroup}
             onUpdateProject={onUpdateProject}
+            onPatchProject={onPatchProject}
             onCreateTask={onCreateTask}
             onUpdateTask={onUpdateTask}
             onDeleteTask={onDeleteTask}

@@ -210,6 +210,7 @@ export async function collectCapabilities(config: AgentConfig) {
       codex_thread_monitor: true,
       codex_orphan_thread_import: true,
       codex_thread_import_api_path: '/api/agents/codex-monitor/import-thread',
+      codex_thread_import_scopes_api_path: '/api/agents/codex-monitor/import-scopes',
       opencode_installed: opencode,
       aider_installed: aider,
       gws_installed: gws,

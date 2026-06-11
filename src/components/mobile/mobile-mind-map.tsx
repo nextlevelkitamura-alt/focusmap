@@ -42,6 +42,7 @@ interface MobileMindMapProps {
     onCreateGroup?: (title: string) => Promise<Task | null>
     onDeleteGroup?: (groupId: string) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
+    onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
@@ -62,6 +63,7 @@ export function MobileMindMap({
     onCreateGroup,
     onDeleteGroup,
     onUpdateProject,
+    onPatchProject,
     onCreateTask,
     onUpdateTask,
     onDeleteTask,
@@ -78,6 +80,8 @@ export function MobileMindMap({
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
     const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set())
+    const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null)
+    const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false)
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
@@ -96,7 +100,39 @@ export function MobileMindMap({
     useEffect(() => {
         setKanbanSpaceId(project.space_id ?? null)
         setKanbanProjectId(project.id)
+        setCodexThreadImportOverride(null)
     }, [project.id, project.space_id])
+
+    const projectRepoPath = useMemo(() => (project.repo_path ?? "").trim(), [project.repo_path])
+    const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project.codex_thread_import_enabled)
+    const toggleCodexThreadImport = useCallback(async () => {
+        if (!project.id || !projectRepoPath || isCodexThreadImportSaving) return
+        const nextEnabled = !codexThreadImportEnabled
+        const previous = codexThreadImportEnabled
+        setCodexThreadImportOverride(nextEnabled)
+        setIsCodexThreadImportSaving(true)
+        try {
+            const updates: Partial<Project> = { codex_thread_import_enabled: nextEnabled }
+            if (onPatchProject) {
+                await onPatchProject(project.id, updates)
+            } else {
+                const res = await fetch(`/api/projects/${project.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(updates),
+                })
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}))
+                    throw new Error(typeof data.error === "string" ? data.error : "Codex thread import update failed")
+                }
+            }
+        } catch (error) {
+            setCodexThreadImportOverride(previous)
+            console.error("[MobileMindMap] Failed to toggle Codex thread import:", error)
+        } finally {
+            setIsCodexThreadImportSaving(false)
+        }
+    }, [codexThreadImportEnabled, isCodexThreadImportSaving, onPatchProject, project.id, projectRepoPath])
 
     const kanbanProject = useMemo(() => (
         kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
@@ -750,6 +786,11 @@ export function MobileMindMap({
                 generatingHeadingNodeIds={generatingHeadingNodeIds}
                 onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
                 codexRunByNodeId={codexRunByNodeId}
+                codexThreadImportEnabled={codexThreadImportEnabled}
+                codexThreadImportAvailable={!!projectRepoPath}
+                codexThreadImportPending={isCodexThreadImportSaving}
+                codexThreadImportRepoPath={projectRepoPath || null}
+                onToggleCodexThreadImport={toggleCodexThreadImport}
                 taskProgressByNodeId={taskProgressByNodeId}
                 onOpenTaskProgress={(task) => setTaskProgressPanelTaskId(task.id)}
                 onMoveTask={handleMoveTask}

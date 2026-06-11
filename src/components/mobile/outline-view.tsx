@@ -33,6 +33,7 @@ interface OutlineViewProps {
     onUpdateGroupTitle: (groupId: string, title: string) => Promise<void>
     onUpdateGroup: (groupId: string, updates: Partial<Task>) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
+    onPatchProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
     onCreateProject?: (title: string) => Promise<Project | null>
     onOpenLinkedMemos?: (taskId: string) => void
 }
@@ -55,6 +56,7 @@ export function OutlineView({
     onReorderTask,
     onUpdateGroupTitle,
     onUpdateProject,
+    onPatchProject,
     onCreateProject,
     onOpenLinkedMemos,
 }: OutlineViewProps) {
@@ -131,6 +133,7 @@ export function OutlineView({
                             onCreateGroup={onCreateGroup}
                             onDeleteGroup={onDeleteGroup}
                             onUpdateProject={onUpdateProject}
+                            onPatchProject={onPatchProject}
                             onCreateTask={onCreateTask}
                             onUpdateTask={onUpdateTask}
                             onDeleteTask={onDeleteTask}

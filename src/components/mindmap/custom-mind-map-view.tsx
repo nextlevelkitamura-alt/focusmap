@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Loader2, MoreVertical, Sparkles } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Loader2, MoreVertical, Sparkles } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -58,6 +58,11 @@ type CustomMindMapViewProps = {
     generatingHeadingNodeIds?: Set<string>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexRunByNodeId?: Record<string, CodexNodeState>;
+    codexThreadImportEnabled?: boolean;
+    codexThreadImportAvailable?: boolean;
+    codexThreadImportPending?: boolean;
+    codexThreadImportRepoPath?: string | null;
+    onToggleCodexThreadImport?: () => void | Promise<void>;
     taskProgressByNodeId?: Record<string, TaskProgressSnapshotTask>;
     onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
     onMoveTask?: (params: {
@@ -1282,6 +1287,11 @@ export function CustomMindMapView({
     generatingHeadingNodeIds = new Set(),
     onRunCodex,
     codexRunByNodeId = {},
+    codexThreadImportEnabled = false,
+    codexThreadImportAvailable = false,
+    codexThreadImportPending = false,
+    codexThreadImportRepoPath,
+    onToggleCodexThreadImport,
     taskProgressByNodeId = {},
     onOpenTaskProgress,
     onMoveTask,
@@ -2865,6 +2875,12 @@ export function CustomMindMapView({
         }
         : null;
     const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
+    const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
+    const codexThreadImportTitle = codexThreadImportAvailable
+        ? codexThreadImportEnabled
+            ? `Codex thread取り込み: ON (${codexThreadImportRepoPath ?? "repo設定済み"})`
+            : `Codex thread取り込み: OFF (${codexThreadImportRepoPath ?? "repo設定済み"})`
+        : "プロジェクトにリポジトリを設定するとCodex threadを取り込めます";
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
@@ -2885,28 +2901,62 @@ export function CustomMindMapView({
                     className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
                 />
             )}
-            {(codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0) && (
-                <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
-                    {codexSummary.running > 0 && (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            実行中{codexSummary.running}
-                        </span>
+            {(onToggleCodexThreadImport || shouldShowCodexSummary) && (
+                <div className="absolute left-12 top-3 z-30 flex max-w-[calc(100%-6rem)] items-center gap-2">
+                    {onToggleCodexThreadImport && (
+                        <button
+                            type="button"
+                            className={cn(
+                                "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-55",
+                                codexThreadImportEnabled && codexThreadImportAvailable && "border-sky-400/70 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+                            )}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                void onToggleCodexThreadImport();
+                            }}
+                            disabled={!codexThreadImportAvailable || codexThreadImportPending}
+                            aria-label={codexThreadImportEnabled ? "Codex thread取り込みをOFFにする" : "Codex thread取り込みをONにする"}
+                            aria-pressed={codexThreadImportEnabled}
+                            title={codexThreadImportTitle}
+                        >
+                            {codexThreadImportPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Bot className="h-5 w-5" />
+                            )}
+                            <span
+                                className={cn(
+                                    "absolute bottom-2 right-2 h-2 w-2 rounded-full border border-background bg-muted-foreground/50",
+                                    codexThreadImportEnabled && codexThreadImportAvailable && "bg-sky-500",
+                                    !codexThreadImportAvailable && "bg-amber-500",
+                                )}
+                            />
+                        </button>
                     )}
-                    {codexSummary.promptWaiting > 0 && (
-                        <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
-                            未送信{codexSummary.promptWaiting}
-                        </span>
-                    )}
-                    {codexSummary.awaitingApproval > 0 && (
-                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
-                            確認待ち{codexSummary.awaitingApproval}
-                        </span>
-                    )}
-                    {codexSummary.connectionFailed > 0 && (
-                        <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
-                            接続失敗{codexSummary.connectionFailed}
-                        </span>
+                    {shouldShowCodexSummary && (
+                        <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
+                            {codexSummary.running > 0 && (
+                                <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    実行中{codexSummary.running}
+                                </span>
+                            )}
+                            {codexSummary.promptWaiting > 0 && (
+                                <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
+                                    未送信{codexSummary.promptWaiting}
+                                </span>
+                            )}
+                            {codexSummary.awaitingApproval > 0 && (
+                                <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                                    確認待ち{codexSummary.awaitingApproval}
+                                </span>
+                            )}
+                            {codexSummary.connectionFailed > 0 && (
+                                <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
+                                    接続失敗{codexSummary.connectionFailed}
+                                </span>
+                            )}
+                        </div>
                     )}
                 </div>
             )}

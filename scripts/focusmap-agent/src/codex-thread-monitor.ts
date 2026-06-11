@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { AgentApiError, type AgentApiClient } from './api-client.js';
-import type { AgentActivityMessage, AiTask, CodexThreadImportPayload, TaskResultJson } from './types.js';
+import type { AgentActivityMessage, AiTask, CodexThreadImportPayload, CodexThreadImportScope, TaskResultJson } from './types.js';
 import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
 import { debug, error as logError, info } from './logger.js';
 
@@ -24,6 +24,7 @@ const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) 
 const ORPHAN_IMPORT_RETRY_MS = 5 * 60 * 1000;
 const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
 let orphanImportApiUnavailableUntil = 0;
+let importScopesApiUnavailableUntil = 0;
 
 type CodexThreadRow = {
   id: string;
@@ -334,17 +335,37 @@ export function knownCodexThreadIds(tasks: AiTask[]): Set<string> {
 export function isOrphanThreadImportCandidate(
   row: CodexThreadRow,
   knownThreadIds: Set<string>,
+  importScopes: CodexThreadImportScope[],
   nowMs = Date.now(),
   windowMs = ORPHAN_IMPORT_WINDOW_MS,
 ): boolean {
   if (!row.id || knownThreadIds.has(row.id)) return false;
   if (boolValue(row.archived)) return false;
-  if (!boolValue(row.has_user_event)) return false;
   const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
-  if (updatedMs <= 0 || nowMs - updatedMs > windowMs) return false;
+  if (updatedMs <= 0) return false;
+  const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs);
+  if (!matchingScope) return false;
+  if (!matchingScope.enabled_since && nowMs - updatedMs > windowMs) return false;
   const firstUserMessage = compactText(row.first_user_message ?? '', 400);
   if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
   return true;
+}
+
+export function matchingThreadImportScope(
+  row: Pick<CodexThreadRow, 'cwd'>,
+  importScopes: CodexThreadImportScope[],
+  updatedMs = Date.now(),
+): CodexThreadImportScope | null {
+  const cwd = row.cwd?.trim();
+  if (!cwd) return null;
+  for (const scope of importScopes) {
+    const repoPath = scope.repo_path?.trim();
+    if (!repoPath || repoPath !== cwd) continue;
+    const enabledSinceMs = timeMs(scope.enabled_since);
+    if (enabledSinceMs !== null && updatedMs < enabledSinceMs) continue;
+    return scope;
+  }
+  return null;
 }
 
 export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiError {
@@ -552,20 +573,50 @@ async function readRecentThreads(dbPath: string, sinceMs: number): Promise<Codex
   );
 }
 
+function orphanImportSinceMs(importScopes: CodexThreadImportScope[], now = Date.now()): number {
+  const windowSinceMs = Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS);
+  const scopeSinceMs = importScopes
+    .map(scope => timeMs(scope.enabled_since))
+    .filter((value): value is number => value !== null && value > 0);
+  if (scopeSinceMs.length === 0) return windowSinceMs;
+  return Math.max(0, Math.min(windowSinceMs, ...scopeSinceMs));
+}
+
+async function listThreadImportScopes(
+  api: AgentApiClient,
+  runnerId: string,
+): Promise<CodexThreadImportScope[]> {
+  const now = Date.now();
+  if (now < importScopesApiUnavailableUntil) return [];
+  try {
+    return await api.listCodexThreadImportScopes(runnerId);
+  } catch (error) {
+    if (isOrphanImportApiUnavailable(error)) {
+      importScopesApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+      info(`codex import scopes API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      return [];
+    }
+    logError('codex import scopes refresh failed', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
 async function importOrphanThreads(
   api: AgentApiClient,
   runnerId: string,
   dbPath: string,
   tasks: AiTask[],
+  importScopes: CodexThreadImportScope[],
 ): Promise<number> {
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
+  if (importScopes.length === 0) return 0;
   const knownThreadIds = knownCodexThreadIds(tasks);
-  const rows = await readRecentThreads(dbPath, Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS));
+  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now));
   let imported = 0;
 
   for (const row of rows) {
-    if (!isOrphanThreadImportCandidate(row, knownThreadIds, now)) continue;
+    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now)) continue;
     const cachedAt = orphanImportCache.get(row.id) ?? 0;
     if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;
     orphanImportCache.set(row.id, now);
@@ -729,6 +780,7 @@ export function startCodexThreadMonitorLoop(
   let targetsLoaded = false;
   let nextTargetRefreshAt = 0;
   let tasks: AiTask[] = [];
+  let importScopes: CodexThreadImportScope[] = [];
   const dbPath = join(homedir(), '.codex', 'state_5.sqlite');
 
   const tick = async () => {
@@ -739,7 +791,12 @@ export function startCodexThreadMonitorLoop(
     try {
       const now = Date.now();
       if (!targetsLoaded || now >= nextTargetRefreshAt) {
-        tasks = await api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT);
+        const [nextTasks, nextImportScopes] = await Promise.all([
+          api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT),
+          listThreadImportScopes(api, runnerId),
+        ]);
+        tasks = nextTasks;
+        importScopes = nextImportScopes;
         targetsLoaded = true;
         nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
       }
@@ -754,7 +811,7 @@ export function startCodexThreadMonitorLoop(
           logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
         }
       }
-      await importOrphanThreads(api, runnerId, dbPath, tasks);
+      await importOrphanThreads(api, runnerId, dbPath, tasks, importScopes);
     } catch (error) {
       logError('codex monitor loop error', error instanceof Error ? error.message : error);
     } finally {

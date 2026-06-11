@@ -131,6 +131,13 @@ export interface CodexThreadImportPayload {
   updated_at_ms?: number | null;
 }
 
+export interface CodexThreadImportScope {
+  project_id: string;
+  space_id?: string | null;
+  repo_path: string;
+  enabled_since?: string | null;
+}
+
 export interface AgentCommand {
   id: string;
   runner_id: string;

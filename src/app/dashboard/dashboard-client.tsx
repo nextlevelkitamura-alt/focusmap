@@ -450,14 +450,23 @@ export function DashboardClient({
     }, [selectedSpaceId, spaces])
 
     const handleUpdateProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
-        // Optimistic update
+        const previousProjects = projects
         setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...updates } : p))
-        await fetch(`/api/projects/${projectId}`, {
+        const res = await fetch(`/api/projects/${projectId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updates),
         })
-    }, [])
+        if (!res.ok) {
+            setProjects(previousProjects)
+            const data = await res.json().catch(() => ({}))
+            throw new Error(typeof data.error === 'string' ? data.error : 'Project update failed')
+        }
+        const savedProject = await res.json().catch(() => null) as Project | null
+        if (savedProject?.id) {
+            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...savedProject } : p))
+        }
+    }, [projects])
 
     const handleDeleteProject = useCallback(async (projectId: string) => {
         const previousProjects = projects
@@ -1343,6 +1352,7 @@ export function DashboardClient({
                             onCreateGroup={handleCreateGroup}
                             onDeleteGroup={handleDeleteGroup}
                             onUpdateProject={handleUpdateProjectTitle}
+                            onPatchProject={handleUpdateProject}
                             onCreateTask={createTask}
                             onUpdateTask={updateTask}
                             onDeleteTask={handleDeleteTask}
@@ -1418,6 +1428,7 @@ export function DashboardClient({
                                         onCreateGroup={handleCreateGroup}
                                         onDeleteGroup={handleDeleteGroup}
                                         onCreateTask={createTask}
+                                        onPatchProject={handleUpdateProject}
                                         onUpdateTask={updateTask}
                                         onDeleteTask={handleDeleteTask}
                                         onBulkDelete={bulkDelete}
@@ -1646,6 +1657,7 @@ export function DashboardClient({
                                     onCreateGroup={handleCreateGroup}
                                     onDeleteGroup={handleDeleteGroup}
                                     onCreateTask={createTask}
+                                    onPatchProject={handleUpdateProject}
                                     onUpdateTask={updateTask}
                                     onDeleteTask={handleDeleteTask}
                                     onBulkDelete={bulkDelete}
@@ -1672,6 +1684,7 @@ export function DashboardClient({
                             onCreateGroup={handleCreateGroup}
                             onDeleteGroup={handleDeleteGroup}
                             onCreateTask={createTask}
+                            onPatchProject={handleUpdateProject}
                             onUpdateTask={updateTask}
                             onDeleteTask={handleDeleteTask}
                             onBulkDelete={bulkDelete}

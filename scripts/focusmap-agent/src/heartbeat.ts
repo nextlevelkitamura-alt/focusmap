@@ -8,6 +8,7 @@ const FULL_REGISTRATION_ACTIVE_INTERVAL_MS = 60_000;
 const FULL_REGISTRATION_IDLE_INTERVAL_MS = 10 * 60_000;
 const AGENT_VERSION = '0.2.1';
 const CODEX_THREAD_IMPORT_API_PATH = '/api/agents/codex-monitor/import-thread';
+const CODEX_THREAD_IMPORT_SCOPES_API_PATH = '/api/agents/codex-monitor/import-scopes';
 
 export async function upsertRunner(api: AgentApiClient, config: AgentConfig): Promise<string> {
   const capabilities = await collectCapabilities(config);
@@ -44,6 +45,7 @@ async function sendRunnerHeartbeat(
       codex_thread_monitor: true,
       codex_orphan_thread_import: true,
       codex_thread_import_api_path: CODEX_THREAD_IMPORT_API_PATH,
+      codex_thread_import_scopes_api_path: CODEX_THREAD_IMPORT_SCOPES_API_PATH,
       ...metadata,
     },
   });
