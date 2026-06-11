@@ -1971,7 +1971,7 @@ export function WishlistCardDetail({
   }
 
   const organizationSection = (
-    <div className={cn("min-w-0 space-y-2", isMobile ? "order-7 pt-1" : "xl:col-start-2 xl:row-start-1")}>
+    <div className={cn("min-w-0 space-y-2", isMobile ? "order-7 pt-1" : "order-5")}>
       <label className="block min-w-0 space-y-1">
         <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
         <div className="relative">
@@ -2088,7 +2088,8 @@ export function WishlistCardDetail({
       }}
     >
       <SheetContent
-        side={isMobile ? "bottom" : "center"}
+        side={isMobile ? "bottom" : "right"}
+        data-testid="memo-detail-sheet"
         className={cn(
           isMobile
             ? [
@@ -2098,8 +2099,8 @@ export function WishlistCardDetail({
                 "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5",
               ]
             : [
-                "h-[min(920px,calc(100dvh-32px))] w-[min(1280px,calc(100vw-32px))] gap-2 overflow-y-auto px-6",
-                "border-neutral-800 bg-neutral-950/98 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
+                "h-full w-[min(520px,calc(100vw-20px))] max-w-none gap-2 overflow-hidden px-5 pb-0 sm:max-w-none",
+                "border-l border-neutral-800 bg-neutral-950/98 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
                 "[&>button]:right-5 [&>button]:top-5 [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:text-neutral-100",
               ]
         )}
@@ -2125,9 +2126,9 @@ export function WishlistCardDetail({
           className={cn(
           isMobile
             ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none px-4 pb-0 [touch-action:pan-y]"
-            : "grid gap-4 pb-6 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start"
+            : "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-0 pb-6 pr-1"
         )}>
-          <div className={cn("min-w-0 max-w-full", isMobile ? "flex w-full flex-col gap-3" : "contents")}>
+          <div className={cn("min-w-0 max-w-full", isMobile ? "flex w-full flex-col gap-3" : "flex w-full flex-col gap-4")}>
           <div className="order-0 min-w-0 space-y-1 xl:col-start-1 xl:row-start-1">
             <label className="block min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
@@ -2677,7 +2678,7 @@ export function WishlistCardDetail({
 
             {organizationSection}
 
-              <div className={cn("min-w-0", isMobile ? "order-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-4")}>
+              <div className={cn("min-w-0", isMobile ? "order-3 space-y-3" : "order-3 space-y-4")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
