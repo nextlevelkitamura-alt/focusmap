@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type MouseEvent } from "react"
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
@@ -1438,7 +1439,7 @@ export function CodexNodePanel({
   }, [attachments.length, detail, estimatedMinutes, node.hasMemo, node.isDone, node.priority, scheduledAt])
 
   return (
-    <Dialog
+    <Sheet
       open={open}
       onOpenChange={(nextOpen) => {
         if (!nextOpen) {
@@ -1447,18 +1448,27 @@ export function CodexNodePanel({
         }
       }}
     >
-      <DialogContent
+      <SheetContent
         ref={contentRef}
         tabIndex={-1}
+        side={isMobile ? "bottom" : "right"}
         onPaste={handlePanelPaste}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           window.requestAnimationFrame(moveFocusToPanel)
         }}
-        className="flex max-h-[92dvh] w-[calc(100vw-1rem)] max-w-full !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden overflow-x-hidden border-neutral-800 bg-neutral-950/98 p-0 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)] xl:!max-w-[1280px]"
+        className={cn(
+          "gap-0 overflow-hidden overflow-x-hidden border-neutral-800 bg-neutral-950/98 p-0 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
+          isMobile
+            ? "max-h-[90dvh] rounded-t-2xl"
+            : "h-full w-[min(92vw,460px)] max-w-none sm:max-w-none"
+        )}
       >
         <div className="shrink-0 px-4 pb-2 pt-4 pr-12 sm:px-6">
-          <DialogTitle className="text-left text-lg font-semibold text-neutral-50">メモを編集</DialogTitle>
+          <SheetTitle className="text-left text-lg font-semibold text-neutral-50">メモを編集</SheetTitle>
+          <SheetDescription className="sr-only">
+            マインドマップノードの見出し、メモ、所要時間、画像、Codex実行を編集します。
+          </SheetDescription>
         </div>
 
         <div className="shrink-0 border-b border-neutral-800 px-4 pb-4 sm:px-6">
@@ -1476,9 +1486,9 @@ export function CodexNodePanel({
         </div>
 
         <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-x-none px-4 py-5 sm:px-6 [touch-action:pan-y]">
-          <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)] xl:items-start">
+          <div className="grid min-w-0 gap-4 xl:items-start">
             <section
-              className="order-1 min-w-0 space-y-2 xl:col-start-1 xl:row-start-1"
+              className="order-1 min-w-0 space-y-2"
               data-testid="codex-node-detail-section"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -1533,7 +1543,6 @@ export function CodexNodePanel({
               />
             </section>
 
-            <div className="contents min-w-0 xl:col-start-2 xl:row-start-1 xl:block xl:space-y-4">
             <section
               className="order-2 min-w-0 space-y-2"
               data-testid="codex-node-image-section"
@@ -1784,10 +1793,9 @@ export function CodexNodePanel({
                 )}
               </div>
             </section>
-            </div>
 
             <section
-              className="order-3 min-w-0 space-y-2 xl:col-start-1 xl:row-start-2"
+              className="order-3 min-w-0 space-y-2"
               data-testid="codex-node-codex-section"
             >
               <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
@@ -1799,9 +1807,9 @@ export function CodexNodePanel({
                   href={codexHref}
                   onClick={sendToCodex}
                   aria-disabled={codexSendStatus === "sending" || isWaitingForImageSave}
-                  className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
-                  aria-label="コピーしてCodexに送信"
-                  title="コピーしてCodexに送信"
+                  className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-neutral-700 bg-neutral-50 px-4 text-sm font-semibold text-neutral-950 transition-colors hover:bg-neutral-200 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                  aria-label="コピーしてCodexに送る"
+                  title="コピーしてCodexに送る"
                 >
                   {codexSendStatus === "sending" ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1810,7 +1818,7 @@ export function CodexNodePanel({
                   ) : (
                     <ExternalLink className="h-4 w-4" />
                   )}
-                  Codexに送信
+                  Codexに送る
                 </a>
               )}
               {codexCopyableImages.length > 0 && (
@@ -2007,7 +2015,7 @@ export function CodexNodePanel({
             </section>
 
             <section
-              className="order-7 min-w-0 space-y-2 xl:col-start-2 xl:row-start-3"
+              className="order-7 min-w-0 space-y-2"
               data-testid="codex-node-tags-section"
             >
               <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
@@ -2033,10 +2041,10 @@ export function CodexNodePanel({
               void saveDraft(heading, detail)
               onClose()
             }}
-            className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-base font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+            className="sticky bottom-0 z-10 mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-lime-400 px-4 text-base font-semibold text-lime-950 shadow-[0_-18px_30px_rgba(10,10,10,0.85)] transition-colors hover:bg-lime-300 disabled:opacity-50"
           >
             {saveStatus === "saving" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
-            保存して閉じる
+            保存
           </button>
 
           {codexFeedback && (
@@ -2047,7 +2055,7 @@ export function CodexNodePanel({
             <p className="mt-3 text-sm text-rose-500">{error || voiceError}</p>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   )
 }
