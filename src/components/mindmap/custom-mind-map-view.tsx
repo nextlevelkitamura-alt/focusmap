@@ -39,6 +39,7 @@ type CustomMindMapViewProps = {
     groups: Task[];
     tasks: Task[];
     isMobile?: boolean;
+    mobilePlacementMode?: boolean;
     collapsedTaskIds: Set<string>;
     selectedNodeId: string | null;
     selectedNodeIds: Set<string>;
@@ -396,6 +397,7 @@ function CustomTaskNode({
     onRequestEdit,
     onPreviewTitleChange,
     onDropImportedChatNode,
+    mobilePlacementMode,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -431,6 +433,7 @@ function CustomTaskNode({
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
     onPreviewTitleChange?: (taskId: string, title: string | null) => void;
     onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
+    mobilePlacementMode?: boolean;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -810,7 +813,7 @@ function CustomTaskNode({
             onClick={(event) => {
                 event.stopPropagation();
                 onSelectNode(node.id, { additive: event.shiftKey || event.metaKey || event.ctrlKey });
-                if (isMobile && !isEditing) beginEditing();
+                if (isMobile && !isEditing && !mobilePlacementMode) beginEditing();
             }}
             onDoubleClick={(event) => {
                 event.stopPropagation();
@@ -1036,6 +1039,7 @@ function CustomProjectNode({
     onRegisterEditController,
     onRequestEdit,
     onDropImportedChatNode,
+    mobilePlacementMode,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -1051,6 +1055,7 @@ function CustomProjectNode({
     onRegisterEditController?: (nodeId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
     onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
+    mobilePlacementMode?: boolean;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1312,7 +1317,7 @@ function CustomProjectNode({
                 if (target instanceof HTMLElement && target.closest("input,textarea,select,a")) return;
                 event.stopPropagation();
                 onSelectNode(node.id);
-                if (isMobile) beginEditing();
+                if (isMobile && !mobilePlacementMode) beginEditing();
             }}
             onDoubleClick={(event) => {
                 event.stopPropagation();
@@ -1354,6 +1359,7 @@ export function CustomMindMapView({
     groups,
     tasks,
     isMobile = false,
+    mobilePlacementMode = false,
     collapsedTaskIds,
     selectedNodeId,
     selectedNodeIds,
@@ -3138,6 +3144,7 @@ export function CustomMindMapView({
                                     onRegisterEditController={handleRegisterEditController}
                                     onRequestEdit={startFloatingEdit}
                                     onDropImportedChatNode={onDropImportedChatNode}
+                                    mobilePlacementMode={mobilePlacementMode}
                                 />
                             );
                         }
@@ -3178,6 +3185,7 @@ export function CustomMindMapView({
                                 onRequestEdit={startFloatingEdit}
                                 onPreviewTitleChange={handlePreviewTitleChange}
                                 onDropImportedChatNode={onDropImportedChatNode}
+                                mobilePlacementMode={mobilePlacementMode}
                             />
                         );
                     })}

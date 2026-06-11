@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
-import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
+import { TaskProgressKanban, type TaskProgressImportItem } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state"
 import {
     CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS,
@@ -14,6 +14,7 @@ import {
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source"
+import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui"
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
@@ -24,6 +25,13 @@ import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-
 type MobileCustomDropPosition = "above" | "below" | "as-child"
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiting_approval", "completed", "failed"]
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input"])
+
+function formatChatImportUpdatedLabel(value: string | null | undefined) {
+    if (!value) return "更新不明"
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return "更新不明"
+    return `最終 ${date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })} ${date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`
+}
 
 function shouldUseTaskProgressFixture() {
     if (typeof window === "undefined") return false
@@ -51,6 +59,7 @@ interface MobileMindMapProps {
     focusEditNodeId?: string | null
     onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
+    codexOpenSignal?: number
 }
 
 export function MobileMindMap({
@@ -72,6 +81,7 @@ export function MobileMindMap({
     focusEditNodeId,
     onKanbanUpdateTask,
     onKanbanDeleteTask,
+    codexOpenSignal,
 }: MobileMindMapProps) {
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -82,6 +92,8 @@ export function MobileMindMap({
     const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set())
     const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null)
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false)
+    const [hiddenCodexChatImportIds, setHiddenCodexChatImportIds] = useState<Set<string>>(() => new Set())
+    const [placingCodexImportTaskId, setPlacingCodexImportTaskId] = useState<string | null>(null)
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
@@ -101,6 +113,8 @@ export function MobileMindMap({
         setKanbanSpaceId(project.space_id ?? null)
         setKanbanProjectId(project.id)
         setCodexThreadImportOverride(null)
+        setHiddenCodexChatImportIds(new Set())
+        setPlacingCodexImportTaskId(null)
     }, [project.id, project.space_id])
 
     const projectRepoPath = useMemo(() => (project.repo_path ?? "").trim(), [project.repo_path])
@@ -137,6 +151,7 @@ export function MobileMindMap({
     const kanbanProject = useMemo(() => (
         kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
     ), [kanbanProjectId, kanbanProjects, project])
+    const kanbanProjectRepoPath = useMemo(() => (kanbanProject?.repo_path ?? "").trim(), [kanbanProject?.repo_path])
     const kanbanTaskNodes = useMemo(() => {
         if (!kanbanProject?.id) return allMindMapTasks
         if (kanbanProject.id === project.id) return allMindMapTasks
@@ -383,7 +398,7 @@ export function MobileMindMap({
 
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {}
-        for (const task of allMindMapTasks) {
+        for (const task of knownCodexTaskNodes) {
             const aiTask = getBySourceId(task.id)
             const uiState = getCodexTaskUiState(aiTask)
             if (!aiTask || !uiState) continue
@@ -400,24 +415,72 @@ export function MobileMindMap({
             }
         }
         return result
-    }, [allMindMapTasks, getBySourceId])
+    }, [getBySourceId, knownCodexTaskNodes])
 
     const taskProgressByNodeId = useMemo(() => {
         const result: Record<string, TaskProgressSnapshotTask> = {}
         const snapshotByAiTaskId = new Map(taskProgressDisplayTasks.map(task => [task.id, task]))
         for (const progressTask of taskProgressDisplayTasks) {
-            if (progressTask.source_type === "mindmap" && progressTask.source_id && taskMap.has(progressTask.source_id)) {
+            if (progressTask.source_type === "mindmap" && progressTask.source_id && fallbackSourceTasksByIdForCodex.has(progressTask.source_id)) {
                 result[progressTask.source_id] = progressTask
             }
         }
-        for (const task of allMindMapTasks) {
+        for (const task of knownCodexTaskNodes) {
             if (result[task.id]) continue
             const aiTask = getBySourceId(task.id)
             const progressTask = aiTask ? snapshotByAiTaskId.get(aiTask.id) : null
             if (progressTask) result[task.id] = progressTask
         }
         return result
-    }, [allMindMapTasks, getBySourceId, taskMap, taskProgressDisplayTasks])
+    }, [fallbackSourceTasksByIdForCodex, getBySourceId, knownCodexTaskNodes, taskProgressDisplayTasks])
+
+    const codexChatImportItems = useMemo<TaskProgressImportItem[]>(() => {
+        const pool = allTasks.length > 0 ? allTasks : allMindMapTasks
+        const codexInboxGroupIds = new Set(
+            pool
+                .filter(task => task.deleted_at == null)
+                .filter(task => task.source === "codex_inbox" || task.title === "Codex Inbox")
+                .filter(task => !kanbanProject?.id || task.project_id === kanbanProject.id)
+                .map(task => task.id),
+        )
+        if (codexInboxGroupIds.size === 0) return []
+
+        return pool
+            .filter(task => task.source === "codex_app_thread" && task.deleted_at == null)
+            .filter(task => !hiddenCodexChatImportIds.has(task.id))
+            .filter(task => !!task.parent_task_id && codexInboxGroupIds.has(task.parent_task_id))
+            .filter(task => !kanbanProjectRepoPath || (task.codex_work_dir ?? "").trim() === kanbanProjectRepoPath)
+            .flatMap(task => {
+                const progressTask = taskProgressByNodeId[task.id]
+                const codexRun = codexRunByNodeId[task.id]
+                if (progressTask && getCodexMonitorUiStatus(progressTask.status) === "unsent") return []
+                if (codexRun?.state === "prompt_waiting") return []
+                if (!progressTask && !codexRun) return []
+                return [{
+                    id: task.id,
+                    title: task.title,
+                    snippet: task.memo?.trim() || null,
+                    repoPath: task.codex_work_dir?.trim() || null,
+                    threadId: task.codex_thread_id?.trim() || null,
+                    statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
+                    updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
+                }]
+            })
+            .sort((a, b) => {
+                const taskA = fallbackSourceTasksByIdForCodex.get(a.id)
+                const taskB = fallbackSourceTasksByIdForCodex.get(b.id)
+                return (taskB?.updated_at ?? "").localeCompare(taskA?.updated_at ?? "")
+            })
+    }, [
+        allMindMapTasks,
+        allTasks,
+        codexRunByNodeId,
+        fallbackSourceTasksByIdForCodex,
+        hiddenCodexChatImportIds,
+        kanbanProject?.id,
+        kanbanProjectRepoPath,
+        taskProgressByNodeId,
+    ])
 
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null
@@ -492,10 +555,55 @@ export function MobileMindMap({
         return false
     }, [taskMap])
 
+    const handleBeginPlaceCodexImportItem = useCallback((taskId: string) => {
+        setPlacingCodexImportTaskId(taskId)
+    }, [])
+
+    const handlePlaceCodexImportOnNode = useCallback(async (targetId: string) => {
+        const taskId = placingCodexImportTaskId
+        if (!taskId || (!onUpdateTask && !onKanbanUpdateTask)) return
+        if (taskId === targetId) return
+        if (isDescendant(taskId, targetId)) return
+
+        setHiddenCodexChatImportIds(prev => {
+            const next = new Set(prev)
+            next.add(taskId)
+            return next
+        })
+        setPlacingCodexImportTaskId(null)
+        setCollapsedTaskIds(prev => {
+            if (!prev.has(targetId)) return prev
+            const next = new Set(prev)
+            next.delete(targetId)
+            return next
+        })
+
+        try {
+            await updateTaskForCodexScope(taskId, {
+                parent_task_id: targetId,
+                project_id: project.id,
+            })
+            setSelectedNodeId(taskId)
+            setSelectedNodeIds(new Set([taskId]))
+        } catch (error) {
+            setHiddenCodexChatImportIds(prev => {
+                const next = new Set(prev)
+                next.delete(taskId)
+                return next
+            })
+            setPlacingCodexImportTaskId(taskId)
+            console.error("[MobileMindMap] Failed to place imported Codex chat:", error)
+        }
+    }, [isDescendant, onKanbanUpdateTask, onUpdateTask, placingCodexImportTaskId, project.id, updateTaskForCodexScope])
+
     const handleSelectNode = useCallback((nodeId: string | null) => {
+        if (nodeId && placingCodexImportTaskId && taskMap.has(nodeId)) {
+            void handlePlaceCodexImportOnNode(nodeId)
+            return
+        }
         setSelectedNodeId(nodeId)
         setSelectedNodeIds(nodeId && taskMap.has(nodeId) ? new Set([nodeId]) : new Set())
-    }, [taskMap])
+    }, [handlePlaceCodexImportOnNode, placingCodexImportTaskId, taskMap])
 
     const handleSelectNodes = useCallback((nodeIds: string[], primaryNodeId: string | null) => {
         const next = new Set(nodeIds.filter(nodeId => taskMap.has(nodeId)))
@@ -767,6 +875,7 @@ export function MobileMindMap({
                 onSelectNodes={handleSelectNodes}
                 onToggleCollapse={handleToggleCollapse}
                 pendingEditNodeId={pendingEditNodeId}
+                mobilePlacementMode={!!placingCodexImportTaskId}
                 onAddRootNode={handleAddRootNode}
                 onAddChildNode={handleAddChildNode}
                 onAddSiblingNode={handleAddSiblingNode}
@@ -814,7 +923,27 @@ export function MobileMindMap({
                 onRunSourceTask={(taskId) => setCodexPanelTaskId(taskId)}
                 onToggleSourceTaskComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
                 onDeleteSourceTask={(taskId) => { void handleDeleteTaskFromKanban(taskId) }}
+                mobileOpenSignal={codexOpenSignal}
+                mobileTriggerVisible={false}
+                mobileImportItems={codexChatImportItems}
+                onPlaceImportItem={handleBeginPlaceCodexImportItem}
             />
+            {placingCodexImportTaskId && (
+                <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top)+72px)] z-50 rounded-lg border bg-background/95 px-3 py-2 text-xs shadow-lg backdrop-blur">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 flex-1 text-muted-foreground">
+                            配置先のノードをタップ
+                        </span>
+                        <button
+                            type="button"
+                            className="min-h-9 shrink-0 rounded-md px-2 text-xs font-semibold text-primary"
+                            onClick={() => setPlacingCodexImportTaskId(null)}
+                        >
+                            キャンセル
+                        </button>
+                    </div>
+                </div>
+            )}
             <TaskProgressDetailPanel
                 open={!!taskProgressPanelTask}
                 task={taskProgressPanelTask}

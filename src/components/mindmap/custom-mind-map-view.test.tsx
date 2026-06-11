@@ -758,6 +758,17 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.getByTestId("floating-mind-map-editor")).toBeInTheDocument()
   })
 
+  test("does not start mobile title editing while choosing a Codex import destination", () => {
+    const onSelectNode = vi.fn()
+    renderMap({ isMobile: true, mobilePlacementMode: true, onSelectNode })
+
+    fireEvent.click(getNode("Root task", "root-1"))
+
+    expect(onSelectNode).toHaveBeenCalledWith("root-1")
+    expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("floating-mind-map-editor")).not.toBeInTheDocument()
+  })
+
   test("focuses an externally requested first mobile root node", async () => {
     installOpenKeyboardViewport()
     const firstRoot = makeTask({ id: "root-1", title: "" })

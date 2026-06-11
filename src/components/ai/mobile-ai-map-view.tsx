@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { Loader2, Sparkles } from "lucide-react"
+import { Bot, Loader2, Sparkles } from "lucide-react"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
@@ -92,6 +92,7 @@ export function MobileAiMapView({
   const [isLoadingOrganizeMemos, setIsLoadingOrganizeMemos] = useState(false)
   const [organizeError, setOrganizeError] = useState<string | null>(null)
   const [isMindmapDialogOpen, setIsMindmapDialogOpen] = useState(false)
+  const [codexOpenSignal, setCodexOpenSignal] = useState(0)
 
   const defaultProjectId = selectedProject?.id ?? null
 
@@ -137,8 +138,7 @@ export function MobileAiMapView({
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <div className="z-10 shrink-0 border-b bg-background/95 px-3 py-2 backdrop-blur">
         <div className="flex min-w-0 items-center gap-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            <h1 className="shrink-0 text-lg font-semibold leading-none tracking-normal">マップ</h1>
+          <div className="flex min-w-0 flex-1 items-center justify-start gap-1.5">
             <SpaceProjectSwitcher
               spaces={spaces}
               projects={projects}
@@ -148,7 +148,7 @@ export function MobileAiMapView({
               onSelectProject={onSelectProject}
               showAllProjectsOption={false}
               variant="memoHeaderCompact"
-              className="ml-6"
+              className="min-w-0 justify-start"
             />
           </div>
           <Button
@@ -156,10 +156,21 @@ export function MobileAiMapView({
             size="icon"
             variant="outline"
             className="h-11 w-11 shrink-0 rounded-md"
+            onClick={() => setCodexOpenSignal(value => value + 1)}
+            aria-label="Codexを開く"
+            title="Codex"
+          >
+            <Bot className="h-5 w-5" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-11 w-11 shrink-0 rounded-md"
             onClick={() => { void handleOpenMindmapDialog() }}
             disabled={!selectedProjectId || isLoadingOrganizeMemos}
-            aria-label="AIでメモからマップを作成"
-            title="AIでメモからマップを作成"
+            aria-label="メモからマップを作成"
+            title="メモからマップを作成"
           >
             {isLoadingOrganizeMemos ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -202,6 +213,7 @@ export function MobileAiMapView({
             onOpenLinkedMemos={onOpenLinkedMemos}
             onKanbanUpdateTask={onKanbanUpdateTask}
             onKanbanDeleteTask={onKanbanDeleteTask}
+            codexOpenSignal={codexOpenSignal}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">

@@ -234,7 +234,7 @@ describe('TaskProgressKanban', () => {
       ['node-review', sourceTask('node-review')],
     ]))
 
-    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Codexを開く/ }))
 
     expect(screen.getByText('確認待ちのCodexタスク')).toBeInTheDocument()
     expect(screen.queryByText('実行中のCodexタスク')).not.toBeInTheDocument()
@@ -264,7 +264,7 @@ describe('TaskProgressKanban', () => {
       ['node-done', sourceTask('node-done', { status: 'done' })],
     ]))
 
-    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Codexを開く/ }))
 
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /完了済み 1件/ })).toBeInTheDocument()
@@ -293,7 +293,7 @@ describe('TaskProgressKanban', () => {
       ['node-visible', sourceTask('node-visible')],
     ]))
 
-    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Codexを開く/ }))
 
     expect(screen.getByText('残っているノードのCodexタスク')).toBeInTheDocument()
     expect(screen.queryByText('削除済みノードのCodexタスク')).not.toBeInTheDocument()
@@ -317,11 +317,64 @@ describe('TaskProgressKanban', () => {
       ['node-visible', sourceTask('node-visible')],
     ]))
 
-    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Codexを開く/ }))
 
     expect(screen.getByText('現在ノードのCodexタスク')).toBeInTheDocument()
     expect(screen.queryByText('紐付かない古いCodexタスク')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
+  })
+
+  test('スマホCodexシートは外部ボタンから取り込みタブを開き配置選択へ進める', async () => {
+    const onPlaceImportItem = vi.fn()
+    const importItem = {
+      id: 'chat-node-1',
+      title: 'チャットがアーカイブされたのか',
+      snippet: 'この確認に必要な返信期限と背景を取り込む',
+      repoPath: '/Users/me/focusmap',
+      threadId: 'thread-abcdef123456',
+      statusLabel: '確認待ち',
+      updatedLabel: '最終 6/12 08:10',
+    }
+
+    const { rerender } = render(
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={0}
+        mobileImportItems={[importItem]}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+        onPlaceImportItem={onPlaceImportItem}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /Codexを開く/ })).not.toBeInTheDocument()
+
+    rerender(
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={1}
+        mobileImportItems={[importItem]}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+        onPlaceImportItem={onPlaceImportItem}
+      />,
+    )
+
+    expect(await screen.findByText('チャットがアーカイブされたのか')).toBeInTheDocument()
+    expect(screen.getByText('この確認に必要な返信期限と背景を取り込む')).toBeInTheDocument()
+    expect(screen.getByText('focusmap')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '配置先を選ぶ' }))
+
+    expect(onPlaceImportItem).toHaveBeenCalledWith('chat-node-1')
   })
 
   test('デスクトップ看板カードから元ノードを完了チェック・削除できる', async () => {

@@ -70,6 +70,17 @@ type RunnerConnectionState = {
 }
 
 type CodexKanbanLaneId = "running" | "review" | "connection_failed" | "done"
+type MobileCodexSheetTab = "import" | "board"
+
+export type TaskProgressImportItem = {
+  id: string
+  title: string
+  snippet: string | null
+  repoPath: string | null
+  threadId?: string | null
+  statusLabel: string | null
+  updatedLabel: string
+}
 
 type TaskProgressKanbanProps = {
   tasks: TaskProgressSnapshotTask[]
@@ -82,12 +93,16 @@ type TaskProgressKanbanProps = {
   onSelectProject?: (id: string | null) => void
   closeSignal?: number
   isMobile?: boolean
+  mobileOpenSignal?: number
+  mobileTriggerVisible?: boolean
+  mobileImportItems?: TaskProgressImportItem[]
   isLoading?: boolean
   isRefreshing?: boolean
   error?: string | null
   pollIntervalMs: number
   onRefresh: () => void | Promise<void>
   onOpenTask: (task: TaskProgressSnapshotTask) => void
+  onPlaceImportItem?: (taskId: string) => void
   onRunSourceTask?: (taskId: string) => void
   onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
@@ -143,6 +158,11 @@ function readStoredDesktopBoardHeight() {
   if (typeof window === "undefined") return DESKTOP_BOARD_DEFAULT_HEIGHT_PX
   const stored = Number(window.localStorage.getItem(DESKTOP_BOARD_HEIGHT_STORAGE_KEY))
   return clampDesktopBoardHeight(Number.isFinite(stored) && stored > 0 ? stored : DESKTOP_BOARD_DEFAULT_HEIGHT_PX)
+}
+
+function repoNameFromPath(value: string | null | undefined) {
+  if (!value) return null
+  return value.split(/[\\/]/).filter(Boolean).pop() || value
 }
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
@@ -694,23 +714,29 @@ export function TaskProgressKanban({
   onSelectProject,
   closeSignal = 0,
   isMobile = false,
+  mobileOpenSignal,
+  mobileTriggerVisible = true,
+  mobileImportItems = [],
   isLoading = false,
   isRefreshing = false,
   error,
   onRefresh,
   onOpenTask,
+  onPlaceImportItem,
   onRunSourceTask,
   onToggleSourceTaskComplete,
   onDeleteSourceTask,
 }: TaskProgressKanbanProps) {
   const [desktopExpansion, setDesktopExpansion] = useState(() => ({ closeSignal, expanded: false }))
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [activeMobileTab, setActiveMobileTab] = useState<MobileCodexSheetTab>("board")
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [desktopBodyHeightPx, setDesktopBodyHeightPx] = useState(readStoredDesktopBoardHeight)
   const [sourceTaskStatusOverrides, setSourceTaskStatusOverrides] = useState<Map<string, string>>(new Map())
   const [hiddenSourceTaskIds, setHiddenSourceTaskIds] = useState<Set<string>>(new Set())
   const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const lastMobileOpenSignalRef = useRef<number | undefined>(mobileOpenSignal)
   const desktopResizeCleanupRef = useRef<(() => void) | null>(null)
   const runnerState = useRunnerConnection()
 
@@ -836,13 +862,30 @@ export function TaskProgressKanban({
     }
   }, [onDeleteSourceTask])
 
-  const openMobileKanban = useCallback(() => {
+  const openMobileKanban = useCallback((tab?: MobileCodexSheetTab) => {
+    setActiveMobileTab(tab ?? (mobileImportItems.length > 0 ? "import" : "board"))
     setActiveMobileLaneId(current => {
       if (counts[current] > 0) return current
       return LANES.find(lane => counts[lane.id] > 0)?.id ?? current
     })
     setMobileOpen(true)
-  }, [counts])
+  }, [counts, mobileImportItems.length])
+
+  useEffect(() => {
+    if (!isMobile) return
+    if (mobileOpenSignal == null) return
+    if (lastMobileOpenSignalRef.current === mobileOpenSignal) return
+    lastMobileOpenSignalRef.current = mobileOpenSignal
+    const timeoutId = window.setTimeout(() => {
+      openMobileKanban(mobileImportItems.length > 0 ? "import" : "board")
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [isMobile, mobileImportItems.length, mobileOpenSignal, openMobileKanban])
+
+  const handlePlaceImportItem = useCallback((taskId: string) => {
+    onPlaceImportItem?.(taskId)
+    setMobileOpen(false)
+  }, [onPlaceImportItem])
 
   const handleMobileLanePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse") return
@@ -912,25 +955,27 @@ export function TaskProgressKanban({
   if (isMobile) {
     return (
       <>
-        <button
-          type="button"
-          className="absolute bottom-[calc(env(safe-area-inset-bottom)+76px)] right-3 z-40 inline-flex min-h-11 items-center gap-2 rounded-full border bg-background/95 px-3 text-xs font-semibold shadow-lg backdrop-blur"
-          onClick={openMobileKanban}
-          aria-label={`Codex看板を開く。Mac状態は${runnerState.loading ? "確認中" : runnerState.online ? "オンライン" : "オフライン"}です`}
-        >
-          <Bot className="h-4 w-4 text-emerald-600" />
-          Codex
-          <RunnerCompactStatus state={runnerState} />
-          {total > 0 && <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{total}</span>}
-        </button>
+        {mobileTriggerVisible && (
+          <button
+            type="button"
+            className="absolute bottom-[calc(env(safe-area-inset-bottom)+76px)] right-3 z-40 inline-flex min-h-11 items-center gap-2 rounded-full border bg-background/95 px-3 text-xs font-semibold shadow-lg backdrop-blur"
+            onClick={() => openMobileKanban()}
+            aria-label={`Codexを開く。Mac状態は${runnerState.loading ? "確認中" : runnerState.online ? "オンライン" : "オフライン"}です`}
+          >
+            <Bot className="h-4 w-4 text-emerald-600" />
+            Codex
+            <RunnerCompactStatus state={runnerState} />
+            {total > 0 && <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{total}</span>}
+          </button>
+        )}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetContent side="bottom" className="flex max-h-[86dvh] flex-col rounded-t-2xl p-0">
             <SheetHeader className="border-b px-4 py-3 text-left">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <SheetTitle className="text-base">Codex看板</SheetTitle>
+                  <SheetTitle className="text-base">Codex</SheetTitle>
                   <SheetDescription className="mt-1 text-xs">
-                    確認が必要なCodex実行だけを見る
+                    取り込んだチャットと実行状況を切り替える
                   </SheetDescription>
                 </div>
                 <Button
@@ -948,6 +993,29 @@ export function TaskProgressKanban({
               <div className="flex flex-wrap gap-1.5 pt-2">
                 <RunnerChip state={runnerState} />
               </div>
+              <div className="grid grid-cols-2 gap-1 rounded-md border bg-muted/30 p-1">
+                {[
+                  { id: "import" as const, label: "取り込み", count: mobileImportItems.length },
+                  { id: "board" as const, label: "看板", count: total },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={cn(
+                      "min-h-11 rounded px-3 text-sm font-semibold transition-colors",
+                      activeMobileTab === tab.id
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground",
+                    )}
+                    onClick={() => setActiveMobileTab(tab.id)}
+                  >
+                    {tab.label}
+                    <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
               <div className="pt-2">
                 <KanbanScopeSwitcher
                   spaces={spaces}
@@ -959,7 +1027,8 @@ export function TaskProgressKanban({
                   compact
                 />
               </div>
-              <div className="-mx-1 overflow-x-auto pt-2">
+              {activeMobileTab === "board" && (
+                <div className="-mx-1 overflow-x-auto pt-2">
                 <div className="flex w-max gap-1.5 px-1" role="tablist" aria-label="Codexステータス">
                   {LANES.map(lane => {
                     const Icon = lane.icon
@@ -990,35 +1059,87 @@ export function TaskProgressKanban({
                     )
                   })}
                 </div>
-              </div>
+                </div>
+              )}
             </SheetHeader>
-            <div
-              className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]"
-              onPointerDown={handleMobileLanePointerDown}
-              onPointerUp={handleMobileLanePointerEnd}
-              onPointerCancel={handleMobileLanePointerCancel}
-            >
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
               {error && (
                 <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
                   {error}
                 </div>
               )}
-              {isLoading && total === 0 ? (
-                <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
-                  最新状態を確認中...
+              {activeMobileTab === "import" ? (
+                <div className="space-y-2">
+                  {mobileImportItems.length === 0 ? (
+                    <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
+                      取り込めるCodexチャットはありません
+                    </div>
+                  ) : mobileImportItems.map(item => (
+                    <div key={item.id} className="rounded-lg border bg-card p-3 shadow-sm">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="line-clamp-2 text-sm font-semibold leading-snug">{item.title}</div>
+                          {item.snippet && (
+                            <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                              {item.snippet}
+                            </div>
+                          )}
+                        </div>
+                        {item.statusLabel && (
+                          <span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            {item.statusLabel}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                        {item.repoPath && (
+                          <span className="rounded-full bg-muted px-1.5 py-0.5" title={item.repoPath}>
+                            {repoNameFromPath(item.repoPath)}
+                          </span>
+                        )}
+                        {item.threadId && (
+                          <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono" title={item.threadId}>
+                            {item.threadId.slice(0, 8)}
+                          </span>
+                        )}
+                        <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
+                      </div>
+                      {onPlaceImportItem && (
+                        <button
+                          type="button"
+                          className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+                          onClick={() => handlePlaceImportItem(item.id)}
+                        >
+                          配置先を選ぶ
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <MobileKanbanLanePager
-                  lanes={lanes}
-                  activeLaneId={activeMobileLaneId}
-                  sourceTasksById={effectiveSourceTasksById}
-                  runnerState={runnerState}
-                  nowMs={nowMs}
-                  onOpenTask={onOpenTask}
-                  onRunSourceTask={onRunSourceTask}
-                  onToggleSourceTaskComplete={handleToggleSourceTaskComplete}
-                  onDeleteSourceTask={handleDeleteSourceTask}
-                />
+                <div
+                  onPointerDown={handleMobileLanePointerDown}
+                  onPointerUp={handleMobileLanePointerEnd}
+                  onPointerCancel={handleMobileLanePointerCancel}
+                >
+                  {isLoading && total === 0 ? (
+                    <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
+                      最新状態を確認中...
+                    </div>
+                  ) : (
+                    <MobileKanbanLanePager
+                      lanes={lanes}
+                      activeLaneId={activeMobileLaneId}
+                      sourceTasksById={effectiveSourceTasksById}
+                      runnerState={runnerState}
+                      nowMs={nowMs}
+                      onOpenTask={onOpenTask}
+                      onRunSourceTask={onRunSourceTask}
+                      onToggleSourceTaskComplete={handleToggleSourceTaskComplete}
+                      onDeleteSourceTask={handleDeleteSourceTask}
+                    />
+                  )}
+                </div>
               )}
             </div>
           </SheetContent>
