@@ -874,7 +874,8 @@ export function WishlistView({
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
-  const [desktopComposerOpen, setDesktopComposerOpen] = useState(true)
+  const [desktopComposerOpen, setDesktopComposerOpen] = useState(false)
+  const [desktopDraftFocusRequest, setDesktopDraftFocusRequest] = useState(0)
   const [desktopDraftColumn, setDesktopDraftColumn] = useState<ColumnKey>("unsorted")
   const [desktopDraftTitle, setDesktopDraftTitle] = useState("")
   const [desktopDraftDescription, setDesktopDraftDescription] = useState("")
@@ -905,9 +906,26 @@ export function WishlistView({
   const memoColumnDragRef = useRef<MemoColumnDragState | null>(null)
   const columnAutoMoveTimerRef = useRef<ColumnAutoMoveTimer | null>(null)
   const desktopDraftFileInputRef = useRef<HTMLInputElement>(null)
+  const desktopDraftDescriptionRef = useRef<HTMLTextAreaElement>(null)
   const desktopDraftImagesRef = useRef<DesktopMemoDraftImage[]>([])
   const voiceTargetRef = useRef<"intake" | "desktopDraft">("intake")
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
+
+  useEffect(() => {
+    if (!desktopComposerOpen || desktopDraftFocusRequest === 0) return
+
+    const focusDescription = () => {
+      desktopDraftDescriptionRef.current?.focus()
+    }
+
+    if (typeof window.requestAnimationFrame === "function") {
+      const frameId = window.requestAnimationFrame(focusDescription)
+      return () => window.cancelAnimationFrame(frameId)
+    }
+
+    const timeoutId = window.setTimeout(focusDescription, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [desktopComposerOpen, desktopDraftFocusRequest])
   const itemUpdateVersions = useRef(new Map<string, number>())
   const creatingMemoIdsRef = useRef(new Set<string>())
   const creatingMemoPromisesRef = useRef(new Map<string, Promise<void>>())
@@ -1747,6 +1765,7 @@ export function WishlistView({
 
   const resetDesktopDraft = useCallback((column: ColumnKey = "unsorted") => {
     setDesktopComposerOpen(true)
+    setDesktopDraftFocusRequest(prev => prev + 1)
     setDesktopDraftColumn(column)
     setDesktopDraftTitle("")
     setDesktopDraftDescription("")
@@ -3268,6 +3287,7 @@ export function WishlistView({
                         <span className="text-xs font-medium text-muted-foreground">メモの内容</span>
                         <div className="relative">
                           <textarea
+                            ref={desktopDraftDescriptionRef}
                             value={desktopDraftDescription}
                             onChange={event => setDesktopDraftDescription(event.target.value)}
                             placeholder="本文を入力"
@@ -3468,12 +3488,25 @@ export function WishlistView({
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
               >
-                <div className={cn(
-                  "grid h-full min-h-0 gap-3",
-                  desktopComposerOpen
-                    ? "lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]"
-                    : "lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)_minmax(16rem,1fr)] xl:grid-cols-[minmax(0,3.2fr)_minmax(17rem,1fr)_minmax(17rem,1fr)]",
-                )}>
+                <div className="flex h-full min-h-0 flex-col gap-2">
+                  {intakeError && !isAnalyzing && (
+                    <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                      <span>{intakeError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setIntakeError(null)}
+                        className="shrink-0 rounded px-2 py-1 hover:bg-destructive/10"
+                      >
+                        閉じる
+                      </button>
+                    </div>
+                  )}
+                  <div className={cn(
+                    "grid min-h-0 flex-1 gap-3",
+                    desktopComposerOpen
+                      ? "lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]"
+                      : "lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)_minmax(16rem,1fr)] xl:grid-cols-[minmax(0,3.2fr)_minmax(17rem,1fr)_minmax(17rem,1fr)]",
+                  )}>
                   <MemoSection
                     columnKey="unsorted"
                     title="メモ"
@@ -3529,6 +3562,7 @@ export function WishlistView({
                     selectedMemoIds={selectedMemoIds}
                     onToggleSelect={toggleMemoSelection}
                   />
+                  </div>
                 </div>
               </DragDropContext>
             </div>
