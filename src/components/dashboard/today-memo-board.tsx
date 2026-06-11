@@ -1130,7 +1130,7 @@ export function TodayMemoBoard({
             size="icon"
             variant="outline"
             onClick={openCreateDialog}
-            className="h-8 w-8 shrink-0 rounded-md"
+            className="h-8 w-8 shrink-0 rounded-md border-border/80 bg-background text-muted-foreground shadow-sm transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-primary"
             aria-label="今日するメモを追加"
             title="今日するメモを追加"
           >
@@ -1181,7 +1181,7 @@ export function TodayMemoBoard({
                 aria-label={COLUMN_LABEL[column]}
               >
                 {sectionItems.length === 0 ? (
-                  <div className="flex min-h-[36vh] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+                  <div className="flex h-full min-h-[36vh] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
                     <p>{COLUMN_EMPTY_TEXT[column]}</p>
                     {column === "today" && (
                       <p className="max-w-xs text-xs">メモ画面でメモを今日カラムにドラッグしてください。</p>

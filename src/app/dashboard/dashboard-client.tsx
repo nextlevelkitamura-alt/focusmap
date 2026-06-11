@@ -1390,13 +1390,13 @@ export function DashboardClient({
 
                 {/* === Mobile/Desktop: Ideal View === */}
                 {isViewReady && activeView === 'ideal' && (
-                    <div className="flex-1 flex overflow-hidden">
+                    <div className="flex-1 min-h-0 flex overflow-hidden">
                         <IdealView />
                     </div>
                 )}
 
                 {isViewReady && activeView === 'long-term' && (
-                    <div className={cn("flex-1 overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
+                    <div className={cn("flex-1 min-h-0 overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
                         {isMapSplitVisible ? (
                             <div className="flex h-full min-h-0 overflow-hidden">
                                 <div className="h-full min-w-[420px] max-w-[720px] border-r bg-background" style={{ width: '46%' }}>
@@ -1466,7 +1466,7 @@ export function DashboardClient({
 
                 {/* === Desktop: AI View === */}
                 {!isMobileViewport && activeView === 'ai' && (
-                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
+                    <div className={cn("flex-1 min-h-0 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiView
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
@@ -1475,14 +1475,14 @@ export function DashboardClient({
                 )}
 
                 {!isMobileViewport && activeView === 'automation' && (
-                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
+                    <div className={cn("flex-1 min-h-0 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
                     </div>
                 )}
 
                 {/* === Desktop: AI Todos View === */}
                 {!isMobileViewport && activeView === 'ai-todos' && (
-                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
+                    <div className={cn("flex-1 min-h-0 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiTodosView initialTasks={[]} initialSnapshot={null} sessionDate={getTodayDateString()} />
                     </div>
                 )}
@@ -1491,7 +1491,7 @@ export function DashboardClient({
                 {!isMobileViewport && (
                 <TodayDateProvider selectedDate={todaySelectedDate} setSelectedDate={setTodaySelectedDate}>
                 <div className={cn(
-                    "flex-1 w-full relative gap-0 overflow-hidden",
+                    "flex-1 min-h-0 w-full relative gap-0 overflow-hidden",
                     desktopFlexClass,
                     desktopDashboardWidthClass,
                     (activeView === 'ai' || activeView === 'automation' || activeView === 'ideal' || activeView === 'ai-todos' || activeView === 'settings' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""

@@ -2955,7 +2955,7 @@ export function WishlistView({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {!useDesktopMemoBoard && (
       <div className={cn("shrink-0 border-b px-3 py-2", compactComposer ? "space-y-2 md:px-3" : "space-y-2 md:px-5")}>
         {compactComposer ? (
@@ -3357,7 +3357,7 @@ export function WishlistView({
       </div>
       )}
 
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <div className={cn(
           "h-full",
           useDesktopMemoBoard ? "overflow-hidden p-3" : "overflow-y-auto px-4 py-4 pb-24 md:px-6",
@@ -3812,7 +3812,7 @@ export function WishlistView({
                     </div>
                   )}
                   <div className={cn(
-                    "grid min-h-0 flex-1 gap-3",
+                    "grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3",
                     desktopComposerOpen
                       ? "lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]"
                       : "lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)_minmax(16rem,1fr)] xl:grid-cols-[minmax(0,3.2fr)_minmax(17rem,1fr)_minmax(17rem,1fr)]",
@@ -3831,7 +3831,7 @@ export function WishlistView({
                     tagColors={tagColors}
                     nativeMemoDrag={isCalendarSplitVisible}
                     nativeMemoDragForItem={item => isCalendarSplitVisible && getColumn(item, todayRange.start, todayRange.end) === "unsorted"}
-                    className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
+                    className="flex h-full min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
                     listClassName={desktopComposerOpen ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3"}
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
@@ -3850,7 +3850,7 @@ export function WishlistView({
                     projectById={projectById}
                     tagColors={tagColors}
                     nativeMemoDrag={isCalendarSplitVisible}
-                    className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
+                    className="flex h-full min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
                     onToggleSelect={toggleMemoSelection}
@@ -3867,7 +3867,7 @@ export function WishlistView({
                     projectById={projectById}
                     tagColors={tagColors}
                     nativeMemoDrag={false}
-                    className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
+                    className="flex h-full min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
                     onToggleSelect={toggleMemoSelection}
@@ -4403,7 +4403,7 @@ function MemoSection({
             variant="ghost"
             size="icon"
             onClick={onAdd}
-            className="ml-auto h-8 w-8 shrink-0 rounded-md"
+            className="ml-auto h-8 w-8 shrink-0 rounded-md border border-border/80 bg-background text-muted-foreground shadow-sm transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-primary"
             aria-label={`${title}にメモを追加`}
             title={`${title}にメモを追加`}
           >
@@ -4422,7 +4422,7 @@ function MemoSection({
             )}
           >
             {items.length === 0 ? (
-              <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+              <div className="flex h-full min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
                 {emptyText}
               </div>
             ) : (

@@ -20,7 +20,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {/* Main Content Area */}
                     <main className={cn(
                         "flex-1 min-h-0 relative flex flex-col",
-                        forceDesktopDashboard ? "overflow-auto pb-0" : "overflow-hidden pb-[calc(76px+env(safe-area-inset-bottom,0px))] md:pb-0",
+                        forceDesktopDashboard ? "overflow-x-auto overflow-y-hidden pb-0" : "overflow-hidden pb-[calc(76px+env(safe-area-inset-bottom,0px))] md:pb-0",
                     )}>
                         {children}
                     </main>

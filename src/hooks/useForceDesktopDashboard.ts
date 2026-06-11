@@ -46,10 +46,8 @@ export function useForceDesktopDashboard(): boolean {
             document.head.appendChild(viewport)
         }
 
-        viewport.content = forceDesktop
-            ? "width=1120, maximum-scale=1, user-scalable=no, viewport-fit=cover"
-            : "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
-    }, [forceDesktop])
+        viewport.content = "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    }, [])
 
     return forceDesktop
 }
