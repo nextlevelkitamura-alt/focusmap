@@ -804,7 +804,7 @@ describe('WishlistView calendar D&D', () => {
     expect(screen.queryByRole('button', { name: /予定済み/ })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '今日0' }))
-    fireEvent.change(screen.getByPlaceholderText('音声またはテキストで入力'), {
+    fireEvent.change(screen.getByPlaceholderText('話した内容やメモを入力'), {
       target: { value: '新しいメモ' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'メモを追加' }))

@@ -213,7 +213,7 @@ describe('WishlistCardDetail', () => {
     expectVisualOrder(scheduleSection, 'order-4')
   })
 
-  test('スマホ表示ではメモ詳細と画像を上に置き、タグを最後に回す', async () => {
+  test('スマホ表示ではモック型の下部編集シートを表示する', async () => {
     vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
 
     render(
@@ -242,24 +242,22 @@ describe('WishlistCardDetail', () => {
       />,
     )
 
-    const titleInput = await screen.findByDisplayValue('Original title')
-    const memoDetail = screen.getByText('メモ詳細')
-    const imageSection = screen.getByText('画像')
-    const codexButton = screen.getByRole('button', { name: /Codexに送る/ })
-    const scheduleSection = screen.getByText('時間・予定')
-    const tagSection = screen.getByText('タグ')
-
-    expectVisualOrder(titleInput, 'order-0')
-    expectVisualOrder(memoDetail, 'order-1')
-    expectVisualOrder(imageSection, 'order-2')
-    expectVisualOrder(codexButton, 'order-3')
-    expectVisualOrder(scheduleSection, 'order-4')
-    expectVisualOrder(tagSection, 'order-7')
+    await screen.findByDisplayValue('Original title')
+    expect(screen.getByRole('heading', { name: 'メモを追加' })).toBeInTheDocument()
+    expect(screen.getByText('見出し')).toBeInTheDocument()
+    expect(screen.getByText('メモの内容')).toBeInTheDocument()
+    expect(screen.getByText('所要時間')).toBeInTheDocument()
+    expect(screen.getByText('画像')).toBeInTheDocument()
     expect(screen.queryByText('見出し生成')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '見出しを生成' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '本文から見出し生成' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '本文を音声入力' })).toBeInTheDocument()
     expect(screen.getByText('写真を選択')).toBeInTheDocument()
-    expect(screen.getByText('ライブラリ / 撮影')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Codexに送る/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('タグ')).not.toBeInTheDocument()
+    expect(screen.queryByText('時間・予定')).not.toBeInTheDocument()
+    expect(screen.queryByText('ライブラリ / 撮影')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /クリップボード画像を貼り付け/ })).not.toBeInTheDocument()
   })
 

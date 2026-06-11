@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Mic, Network, Plus, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
+import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, FolderOpen, ImagePlus, Loader2, Mic, Network, Plus, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -2075,6 +2075,270 @@ export function WishlistCardDetail({
       </div>
     </div>
   )
+
+  if (isMobile) {
+    const handleMobileSave = async () => {
+      await flushMemoDraft()
+      onSaved?.()
+      onOpenChange(false)
+    }
+    const selectedDurationLabel = item.duration_minutes ? formatDurationLabel(item.duration_minutes) : "未設定"
+    const mobileDurationOptions = QUICK_MINUTES
+
+    return (
+      <Sheet
+        open={open}
+        onOpenChange={nextOpen => {
+          if (nextOpen) {
+            onOpenChange(true)
+            return
+          }
+          void handleRequestClose()
+        }}
+      >
+        <SheetContent
+          side="bottom"
+          data-testid="memo-detail-sheet"
+          className={cn(
+            "max-h-[84dvh] w-full max-w-full gap-0 overflow-hidden rounded-t-[28px] border-neutral-700/60 bg-[#202020]/95 px-0 pb-0 text-neutral-50 shadow-[0_-20px_56px_rgba(0,0,0,0.62)] backdrop-blur-xl",
+            "[&>button]:right-4 [&>button]:top-7 [&>button]:flex [&>button]:h-10 [&>button]:w-10 [&>button]:items-center [&>button]:justify-center",
+            "[&>button]:rounded-full [&>button]:text-neutral-300 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-50 [&>button_svg]:h-5 [&>button_svg]:w-5",
+          )}
+          onOpenAutoFocus={event => {
+            event.preventDefault()
+          }}
+          onPaste={handleImagePaste}
+          onTouchStart={handleSheetTouchStart}
+          onTouchEnd={handleSheetTouchEnd}
+        >
+          <div className="flex justify-center pt-2">
+            <div className="h-1 w-12 rounded-full bg-white/28" />
+          </div>
+
+          <div className="flex min-h-14 items-center justify-between gap-3 px-5 pb-2 pt-3">
+            <SheetTitle className="text-left text-xl font-bold tracking-normal text-neutral-50">メモを追加</SheetTitle>
+            <div className="mr-11 rounded-full border border-white/10 bg-white/[0.08] px-5 py-2 text-sm font-medium text-neutral-300">
+              メモ
+            </div>
+          </div>
+
+          <div
+            ref={sheetScrollRef}
+            className="max-h-[calc(84dvh-82px)] overflow-y-auto px-5 pb-[calc(16px+env(safe-area-inset-bottom,0px))] [touch-action:pan-y]"
+          >
+            <div className="space-y-4">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-neutral-400">見出し</span>
+                <div className="relative">
+                  <Input
+                    value={draftTitle}
+                    onChange={e => setDraftTitle(e.target.value)}
+                    placeholder="メモの見出し"
+                    className="h-14 rounded-xl border-white/10 bg-[#171717] pr-14 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateTitle()}
+                    disabled={isGeneratingTitle || !draftDescription.trim()}
+                    className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-neutral-200 transition hover:bg-white/10 disabled:opacity-35"
+                    aria-label="見出しを生成"
+                    title="見出しを生成"
+                  >
+                    {isGeneratingTitle ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-6 w-6" />}
+                  </button>
+                </div>
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-neutral-400">メモの内容</span>
+                <div className="relative overflow-hidden rounded-xl border border-white/10 bg-[#111111] focus-within:ring-2 focus-within:ring-white/15">
+                  <textarea
+                    value={draftDescription}
+                    onChange={e => setDraftDescription(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault()
+                        void flushMemoDraft()
+                      }
+                    }}
+                    rows={4}
+                    placeholder="本文を入力"
+                    className="min-h-[128px] w-full resize-none bg-transparent px-4 py-4 pr-14 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateTitle()}
+                    disabled={isGeneratingTitle || !draftDescription.trim()}
+                    className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-lg text-neutral-200 transition hover:bg-white/10 disabled:opacity-35"
+                    aria-label="本文から見出し生成"
+                    title="本文から見出し生成"
+                  >
+                    {isGeneratingTitle ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-6 w-6" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleMemoVoiceToggle()}
+                    disabled={isMemoTranscribing}
+                    className={cn(
+                      "absolute bottom-2 right-2 flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-50",
+                      isMemoRecording && "border-red-400/40 bg-red-500/20 text-red-100",
+                    )}
+                    aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                    title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                  >
+                    {isMemoTranscribing ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : isMemoRecording ? (
+                      <Square className="h-5 w-5" />
+                    ) : (
+                      <Mic className="h-5 w-5" />
+                    )}
+                  </button>
+                </div>
+              </label>
+
+              {(isMemoRecording || isMemoTranscribing || memoVoiceError) && (
+                <div className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-neutral-300">
+                  {isMemoRecording && (
+                    <>
+                      <span className="shrink-0 font-medium text-red-300">録音中</span>
+                      <VoiceWaveform analyserRef={memoVoiceAnalyserRef} height={18} barCount={18} />
+                    </>
+                  )}
+                  {isMemoTranscribing && (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>文字起こし中...</span>
+                    </>
+                  )}
+                  {memoVoiceError && <span className="min-w-0 flex-1 truncate text-red-200">{memoVoiceError}</span>}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-neutral-400">所要時間</span>
+                  <span className="text-sm text-neutral-400">{selectedDurationLabel}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {mobileDurationOptions.map(minutes => (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => void handleDurationChange(minutes)}
+                      className={cn(
+                        "min-h-11 rounded-xl border px-2 text-sm font-medium transition",
+                        item.duration_minutes === minutes
+                          ? "border-neutral-100 bg-neutral-100 text-neutral-950"
+                          : "border-white/10 bg-[#111111] text-neutral-300 hover:bg-white/[0.08]",
+                      )}
+                    >
+                      {formatDurationLabel(minutes)}
+                    </button>
+                  ))}
+                  <DurationWheelPopover
+                    valueMinutes={item.duration_minutes}
+                    onChange={handleDurationChange}
+                    side="bottom"
+                    align="end"
+                    trigger={(
+                      <button
+                        type="button"
+                        className={cn(
+                          "min-h-11 rounded-xl border px-2 text-sm font-medium transition",
+                          item.duration_minutes && !mobileDurationOptions.includes(item.duration_minutes)
+                            ? "border-neutral-100 bg-neutral-100 text-neutral-950"
+                            : "border-white/10 bg-[#111111] text-neutral-300 hover:bg-white/[0.08]",
+                        )}
+                      >
+                        カスタム
+                      </button>
+                    )}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-sm font-medium text-neutral-400">画像</span>
+                {displayedImages.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {displayedImages.map(image => {
+                      const isPending = "is_pending" in image
+                      return (
+                        <div key={image.id} className={cn("relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.04]", isPending && "opacity-50")}>
+                          {image.file_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={image.file_url} alt={image.file_name} className="h-24 w-full object-cover" />
+                          ) : (
+                            <div className="flex h-24 items-center justify-center">
+                              <ImagePlus className="h-6 w-6 text-neutral-500" />
+                            </div>
+                          )}
+                          {isPending ? (
+                            <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-black/60 px-2 py-1 text-[11px] text-neutral-200">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              保存中
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleImageDelete(image)}
+                              disabled={deletingImageId === image.id}
+                              className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-neutral-100"
+                              aria-label="画像を削除"
+                              title="画像を削除"
+                            >
+                              {deletingImageId === image.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  disabled={isUploadingImage || isPastingClipboardImage}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex min-h-14 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-100 transition hover:bg-white/[0.08] disabled:opacity-60"
+                >
+                  {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <FolderOpen className="h-6 w-6" />}
+                  写真を選択
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={e => {
+                    const files = Array.from(e.target.files ?? [])
+                    if (files.length > 0) void uploadImages(files)
+                  }}
+                />
+              </div>
+
+              {saveError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm leading-5 text-red-200">
+                  {saveError}
+                </div>
+              )}
+
+              <Button
+                type="button"
+                onClick={() => void handleMobileSave()}
+                disabled={isSavingMemo || isUploadingImage || isPastingClipboardImage}
+                className="h-14 w-full rounded-xl bg-[#32d354] text-lg font-bold text-white shadow-[0_12px_28px_rgba(50,211,84,0.28)] hover:bg-[#38df5c] disabled:opacity-60"
+              >
+                {isSavingMemo ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
+                保存
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    )
+  }
 
   return (
     <Sheet
