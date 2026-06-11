@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WishlistView } from './wishlist-view'
 import type { IdealGoalWithItems } from '@/types/database'
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT } from '@/lib/calendar-constants'
+import { compressImageFileForUpload } from '@/lib/image-compression'
 import { invalidateWishlistItemsCache } from '@/lib/wishlist-cache'
 
 const calendarEvents = vi.hoisted(() => ({
@@ -201,6 +202,8 @@ describe('WishlistView calendar D&D', () => {
     calendarEvents.broadcastCalendarOptimisticEventRemoval.mockClear()
     calendarEvents.broadcastCalendarSync.mockClear()
     calendarEvents.invalidateCalendarCache.mockClear()
+    vi.mocked(compressImageFileForUpload).mockReset()
+    vi.mocked(compressImageFileForUpload).mockImplementation(async (file: File) => file)
   })
 
   test('ドロップ成功時にカレンダーAPIへ保存し、メモを予定済みに更新する', async () => {
@@ -501,7 +504,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('デスクトップ左パネルで選んだ画像を保存後に添付APIへアップロードする', async () => {
+  test('デスクトップ左パネルで選んだ画像を保存後に圧縮して添付APIへアップロードする', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -543,6 +546,7 @@ describe('WishlistView calendar D&D', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => {
+      expect(compressImageFileForUpload).toHaveBeenCalledWith(imageFile)
       expect(fetchMock.mock.calls.some(([input, init]) =>
         requestUrl(input) === '/api/wishlist/created-memo/attachments' && init?.method === 'POST',
       )).toBe(true)
@@ -577,6 +581,7 @@ describe('WishlistView calendar D&D', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
     })
+    expect(screen.queryByRole('button', { name: '完了にメモを追加' })).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
     )).toBe(false)

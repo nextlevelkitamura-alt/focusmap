@@ -874,7 +874,6 @@ export function WishlistView({
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
-  const [desktopComposerOpen, setDesktopComposerOpen] = useState(true)
   const [desktopDraftColumn, setDesktopDraftColumn] = useState<ColumnKey>("unsorted")
   const [desktopDraftTitle, setDesktopDraftTitle] = useState("")
   const [desktopDraftDescription, setDesktopDraftDescription] = useState("")
@@ -1746,7 +1745,6 @@ export function WishlistView({
   }, [])
 
   const resetDesktopDraft = useCallback((column: ColumnKey = "unsorted") => {
-    setDesktopComposerOpen(true)
     setDesktopDraftColumn(column)
     setDesktopDraftTitle("")
     setDesktopDraftDescription("")
@@ -1758,7 +1756,6 @@ export function WishlistView({
   }, [clearDesktopDraftImages])
 
   const handleCloseDesktopComposer = useCallback(() => {
-    setDesktopComposerOpen(false)
     setDesktopDraftTitle("")
     setDesktopDraftDescription("")
     setDesktopDraftDuration(null)
@@ -3213,8 +3210,7 @@ export function WishlistView({
                 className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/70 shadow-sm"
                 onPaste={handleDesktopDraftPaste}
               >
-                {desktopComposerOpen ? (
-                  <>
+                <>
                     <div className="flex min-h-12 shrink-0 items-center gap-2 border-b px-3">
                       <div className="min-w-0 flex-1">
                         <h1 className="truncate text-sm font-semibold">メモを追加</h1>
@@ -3239,8 +3235,8 @@ export function WishlistView({
                         size="icon"
                         onClick={handleCloseDesktopComposer}
                         className="h-8 w-8 shrink-0"
-                        aria-label="追加パネルを閉じる"
-                        title="閉じる"
+                        aria-label="追加内容をクリア"
+                        title="入力をクリア"
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -3437,7 +3433,7 @@ export function WishlistView({
                       )}
                     </div>
 
-                    <div className="shrink-0 border-t bg-background/80 p-3">
+                    <div className="shrink-0 border-t bg-background/95 p-3">
                       <Button
                         type="button"
                         onClick={() => { void handleSaveDesktopDraft() }}
@@ -3451,17 +3447,7 @@ export function WishlistView({
                         保存
                       </Button>
                     </div>
-                  </>
-                ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
-                    <div className="text-sm font-medium">メモを追加</div>
-                    <p className="text-xs leading-5 text-muted-foreground">各レーンの＋から追加先を選べます。</p>
-                    <Button type="button" onClick={() => resetDesktopDraft("unsorted")} className="min-h-10 gap-1.5">
-                      <Plus className="h-4 w-4" />
-                      新規メモ
-                    </Button>
-                  </div>
-                )}
+                </>
               </section>
 
               <DragDropContext
@@ -3470,7 +3456,7 @@ export function WishlistView({
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
               >
-                <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(14rem,1fr)_minmax(14rem,1fr)]">
+                <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]">
                   <MemoSection
                     columnKey="unsorted"
                     title="未予定"
@@ -3486,7 +3472,7 @@ export function WishlistView({
                     nativeMemoDrag={isCalendarSplitVisible}
                     nativeMemoDragForItem={item => isCalendarSplitVisible && getColumn(item, todayRange.start, todayRange.end) === "unsorted"}
                     className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
-                    listClassName="sm:grid-cols-2"
+                    listClassName="sm:grid-cols-2 lg:grid-cols-3"
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
                     onToggleSelect={toggleMemoSelection}
@@ -3518,7 +3504,6 @@ export function WishlistView({
                     onUpdate={handleUpdate}
                     onDelete={handleDelete}
                     onOpen={openDetail}
-                    onAdd={() => resetDesktopDraft("completed")}
                     projectById={projectById}
                     tagColors={tagColors}
                     nativeMemoDrag={false}
