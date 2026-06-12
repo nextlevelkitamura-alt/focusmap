@@ -7,6 +7,17 @@ import { compressImageFileForUpload } from '@/lib/image-compression'
 import { invalidateWishlistItemsCache } from '@/lib/wishlist-cache'
 
 const calendarEvents = vi.hoisted(() => ({
+  useCalendarEvents: vi.fn(() => ({
+    events: [],
+    isLoading: false,
+    isRefreshing: false,
+    error: null,
+    syncNow: vi.fn(),
+    refetch: vi.fn(),
+    setEvents: vi.fn(),
+    addOptimisticEvent: vi.fn(),
+    removeOptimisticEvent: vi.fn(),
+  })),
   broadcastCalendarOptimisticEvent: vi.fn(),
   broadcastCalendarOptimisticEventRemoval: vi.fn(),
   broadcastCalendarSync: vi.fn(),
@@ -179,6 +190,21 @@ function requestUrl(input: RequestInfo | URL) {
   return input.url
 }
 
+function rect(overrides: Partial<DOMRect> = {}): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    bottom: 0,
+    right: 0,
+    width: 0,
+    height: 0,
+    toJSON: () => ({}),
+    ...overrides,
+  } as DOMRect
+}
+
 async function renderVisibleWishlist(expectedText = 'Drop memo') {
   render(
     <WishlistView
@@ -208,6 +234,18 @@ describe('WishlistView calendar D&D', () => {
     calendarEvents.broadcastCalendarOptimisticEventRemoval.mockClear()
     calendarEvents.broadcastCalendarSync.mockClear()
     calendarEvents.invalidateCalendarCache.mockClear()
+    calendarEvents.useCalendarEvents.mockClear()
+    calendarEvents.useCalendarEvents.mockReturnValue({
+      events: [],
+      isLoading: false,
+      isRefreshing: false,
+      error: null,
+      syncNow: vi.fn(),
+      refetch: vi.fn(),
+      setEvents: vi.fn(),
+      addOptimisticEvent: vi.fn(),
+      removeOptimisticEvent: vi.fn(),
+    })
     memoAiTaskMock.task = null
     memoAiTaskMock.refresh.mockClear()
     vi.mocked(compressImageFileForUpload).mockReset()
@@ -368,6 +406,72 @@ describe('WishlistView calendar D&D', () => {
     expect(screen.getByRole('heading', { name: 'メモ' })).toBeInTheDocument()
     expect(screen.getByText('Mapped memo')).toBeInTheDocument()
     expect(screen.getByText('Unsorted memo')).toBeInTheDocument()
+  })
+
+  test('スマホの予定ボタンはメモタブ内カレンダーを開き、ドラッグ終了で保存して一覧に戻る', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const originalItem = createMemoItem({ title: 'Schedule from memo' })
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist') return jsonResponse({ items: [originalItem] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      if (url === '/api/wishlist/memo-1/calendar') {
+        const body = JSON.parse((init?.body as string | undefined) ?? '{}')
+        return jsonResponse({
+          google_event_id: 'google-event-1',
+          item: createMemoItem({
+            ...originalItem,
+            scheduled_at: body.scheduled_at,
+            duration_minutes: body.duration_minutes,
+            google_event_id: 'google-event-1',
+            memo_status: 'scheduled',
+            is_today: false,
+          }),
+        })
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView />)
+
+    await screen.findByText('Schedule from memo')
+    fireEvent.click(screen.getByRole('button', { name: '予定に入れる' }))
+
+    await screen.findByTestId('memo-inline-scheduler')
+    expect(screen.queryByText('この時間に入れる')).not.toBeInTheDocument()
+    expect(screen.queryByText('キャンセル')).not.toBeInTheDocument()
+
+    const grid = screen.getByTestId('memo-scheduler-grid')
+    const draft = screen.getByTestId('memo-scheduler-draft')
+    vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue(rect({ top: 0, bottom: 1536, height: 1536, width: 360, right: 360 }))
+    vi.spyOn(draft, 'getBoundingClientRect').mockReturnValue(rect({ top: 640, bottom: 700, height: 60, width: 300, right: 360 }))
+
+    fireEvent.pointerDown(draft, { pointerId: 1, button: 0, clientY: 650 })
+    fireEvent.pointerMove(draft, { pointerId: 1, button: 0, clientY: 770 })
+    fireEvent.pointerUp(draft, { pointerId: 1, button: 0, clientY: 770 })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('memo-inline-scheduler')).not.toBeInTheDocument()
+      const calendarCall = fetchMock.mock.calls.find(([input]) => requestUrl(input) === '/api/wishlist/memo-1/calendar')
+      expect(calendarCall).toBeDefined()
+      expect(JSON.parse(calendarCall?.[1]?.body as string)).toMatchObject({
+        duration_minutes: TODAY_DURATION_DEFAULT,
+        calendar_id: 'work-cal',
+        title: 'Schedule from memo',
+      })
+    })
+    expect(screen.getByText('Schedule from memo')).toBeInTheDocument()
   })
 
   test('看板の完了切り替えを紐づくマインドマップノードへ同期する', async () => {

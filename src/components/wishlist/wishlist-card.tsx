@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Calendar, Check, Clock, GripVertical, Trash2 } from "lucide-react"
+import { Calendar, CalendarPlus, Check, Clock, GripVertical, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
@@ -33,6 +33,7 @@ interface WishlistCardProps {
   onDragStart?: () => void
   // Today タブで native HTML5 D&D を有効化（カレンダー上に配置するため）
   nativeMemoDrag?: boolean
+  onScheduleClick?: () => void
 }
 
 function formatDateTime(value: string | null): string | null {
@@ -59,6 +60,7 @@ export function WishlistCard({
   draggable,
   onDragStart,
   nativeMemoDrag = false,
+  onScheduleClick,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
@@ -97,6 +99,11 @@ export function WishlistCard({
   const handleSetDuration = async (e: React.MouseEvent, minutes: number) => {
     e.stopPropagation()
     await onUpdate(item.id, { duration_minutes: minutes } as Partial<MemoItem>)
+  }
+
+  const handleScheduleClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onScheduleClick?.()
   }
 
   // scheduled_at が今日のものも「今日カラム」相当として扱う（duration チップ表示判定）
@@ -295,19 +302,38 @@ export function WishlistCard({
         </div>
       )}
 
-      <div className="mt-2 flex justify-end" onClick={e => e.stopPropagation()}>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          title="削除"
-          aria-label="削除"
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="absolute right-2 top-12 z-10 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
+        onPointerDown={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        onClick={handleDelete}
+        disabled={isDeleting}
+        title="削除"
+        aria-label="削除"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+
+      {onScheduleClick && !isCompleted && !isScheduled && (
+        <div className="mt-2 flex items-center" onClick={e => e.stopPropagation()}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 min-h-[32px] rounded-md border-primary/50 bg-primary/10 px-2.5 text-xs font-semibold text-primary hover:bg-primary/15"
+            onPointerDown={e => e.stopPropagation()}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={handleScheduleClick}
+            title="予定に入れる"
+            aria-label="予定に入れる"
+          >
+            <CalendarPlus className="mr-1.5 h-3.5 w-3.5" />
+            予定に入れる
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

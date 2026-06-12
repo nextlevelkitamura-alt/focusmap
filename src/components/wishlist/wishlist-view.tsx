@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent } from "react"
 import {
   DragDropContext,
   Droppable,
@@ -15,7 +15,7 @@ import {
   type SensorAPI,
 } from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Send, Settings, Sparkles, Square, Terminal, X } from "lucide-react"
+import { Calendar, Check, ChevronDown, ChevronLeft, Clock, FolderOpen, ImagePlus, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Send, Settings, Sparkles, Square, Terminal, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -40,7 +40,7 @@ import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wh
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useTagColors } from "@/hooks/useTagColors"
-import { useCalendars } from "@/hooks/useCalendars"
+import { useCalendars, type UserCalendar as CalendarListItem } from "@/hooks/useCalendars"
 import { useUndoRedo } from "@/hooks/useUndoRedo"
 import {
   broadcastCalendarOptimisticEvent,
@@ -48,6 +48,7 @@ import {
   broadcastCalendarSync,
   CALENDAR_EVENT_TIME_UPDATE_EVENT,
   invalidateCalendarCache,
+  useCalendarEvents,
 } from "@/hooks/useCalendarEvents"
 import { IdealGoalWithItems, Project, Space } from "@/types/database"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
@@ -76,6 +77,7 @@ import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { calculateTodayTimelineLayout } from "@/lib/today-timeline-layout"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type ColumnKey = "unsorted" | "mapped" | "today" | "scheduled" | "completed"
@@ -191,6 +193,26 @@ const MEMO_HORIZONTAL_COLUMN_DRAG_PX = 76
 const MEMO_COLUMN_AUTO_MOVE_HOLD_MS = 320
 const MEMO_COLUMN_AUTO_MOVE_EDGE_PX = 72
 const DESKTOP_DRAFT_IMAGE_UPLOAD_TIMEOUT_MS = 60_000
+const MEMO_SCHEDULER_HOUR_HEIGHT = 64
+const MEMO_SCHEDULER_TOTAL_HEIGHT = MEMO_SCHEDULER_HOUR_HEIGHT * 24
+const MEMO_SCHEDULER_MIN_EVENT_HEIGHT = 28
+const MEMO_SCHEDULER_SNAP_MINUTES = 15
+const MEMO_SCHEDULER_MINUTES_PER_DAY = 24 * 60
+const MEMO_SCHEDULER_HOURS = Array.from({ length: 24 }, (_, hour) => hour)
+const MEMO_SCHEDULER_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"]
+const MEMO_SCHEDULER_VIEW_MODES = [
+  { key: "day", label: "Day" },
+  { key: "3days", label: "3days" },
+  { key: "month", label: "Month" },
+] as const
+
+type MemoSchedulerViewMode = typeof MEMO_SCHEDULER_VIEW_MODES[number]["key"]
+type MemoSchedulerDragState = {
+  pointerId: number
+  offsetY: number
+  startY: number
+  hasMoved: boolean
+}
 
 type DragPoint = { x: number; y: number }
 type MemoColumnDragState = {
@@ -619,6 +641,96 @@ function getTimestamp(value: string | null | undefined) {
   return Number.isNaN(time) ? 0 : time
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function startOfLocalDay(date: Date) {
+  const next = new Date(date)
+  next.setHours(0, 0, 0, 0)
+  return next
+}
+
+function addLocalDays(date: Date, days: number) {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function isSameLocalDate(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate()
+}
+
+function createLocalDayRange(date: Date) {
+  const start = startOfLocalDay(date)
+  return { start, end: addLocalDays(start, 1) }
+}
+
+function minutesFromLocalMidnight(date: Date) {
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+function dateWithLocalMinutes(day: Date, minutes: number) {
+  const next = startOfLocalDay(day)
+  next.setMinutes(minutes, 0, 0)
+  return next
+}
+
+function snapSchedulerMinutes(rawMinutes: number, durationMinutes: number) {
+  const maxStart = Math.max(0, MEMO_SCHEDULER_MINUTES_PER_DAY - durationMinutes)
+  const snapped = Math.round(rawMinutes / MEMO_SCHEDULER_SNAP_MINUTES) * MEMO_SCHEDULER_SNAP_MINUTES
+  return clampNumber(snapped, 0, maxStart)
+}
+
+function getMemoSchedulerInitialState(scheduledAt: string | null | undefined, durationMinutesValue: number | null | undefined) {
+  const durationMinutes = Math.max(5, durationMinutesValue ?? TODAY_DURATION_DEFAULT)
+  const scheduledDate = scheduledAt ? new Date(scheduledAt) : null
+  if (scheduledDate && !Number.isNaN(scheduledDate.getTime())) {
+    return {
+      selectedDate: startOfLocalDay(scheduledDate),
+      draftMinutes: snapSchedulerMinutes(minutesFromLocalMidnight(scheduledDate), durationMinutes),
+      durationMinutes,
+    }
+  }
+
+  const now = new Date()
+  const nextSlot = snapSchedulerMinutes(minutesFromLocalMidnight(now) + MEMO_SCHEDULER_SNAP_MINUTES, durationMinutes)
+  return {
+    selectedDate: startOfLocalDay(now),
+    draftMinutes: nextSlot,
+    durationMinutes,
+  }
+}
+
+function formatMemoSchedulerDate(date: Date) {
+  return `${date.getMonth() + 1}月${date.getDate()}日(${MEMO_SCHEDULER_WEEKDAYS[date.getDay()]})`
+}
+
+function formatMemoSchedulerShortDate(date: Date) {
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function formatMemoSchedulerTimeFromMinutes(minutes: number) {
+  const hour = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+}
+
+function buildMemoSchedulerMonthDays(selectedDate: Date) {
+  const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1)
+  const monthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0)
+  const startOffset = (monthStart.getDay() + 6) % 7
+  const days: Date[] = []
+  const start = addLocalDays(monthStart, -startOffset)
+  const totalDays = Math.ceil((startOffset + monthEnd.getDate()) / 7) * 7
+  for (let index = 0; index < totalDays; index += 1) {
+    days.push(addLocalDays(start, index))
+  }
+  return days
+}
+
 function sortMemoItemsForSection(items: MemoItem[], section: ColumnKey) {
   return [...items].sort((a, b) => {
     if (section === "today") {
@@ -865,6 +977,399 @@ async function createWishlistMemo(payload: Record<string, unknown>) {
   throw new Error("メモの作成に失敗しました")
 }
 
+type MemoSchedulerCalendarBlock = {
+  id: string
+  source: "calendar"
+  title: string
+  startTime: Date
+  endTime: Date
+  color: string
+  syncStatus?: CalendarEvent["sync_status"]
+}
+
+function MemoInlineScheduler({
+  item,
+  calendars,
+  targetCalendarId,
+  onClose,
+  onSchedule,
+}: {
+  item: MemoItem
+  calendars: CalendarListItem[]
+  targetCalendarId: string
+  onClose: () => void
+  onSchedule: (startTime: Date, durationMinutes: number) => void
+}) {
+  const initialState = useMemo(
+    () => getMemoSchedulerInitialState(item.scheduled_at, item.duration_minutes),
+    [item.duration_minutes, item.scheduled_at],
+  )
+  const [selectedDate, setSelectedDate] = useState(initialState.selectedDate)
+  const [draftMinutes, setDraftMinutes] = useState(initialState.draftMinutes)
+  const [viewMode, setViewMode] = useState<MemoSchedulerViewMode>("day")
+  const timelineScrollRef = useRef<HTMLDivElement>(null)
+  const timelineGridRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<MemoSchedulerDragState | null>(null)
+  const durationMinutes = initialState.durationMinutes
+  const dayRange = useMemo(() => createLocalDayRange(selectedDate), [selectedDate])
+  const selectedCalendarIds = useMemo(() => {
+    const selected = calendars
+      .filter(calendar => calendar.selected)
+      .map(calendar => calendar.google_calendar_id)
+      .filter(Boolean)
+    if (selected.length > 0) return selected
+    return targetCalendarId ? [targetCalendarId] : undefined
+  }, [calendars, targetCalendarId])
+  const calendarColorById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const calendar of calendars) {
+      map.set(calendar.google_calendar_id, calendar.background_color ?? calendar.color ?? "#3b82f6")
+    }
+    return map
+  }, [calendars])
+  const { events, isLoading: isEventsLoading } = useCalendarEvents({
+    timeMin: dayRange.start,
+    timeMax: dayRange.end,
+    calendarIds: selectedCalendarIds,
+    enabled: true,
+    autoSync: false,
+  })
+
+  useEffect(() => {
+    setSelectedDate(initialState.selectedDate)
+    setDraftMinutes(initialState.draftMinutes)
+    setViewMode("day")
+  }, [initialState, item.id])
+
+  useEffect(() => {
+    const scrollElement = timelineScrollRef.current
+    if (!scrollElement) return
+    const targetTop = Math.max(0, (draftMinutes / 60) * MEMO_SCHEDULER_HOUR_HEIGHT - 180)
+    const frameId = window.requestAnimationFrame(() => {
+      scrollElement.scrollTo({ top: targetTop })
+    })
+    return () => window.cancelAnimationFrame(frameId)
+    // 初回表示時だけ予定ブロック付近へ寄せる。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id])
+
+  const calendarBlocks = useMemo<MemoSchedulerCalendarBlock[]>(() => {
+    const dayStart = dayRange.start.getTime()
+    const dayEnd = dayRange.end.getTime()
+    return events.flatMap(event => {
+      if (event.is_all_day) return []
+      if (event.id === `optimistic-wishlist-${item.id}`) return []
+      if (item.google_event_id && event.google_event_id === item.google_event_id) return []
+      const start = new Date(event.start_time)
+      const end = new Date(event.end_time)
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return []
+      if (end.getTime() <= dayStart || start.getTime() >= dayEnd) return []
+      return [{
+        id: event.id,
+        source: "calendar" as const,
+        title: event.title || "予定",
+        startTime: new Date(Math.max(start.getTime(), dayStart)),
+        endTime: new Date(Math.min(end.getTime(), dayEnd)),
+        color: event.background_color ?? event.color ?? calendarColorById.get(event.calendar_id) ?? "#3b82f6",
+        syncStatus: event.sync_status,
+      }]
+    })
+  }, [calendarColorById, dayRange.end, dayRange.start, events, item.google_event_id, item.id])
+  const positionedBlocks = useMemo(() => calculateTodayTimelineLayout(calendarBlocks, {
+    totalHeight: MEMO_SCHEDULER_TOTAL_HEIGHT,
+    minHeight: MEMO_SCHEDULER_MIN_EVENT_HEIGHT,
+  }), [calendarBlocks])
+  const monthDays = useMemo(() => buildMemoSchedulerMonthDays(selectedDate), [selectedDate])
+  const threeDayDates = useMemo(() => [0, 1, 2].map(offset => addLocalDays(selectedDate, offset)), [selectedDate])
+  const draftTop = (draftMinutes / MEMO_SCHEDULER_MINUTES_PER_DAY) * MEMO_SCHEDULER_TOTAL_HEIGHT
+  const draftHeight = Math.max(
+    MEMO_SCHEDULER_MIN_EVENT_HEIGHT + 8,
+    (durationMinutes / MEMO_SCHEDULER_MINUTES_PER_DAY) * MEMO_SCHEDULER_TOTAL_HEIGHT,
+  )
+  const draftEndMinutes = Math.min(MEMO_SCHEDULER_MINUTES_PER_DAY, draftMinutes + durationMinutes)
+  const draftTimeLabel = `${formatMemoSchedulerTimeFromMinutes(draftMinutes)}-${formatMemoSchedulerTimeFromMinutes(draftEndMinutes)}`
+
+  const minutesFromPointer = useCallback((clientY: number, offsetY: number) => {
+    const grid = timelineGridRef.current
+    if (!grid) return draftMinutes
+    const rect = grid.getBoundingClientRect()
+    const rawY = clientY - rect.top - offsetY
+    const rawMinutes = (rawY / MEMO_SCHEDULER_TOTAL_HEIGHT) * MEMO_SCHEDULER_MINUTES_PER_DAY
+    return snapSchedulerMinutes(rawMinutes, durationMinutes)
+  }, [draftMinutes, durationMinutes])
+
+  const autoScrollTimeline = useCallback((clientY: number) => {
+    const scrollElement = timelineScrollRef.current
+    if (!scrollElement) return
+    const rect = scrollElement.getBoundingClientRect()
+    const edge = 72
+    if (clientY < rect.top + edge) {
+      scrollElement.scrollTop = Math.max(0, scrollElement.scrollTop - 18)
+      return
+    }
+    if (clientY > rect.bottom - edge) {
+      scrollElement.scrollTop = Math.min(
+        scrollElement.scrollHeight - scrollElement.clientHeight,
+        scrollElement.scrollTop + 18,
+      )
+    }
+  }, [])
+
+  const handleDraftPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      offsetY: event.clientY - rect.top,
+      startY: event.clientY,
+      hasMoved: false,
+    }
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+  }
+
+  const handleDraftPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (Math.abs(event.clientY - dragState.startY) >= 3) {
+      dragState.hasMoved = true
+    }
+    autoScrollTimeline(event.clientY)
+    setDraftMinutes(minutesFromPointer(event.clientY, dragState.offsetY))
+  }
+
+  const clearPointerCapture = (event: ReactPointerEvent<HTMLDivElement>, pointerId: number) => {
+    if (
+      typeof event.currentTarget.hasPointerCapture === "function"
+      && typeof event.currentTarget.releasePointerCapture === "function"
+      && event.currentTarget.hasPointerCapture(pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(pointerId)
+    }
+  }
+
+  const handleDraftPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    clearPointerCapture(event, dragState.pointerId)
+    const finalMinutes = minutesFromPointer(event.clientY, dragState.offsetY)
+    dragStateRef.current = null
+    setDraftMinutes(finalMinutes)
+    if (dragState.hasMoved) {
+      onSchedule(dateWithLocalMinutes(selectedDate, finalMinutes), durationMinutes)
+    }
+  }
+
+  const handleDraftPointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    clearPointerCapture(event, dragState.pointerId)
+    dragStateRef.current = null
+  }
+
+  const selectDate = (date: Date) => {
+    setSelectedDate(startOfLocalDay(date))
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#050607] text-neutral-100" data-testid="memo-inline-scheduler">
+      <div className="shrink-0 border-b border-white/10 bg-[#050607]/95 px-4 pb-3 pt-3">
+        <div className="mx-auto flex max-w-xl items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="h-10 w-10 shrink-0 rounded-full text-neutral-300 hover:bg-white/10 hover:text-white"
+            aria-label="メモ一覧に戻る"
+            title="メモ一覧に戻る"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-xl font-bold tracking-normal text-white">{formatMemoSchedulerDate(selectedDate)}</h1>
+            <p className="text-xs text-neutral-400">
+              {isEventsLoading ? "スケジュール読込中" : `${calendarBlocks.length}件のスケジュール`}
+            </p>
+          </div>
+          <div className="flex h-9 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.06] p-0.5">
+            {MEMO_SCHEDULER_VIEW_MODES.map(mode => (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={() => setViewMode(mode.key)}
+                className={cn(
+                  "h-8 rounded-md px-2 text-[11px] font-semibold transition-colors",
+                  viewMode === mode.key
+                    ? "bg-white text-black"
+                    : "text-neutral-400 hover:bg-white/10 hover:text-neutral-100",
+                )}
+                aria-pressed={viewMode === mode.key}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 shrink-0 rounded-lg border-white/10 bg-white/[0.06] text-neutral-200 hover:bg-white/10"
+            aria-label="AI"
+            title="AI"
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {viewMode === "3days" && (
+          <div className="mx-auto mt-3 grid max-w-xl grid-cols-3 gap-2">
+            {threeDayDates.map(date => {
+              const active = isSameLocalDate(date, selectedDate)
+              return (
+                <button
+                  key={date.toISOString()}
+                  type="button"
+                  onClick={() => selectDate(date)}
+                  className={cn(
+                    "min-h-11 rounded-lg border px-2 text-left transition-colors",
+                    active
+                      ? "border-primary bg-primary/20 text-primary"
+                      : "border-white/10 bg-white/[0.04] text-neutral-300",
+                  )}
+                >
+                  <span className="block text-xs font-semibold">{MEMO_SCHEDULER_WEEKDAYS[date.getDay()]}</span>
+                  <span className="block text-sm font-bold">{formatMemoSchedulerShortDate(date)}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {viewMode === "month" && (
+          <div className="mx-auto mt-3 max-w-xl rounded-lg border border-white/10 bg-white/[0.035] p-2">
+            <div className="mb-2 flex items-center justify-between text-xs font-semibold text-neutral-300">
+              <button type="button" onClick={() => selectDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))} className="rounded px-2 py-1 hover:bg-white/10">
+                前月
+              </button>
+              <span>{selectedDate.getFullYear()}年{selectedDate.getMonth() + 1}月</span>
+              <button type="button" onClick={() => selectDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))} className="rounded px-2 py-1 hover:bg-white/10">
+                次月
+              </button>
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-neutral-500">
+              {["月", "火", "水", "木", "金", "土", "日"].map(day => <span key={day}>{day}</span>)}
+            </div>
+            <div className="mt-1 grid grid-cols-7 gap-1">
+              {monthDays.map(date => {
+                const active = isSameLocalDate(date, selectedDate)
+                const currentMonth = date.getMonth() === selectedDate.getMonth()
+                return (
+                  <button
+                    key={date.toISOString()}
+                    type="button"
+                    onClick={() => selectDate(date)}
+                    className={cn(
+                      "aspect-square rounded-md text-xs font-semibold transition-colors",
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : currentMonth
+                          ? "text-neutral-200 hover:bg-white/10"
+                          : "text-neutral-600 hover:bg-white/5",
+                    )}
+                    aria-pressed={active}
+                  >
+                    {date.getDate()}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div ref={timelineScrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-3">
+        <div ref={timelineGridRef} data-testid="memo-scheduler-grid" className="relative mx-auto w-full max-w-xl" style={{ height: MEMO_SCHEDULER_TOTAL_HEIGHT }}>
+          {MEMO_SCHEDULER_HOURS.map(hour => (
+            <div
+              key={hour}
+              className="absolute left-0 right-0 border-t border-white/[0.055]"
+              style={{ top: hour * MEMO_SCHEDULER_HOUR_HEIGHT }}
+            >
+              <span className="absolute -top-2 left-0 w-12 pr-2 text-right text-xs tabular-nums text-neutral-500">
+                {String(hour).padStart(2, "0")}:00
+              </span>
+            </div>
+          ))}
+          <div className="absolute bottom-0 left-14 right-0 top-0 border-l border-white/[0.08]" />
+          <div className="absolute bottom-0 left-14 right-0 top-0">
+            {positionedBlocks.map(block => {
+              const left = (block.column / block.totalColumns) * 100
+              const width = (block.columnSpan / block.totalColumns) * 100
+              return (
+                <div
+                  key={block.id}
+                  className="absolute overflow-hidden rounded-lg border border-white/10 px-2 py-1 text-[11px] leading-4 text-neutral-300 shadow-sm"
+                  style={{
+                    top: block.top,
+                    height: block.height,
+                    left: `calc(${left}% + 3px)`,
+                    width: `calc(${width}% - 6px)`,
+                    borderLeftColor: block.color,
+                    backgroundColor: colorToRgba(block.color, block.syncStatus === "pending" ? 0.2 : 0.12),
+                  }}
+                >
+                  <div className="flex min-w-0 items-start gap-1.5">
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium text-neutral-200">{block.title}</div>
+                      <div className="truncate text-[10px] text-neutral-500">
+                        {formatMemoSchedulerTimeFromMinutes(minutesFromLocalMidnight(block.startTime))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="予定ブロックをドラッグして時間を決める"
+              data-testid="memo-scheduler-draft"
+              onPointerDown={handleDraftPointerDown}
+              onPointerMove={handleDraftPointerMove}
+              onPointerUp={handleDraftPointerUp}
+              onPointerCancel={handleDraftPointerCancel}
+              className="absolute left-0 right-0 touch-none select-none rounded-lg border border-primary/70 bg-primary/22 px-3 py-2 text-left text-sm text-white shadow-[0_12px_32px_rgba(37,99,235,0.34)] ring-1 ring-primary/35 active:cursor-grabbing"
+              style={{
+                top: draftTop,
+                height: draftHeight,
+                cursor: dragStateRef.current ? "grabbing" : "grab",
+              }}
+            >
+              <div className="flex min-w-0 items-start gap-2">
+                <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-primary-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold">{item.title || "無題"}</div>
+                  <div className="mt-0.5 text-xs font-medium text-blue-100">{draftTimeLabel} / {formatDuration(durationMinutes)}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function WishlistView({
   projects = [],
   spaces = [],
@@ -940,6 +1445,7 @@ export function WishlistView({
   const [showMindmapDialog, setShowMindmapDialog] = useState(false)
   const [activeMobileColumn, setActiveMobileColumn] = useState<ColumnKey>("unsorted")
   const [isMobileMemoLayout, setIsMobileMemoLayout] = useState(false)
+  const [memoSchedulerItemId, setMemoSchedulerItemId] = useState<string | null>(null)
   const [linkedMemoFocus, setLinkedMemoFocus] = useState<{
     taskId: string
     taskTitle: string
@@ -972,6 +1478,9 @@ export function WishlistView({
   const desktopMemoAiTaskId = desktopMemoAiTask?.id ?? null
   const desktopMemoAiTaskStatus = desktopMemoAiTask?.status ?? null
   const desktopMemoCodexState = getMemoCodexState(desktopMemoAiTask)
+  const memoSchedulerItem = memoSchedulerItemId
+    ? (selectedItem?.id === memoSchedulerItemId ? selectedItem : items.find(item => item.id === memoSchedulerItemId) ?? null)
+    : null
 
   useEffect(() => {
     if (!desktopComposerOpen || desktopDraftFocusRequest === 0) return
@@ -1534,6 +2043,12 @@ export function WishlistView({
       return next.size === prev.size ? prev : next
     })
   }, [items])
+
+  useEffect(() => {
+    if (!memoSchedulerItemId) return
+    if (memoSchedulerItem) return
+    setMemoSchedulerItemId(null)
+  }, [memoSchedulerItem, memoSchedulerItemId])
 
   const targetCalendarId = useMemo(() => {
     const writableCalendars = calendars.filter(calendar => calendar.access_level === "owner" || calendar.access_level === "writer")
@@ -2585,6 +3100,26 @@ export function WishlistView({
     window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
   }, [handleCalendarAdd, items, selectedItem])
 
+  const openMemoScheduler = useCallback(async (item: MemoItem) => {
+    if (item.is_completed || item.memo_status === "completed") return
+    setIntakeError(null)
+    try {
+      await waitForMemoPersistence(item.id)
+      setDetailOpen(false)
+      setSelectedItem(item)
+      setMemoSchedulerItemId(item.id)
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "メモの保存完了を待てませんでした")
+    }
+  }, [waitForMemoPersistence])
+
+  const handleMemoSchedulerSchedule = useCallback((item: MemoItem, startTime: Date, durationMinutes: number) => {
+    setMemoSchedulerItemId(null)
+    void handleMemoCalendarDrop(item.id, startTime, durationMinutes).catch(err => {
+      setIntakeError(err instanceof Error ? err.message : "カレンダー登録に失敗しました")
+    })
+  }, [handleMemoCalendarDrop])
+
   useEffect(() => {
     if (!isCalendarSplitVisible) return
     const handler = (memoId: string, startTime: Date, durationMinutes: number) => {
@@ -2684,9 +3219,16 @@ export function WishlistView({
   const handleDialogOpenTodaySchedule = useCallback(() => {
     if (!todayRemovalDialog) return
     const date = todayRemovalDialog.scheduledDate ?? new Date()
-    onOpenTodayMemoSchedule?.({ memoId: todayRemovalDialog.item.id, date })
+    if (isMobileMemoLayout && !linkedMemoFocus) {
+      void openMemoScheduler({
+        ...todayRemovalDialog.item,
+        scheduled_at: date.toISOString(),
+      } as MemoItem)
+    } else {
+      onOpenTodayMemoSchedule?.({ memoId: todayRemovalDialog.item.id, date })
+    }
     setTodayRemovalDialog(null)
-  }, [onOpenTodayMemoSchedule, todayRemovalDialog])
+  }, [isMobileMemoLayout, linkedMemoFocus, onOpenTodayMemoSchedule, openMemoScheduler, todayRemovalDialog])
 
   const handleDialogReschedule = useCallback(async () => {
     if (!todayRemovalDialog) return
@@ -3014,6 +3556,19 @@ export function WishlistView({
           ))}
         </div>
       </div>
+    )
+  }
+
+  if (isMobileMemoLayout && !linkedMemoFocus && !compactComposer && memoSchedulerItem) {
+    return (
+      <MemoInlineScheduler
+        key={memoSchedulerItem.id}
+        item={memoSchedulerItem}
+        calendars={calendars}
+        targetCalendarId={targetCalendarId}
+        onClose={() => setMemoSchedulerItemId(null)}
+        onSchedule={(startTime, durationMinutes) => handleMemoSchedulerSchedule(memoSchedulerItem, startTime, durationMinutes)}
+      />
     )
   }
 
@@ -4025,6 +4580,7 @@ export function WishlistView({
                           selectMode={selectMode}
                           selectedMemoIds={selectedMemoIds}
                           onToggleSelect={toggleMemoSelection}
+                          onScheduleClick={column === "unsorted" || column === "today" ? item => { void openMemoScheduler(item) } : undefined}
                         />
                       </div>
                     )
@@ -4477,6 +5033,7 @@ function MemoSection({
   selectMode = false,
   selectedMemoIds,
   onToggleSelect,
+  onScheduleClick,
   showHeader = true,
 }: {
   columnKey: ColumnKey
@@ -4497,6 +5054,7 @@ function MemoSection({
   selectMode?: boolean
   selectedMemoIds?: Set<string>
   onToggleSelect?: (memoId: string) => void
+  onScheduleClick?: (item: MemoItem) => void
   showHeader?: boolean
 }) {
   return (
@@ -4559,6 +5117,7 @@ function MemoSection({
                           project={item.project_id ? projectById.get(item.project_id) ?? null : null}
                           tagColors={tagColors}
                           nativeMemoDrag={nativeMemoDragForItem ? nativeMemoDragForItem(item) : nativeMemoDrag}
+                          onScheduleClick={!selectMode && onScheduleClick ? () => onScheduleClick(item) : undefined}
                         />
                         {selectMode && (
                           <>

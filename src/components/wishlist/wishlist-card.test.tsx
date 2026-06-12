@@ -115,6 +115,40 @@ describe('WishlistCard', () => {
     expect(confirmSpy).not.toHaveBeenCalled()
   })
 
+  test('未予定カードは左側の予定ボタンからスケジュール画面を開ける', () => {
+    const onScheduleClick = vi.fn()
+    const onOpen = vi.fn()
+
+    render(
+      <WishlistCard
+        item={createMemoItem({ title: 'Schedule memo' })}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+        onClick={onOpen}
+        onScheduleClick={onScheduleClick}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '予定に入れる' }))
+
+    expect(onScheduleClick).toHaveBeenCalledTimes(1)
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  test('予定済みカードには予定ボタンを表示しない', () => {
+    render(
+      <WishlistCard
+        item={createMemoItem({ scheduled_at: '2026-06-12T10:00:00.000Z', memo_status: 'scheduled' })}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+        onClick={vi.fn()}
+        onScheduleClick={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: '予定に入れる' })).not.toBeInTheDocument()
+  })
+
   test('プロジェクトは左上、タグは見出し下に1回だけ表示し、チェックボックスを右上に置く', () => {
     render(
       <WishlistCard
