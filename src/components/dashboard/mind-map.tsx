@@ -608,6 +608,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
                 return [{
                     id: task.id,
+                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? null,
                     title: task.title,
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
@@ -2001,6 +2002,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 onSelectRepoPath={selectCodexImportRepoPath}
                                 onToggleImport={toggleSelectedRepoImport}
                                 onDeleteChatItem={handleDeleteCodexChatImportItem}
+                                onPlaceChatItem={(taskId) => handleDropImportedChatNode({ taskId, targetId: 'project-root', position: 'as-child' })}
                             />
                         </div>
                     )}

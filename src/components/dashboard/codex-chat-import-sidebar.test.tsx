@@ -5,6 +5,7 @@ import { CodexChatImportSidebar, type CodexChatImportItem } from "./codex-chat-i
 
 const refreshRepos = vi.fn()
 const requestRescan = vi.fn()
+const runnerStatusMock = vi.hoisted(() => ({ ready: false }))
 
 vi.mock("@/hooks/useAvailableRepos", () => ({
   useAvailableRepos: () => ({
@@ -25,9 +26,18 @@ vi.mock("@/hooks/useAvailableRepos", () => ({
   }),
 }))
 
+vi.mock("@/hooks/useCodexRunnerStatus", () => ({
+  useCodexRunnerStatus: () => ({
+    ready: runnerStatusMock.ready,
+    loading: false,
+    checked: true,
+  }),
+}))
+
 const chatItems: CodexChatImportItem[] = [
   {
     id: "chat-node-1",
+    aiTaskId: "ai-task-1",
     title: "Codexスレッド連携UI",
     snippet: "右側サイドバーにチャット一覧を表示する",
     repoPath: "/Users/me/focusmap",
@@ -39,10 +49,21 @@ const chatItems: CodexChatImportItem[] = [
   },
 ]
 
-function renderSidebar() {
+function jsonResponse(data: unknown, ok = true) {
+  return {
+    ok,
+    json: async () => data,
+  }
+}
+
+function renderSidebar(options: {
+  chatItems?: CodexChatImportItem[]
+  onPlaceChatItem?: ReturnType<typeof vi.fn>
+} = {}) {
   const onSelectRepoPath = vi.fn().mockResolvedValue(undefined)
   const onToggleImport = vi.fn().mockResolvedValue(undefined)
   const onDeleteChatItem = vi.fn().mockResolvedValue(undefined)
+  const onPlaceChatItem = options.onPlaceChatItem ?? vi.fn().mockResolvedValue(undefined)
   const onClose = vi.fn()
 
   render(
@@ -51,19 +72,21 @@ function renderSidebar() {
       selectedRepoPath="/Users/me/focusmap"
       importEnabled
       importOwnerLabel="仕事"
-      chatItems={chatItems}
+      chatItems={options.chatItems ?? chatItems}
       onClose={onClose}
       onSelectRepoPath={onSelectRepoPath}
       onToggleImport={onToggleImport}
       onDeleteChatItem={onDeleteChatItem}
+      onPlaceChatItem={onPlaceChatItem}
     />,
   )
 
-  return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onClose }
+  return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onPlaceChatItem, onClose }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  runnerStatusMock.ready = false
 })
 
 afterEach(() => {
@@ -82,6 +105,8 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
     expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
   })
 
   test("selects a repo from Focusmap agent repo candidates", async () => {
@@ -95,16 +120,45 @@ describe("CodexChatImportSidebar", () => {
     })
   })
 
-  test("fetches chat detail only when a chat row is opened", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        success: true,
-        task: {
-          title: "Codexスレッド連携UI",
-          memo: "取得したチャット詳細\n2行目",
-        },
-      }),
+  test("opens the selected chat as a sidebar detail view and reads saved activity", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          ai_task_id: "ai-task-1",
+          include_visible_activity: true,
+        })
+        return jsonResponse({ success: true, task_id: "ai-task-1" })
+      }
+      if (url === "/api/ai-tasks/ai-task-1/activity") {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-user",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "右側サイドバーにチャット一覧を表示する",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:00:00.000Z",
+            },
+            {
+              id: "msg-codex",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "DBに保存してから表示します",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:10:00.000Z",
+            },
+          ],
+        })
+      }
+      return jsonResponse({ success: false, error: { message: `unexpected fetch ${url}` } }, false)
     })
     vi.stubGlobal("fetch", fetchMock)
     renderSidebar()
@@ -114,15 +168,73 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
 
     await waitFor(() => {
-      expect(screen.getByText("取得したチャット詳細", { exact: false })).toBeInTheDocument()
+      expect(screen.getByText("DBに保存してから表示します")).toBeInTheDocument()
     })
-    expect(fetchMock).toHaveBeenCalledWith("/api/tasks/chat-node-1")
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole("button", { name: "戻る" })).toBeInTheDocument()
+    expect(screen.queryByLabelText("チャットを検索")).not.toBeInTheDocument()
+    expect(screen.getByText("送信内容")).toBeInTheDocument()
+    expect(screen.getByText("Codexの返答")).toBeInTheDocument()
+    expect(screen.getByText("右側サイドバーにチャット一覧を表示する")).toBeInTheDocument()
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
+    expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
+
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }))
+    expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
+  })
+
+  test("saves visible Codex activity in the background when Mac is online", async () => {
+    runnerStatusMock.ready = true
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ success: true, task_id: "ai-task-1" }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderSidebar()
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
+    })
+    const syncCall = fetchMock.mock.calls.find(([input]) => String(input) === "/api/codex/sync-node")
+    expect(JSON.parse(String(syncCall?.[1]?.body))).toEqual({
+      ai_task_id: "ai-task-1",
+      include_visible_activity: true,
+    })
+  })
+
+  test("places the selected chat from the detail footer", async () => {
+    const onPlaceChatItem = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
+      if (url === "/api/ai-tasks/ai-task-1/activity") {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-user",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "配置するチャット",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:00:00.000Z",
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar({ onPlaceChatItem })
 
     fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
-    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
+    await screen.findByRole("button", { name: "ノードへ配置" })
+    fireEvent.click(screen.getByRole("button", { name: "ノードへ配置" }))
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(onPlaceChatItem).toHaveBeenCalledWith("chat-node-1")
+    })
+    expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
   })
 
   test("selects a repo folder picked from Finder immediately", async () => {
