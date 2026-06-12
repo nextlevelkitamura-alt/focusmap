@@ -43,6 +43,7 @@ const TOOL_LABELS: Record<string, string> = {
   listProjectTasks: 'DBタスク確認',
   listNotesForOrganization: 'ノート整理確認',
   getNoteOrganizationDetail: 'ノート詳細確認',
+  proposeMindmapOrganization: 'マップ整理提案',
   getMindmapOverview: 'マップ全体確認',
   getMindmapNodeDetail: 'ノード詳細確認',
   updateMindmapNode: 'ノード更新',

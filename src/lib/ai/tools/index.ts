@@ -12,6 +12,13 @@ import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
 import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
 import { parseAgentCalendarPreferences } from '@/lib/ai/agent-preferences'
 import { matchProjectSearch } from '@/lib/ai/project-search'
+import {
+  buildMindmapOrganizationHarness,
+  formatMindmapOrganizationTree,
+  orderMindmapOrganizationNodes,
+  suggestMindmapOrganizationCandidates,
+  type MindmapOrganizationNodeInput,
+} from '@/lib/ai/context/mindmap-organization-harness'
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
@@ -1415,6 +1422,145 @@ export const getMindmapOverview = tool({
   },
 })
 
+export const proposeMindmapOrganization = tool({
+  description:
+    'マインドマップを整理・統合・まとめ直したい時に最初に使う読み取り専用ハーネス。プロジェクト概要、蓄積コンテキスト、ノード/ノート見出しだけを読み、まとめ候補と図解用テンプレートを返す。DBは変更しない。返答では提案と図を出し、ユーザー承認後だけ addMindmapGroup / moveMindmapNode / updateMindmapNode を使う。',
+  inputSchema: z.object({
+    projectId: z.string().describe('整理提案するプロジェクトID'),
+    focus: z.string().optional().describe('整理したい観点。例: チャット文脈、ノート整理、未分類ノードなど。'),
+    maxNodes: z.number().optional().describe('見出しとして返す最大ノード数。通常120、最大240。'),
+    maxNoteHeadings: z.number().optional().describe('返すノート/メモ見出し数。通常30、最大80。'),
+    maxCandidates: z.number().optional().describe('機械的に拾うまとめ候補数。通常6、最大12。'),
+  }),
+  execute: async ({ projectId, focus, maxNodes, maxNoteHeadings, maxCandidates }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const nodeLimit = normalizeLimit(maxNodes, 120, 240)
+    const noteLimit = normalizeLimit(maxNoteHeadings, 30, 80)
+    const candidateLimit = normalizeLimit(maxCandidates, 6, 12)
+
+    const [{ data: project, error: projectError }, { data: context }] = await Promise.all([
+      supabase
+        .from('projects')
+        .select('id, title, description, purpose, status, repo_path')
+        .eq('id', projectId)
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('project_contexts')
+        .select('heading, details, progress, progress_status, updated_at')
+        .eq('project_id', projectId)
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ])
+    if (projectError) return { success: false, error: projectError.message }
+    if (!project) return { success: false, error: 'プロジェクトが見つかりません' }
+
+    const [{ data: taskRows, error: taskError }, { data: wishlistRows }, { data: memoRows }] = await Promise.all([
+      supabase
+        .from('tasks')
+        .select('id, title, parent_task_id, is_group, status, stage, order_index')
+        .eq('project_id', projectId)
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+        .order('order_index', { ascending: true })
+        .limit(nodeLimit),
+      supabase
+        .from('ideal_goals')
+        .select('id, title, status, memo_status, is_completed, updated_at')
+        .eq('user_id', user.id)
+        .eq('project_id', projectId)
+        .in('status', ['wishlist', 'memo'])
+        .order('updated_at', { ascending: false })
+        .limit(noteLimit),
+      supabase
+        .from('memo_items')
+        .select('id, title, status, item_kind, updated_at')
+        .eq('user_id', user.id)
+        .eq('project_id', projectId)
+        .order('updated_at', { ascending: false })
+        .limit(noteLimit),
+    ])
+    if (taskError) return { success: false, error: taskError.message }
+
+    const rawNodes = (taskRows || []) as MindmapOrganizationNodeInput[]
+    const ordered = orderMindmapOrganizationNodes(rawNodes)
+    const candidateGroups = suggestMindmapOrganizationCandidates(ordered, candidateLimit)
+    const wishlistHeadings = (wishlistRows || [])
+      .filter(row => !row.is_completed && !['done', 'dismissed', 'archived'].includes(row.memo_status ?? ''))
+      .map(row => ({
+        record_type: 'wishlist' as const,
+        id: row.id,
+        title: row.title ?? '無題',
+        status: row.memo_status ?? row.status ?? null,
+        updated_at: row.updated_at,
+      }))
+    const memoHeadings = (memoRows || [])
+      .filter(row => !['done', 'dismissed', 'archived'].includes(row.status ?? ''))
+      .map(row => ({
+        record_type: 'memo_item' as const,
+        id: row.id,
+        title: row.title ?? '無題',
+        status: row.status ?? null,
+        item_kind: row.item_kind ?? null,
+        updated_at: row.updated_at,
+      }))
+    const noteHeadings = [...wishlistHeadings, ...memoHeadings]
+      .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))
+      .slice(0, noteLimit)
+
+    return {
+      success: true,
+      focus: focus ? compactText(focus, 200) : null,
+      project: {
+        id: project.id,
+        title: project.title,
+        status: project.status,
+        repo_path: project.repo_path,
+        description_preview: compactPreview(project.description, 800),
+        purpose_preview: compactPreview(project.purpose, 500),
+      },
+      project_context: context ? {
+        heading: context.heading,
+        details_preview: compactPreview(context.details, 1200),
+        progress_preview: compactPreview(context.progress, 1200),
+        progress_status: context.progress_status,
+        updated_at: context.updated_at,
+      } : null,
+      map_stats: {
+        returned_nodes: ordered.length,
+        truncated: (taskRows || []).length >= nodeLimit,
+        groups: ordered.filter(node => node.is_group).length,
+        tasks: ordered.filter(node => !node.is_group).length,
+        done_tasks: ordered.filter(node => !node.is_group && (node.status === 'done' || node.stage === 'done')).length,
+      },
+      heading_tree: formatMindmapOrganizationTree(ordered, nodeLimit),
+      nodes: ordered.map(node => ({
+        id: node.id,
+        title: node.title,
+        parent_task_id: node.parent_task_id,
+        parent_title: node.parent_title,
+        path: node.path,
+        depth: node.depth,
+        is_group: node.is_group,
+        status: node.status,
+        stage: node.stage,
+        children_count: node.children_count,
+      })),
+      note_headings: {
+        count_returned: noteHeadings.length,
+        truncated: ((wishlistRows || []).length >= noteLimit) || ((memoRows || []).length >= noteLimit),
+        records: noteHeadings,
+      },
+      candidate_groups: candidateGroups,
+      response_harness: buildMindmapOrganizationHarness(),
+      message: `「${project.title}」のマインドマップ整理用に、見出し${ordered.length}件とノート/メモ見出し${noteHeadings.length}件を取得しました。`,
+    }
+  },
+})
+
 export const getMindmapNodeDetail = tool({
   description:
     'マインドマップの1ノードについて、親、子孫、メモ紐づき、予定情報、進捗状態を詳しく確認する。',
@@ -2273,39 +2419,74 @@ export const updateCalendarEvent = tool({
 // ━━━ マインドマップ関連 ━━━
 
 export const addMindmapGroup = tool({
-  description: 'マインドマップにグループ（カテゴリ）ノードを追加する',
+  description: 'マインドマップにグループ（カテゴリ/まとめ）ノードを追加する。整理提案の承認後、まとめノードを作る時にも使う。',
   inputSchema: z.object({
     title: z.string().describe('グループのタイトル'),
     projectId: z.string().describe('プロジェクトID'),
+    parentId: z.string().nullable().optional().describe('親ノードID。未指定またはnullならプロジェクト直下に作る。'),
   }),
-  execute: async ({ title, projectId }) => {
+  execute: async ({ title, projectId, parentId }) => {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { success: false, error: '認証エラー' }
 
-    const { data: maxOrder } = await supabase
+    let parentNode: { id: string; title: string; project_id: string | null } | null = null
+    if (parentId) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id, title, project_id')
+        .eq('id', parentId)
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+        .maybeSingle()
+      if (error) return { success: false, error: error.message }
+      if (!data) return { success: false, error: '親ノードが見つかりません' }
+      if (data.project_id !== projectId) return { success: false, error: '親ノードとプロジェクトが一致していません' }
+      parentNode = data
+    }
+
+    let orderQuery = supabase
       .from('tasks')
       .select('order_index')
       .eq('user_id', user.id)
       .eq('project_id', projectId)
-      .is('parent_task_id', null)
       .is('deleted_at', null)
+
+    orderQuery = parentId
+      ? orderQuery.eq('parent_task_id', parentId)
+      : orderQuery.is('parent_task_id', null)
+
+    const { data: maxOrder } = await orderQuery
       .order('order_index', { ascending: false })
       .limit(1)
       .maybeSingle()
 
-    const { error } = await supabase.from('tasks').insert({
+    const insertPayload = {
       title,
       user_id: user.id,
       project_id: projectId,
       is_group: true,
-      parent_task_id: null,
+      parent_task_id: parentId ?? null,
       status: 'todo',
       stage: 'plan',
       order_index: (maxOrder?.order_index ?? -1) + 1,
-    })
+    }
+    const { data: group, error } = await supabase
+      .from('tasks')
+      .insert(insertPayload)
+      .select('id, title, project_id, parent_task_id, is_group, order_index')
+      .maybeSingle()
     if (error) return { success: false, error: error.message }
-    return { success: true, title, message: `グループ「${title}」を追加しました` }
+    if (!group) return { success: false, error: 'グループ作成に失敗しました' }
+    return {
+      success: true,
+      group,
+      title,
+      parentTitle: parentNode?.title ?? null,
+      message: parentNode
+        ? `「${parentNode.title}」配下にグループ「${title}」を追加しました`
+        : `グループ「${title}」を追加しました`,
+    }
   },
 })
 
