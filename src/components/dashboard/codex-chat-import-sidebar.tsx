@@ -40,6 +40,7 @@ type CodexChatImportSidebarProps = {
   onToggleImport: () => Promise<void> | void
   onDeleteChatItem?: (taskId: string) => Promise<void> | void
   onPlaceChatItem?: (taskId: string) => Promise<void> | void
+  onChatDragStateChange?: (state: { itemId: string; title: string } | null) => void
 }
 
 type DesktopFolderPickerResult = {
@@ -170,6 +171,94 @@ function activityLabel(message: AiTaskActivityMessage) {
   return "Codexの返答"
 }
 
+function createChatDragImage(item: CodexChatImportItem) {
+  if (typeof document === "undefined") return null
+  const preview = document.createElement("div")
+  preview.style.cssText = [
+    "position:fixed",
+    "left:-9999px",
+    "top:-9999px",
+    "z-index:999999",
+    "width:220px",
+    "max-width:220px",
+    "border:1px solid rgba(56,189,248,0.9)",
+    "border-radius:8px",
+    "background:rgba(10,20,28,0.96)",
+    "box-shadow:0 18px 42px rgba(0,0,0,0.35),0 0 0 3px rgba(56,189,248,0.18)",
+    "color:white",
+    "padding:8px 10px",
+    "font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+    "line-height:1.35",
+    "pointer-events:none",
+  ].join(";")
+
+  const status = document.createElement("div")
+  status.textContent = "ノード化"
+  status.style.cssText = "margin-bottom:4px;color:rgb(125,211,252);font-size:10px;font-weight:700"
+
+  const title = document.createElement("div")
+  title.textContent = item.title
+  title.style.cssText = "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"
+
+  preview.append(status, title)
+  document.body.appendChild(preview)
+  const removePreview = () => preview.remove()
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(removePreview)
+  } else {
+    window.setTimeout(removePreview, 0)
+  }
+  return preview
+}
+
+function isUserActivityMessage(message: AiTaskActivityMessage) {
+  return message.role === "user" || message.kind === "sent" || message.kind === "user_answer"
+}
+
+function isStatusActivityMessage(message: AiTaskActivityMessage) {
+  return message.role === "status" || message.role === "system"
+}
+
+function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) {
+  const isUserMessage = isUserActivityMessage(message)
+  const isStatusMessage = isStatusActivityMessage(message)
+  const timeLabel = formatActivityTime(message.created_at)
+  const showLabel = !isUserMessage && (isStatusMessage || message.kind === "question" || message.kind === "approval")
+
+  return (
+    <article className={cn("flex", isUserMessage && "justify-end")}>
+      <div className={cn(
+        "flex min-w-0 flex-col gap-1.5",
+        isUserMessage ? "max-w-[82%] items-end" : "w-full",
+      )}>
+        {(showLabel || timeLabel) && (
+          <div className={cn(
+            "flex max-w-full items-center gap-2 text-[11px] text-zinc-500",
+            isUserMessage && "justify-end",
+          )}>
+            {showLabel && <span className="shrink-0 font-medium text-zinc-400">{activityLabel(message)}</span>}
+            {timeLabel && <span className="truncate">{timeLabel}</span>}
+          </div>
+        )}
+        <div
+          className={cn(
+            "whitespace-pre-wrap break-words text-[15px] leading-7",
+            isUserMessage
+              ? "rounded-2xl bg-white px-4 py-2.5 font-medium text-zinc-950 shadow-sm"
+              : "px-0 py-0 text-zinc-100",
+            isStatusMessage && "rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-sm leading-6 text-zinc-300",
+            message.kind === "question" && "rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-sm leading-6 text-sky-100",
+            message.kind === "approval" && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
+            message.importance === "important" && !isUserMessage && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
+          )}
+        >
+          {message.body}
+        </div>
+      </div>
+    </article>
+  )
+}
+
 export function CodexChatImportSidebar({
   projectTitle,
   selectedRepoPath,
@@ -182,6 +271,7 @@ export function CodexChatImportSidebar({
   onToggleImport,
   onDeleteChatItem,
   onPlaceChatItem,
+  onChatDragStateChange,
 }: CodexChatImportSidebarProps) {
   const [pickerPending, setPickerPending] = React.useState(false)
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false)
@@ -191,6 +281,7 @@ export function CodexChatImportSidebar({
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [placingPending, setPlacingPending] = React.useState(false)
+  const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const backgroundSyncedChatIdsRef = React.useRef(new Set<string>())
   const { repos, isLoading, error: reposError, refresh, requestRescan } = useAvailableRepos()
   const codexRunnerStatus = useCodexRunnerStatus()
@@ -435,23 +526,27 @@ export function CodexChatImportSidebar({
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
+  const finishChatDrag = React.useCallback(() => {
+    setDraggingChatId(null)
+    onChatDragStateChange?.(null)
+  }, [onChatDragStateChange])
 
   return (
     <aside
-      className="flex h-full w-[340px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden border border-y-0 border-r-0 bg-background/95 shadow-2xl backdrop-blur"
+      className="flex h-full w-[390px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden border border-y-0 border-r-0 border-[#303030] bg-[#171717] text-zinc-100 shadow-2xl shadow-black/40"
       aria-label="チャット取り込み"
       title={projectTitle}
     >
       {!selectedChatItem && (
-        <div className="space-y-2 border-b p-2.5">
-          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
+        <div className="space-y-2 border-b border-[#303030] p-3">
+          <div className="flex items-center gap-2 rounded-lg border border-[#2d2d2d] bg-[#111111] px-2.5 py-2">
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="shrink-0 text-xs font-medium">リポ監視</span>
-              <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={hasRepoPath ? currentRepoPath : undefined}>
+              <span className="shrink-0 text-xs font-semibold text-zinc-200">リポ監視</span>
+              <span className="min-w-0 truncate text-[11px] text-zinc-500" title={hasRepoPath ? currentRepoPath : undefined}>
                 {hasRepoPath ? currentRepoLabel : "リポ未選択"}
               </span>
               {hasRepoPath && importOwnerLabel && (
-                <span className="max-w-[96px] shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={importOwnerLabel}>
+                <span className="max-w-[96px] shrink-0 truncate rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400" title={importOwnerLabel}>
                   監視: {importOwnerLabel}
                 </span>
               )}
@@ -459,8 +554,8 @@ export function CodexChatImportSidebar({
                 className={cn(
                   "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
                   codexRunnerStatus.ready
-                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                    : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
+                    ? "bg-emerald-400/10 text-emerald-300"
+                    : "bg-amber-400/10 text-amber-200",
                 )}
               >
                 {codexRunnerStatus.loading || !codexRunnerStatus.checked
@@ -476,7 +571,7 @@ export function CodexChatImportSidebar({
               disabled={!hasRepoPath || isBusy || runnerUnavailable}
               aria-label="リポ監視"
               title={runnerUnavailable ? runnerUnavailableMessage : undefined}
-              className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
+              className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
             />
           </div>
 
@@ -486,7 +581,7 @@ export function CodexChatImportSidebar({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-8 px-2"
+                className="h-8 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
                 onClick={() => setRepoPickerOpen(open => !open)}
                 disabled={isBusy}
                 aria-expanded={repoPickerOpen}
@@ -499,7 +594,7 @@ export function CodexChatImportSidebar({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-8 px-2"
+                className="h-8 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
                 onClick={chooseFolder}
                 disabled={isBusy}
                 aria-label="Finderでリポフォルダを選択"
@@ -512,7 +607,7 @@ export function CodexChatImportSidebar({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-8 w-8 text-zinc-400 hover:bg-white/10 hover:text-white"
                 onClick={handleRefreshRepos}
                 disabled={isBusy}
                 aria-label="リポ候補を更新"
@@ -525,7 +620,7 @@ export function CodexChatImportSidebar({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2 text-xs text-muted-foreground"
+                  className="h-7 px-2 text-xs text-zinc-500 hover:bg-white/10 hover:text-zinc-200"
                   onClick={() => void selectRepoPath(null)}
                   disabled={isBusy}
                 >
@@ -537,10 +632,10 @@ export function CodexChatImportSidebar({
             {repoPickerOpen && (
               <div
                 id="codex-repo-picker"
-                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover p-1 shadow-xl"
+                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
               >
                 {repos.length === 0 ? (
-                  <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                  <div className="px-2 py-3 text-center text-xs text-zinc-500">
                     リポ候補がありません
                   </div>
                 ) : (
@@ -552,19 +647,19 @@ export function CodexChatImportSidebar({
                         type="button"
                         aria-label={`対象リポを選択 ${repo.display_name || repoNameFromPath(repo.absolute_path)}`}
                         className={cn(
-                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
-                          selected && "bg-muted",
+                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
+                          selected && "bg-white/10 text-white",
                         )}
                         onClick={() => void selectRepoPath(repo.absolute_path)}
                         disabled={isBusy}
                         title={repo.absolute_path}
                       >
-                        <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
                         <span className="min-w-0 flex-1 truncate text-xs font-medium">
                           {repo.display_name || repoNameFromPath(repo.absolute_path)}
                         </span>
-                        <span className="shrink-0 text-[10px] text-muted-foreground">agent</span>
-                        {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
+                        <span className="shrink-0 text-[10px] text-zinc-500">agent</span>
+                        {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
                       </button>
                     )
                   })
@@ -574,7 +669,7 @@ export function CodexChatImportSidebar({
           </div>
 
           {(repoError || reposError) && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">
               {repoError ?? reposError}
             </p>
           )}
@@ -583,109 +678,58 @@ export function CodexChatImportSidebar({
 
       {selectedChatItem ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b px-3 py-2">
+          <div className="border-b border-[#303030] px-3 py-2">
             <div className="flex min-w-0 items-center gap-2">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="-ml-1 h-8 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                className="-ml-1 h-8 shrink-0 gap-1.5 px-2 text-xs text-zinc-400 hover:bg-white/10 hover:text-white"
                 onClick={() => setSelectedChatId(null)}
               >
                 <ArrowLeft className="h-4 w-4" />
                 <span>戻る</span>
               </Button>
-              <div className="min-w-0 flex-1 truncate text-xs font-semibold" title={selectedChatItem.title}>
+              <div className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100" title={selectedChatItem.title}>
                 {selectedChatItem.title}
               </div>
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5">
             {selectedDetail?.loading && selectedMessages.length === 0 && !selectedDetail.text ? (
-              <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-3 py-2 text-xs text-zinc-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 チャット内容を取得中
               </div>
             ) : null}
 
             {selectedDetail?.error ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
                 {selectedDetail.error}
               </div>
             ) : null}
 
             {selectedDetail?.loading && selectedMessages.length > 0 ? (
-              <div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-2 py-1.5 text-[11px] text-zinc-500">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 最新内容を取得中
               </div>
             ) : null}
 
             {selectedMessages.length > 0 ? (
-              <div className="space-y-4">
-                {selectedMessages.map(message => {
-                  const label = activityLabel(message)
-                  const isUserMessage = message.role === "user" || message.kind === "sent" || message.kind === "user_answer"
-                  const isStatusMessage = message.role === "status" || message.role === "system"
-                  const timeLabel = formatActivityTime(message.created_at)
-                  return (
-                    <article key={message.id} className="flex min-w-0 gap-2">
-                      {!isUserMessage && (
-                        <div
-                          className={cn(
-                            "mt-5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
-                            isStatusMessage
-                              ? "bg-muted text-muted-foreground"
-                              : "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300",
-                          )}
-                          aria-hidden="true"
-                        >
-                          {isStatusMessage ? <GitBranch className="h-3 w-3" /> : "C"}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="mb-1 flex min-w-0 items-center gap-2">
-                          <span className={cn(
-                            "shrink-0 text-xs font-semibold",
-                            isUserMessage && "text-sky-700 dark:text-sky-200",
-                          )}>
-                            {label}
-                          </span>
-                          {timeLabel && (
-                            <span className={cn(
-                              "truncate text-[11px] text-muted-foreground",
-                              isUserMessage && "text-sky-700/70 dark:text-sky-200/60",
-                            )}>
-                              {timeLabel}
-                            </span>
-                          )}
-                        </div>
-                        <div
-                          className={cn(
-                            "whitespace-pre-wrap break-words rounded-lg border px-3 py-2 text-xs leading-relaxed text-foreground shadow-sm",
-                            isUserMessage
-                              ? "border-sky-400/25 bg-sky-500/[0.11] dark:border-sky-300/20 dark:bg-sky-400/[0.12]"
-                              : "bg-muted/20",
-                            message.importance === "important" && "border-amber-400/50 bg-amber-500/10",
-                          )}
-                        >
-                          {message.body}
-                        </div>
-                      </div>
-                    </article>
-                  )
-                })}
+              <div className="space-y-5">
+                {selectedMessages.map(message => <ActivityMessageBubble key={message.id} message={message} />)}
               </div>
             ) : selectedDetail?.text ? (
-              <div className="space-y-1">
-                <div className="text-xs font-semibold">取得内容</div>
-                <div className="whitespace-pre-wrap break-words rounded-lg border bg-card px-3 py-2 text-xs leading-relaxed text-foreground shadow-sm">
+              <div className="space-y-2">
+                <div className="text-[11px] font-medium text-zinc-500">取得内容</div>
+                <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-zinc-100">
                   {selectedDetail.text}
                 </div>
               </div>
             ) : !selectedDetail?.loading && !selectedDetail?.error ? (
-              <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+              <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
                 表示できるチャット内容がありません
               </div>
             ) : null}
@@ -693,60 +737,77 @@ export function CodexChatImportSidebar({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b p-3">
+          <div className="border-b border-[#303030] p-3">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
               <Input
                 value={query}
                 onChange={event => setQuery(event.target.value)}
-                className="h-8 pl-7 text-xs"
+                className="h-11 rounded-lg border-[#2d2d2d] bg-[#111111] pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-zinc-500"
                 placeholder="チャットを検索"
                 aria-label="チャットを検索"
               />
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-2">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
+            <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">未配置チャット</div>
             {filteredChatItems.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+              <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
                 未配置チャットはありません
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {filteredChatItems.map(item => (
-                  <div
-                    key={item.id}
-                    draggable
-                    role="button"
-                    tabIndex={0}
-                    className="group flex w-full cursor-grab flex-col gap-1 rounded-lg border bg-card/80 px-2.5 py-2 text-left shadow-sm transition-colors hover:border-sky-400/60 hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-                    data-testid={`codex-chat-import-row-${item.id}`}
-                    onClick={() => handleChatItemClick(item)}
-                    onKeyDown={event => {
-                      if (event.key !== "Enter" && event.key !== " ") return
-                      event.preventDefault()
-                      handleChatItemClick(item)
-                    }}
-                    onDragStart={event => {
-                      event.dataTransfer.effectAllowed = "move"
-                      event.dataTransfer.setData(
-                        CODEX_CHAT_IMPORT_DRAG_TYPE,
-                        encodeCodexChatImportDragPayload({ taskId: item.id }),
-                      )
-                      event.dataTransfer.setData("text/plain", item.title)
-                    }}
-                    title={item.snippet ?? item.title}
-                  >
+              <div className="space-y-1">
+                {filteredChatItems.map(item => {
+                  const isDragging = draggingChatId === item.id
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      role="button"
+                      tabIndex={0}
+                      className={cn(
+                        "group flex w-full cursor-grab flex-col gap-1 rounded-lg px-3 py-2 text-left text-zinc-300 transition-all duration-150 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:cursor-grabbing",
+                        isDragging && "scale-[0.985] bg-sky-400/10 text-sky-100 opacity-60 shadow-inner ring-1 ring-sky-400/60",
+                      )}
+                      data-testid={`codex-chat-import-row-${item.id}`}
+                      aria-grabbed={isDragging}
+                      onClick={() => handleChatItemClick(item)}
+                      onKeyDown={event => {
+                        if (event.key !== "Enter" && event.key !== " ") return
+                        event.preventDefault()
+                        handleChatItemClick(item)
+                      }}
+                      onDragStart={event => {
+                        setDraggingChatId(item.id)
+                        onChatDragStateChange?.({ itemId: item.id, title: item.title })
+                        event.dataTransfer.effectAllowed = "move"
+                        event.dataTransfer.setData(
+                          CODEX_CHAT_IMPORT_DRAG_TYPE,
+                          encodeCodexChatImportDragPayload({ taskId: item.id, title: item.title, snippet: item.snippet }),
+                        )
+                        event.dataTransfer.setData("text/plain", item.title)
+                        const dragImage = createChatDragImage(item)
+                        if (dragImage && typeof event.dataTransfer.setDragImage === "function") {
+                          event.dataTransfer.setDragImage(dragImage, 24, 18)
+                        }
+                      }}
+                      onDragEnd={finishChatDrag}
+                      title={item.snippet ?? item.title}
+                    >
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1 truncate text-xs font-semibold">{item.title}</div>
+                      <div className="flex min-w-0 flex-1 items-start gap-1.5">
+                        <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", isDragging && "text-sky-300")} />
+                        <div className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</div>
+                      </div>
                       <div className="flex shrink-0 items-center gap-1">
-                        {item.updatedLabel && <span className="text-[10px] text-muted-foreground">{item.updatedLabel}</span>}
+                        {item.updatedLabel && <span className="text-[10px] text-zinc-500">{item.updatedLabel}</span>}
                         {onDeleteChatItem && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            className="hidden h-8 w-8 text-zinc-500 hover:bg-red-500/10 hover:text-red-300 group-hover:inline-flex"
                             aria-label={`チャットを削除 ${item.title}`}
                             onClick={event => {
                               event.preventDefault()
@@ -760,54 +821,55 @@ export function CodexChatImportSidebar({
                       </div>
                     </div>
                     {item.snippet && (
-                      <div className="line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+                      <div className="line-clamp-2 text-xs leading-5 text-zinc-500">
                         {item.snippet}
                       </div>
                     )}
                     <div className="flex min-w-0 flex-wrap items-center gap-1">
                       <span className={cn(
                         "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                        item.placed ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" : "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+                        item.placed ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300",
                       )}>
                         {item.placementLabel}
                       </span>
                       {item.statusLabel && (
-                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
                           {item.statusLabel}
                         </span>
                       )}
                       {item.repoPath && (
-                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={item.repoPath}>
+                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500" title={item.repoPath}>
                           {repoNameFromPath(item.repoPath)}
                         </span>
                       )}
                       {item.threadId && (
-                        <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground" title={item.threadId}>
+                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-500" title={item.threadId}>
                           {item.threadId.slice(0, 8)}
                         </span>
                       )}
                       {item.projectTitle && (
-                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
                           {item.projectTitle}
                         </span>
                       )}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] gap-2 border-t p-3">
-        <Button type="button" variant="outline" className="h-10 min-w-0" onClick={onClose}>
+      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] gap-2 border-t border-[#303030] bg-[#171717] p-3">
+        <Button type="button" variant="outline" className="h-11 min-w-0 border-[#303030] bg-[#111111] text-zinc-200 hover:bg-white/10 hover:text-white" onClick={onClose}>
           閉じる
         </Button>
         {selectedChatItem ? (
           <Button
             type="button"
-            className="h-10 min-w-0 bg-sky-500 text-white hover:bg-sky-600"
+            className="h-11 min-w-0 bg-white text-zinc-950 shadow-[0_10px_30px_rgba(255,255,255,0.12)] hover:bg-zinc-200"
             onClick={() => void handlePlaceSelectedChatItem()}
             disabled={!onPlaceChatItem || placingPending}
           >
@@ -815,8 +877,11 @@ export function CodexChatImportSidebar({
             ノードへ配置
           </Button>
         ) : (
-          <div className="flex min-w-0 items-center justify-end truncate text-[11px] text-muted-foreground">
-            ドラッグしてノードへ配置
+          <div className={cn(
+            "flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500 transition-colors",
+            draggingChatId && "text-sky-300",
+          )}>
+            {draggingChatId ? "マップ外で離すとカードに戻ります" : "ドラッグしてノードへ配置"}
           </div>
         )}
       </div>

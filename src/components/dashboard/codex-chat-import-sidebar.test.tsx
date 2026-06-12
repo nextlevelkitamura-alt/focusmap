@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
-import { CODEX_CHAT_IMPORT_DRAG_TYPE } from "@/lib/codex-chat-import-dnd"
+import { CODEX_CHAT_IMPORT_DRAG_TYPE, readCodexChatImportDragPayload } from "@/lib/codex-chat-import-dnd"
 import { CodexChatImportSidebar, type CodexChatImportItem } from "./codex-chat-import-sidebar"
 
 const refreshRepos = vi.fn()
@@ -59,6 +59,7 @@ function jsonResponse(data: unknown, ok = true) {
 function renderSidebar(options: {
   chatItems?: CodexChatImportItem[]
   onPlaceChatItem?: ReturnType<typeof vi.fn>
+  onChatDragStateChange?: ReturnType<typeof vi.fn>
 } = {}) {
   const onSelectRepoPath = vi.fn().mockResolvedValue(undefined)
   const onToggleImport = vi.fn().mockResolvedValue(undefined)
@@ -78,6 +79,7 @@ function renderSidebar(options: {
       onToggleImport={onToggleImport}
       onDeleteChatItem={onDeleteChatItem}
       onPlaceChatItem={onPlaceChatItem}
+      onChatDragStateChange={options.onChatDragStateChange}
     />,
   )
 
@@ -107,6 +109,38 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("未配置")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
+  })
+
+  test("marks a chat card as grabbed and writes the drag payload", () => {
+    const onChatDragStateChange = vi.fn()
+    renderSidebar({ onChatDragStateChange })
+
+    const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
+    const dragData = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: "copy",
+      setData: vi.fn((type: string, value: string) => {
+        dragData.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragData.get(type) ?? ""),
+      setDragImage: vi.fn(),
+    }
+
+    fireEvent.dragStart(row, { dataTransfer })
+
+    expect(row).toHaveAttribute("aria-grabbed", "true")
+    expect(onChatDragStateChange).toHaveBeenCalledWith({
+      itemId: "chat-node-1",
+      title: "Codexスレッド連携UI",
+    })
+    expect(readCodexChatImportDragPayload(dataTransfer as unknown as DataTransfer)).toEqual({
+      taskId: "chat-node-1",
+      title: "Codexスレッド連携UI",
+      snippet: "右側サイドバーにチャット一覧を表示する",
+    })
+
+    fireEvent.dragEnd(row, { dataTransfer })
+    expect(onChatDragStateChange).toHaveBeenLastCalledWith(null)
   })
 
   test("selects a repo from Focusmap agent repo candidates", async () => {
@@ -170,14 +204,14 @@ describe("CodexChatImportSidebar", () => {
     await waitFor(() => {
       expect(screen.getByText("DBに保存してから表示します")).toBeInTheDocument()
     })
-    expect(screen.getByRole("button", { name: "戻る" }).className).toContain("hover:bg-muted/60")
+    expect(screen.getByRole("button", { name: "戻る" }).className).toContain("hover:bg-white/10")
     expect(screen.queryByRole("switch", { name: "リポ監視" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /既存リポ選択/ })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Finderでリポフォルダを選択" })).not.toBeInTheDocument()
     expect(screen.queryByLabelText("チャットを検索")).not.toBeInTheDocument()
-    expect(screen.getByText("送信内容")).toBeInTheDocument()
-    expect(screen.getByText("Codexの返答")).toBeInTheDocument()
-    expect(screen.getByText("右側サイドバーにチャット一覧を表示する").className).toContain("bg-sky-500/[0.11]")
+    expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
+    expect(screen.queryByText("Codexの返答")).not.toBeInTheDocument()
+    expect(screen.getByText("右側サイドバーにチャット一覧を表示する").className).toContain("bg-white")
 
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
     expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
@@ -287,7 +321,11 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.dragStart(screen.getByTestId("codex-chat-import-row-chat-node-1"), { dataTransfer })
 
     expect(dataTransfer.setData).toHaveBeenCalledWith(CODEX_CHAT_IMPORT_DRAG_TYPE, expect.any(String))
-    expect(JSON.parse(data.get(CODEX_CHAT_IMPORT_DRAG_TYPE) ?? "{}")).toEqual({ taskId: "chat-node-1" })
+    expect(JSON.parse(data.get(CODEX_CHAT_IMPORT_DRAG_TYPE) ?? "{}")).toEqual({
+      taskId: "chat-node-1",
+      title: "Codexスレッド連携UI",
+      snippet: "右側サイドバーにチャット一覧を表示する",
+    })
   })
 
   test("deletes a chat row from the repo inbox", async () => {

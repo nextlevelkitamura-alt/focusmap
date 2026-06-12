@@ -86,6 +86,7 @@ type CustomMindMapViewProps = {
         targetId: string;
         position: CustomDropPosition;
     }) => void | Promise<void>;
+    importedChatDragTitle?: string | null;
     onDropImportedChatNode?: (params: {
         taskId: string;
         targetId: string;
@@ -822,6 +823,12 @@ function CustomTaskNode({
             onDragLeave={handleExternalDragLeave}
             onDrop={handleExternalDrop}
         >
+            {externalDropActive && (
+                <div className="pointer-events-none absolute -top-7 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-sky-300/40 bg-background/95 px-2 py-1 text-[11px] font-semibold text-sky-600 shadow-lg dark:bg-[#111111]/95 dark:text-sky-300">
+                    <Bot className="h-3 w-3" />
+                    ここに入れる
+                </div>
+            )}
             {dropPosition === "above" && !dragging && (
                 <div className="absolute -top-1.5 left-0 right-0 h-1 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
             )}
@@ -1326,6 +1333,12 @@ function CustomProjectNode({
             onDragLeave={handleExternalDragLeave}
             onDrop={handleExternalDrop}
         >
+            {externalDropActive && (
+                <div className="pointer-events-none absolute -top-7 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-sky-300/40 bg-background/95 px-2 py-1 text-[11px] font-semibold text-sky-600 shadow-lg dark:bg-[#111111]/95 dark:text-sky-300">
+                    <Bot className="h-3 w-3" />
+                    ここに入れる
+                </div>
+            )}
             {dropPosition === "as-child" && (
                 <div className="pointer-events-none absolute inset-0 rounded-lg bg-sky-400/10" />
             )}
@@ -1389,6 +1402,7 @@ export function CustomMindMapView({
     onMoveTask,
     onMoveTasks,
     onDuplicateTasks,
+    importedChatDragTitle,
     onDropImportedChatNode,
 }: CustomMindMapViewProps) {
     const [zoom, setZoom] = useState(() => isMobile ? 0.85 : 0.9);
@@ -1405,6 +1419,7 @@ export function CustomMindMapView({
     const [floatingEditNodeId, setFloatingEditNodeId] = useState<string | null>(null);
     const [floatingEditValue, setFloatingEditValue] = useState("");
     const [mobileKeyboardAccessoryPinned, setMobileKeyboardAccessoryPinned] = useState(false);
+    const [externalImportDragOverMap, setExternalImportDragOverMap] = useState(false);
     const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight();
     const codexRunnerStatus = useCodexRunnerStatus(Boolean(onToggleCodexThreadImport));
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -1425,6 +1440,7 @@ export function CustomMindMapView({
     const viewportRafRef = useRef<number | null>(null);
     const viewportAnimationFrameRef = useRef<number | null>(null);
     const dragAutoPanFrameRef = useRef<number | null>(null);
+    const externalImportDragResetTimerRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
     const panMovedRef = useRef(false);
     const pendingResizeSavesRef = useRef(new Map<string, number>());
@@ -3048,6 +3064,63 @@ export function CustomMindMapView({
         setMobileKeyboardAccessoryPinned(false);
     }, [clearFloatingTaskPreview]);
 
+    const clearExternalImportDragOverMap = useCallback(() => {
+        if (externalImportDragResetTimerRef.current !== null) {
+            window.clearTimeout(externalImportDragResetTimerRef.current);
+            externalImportDragResetTimerRef.current = null;
+        }
+        setExternalImportDragOverMap(false);
+    }, []);
+
+    const handleExternalImportDragOverCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setExternalImportDragOverMap(true);
+        if (externalImportDragResetTimerRef.current !== null) {
+            window.clearTimeout(externalImportDragResetTimerRef.current);
+        }
+        externalImportDragResetTimerRef.current = window.setTimeout(() => {
+            externalImportDragResetTimerRef.current = null;
+            setExternalImportDragOverMap(false);
+        }, 160);
+    }, []);
+
+    const handleExternalImportDragLeaveCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        clearExternalImportDragOverMap();
+    }, [clearExternalImportDragOverMap]);
+
+    const handleExternalImportDropCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        clearExternalImportDragOverMap();
+    }, [clearExternalImportDragOverMap]);
+
+    const handleExternalImportDropOnViewport = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        clearExternalImportDragOverMap();
+        const payload = readCodexChatImportDragPayload(event.dataTransfer);
+        if (!payload) return;
+        void Promise.resolve(onDropImportedChatNode?.({
+            taskId: payload.taskId,
+            targetId: "project-root",
+            position: "as-child",
+        })).catch(error => {
+            console.error("[CustomMindMap] Failed to drop imported Codex chat:", error);
+        });
+    }, [clearExternalImportDragOverMap, onDropImportedChatNode]);
+
+    useEffect(() => () => {
+        if (externalImportDragResetTimerRef.current !== null) {
+            window.clearTimeout(externalImportDragResetTimerRef.current);
+            externalImportDragResetTimerRef.current = null;
+        }
+    }, []);
+
     const selectionRect = selectionBox
         ? {
             left: Math.min(selectionBox.startX, selectionBox.currentX),
@@ -3154,6 +3227,10 @@ export function CustomMindMapView({
                     panState ? "cursor-grabbing select-none" : spacePressed ? "cursor-grab" : "cursor-default"
                 )}
                 style={{ touchAction: "none", overscrollBehavior: "contain" }}
+                onDragOverCapture={handleExternalImportDragOverCapture}
+                onDragLeaveCapture={handleExternalImportDragLeaveCapture}
+                onDropCapture={handleExternalImportDropCapture}
+                onDrop={handleExternalImportDropOnViewport}
                 onPointerDown={handleViewportPointerDown}
                 onContextMenu={(event) => event.preventDefault()}
                 onClick={() => {
@@ -3163,7 +3240,7 @@ export function CustomMindMapView({
                 }}
             >
                 <div
-                    className="absolute left-0 top-0 origin-top-left"
+                    className="absolute left-0 top-0 z-20 origin-top-left"
                     ref={stageRef}
                     data-testid="custom-mind-map-stage"
                     style={{
@@ -3278,6 +3355,23 @@ export function CustomMindMapView({
                         />
                     )}
                 </div>
+                {externalImportDragOverMap && (
+                    <>
+                        <div
+                            className="pointer-events-none absolute inset-3 z-10 rounded-xl border border-sky-400/45 bg-sky-400/[0.06] shadow-[inset_0_0_0_1px_rgba(56,189,248,0.18),0_0_36px_rgba(56,189,248,0.16)]"
+                            data-testid="codex-chat-import-map-drop-overlay"
+                        />
+                        <div className="pointer-events-none absolute right-6 top-6 z-50 flex max-w-[min(360px,calc(100%-3rem))] items-center gap-2 rounded-lg border border-sky-300/30 bg-background/90 px-3 py-2 text-xs shadow-xl backdrop-blur dark:bg-[#111111]/92">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sky-400/15 text-sky-300">
+                                <Bot className="h-4 w-4" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="block truncate font-semibold text-foreground">{importedChatDragTitle?.trim() || "Codexチャット"}</span>
+                                <span className="block truncate text-[11px] text-muted-foreground">ノードに重ねると子ノード、空白で新しい枝</span>
+                            </span>
+                        </div>
+                    </>
+                )}
                 {isMobile && floatingEditNode && floatingEditViewportStyle && (
                     <div
                         className={cn(

@@ -204,6 +204,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false);
     const [hiddenCodexChatImportIds, setHiddenCodexChatImportIds] = useState<Set<string>>(() => new Set());
     const [isCodexChatImportSidebarOpen, setIsCodexChatImportSidebarOpen] = useState(false);
+    const [activeCodexChatDrag, setActiveCodexChatDrag] = useState<{ itemId: string; title: string } | null>(null);
     const { pushAction: pushUndoableAction } = useUndoRedo();
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
@@ -239,6 +240,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setCodexThreadImportOverride(null);
         setHiddenCodexChatImportIds(new Set());
         setIsCodexChatImportSidebarOpen(false);
+        setActiveCodexChatDrag(null);
     }, [project?.id, project?.space_id]);
 
     const projectRepoPath = useMemo(() => (
@@ -1987,6 +1989,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         onMoveTask={handleCustomMoveTask}
                         onMoveTasks={handleCustomMoveTasks}
                         onDuplicateTasks={handleCustomDuplicateTasks}
+                        importedChatDragTitle={activeCodexChatDrag?.title ?? null}
                         onDropImportedChatNode={handleDropImportedChatNode}
                     />
                     {isCodexChatImportSidebarOpen && (
@@ -2003,6 +2006,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 onToggleImport={toggleSelectedRepoImport}
                                 onDeleteChatItem={handleDeleteCodexChatImportItem}
                                 onPlaceChatItem={(taskId) => handleDropImportedChatNode({ taskId, targetId: 'project-root', position: 'as-child' })}
+                                onChatDragStateChange={setActiveCodexChatDrag}
                             />
                         </div>
                     )}

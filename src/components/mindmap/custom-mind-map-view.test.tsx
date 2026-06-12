@@ -271,6 +271,33 @@ describe("CustomMindMapView keyboard operations", () => {
     })
   })
 
+  test("drops an imported Codex chat onto blank map space as a root branch", () => {
+    const onDropImportedChatNode = vi.fn()
+    renderMap({ importedChatDragTitle: "取り込みたいチャット", onDropImportedChatNode })
+
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
+    const dataTransfer = {
+      types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: vi.fn((type: string) => (
+        type === CODEX_CHAT_IMPORT_DRAG_TYPE
+          ? encodeCodexChatImportDragPayload({ taskId: "chat-node-1", title: "取り込みたいチャット" })
+          : ""
+      )),
+    }
+
+    fireEvent.dragOver(viewport, { dataTransfer })
+    expect(screen.getByTestId("codex-chat-import-map-drop-overlay")).toBeInTheDocument()
+
+    fireEvent.drop(viewport, { dataTransfer })
+
+    expect(onDropImportedChatNode).toHaveBeenCalledWith({
+      taskId: "chat-node-1",
+      targetId: "project-root",
+      position: "as-child",
+    })
+  })
+
   test("prioritizes ai task status over stale task progress on node badge", () => {
     renderMap({
       codexRunByNodeId: {
