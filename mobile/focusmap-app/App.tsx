@@ -2,7 +2,6 @@ import { StatusBar } from "expo-status-bar";
 import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   AppState,
   type AppStateStatus,
@@ -20,8 +19,8 @@ import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react
 const DEFAULT_FOCUSMAP_URL = "https://focusmap-official.com/dashboard";
 const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/";
 const EXTERNAL_AUTH_HOSTS = new Set(["accounts.google.com", "oauth2.googleapis.com"]);
-const STARTUP_OVERLAY_MAX_MS = 1200;
 const WEBVIEW_BACKGROUND = "#050505";
+const STARTUP_HOURS = Array.from({ length: 11 }, (_, index) => 10 + index);
 const CONTENT_READY_SCRIPT = `
 (() => {
   if (window.__focusmapNativeReadyInstalled) return true;
@@ -199,6 +198,167 @@ type ErrorState = {
   detail: string;
 };
 
+type StartupSnapshotEvent = {
+  id?: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  color?: string | null;
+  backgroundColor?: string | null;
+};
+
+type StartupSnapshot = {
+  dateLabel?: string;
+  eventCount?: number;
+  events: StartupSnapshotEvent[];
+  savedAt?: string;
+};
+
+function formatStartupDateLabel() {
+  const now = new Date();
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  return `${now.getMonth() + 1}月${now.getDate()}日(${weekdays[now.getDay()]})`;
+}
+
+function formatStartupTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function normalizeStartupSnapshot(value: unknown): StartupSnapshot | null {
+  const snapshot = value as Partial<StartupSnapshot> | null;
+  if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.events)) return null;
+
+  const events = snapshot.events
+    .map((event): StartupSnapshotEvent | null => {
+      if (!event || typeof event !== "object") return null;
+      const source = event as Partial<StartupSnapshotEvent>;
+      if (typeof source.title !== "string" || typeof source.startTime !== "string" || typeof source.endTime !== "string") return null;
+      return {
+        id: typeof source.id === "string" ? source.id : undefined,
+        title: source.title,
+        startTime: source.startTime,
+        endTime: source.endTime,
+        color: typeof source.color === "string" ? source.color : null,
+        backgroundColor: typeof source.backgroundColor === "string" ? source.backgroundColor : null,
+      };
+    })
+    .filter((event): event is StartupSnapshotEvent => event !== null)
+    .slice(0, 20);
+
+  return {
+    dateLabel: typeof snapshot.dateLabel === "string" ? snapshot.dateLabel : undefined,
+    eventCount: typeof snapshot.eventCount === "number" ? snapshot.eventCount : events.length,
+    events,
+    savedAt: typeof snapshot.savedAt === "string" ? snapshot.savedAt : undefined,
+  };
+}
+
+function CalendarGlyph({ active = false }: { active?: boolean }) {
+  return (
+    <View style={[styles.calendarGlyph, active && styles.calendarGlyphActive]}>
+      <View style={styles.calendarGlyphTop} />
+      <View style={styles.calendarGlyphGrid}>
+        <View style={styles.calendarGlyphDot} />
+        <View style={styles.calendarGlyphDot} />
+        <View style={styles.calendarGlyphDot} />
+        <View style={styles.calendarGlyphDot} />
+      </View>
+    </View>
+  );
+}
+
+function StartupCalendarShell({ snapshot }: { snapshot: StartupSnapshot | null }) {
+  const dateLabel = snapshot?.dateLabel || formatStartupDateLabel();
+  const eventCount = snapshot?.eventCount ?? snapshot?.events.length ?? 0;
+  const eventsByHour = new Map<number, StartupSnapshotEvent>();
+
+  for (const event of snapshot?.events ?? []) {
+    const start = new Date(event.startTime);
+    if (Number.isNaN(start.getTime())) continue;
+    const hour = start.getHours();
+    if (!eventsByHour.has(hour)) eventsByHour.set(hour, event);
+  }
+
+  return (
+    <View style={styles.startupShell}>
+      <View style={styles.startupHeader}>
+        <View style={styles.startupTitleBlock}>
+          <Text style={styles.startupDate}>{dateLabel}</Text>
+          <Text style={styles.startupMeta}>
+            {eventCount > 0 ? `${eventCount}件のスケジュール` : "予定を確認中"}
+          </Text>
+        </View>
+        <View style={styles.startupHeaderActions}>
+          <View style={styles.startupSegment}>
+            <Text style={[styles.startupSegmentText, styles.startupSegmentActive]}>Day</Text>
+            <Text style={styles.startupSegmentText}>3days</Text>
+            <Text style={styles.startupSegmentText}>Month</Text>
+          </View>
+          <View style={styles.startupAiButton}>
+            <Text style={styles.startupAiText}>AI</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.startupTimeline}>
+        {STARTUP_HOURS.map((hour) => {
+          const event = eventsByHour.get(hour);
+          return (
+            <View key={hour} style={styles.startupHourRow}>
+              <Text style={styles.startupHourLabel}>{hour}:00</Text>
+              <View style={styles.startupSlot}>
+                {event ? (
+                  <View
+                    style={[
+                      styles.startupEventCard,
+                      {
+                        borderLeftColor: event.color || "#8ee8c1",
+                        backgroundColor: event.backgroundColor || "rgba(45,102,82,0.72)",
+                      },
+                    ]}
+                  >
+                    <Text style={styles.startupEventTitle} numberOfLines={1}>
+                      {event.title || "予定"}
+                    </Text>
+                    <Text style={styles.startupEventTime}>
+                      {formatStartupTime(event.startTime)} - {formatStartupTime(event.endTime)}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.startupEmptySlot} />
+                )}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.startupBottomNav}>
+        {[
+          { label: "Todo", active: true },
+          { label: "メモ" },
+          { label: "マップ" },
+          { label: "チャット" },
+          { label: "設定" },
+        ].map((item) => (
+          <View key={item.label} style={styles.startupNavItem}>
+            {item.active ? (
+              <CalendarGlyph active />
+            ) : (
+              <View style={styles.startupNavIcon} />
+            )}
+            <Text style={[styles.startupNavLabel, item.active && styles.startupNavLabelActive]}>
+              {item.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function ErrorFallback({
   error,
   onReload,
@@ -236,14 +396,13 @@ export default function App() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
   const [hasPresentedWebContent, setHasPresentedWebContent] = useState(false);
-  const [hasDismissedStartupOverlay, setHasDismissedStartupOverlay] = useState(false);
   const [isRecoveringWebContent, setIsRecoveringWebContent] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
+  const [startupSnapshot, setStartupSnapshot] = useState<StartupSnapshot | null>(null);
 
   const markWebContentPresented = useCallback(() => {
     hasPresentedWebContentRef.current = true;
     setHasPresentedWebContent(true);
-    setHasDismissedStartupOverlay(true);
     setIsRecoveringWebContent(false);
     setInitialLoading(false);
     setLoadProgress(1);
@@ -255,13 +414,11 @@ export default function App() {
 
     if (hasPresentedWebContentRef.current) {
       setInitialLoading(false);
-      setHasDismissedStartupOverlay(true);
       setIsRecoveringWebContent(options?.recovering === true);
       return;
     }
 
     setInitialLoading(true);
-    setHasDismissedStartupOverlay(false);
     setIsRecoveringWebContent(false);
   }, []);
 
@@ -338,6 +495,11 @@ export default function App() {
         markWebContentPresented();
         return;
       }
+      if (payload.type === "focusmap:startup-snapshot") {
+        const snapshot = normalizeStartupSnapshot((payload as { payload?: unknown }).payload);
+        if (snapshot) setStartupSnapshot(snapshot);
+        return;
+      }
       if (payload.type === "focusmap:copyText" && typeof payload.text === "string") {
         copyTextToClipboard(payload.text);
         return;
@@ -382,16 +544,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!initialLoading || hasPresentedWebContent || hasDismissedStartupOverlay) return;
-
-    const handle = setTimeout(() => {
-      setHasDismissedStartupOverlay(true);
-    }, STARTUP_OVERLAY_MAX_MS);
-
-    return () => clearTimeout(handle);
-  }, [hasDismissedStartupOverlay, hasPresentedWebContent, initialLoading]);
-
-  useEffect(() => {
     Linking.getInitialURL().then(handleDeepLink).catch(() => undefined);
     const subscription = Linking.addEventListener("url", ({ url }) => handleDeepLink(url));
     return () => subscription.remove();
@@ -410,7 +562,7 @@ export default function App() {
     return () => subscription.remove();
   }, []);
 
-  const showLoadingOverlay = initialLoading && !hasPresentedWebContent && !hasDismissedStartupOverlay;
+  const showLoadingOverlay = initialLoading && !hasPresentedWebContent;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -488,14 +640,7 @@ export default function App() {
             )}
             {showLoadingOverlay && (
               <View pointerEvents="none" style={styles.loadingOverlay}>
-                <View style={styles.loadingPanel}>
-                  <View style={styles.logoMark}>
-                    <Text style={styles.logoText}>F</Text>
-                  </View>
-                  <Text style={styles.loadingTitle}>Focusmap</Text>
-                  <Text style={styles.loadingDetail}>ダッシュボードを開いています</Text>
-                  <ActivityIndicator color="#9ee493" style={styles.spinner} />
-                </View>
+                <StartupCalendarShell snapshot={startupSnapshot} />
               </View>
             )}
           </>
@@ -588,13 +733,196 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
     backgroundColor: "#050505",
   },
-  loadingPanel: {
+  startupShell: {
+    flex: 1,
+    backgroundColor: "#050607",
+  },
+  startupHeader: {
+    minHeight: 92,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.10)",
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    paddingTop: 10,
+    backgroundColor: "#090b0d",
+  },
+  startupTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  startupDate: {
+    color: "#f7f7f7",
+    fontSize: 25,
+    fontWeight: "800",
+    letterSpacing: 0,
+  },
+  startupMeta: {
+    marginTop: 4,
+    color: "#8d8f94",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  startupHeaderActions: {
+    flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  startupSegment: {
+    height: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    padding: 3,
+  },
+  startupSegmentText: {
+    minWidth: 46,
+    height: 34,
+    borderRadius: 10,
+    color: "#9b9da3",
+    overflow: "hidden",
+    paddingHorizontal: 7,
+    paddingTop: 8,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  startupSegmentActive: {
+    color: "#f7f7f7",
+    backgroundColor: "#000000",
+  },
+  startupAiButton: {
+    height: 42,
+    minWidth: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  startupAiText: {
+    color: "#d4d4d8",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  startupTimeline: {
+    flex: 1,
+    paddingLeft: 14,
+    paddingRight: 16,
+    paddingTop: 6,
+  },
+  startupHourRow: {
+    minHeight: 58,
+    flexDirection: "row",
+  },
+  startupHourLabel: {
+    width: 52,
+    paddingTop: 9,
+    color: "#6f7279",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  startupSlot: {
+    flex: 1,
+    minHeight: 58,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.07)",
+    paddingVertical: 5,
+  },
+  startupEmptySlot: {
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.035)",
+  },
+  startupEventCard: {
+    minHeight: 42,
+    borderLeftWidth: 4,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  startupEventTitle: {
+    color: "#f4f4f5",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  startupEventTime: {
+    marginTop: 2,
+    color: "#c7c7cc",
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  startupBottomNav: {
+    height: 76,
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(5,6,7,0.98)",
+  },
+  startupNavItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  startupNavIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#6d7076",
+    opacity: 0.82,
+  },
+  startupNavLabel: {
+    color: "#8e929a",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  startupNavLabelActive: {
+    color: "#58a6ff",
+  },
+  calendarGlyph: {
+    width: 25,
+    height: 25,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: "#6d7076",
+    overflow: "hidden",
+  },
+  calendarGlyphActive: {
+    borderColor: "#58a6ff",
+  },
+  calendarGlyphTop: {
+    height: 7,
+    borderBottomWidth: 2,
+    borderBottomColor: "rgba(88,166,255,0.9)",
+    backgroundColor: "rgba(88,166,255,0.10)",
+  },
+  calendarGlyphGrid: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    gap: 3,
+  },
+  calendarGlyphDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#58a6ff",
   },
   logoMark: {
     alignItems: "center",
@@ -610,19 +938,6 @@ const styles = StyleSheet.create({
     color: "#9ee493",
     fontSize: 28,
     fontWeight: "700",
-  },
-  loadingTitle: {
-    marginTop: 8,
-    color: "#f5f5f5",
-    fontSize: 22,
-    fontWeight: "700",
-  },
-  loadingDetail: {
-    color: "#a6a6a6",
-    fontSize: 14,
-  },
-  spinner: {
-    marginTop: 14,
   },
   fallback: {
     flex: 1,

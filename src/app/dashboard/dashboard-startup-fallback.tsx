@@ -95,6 +95,23 @@ function readMindmapTasks(): CachedTask[] {
     return []
 }
 
+function createStartupSnapshot(): StartupSnapshot {
+    if (typeof window === "undefined") {
+        return {
+            activeView: "today",
+            events: [],
+            tasks: [],
+        }
+    }
+
+    const savedView = window.localStorage.getItem("focusmap:activeView")
+    return {
+        activeView: savedView === "map" ? "map" : "today",
+        events: readCalendarEvents(),
+        tasks: readMindmapTasks(),
+    }
+}
+
 function formatDateLabel() {
     return new Intl.DateTimeFormat("ja-JP", {
         month: "long",
@@ -114,20 +131,11 @@ function formatTime(value?: string) {
 }
 
 function useStartupSnapshot(): StartupSnapshot {
-    const [snapshot, setSnapshot] = useState<StartupSnapshot>({
-        activeView: "today",
-        events: [],
-        tasks: [],
-    })
+    const [snapshot, setSnapshot] = useState<StartupSnapshot>(() => createStartupSnapshot())
 
     useEffect(() => {
         const handle = window.setTimeout(() => {
-            const savedView = window.localStorage.getItem("focusmap:activeView")
-            setSnapshot({
-                activeView: savedView === "map" ? "map" : "today",
-                events: readCalendarEvents(),
-                tasks: readMindmapTasks(),
-            })
+            setSnapshot(createStartupSnapshot())
         }, 0)
         return () => window.clearTimeout(handle)
     }, [])
@@ -139,6 +147,16 @@ export function DashboardStartupFallback() {
     const snapshot = useStartupSnapshot()
     const dateLabel = useMemo(() => formatDateLabel(), [])
     const isMap = snapshot.activeView === "map"
+    const calendarEventsByHour = useMemo(() => {
+        const map = new Map<number, CachedCalendarEvent>()
+        for (const event of snapshot.events) {
+            const start = event.start_time ? new Date(event.start_time) : null
+            if (!start || Number.isNaN(start.getTime())) continue
+            const hour = start.getHours()
+            if (!map.has(hour)) map.set(hour, event)
+        }
+        return map
+    }, [snapshot.events])
 
     return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#050607] text-neutral-100 md:hidden">
@@ -182,7 +200,7 @@ export function DashboardStartupFallback() {
                     <div className="grid grid-cols-[44px_1fr] gap-x-3">
                         {Array.from({ length: 8 }).map((_, index) => {
                             const hour = 10 + index
-                            const event = snapshot.events[index]
+                            const event = calendarEventsByHour.get(hour)
                             return (
                                 <div key={event?.id ?? index} className="contents">
                                     <div className="pt-2 text-xs text-neutral-500">{hour}:00</div>

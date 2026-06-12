@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState, type TouchEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react"
 import { Task, Project, Space } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
@@ -26,6 +26,37 @@ const HEADER_PULL_REFRESH_THRESHOLD = 52
 const HEADER_PULL_REFRESH_MAX = 76
 const HEADER_PULL_REFRESH_HOLD = 46
 const HEADER_BASE_PADDING_TOP = 6
+
+type NativeStartupSnapshotPayload = {
+    dateLabel: string
+    eventCount: number
+    events: Array<{
+        id: string
+        title: string
+        startTime: string
+        endTime: string
+        color: string
+        backgroundColor: string
+    }>
+    savedAt: string
+}
+
+function postNativeStartupSnapshot(payload: NativeStartupSnapshotPayload) {
+    if (typeof window === 'undefined') return
+    const bridge = (window as Window & {
+        ReactNativeWebView?: { postMessage: (message: string) => void }
+    }).ReactNativeWebView
+    if (!bridge?.postMessage) return
+
+    try {
+        bridge.postMessage(JSON.stringify({
+            type: 'focusmap:startup-snapshot',
+            payload,
+        }))
+    } catch {
+        // The native shell is only a display cache; the web app remains the source of truth.
+    }
+}
 
 // --- Types ---
 
@@ -56,6 +87,7 @@ export function TodayView({
 }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const pullRefreshStartYRef = useRef<number | null>(null)
+    const startupSnapshotSignatureRef = useRef<string>("")
     const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | '3days' | 'month'>('day')
     const [mobilePane, setMobilePane] = useState<'schedule' | 'ai'>('schedule')
     const [pullRefreshDistance, setPullRefreshDistance] = useState(0)
@@ -265,6 +297,35 @@ export function TodayView({
             : calendarRangeMode === 'month'
                 ? ''
                 : rangeHeader.subtitle
+
+    useEffect(() => {
+        if (mobilePane !== 'schedule') return
+        if (calendarRangeMode !== 'day') return
+
+        const events = logic.displayItems.slice(0, 20).map(item => ({
+            id: item.id,
+            title: item.title || '予定',
+            startTime: item.startTime.toISOString(),
+            endTime: item.endTime.toISOString(),
+            color: item.color || '#8ee8c1',
+            backgroundColor: item.originalEvent?.background_color || item.color || 'rgba(45,102,82,0.72)',
+        }))
+        const signature = JSON.stringify({
+            dateLabel: rangeHeader.title,
+            eventCount: logic.displayItems.length,
+            events,
+        })
+
+        if (startupSnapshotSignatureRef.current === signature) return
+        startupSnapshotSignatureRef.current = signature
+
+        postNativeStartupSnapshot({
+            dateLabel: rangeHeader.title,
+            eventCount: logic.displayItems.length,
+            events,
+            savedAt: new Date().toISOString(),
+        })
+    }, [calendarRangeMode, logic.displayItems, mobilePane, rangeHeader.title])
 
     return (
         <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#050607] text-neutral-100 md:bg-background md:text-foreground">
