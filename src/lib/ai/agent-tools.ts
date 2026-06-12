@@ -9,7 +9,21 @@
  */
 import type { ToolSet } from 'ai'
 import { createClient } from '@/utils/supabase/server'
-import { addTask, addCalendarEvent, addMindmapGroup, addMindmapTask, deleteMindmapNode, createScheduleTask } from './tools'
+import {
+  addTask,
+  addCalendarEvent,
+  addMindmapGroup,
+  addMindmapTask,
+  checkCalendarAvailability,
+  createScheduleTask,
+  deleteMindmapNode,
+  getProjectContext,
+  listCalendarEvents,
+  listProjectTasks,
+  listProjects,
+  saveProjectContext,
+  updateCalendarEvent,
+} from './tools'
 import { createRemoteTools, resolveOnlineRunner, type OnlineRunner } from './remote-tools'
 
 export interface BuiltAgentTools {
@@ -27,8 +41,15 @@ export async function buildAgentTools(userId: string, spaceId: string | null): P
   const remote = createRemoteTools({ userId, spaceId, runner })
 
   const tools: ToolSet = {
+    listProjects,
+    getProjectContext,
+    saveProjectContext,
+    listProjectTasks,
     addTask,
+    listCalendarEvents,
+    checkCalendarAvailability,
     addCalendarEvent,
+    updateCalendarEvent,
     addMindmapGroup,
     addMindmapTask,
     deleteMindmapNode,

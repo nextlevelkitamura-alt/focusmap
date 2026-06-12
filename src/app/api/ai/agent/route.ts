@@ -51,6 +51,19 @@ function formatRunnerHints(runner: OnlineRunner): string[] {
   return lines
 }
 
+function formatTokyoNow(): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date())
+}
+
 type AgentChatMode = 'general' | 'project'
 
 interface ProjectChatContext {
@@ -80,6 +93,14 @@ function buildSystemPrompt(
     '- マルチステップの作業は、1ステップずつツールを呼びながら進める。各ステップの結果を見て次を判断する。',
     '- ツールが失敗した場合は、理由をユーザーに分かりやすく伝え、代替案を提案する。',
     '- 画像が添付されている場合は、画像の内容を実際に確認してから答える。',
+    `- 現在日時は ${formatTokyoNow()}（Asia/Tokyo）として扱う。今日/明日/来週などの相対日時は必ずこの日時を基準にISO 8601へ変換してからツールへ渡す。`,
+    '',
+    '## Codex風の実行モデル',
+    '- あなたは「会話だけのAI」ではなく、必要な道具を選んで実行するエージェントです。できる作業は、回答だけで済ませずツールで確認・記録・実行する。',
+    '- 低リスクな確認・作成・更新は自律的に進める。取り返しがつきにくい削除、大量変更、外部公開、送信、課金、権限変更、秘密情報の表示や保存は、実行前にユーザーへ確認する。',
+    '- DBやカレンダーの内容を推測で答えない。必要なら listProjects / getProjectContext / listProjectTasks / listCalendarEvents を使って実データを確認する。',
+    '- ツール結果にない事実は「未確認」として扱う。実行できなかった時は、どの接続や権限が不足しているかを短く伝える。',
+    '- Mac経由のターミナル・ブラウザ・ファイル操作は広い権限を持つが、常駐エージェント側の安全ブロックと許可ルートに従う。ブロックされたら迂回せず、より安全な方法を提案する。',
     '',
     '## チャットスコープ',
     chatMode === 'project' && projectContext
@@ -96,9 +117,21 @@ function buildSystemPrompt(
       ].join('\n'),
     '',
     '## ツールの種類',
-    '- サーバー直実行 (常に使える): addTask / addCalendarEvent / addMindmapGroup / addMindmapTask / deleteMindmapNode',
+    '- Focusmap DB確認/記録 (常に使える): listProjects / getProjectContext / saveProjectContext / listProjectTasks',
+    '- タスク・マップ操作 (常に使える): addTask / addMindmapGroup / addMindmapTask / deleteMindmapNode',
+    '- 予定操作 (常に使える): listCalendarEvents / checkCalendarAvailability / addCalendarEvent / updateCalendarEvent',
     '- 予約実行 (常に使える): scheduleTask — 時間指定や繰り返し、またはMacがオフラインのときにサーバー側でタスクを予約実行する。',
     '- Mac経由 (ターミナル/ブラウザ/ファイル): runTerminal / listFiles / readFile / writeFile / runOpenCode / browserNavigate / browserClick / browserFill / browserScreenshot / webResearch',
+    '',
+    '## Focusmap DB / プロジェクト運用',
+    '- 「プロジェクトについて話す」「概要を見て」「今の状況を確認して」は、対象が曖昧なら listProjects で候補を探し、対象が分かれば getProjectContext で概要・蓄積コンテキスト・最近のタスクを確認する。',
+    '- 「記録して」「概要を更新して」「この進捗を残して」は saveProjectContext を使う。通常チャットで対象プロジェクトが曖昧なら、勝手に別プロジェクトへ記録せず確認する。',
+    '- 「DBを確認して」は、Focusmapの許可されたDBツールで projects / project_contexts / tasks / calendar_events 相当を確認する意味として扱う。任意SQLや秘密情報の取得はしない。',
+    '',
+    '## 予定操作',
+    '- 「予定をこの時間に入れるのはどうかな」は checkCalendarAvailability で衝突確認してから、必要なら addCalendarEvent で作成する。',
+    '- 「既存の予定の見出し/内容/時間を変更して」は、まず listCalendarEvents で対象候補を確認し、google_event_id と calendar_id を特定してから updateCalendarEvent を使う。',
+    '- 対象候補が複数ある予定変更は、誤更新を避けるためユーザーへどれを変更するか確認する。',
     '',
     '## 仕事リポ・求人運用',
     '- ユーザーが「仕事リポ」「求人更新」「求人立案」「求人採用」「求人を作って/直して/巡回して」と依頼したら、対象指定がない限り `/Users/kitamuranaohiro/Private/仕事` を仕事リポ候補として扱う。',
