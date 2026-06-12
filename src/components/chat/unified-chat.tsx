@@ -11,8 +11,10 @@ import {
   type DynamicToolUIPart,
 } from "ai"
 import {
+  Brain,
   BriefcaseBusiness,
   CalendarDays,
+  ChevronDown,
   CheckCircle2,
   FileText,
   Image as ImageIcon,
@@ -31,6 +33,7 @@ import {
   Wrench,
   X,
   XCircle,
+  Zap,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -54,6 +57,13 @@ import {
   type AgentChatProgressMetadata,
 } from "@/lib/ai/agent-chat-progress"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS } from "@/lib/ai/ui-message-sanitize"
+import {
+  AGENT_MODEL_MODE_DESCRIPTIONS,
+  AGENT_MODEL_MODE_LABELS,
+  DEFAULT_AGENT_MODEL_MODE,
+  normalizeAgentModelMode,
+  type AgentModelMode,
+} from "@/lib/ai/agent-model-mode"
 import type { Project } from "@/types/database"
 
 interface UnifiedChatProps {
@@ -132,6 +142,12 @@ const MAX_IMAGE_SIDE = 1600
 const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024
 const CHAT_SLOW_NOTICE_MS = 45_000
 const DEFAULT_VISIBLE_HISTORY_COUNT = 3
+const MODEL_MODE_STORAGE_KEY = "focusmap:agent-chat:model-mode"
+
+const MODEL_MODE_OPTIONS: Array<{ value: AgentModelMode; icon: typeof Zap }> = [
+  { value: "speed", icon: Zap },
+  { value: "think", icon: Brain },
+]
 
 function isDesktopViewport() {
   return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches
@@ -139,6 +155,11 @@ function isDesktopViewport() {
 
 function formatDate(value: number) {
   return new Date(value).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
+}
+
+function loadModelModePreference(): AgentModelMode {
+  if (typeof window === "undefined") return DEFAULT_AGENT_MODEL_MODE
+  return normalizeAgentModelMode(window.localStorage.getItem(MODEL_MODE_STORAGE_KEY))
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -227,6 +248,7 @@ export function UnifiedChat({
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [activeProjectChatId, setActiveProjectChatId] = useState<string | null>(null)
+  const [modelMode, setModelMode] = useState<AgentModelMode>(() => loadModelModePreference())
   const [attachments, setAttachments] = useState<FileUIPart[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice>(null)
@@ -269,6 +291,14 @@ export function UnifiedChat({
     if (!activeProjectChatId || activeProjectChat) return
     setActiveProjectChatId(null)
   }, [activeProjectChat, activeProjectChatId])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MODEL_MODE_STORAGE_KEY, modelMode)
+    } catch {
+      // The selected mode still applies to the current send even if storage is unavailable.
+    }
+  }, [modelMode])
 
   const handleSelectGeneralChat = useCallback(() => {
     setActiveProjectChatId(null)
@@ -346,6 +376,7 @@ export function UnifiedChat({
       spaceId,
       projectId: activeProjectChatIdForRequest,
       chatMode,
+      modelMode,
     }).catch(error => {
       setRuntimeNotice({ tone: "error", message: error instanceof Error ? friendlyChatError(error) : "送信に失敗しました。もう一度送れます。" })
     })
@@ -561,7 +592,7 @@ export function UnifiedChat({
                 </button>
               </div>
             )}
-            <div className="rounded-[1.15rem] border border-[#3a3b40] bg-[#17181b] p-2 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+            <div className="rounded-[1.35rem] border border-[#3a3b40] bg-[#17181b] p-2.5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -577,10 +608,10 @@ export function UnifiedChat({
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 placeholder={inputPlaceholder}
-                rows={1}
-                className="max-h-28 min-h-8 w-full resize-none border-0 bg-transparent px-1 py-0 text-[15px] leading-5 text-zinc-100 outline-none placeholder:text-zinc-500"
+                rows={2}
+                className="max-h-44 min-h-16 w-full resize-none border-0 bg-transparent px-1 py-1.5 text-[16px] leading-6 text-zinc-100 outline-none placeholder:text-zinc-500"
               />
-              <div className="mt-0 flex min-h-8 items-center justify-between gap-2">
+              <div className="mt-1 flex min-h-10 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <AutomationPromptMenu
                     onSelect={insertAutomationPrompt}
@@ -589,11 +620,12 @@ export function UnifiedChat({
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <ModelModeMenu value={modelMode} onChange={setModelMode} disabled={isBusy} />
                   <Button
                     variant="ghost"
                     size="icon"
                     className={cn(
-                      "h-8 w-8 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white",
+                      "h-10 w-10 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white",
                       isRecording && "bg-red-500/15 text-red-300 hover:bg-red-500/20 hover:text-red-200",
                     )}
                     onClick={isRecording ? stopRecording : startRecording}
@@ -606,7 +638,7 @@ export function UnifiedChat({
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-8 w-8 rounded-full bg-white text-zinc-950 hover:bg-zinc-200"
+                      className="h-10 w-10 rounded-full bg-white text-zinc-950 hover:bg-zinc-200"
                       onClick={() => setRuntimeNotice({ tone: "info", message: "実行は裏側で継続中です。完了するとこの履歴へ戻ります。" })}
                       title="裏側で実行中"
                     >
@@ -616,7 +648,7 @@ export function UnifiedChat({
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-8 w-8 rounded-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:opacity-100"
+                      className="h-10 w-10 rounded-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:opacity-100"
                       disabled={!canSend}
                       onClick={() => submit(input)}
                       title={sendLabel}
@@ -658,6 +690,64 @@ export function UnifiedChat({
   )
 }
 
+function ModelModeMenu({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: AgentModelMode
+  onChange: (value: AgentModelMode) => void
+  disabled?: boolean
+}) {
+  const selected = MODEL_MODE_OPTIONS.find(option => option.value === value) ?? MODEL_MODE_OPTIONS[1]
+  const SelectedIcon = selected.icon
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={disabled}
+          className="h-10 shrink-0 rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-xs font-semibold text-zinc-100 hover:bg-white/10 hover:text-white disabled:opacity-60"
+          title={`モデルモード: ${AGENT_MODEL_MODE_LABELS[value]}`}
+          aria-label={`モデルモード: ${AGENT_MODEL_MODE_LABELS[value]}`}
+        >
+          <SelectedIcon className="h-4 w-4 shrink-0" />
+          <span className="inline max-[360px]:hidden">{AGENT_MODEL_MODE_LABELS[value]}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        side="top"
+        sideOffset={8}
+        className="w-56 border-[#3a3a3a] bg-[#202124] text-zinc-100 shadow-[0_18px_60px_rgba(0,0,0,0.45)]"
+      >
+        <DropdownMenuLabel className="text-xs text-zinc-400">モデルモード</DropdownMenuLabel>
+        {MODEL_MODE_OPTIONS.map(option => {
+          const Icon = option.icon
+          const active = option.value === value
+          return (
+            <DropdownMenuItem
+              key={option.value}
+              className="cursor-pointer gap-3 py-2.5 focus:bg-white/10 focus:text-white"
+              onSelect={() => onChange(option.value)}
+            >
+              <Icon className="h-4 w-4 shrink-0 text-zinc-200" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{AGENT_MODEL_MODE_LABELS[option.value]}</span>
+                <span className="block text-xs text-zinc-400">{AGENT_MODEL_MODE_DESCRIPTIONS[option.value]}</span>
+              </span>
+              {active && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" />}
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function AutomationPromptMenu({
   onSelect,
   onAttachImage,
@@ -670,7 +760,7 @@ function AutomationPromptMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white" title="追加">
+        <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white" title="追加">
           <Plus className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>

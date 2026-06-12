@@ -19,6 +19,10 @@ import {
   type AgentCalendarPreferences,
 } from '@/lib/ai/agent-preferences'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
+import {
+  normalizeAgentModelMode,
+  type AgentModelMode,
+} from '@/lib/ai/agent-model-mode'
 
 // マルチステップのツール実行で時間がかかるため上限を引き上げる (Cloud Run の上限内)
 export const maxDuration = 600
@@ -82,10 +86,12 @@ function buildSystemPrompt(
     chatMode,
     projectContext,
     calendarPreferences,
+    modelMode,
   }: {
     chatMode: AgentChatMode
     projectContext?: ProjectChatContext | null
     calendarPreferences: AgentCalendarPreferences
+    modelMode: AgentModelMode
   },
 ): string {
   const online = runner !== null
@@ -102,6 +108,9 @@ function buildSystemPrompt(
     '- ツールが失敗した場合は、理由をユーザーに分かりやすく伝え、代替案を提案する。',
     '- 画像が添付されている場合は、画像の内容を実際に確認してから答える。',
     `- 現在日時は ${formatTokyoNow()}（Asia/Tokyo）として扱う。今日/明日/来週などの相対日時は必ずこの日時を基準にISO 8601へ変換してからツールへ渡す。`,
+    modelMode === 'speed'
+      ? '- 現在の応答モードは「スピード」です。軽い確認・短い整理・単純な実行は、必要最小限の確認だけで素早く結論を返す。深い再構成が必要だと分かった時だけ不足確認をしてから進める。'
+      : '- 現在の応答モードは「考える」です。論理整理、マインドマップ再構成、複数ステップ実行では、必要な情報を確認しながら筋道を立てて進める。',
     '',
     '## Codex風の実行モデル',
     '- あなたは「会話だけのAI」ではなく、必要な道具を選んで実行するエージェントです。できる作業は、回答だけで済ませずツールで確認・記録・実行する。',
@@ -271,6 +280,7 @@ export async function POST(request: Request) {
       projectId?: string | null
       chatMode?: AgentChatMode
     }
+    const modelMode = normalizeAgentModelMode((body as { modelMode?: unknown }).modelMode)
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: 'messages is required' }, { status: 400 })
@@ -281,7 +291,7 @@ export async function POST(request: Request) {
 
     const modelInputMessages = sanitizeUIMessagesForModel(messages)
     const usesVision = hasImagePart(modelInputMessages)
-    const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
+    const { model } = usesVision ? getAgentVisionModel() : getAgentModel(modelMode)
     const { tools, runner } = await buildAgentTools(user.id, spaceId ?? null)
     const { data: userContext } = await supabase
       .from('ai_user_context')
@@ -313,6 +323,7 @@ export async function POST(request: Request) {
         chatMode: projectContext ? 'project' : 'general',
         projectContext,
         calendarPreferences,
+        modelMode,
       }),
       messages: modelMessages,
       tools,

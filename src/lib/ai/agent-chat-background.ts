@@ -16,6 +16,7 @@ import {
 } from '@/lib/ai/agent-preferences'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
 import { withoutAgentProgressMessages } from '@/lib/ai/agent-chat-progress'
+import type { AgentModelMode } from '@/lib/ai/agent-model-mode'
 
 export type AgentChatMode = 'general' | 'project'
 
@@ -75,10 +76,12 @@ function buildSystemPrompt(
     chatMode,
     projectContext,
     calendarPreferences,
+    modelMode,
   }: {
     chatMode: AgentChatMode
     projectContext?: ProjectChatContext | null
     calendarPreferences: AgentCalendarPreferences
+    modelMode: AgentModelMode
   },
 ): string {
   const online = runner !== null
@@ -95,6 +98,9 @@ function buildSystemPrompt(
     '- ツールが失敗した場合は、理由をユーザーに分かりやすく伝え、代替案を提案する。',
     '- 画像が添付されている場合は、画像の内容を実際に確認してから答える。',
     `- 現在日時は ${formatTokyoNow()}（Asia/Tokyo）として扱う。今日/明日/来週などの相対日時は必ずこの日時を基準にISO 8601へ変換してからツールへ渡す。`,
+    modelMode === 'speed'
+      ? '- 現在の応答モードは「スピード」です。軽い確認・短い整理・単純な実行は、必要最小限の確認だけで素早く結論を返す。深い再構成が必要だと分かった時だけ不足確認をしてから進める。'
+      : '- 現在の応答モードは「考える」です。論理整理、マインドマップ再構成、複数ステップ実行では、必要な情報を確認しながら筋道を立てて進める。',
     '',
     '## Codex風の実行モデル',
     '- あなたは「会話だけのAI」ではなく、必要な道具を選んで実行するエージェントです。できる作業は、回答だけで済ませずツールで確認・記録・実行する。',
@@ -252,6 +258,7 @@ export async function generateAgentChatReply({
   spaceId,
   projectId,
   chatMode,
+  modelMode,
   onToolCallStart,
   onToolCallFinish,
 }: {
@@ -260,13 +267,14 @@ export async function generateAgentChatReply({
   spaceId: string | null
   projectId: string | null
   chatMode: AgentChatMode
+  modelMode: AgentModelMode
   onToolCallStart?: NonNullable<Parameters<typeof generateText>[0]['experimental_onToolCallStart']>
   onToolCallFinish?: NonNullable<Parameters<typeof generateText>[0]['experimental_onToolCallFinish']>
 }) {
   const supabase = await createClient()
   const modelInputMessages = sanitizeUIMessagesForModel(withoutAgentProgressMessages(messages))
   const usesVision = agentMessagesHaveImage(modelInputMessages)
-  const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
+  const { model } = usesVision ? getAgentVisionModel() : getAgentModel(modelMode)
   const { tools, runner } = await buildAgentTools(userId, spaceId)
   const { data: userContext } = await supabase
     .from('ai_user_context')
@@ -298,6 +306,7 @@ export async function generateAgentChatReply({
       chatMode: projectContext ? 'project' : 'general',
       projectContext,
       calendarPreferences,
+      modelMode,
     }),
     messages: modelMessages,
     tools,

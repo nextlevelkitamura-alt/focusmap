@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { FileUIPart, UIMessage } from "ai"
 import { createClient as createBrowserSupabaseClient } from "@/utils/supabase/client"
+import type { AgentModelMode } from "@/lib/ai/agent-model-mode"
 
 export type AgentChatStatus = "idle" | "running" | "completed" | "failed"
 export type AgentChatMode = "general" | "project"
@@ -30,6 +31,7 @@ interface StartRunInput {
   spaceId?: string | null
   projectId?: string | null
   chatMode: AgentChatMode
+  modelMode: AgentModelMode
 }
 
 interface AgentChatSessionRow {
@@ -334,7 +336,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     return targetId
   }, [])
 
-  const startRun = useCallback(async ({ text, files, spaceId, projectId, chatMode }: StartRunInput) => {
+  const startRun = useCallback(async ({ text, files, spaceId, projectId, chatMode, modelMode }: StartRunInput) => {
     const userMessage = createUserMessage(text, files)
     const current = stateRef.current
     const now = Date.now()
@@ -365,6 +367,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       sessionId: targetId,
       scopeKey,
       chatMode,
+      modelMode,
       spaceId: spaceId ?? null,
       projectId: projectId ?? null,
       previousMessages,

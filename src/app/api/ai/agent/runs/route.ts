@@ -15,6 +15,10 @@ import {
   AGENT_CHAT_SESSIONS_NOT_READY_MESSAGE,
   isMissingAgentChatSessionsTable,
 } from '@/lib/ai/agent-chat-db'
+import {
+  normalizeAgentModelMode,
+  type AgentModelMode,
+} from '@/lib/ai/agent-model-mode'
 
 export const maxDuration = 600
 
@@ -106,7 +110,7 @@ function normalizeSession(row: AgentChatSessionRow) {
   }
 }
 
-async function runPersistentAgentSession(sessionId: string, userId: string) {
+async function runPersistentAgentSession(sessionId: string, userId: string, modelMode: AgentModelMode) {
   const supabase = await createClient()
   const { data: session, error: loadError } = await supabase
     .from('agent_chat_sessions')
@@ -146,6 +150,7 @@ async function runPersistentAgentSession(sessionId: string, userId: string) {
       spaceId: row.space_id,
       projectId: row.project_id,
       chatMode: row.chat_mode,
+      modelMode,
       onToolCallStart: async event => {
         const toolCallId = event.toolCall.toolCallId
         const toolName = event.toolCall.toolName
@@ -224,6 +229,7 @@ export async function POST(request: NextRequest) {
   const sessionId = isUuid(body?.sessionId) ? body.sessionId : crypto.randomUUID()
   const scopeKey = normalizeScopeKey(body?.scopeKey)
   const chatMode = normalizeChatMode(body?.chatMode)
+  const modelMode = normalizeAgentModelMode(body?.modelMode)
   const spaceId = isUuid(body?.spaceId) ? body.spaceId : null
   const projectId = chatMode === 'project' && isUuid(body?.projectId) ? body.projectId : null
   const previousMessages = isUiMessageArray(body?.previousMessages) ? body.previousMessages : []
@@ -305,7 +311,7 @@ export async function POST(request: NextRequest) {
   }
 
   after(async () => {
-    await runPersistentAgentSession(sessionId, user.id)
+    await runPersistentAgentSession(sessionId, user.id, modelMode)
   })
 
   return NextResponse.json({ session: normalizeSession(data as AgentChatSessionRow) })

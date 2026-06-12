@@ -7,13 +7,12 @@ updated: 2026-06-12
 related: [focusmap-lite-mac-agent.md]
 ---
 
-# 統合エージェントチャット (DeepSeek V4 Pro + Vercel AI SDK)
+# 統合エージェントチャット (DeepSeek V4 Pro / Flash + Vercel AI SDK)
 
 ## 概要
 
 現状「通常チャット(Gemini Flash-Lite)」と「自動化チャット(DeepSeek intent判定→ai_tasks)」が
-`FocusmapChatMode` で完全分離している。これを **1つのチャット基盤・1つのモデル(DeepSeek V4 Pro)・
-1つのエンドポイント** に統合する。2026-06-12時点のUI方針は、`チャット / 自動化` の2タブではなく **単一の全画面チャット** にする。予定整理・タスク化・調査などのショートカットは入力欄左の `+` メニューから同じチャットへプロンプト挿入し、Mac online/offline はヘッダーと入力欄上のステータスチップで常時表示する。
+`FocusmapChatMode` で完全分離している。これを **1つのチャット基盤・1つのエンドポイント** に統合する。2026-06-12時点のUI方針は、`チャット / 自動化` の2タブではなく **単一の全画面チャット** にする。予定整理・タスク化・調査などのショートカットは入力欄左の `+` メニューから同じチャットへプロンプト挿入し、Mac online/offline はヘッダーと入力欄上のステータスチップで常時表示する。モデルは入力欄の小さなモードピルで `スピード` / `考える` をユーザーが明示選択する。
 
 中核思想: **ツール対応モデルにツール群を渡せば、モデルがメッセージごとに「ただ答える/ツールを呼ぶ」を
 自律判断する**。モード切り替え・intent分類・キーワードルーターは不要になり、「必要な時だけエージェントが動く」
@@ -22,7 +21,7 @@ related: [focusmap-lite-mac-agent.md]
 
 ## 決定事項 (ユーザー確定)
 
-- モデル: **DeepSeek V4 Pro**(全メッセージ共通。雑談もV4 Proを通る代償は許容)
+- モデル: 入力欄のモードピルで **スピード**（`DEEPSEEK_AGENT_SPEED_MODEL` / `DEEPSEEK_INTENT_MODEL` / `deepseek-v4-flash`）と **考える**（`DEEPSEEK_AGENT_MODEL` / `deepseek-v4-pro`）を選ぶ。画像付きターンはGemini vision経路へ切り替える
 - チャット: **通常/自動化を1つのチャット基盤に統合**。UIも単一チャットにし、専用の `自動化` タブ/チャットは出さない
 - エージェント動作: 1チャット内で必要時のみツール実行(モデルが判断)
 - 脳の置き場所: **サーバー側 (Vercel AI SDK)**
@@ -149,6 +148,6 @@ related: [focusmap-lite-mac-agent.md]
 
 - **DeepSeekのツール信頼性**: Claude/GPTより複雑ループの実績が薄い。inputSchema厳格化 + stopWhen上限 + 失敗時リトライで吸収。実機で空回り頻度を観測する。
 - **Thinking ON判断**: intent判定はThinking OFFだったが、マルチステップ計画にはThinking推奨。要チューニング。
-- **全メッセージV4 Pro**: 雑談もV4 Proのレイテンシ/コスト。ユーザー確定の代償。後でFlash-Lite受け→V4Pro昇格のhybridも検討余地(ただしrouting復活なので当面しない)。
+- **モード切替**: 常時自動ルーティングではなく、入力欄のピルでユーザーが明示選択する。`スピード` は軽い確認・短い整理、`考える` は論理整理・マップ整理・複数ステップ実行を想定する。
 - **5sポーリング**: 1ツール=最大5s待ち。12ステップで累積1分の死に時間。Phase 4で必須改修。
 - **Mac側変更あり**: `cwd` 反映、フォルダ権限/Google Drive検出、OpenCode等ハーネス検出のため `focusmap-agent` 側も更新する。既存 `agent_commands` 種別は増やさず、`run_shell` / `file_list` を拡張利用する。
