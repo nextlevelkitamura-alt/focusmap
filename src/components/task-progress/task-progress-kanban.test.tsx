@@ -348,7 +348,7 @@ describe('TaskProgressKanban', () => {
         onRefresh={vi.fn()}
         onOpenTask={vi.fn()}
         onPlaceImportItem={onPlaceImportItem}
-      />,
+      />
     )
 
     expect(screen.queryByRole('button', { name: /Codexを開く/ })).not.toBeInTheDocument()
@@ -365,7 +365,7 @@ describe('TaskProgressKanban', () => {
         onRefresh={vi.fn()}
         onOpenTask={vi.fn()}
         onPlaceImportItem={onPlaceImportItem}
-      />,
+      />
     )
 
     expect(await screen.findByText('チャットがアーカイブされたのか')).toBeInTheDocument()
@@ -375,6 +375,59 @@ describe('TaskProgressKanban', () => {
     fireEvent.click(screen.getByRole('button', { name: '配置先を選ぶ' }))
 
     expect(onPlaceImportItem).toHaveBeenCalledWith('chat-node-1')
+  })
+
+  test('スマホCodexシートで取り込みリポを選択・解除・監視できる', async () => {
+    const onSelectRepoPath = vi.fn()
+    const onToggleImport = vi.fn()
+    const onRefreshRepos = vi.fn()
+
+    const renderKanban = (mobileOpenSignal: number) => (
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={mobileOpenSignal}
+        mobileImportItems={[]}
+        mobileImportRepoControl={{
+          selectedRepoPath: '/Users/me/work',
+          selectedRepoLabel: 'work',
+          importEnabled: true,
+          importOwnerLabel: '仕事',
+          repoOptions: [
+            { id: 'work', label: 'work', path: '/Users/me/work', sourceLabel: '仕事' },
+            { id: 'sns', label: 'sns', path: '/Users/me/sns', sourceLabel: 'SNS用' },
+          ],
+          onSelectRepoPath,
+          onToggleImport,
+          onRefreshRepos,
+        }}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+      />
+    )
+    const { rerender } = render(renderKanban(0))
+    rerender(renderKanban(1))
+
+    const monitorSwitch = await screen.findByRole('switch', { name: 'リポ監視' })
+    expect(monitorSwitch).toBeChecked()
+    expect(screen.getByText('監視: 仕事')).toBeInTheDocument()
+
+    fireEvent.click(monitorSwitch)
+    expect(onToggleImport).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByRole('combobox', { name: '取り込みリポを選択' }), {
+      target: { value: '/Users/me/sns' },
+    })
+    expect(onSelectRepoPath).toHaveBeenCalledWith('/Users/me/sns')
+
+    fireEvent.click(screen.getByRole('button', { name: 'リポ候補を更新' }))
+    expect(onRefreshRepos).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '選択解除' }))
+    expect(onSelectRepoPath).toHaveBeenCalledWith(null)
   })
 
   test('デスクトップ看板カードから元ノードを完了チェック・削除できる', async () => {

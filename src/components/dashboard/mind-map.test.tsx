@@ -66,12 +66,16 @@ vi.mock("@/hooks/useTaskProgressSnapshot", () => ({
 
 vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
   CustomMindMapView: ({
+    groups,
+    tasks,
     onSelectNode,
     collapsedTaskIds,
     onToggleCollapse,
     onGenerateHeadingFromLongNode,
     onDropImportedChatNode,
   }: {
+    groups: Array<{ id: string; title: string }>
+    tasks: Array<{ id: string; title: string }>
     onSelectNode: (nodeId: string) => void
     collapsedTaskIds: Set<string>
     onToggleCollapse: (nodeId: string) => void
@@ -79,6 +83,11 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
     onDropImportedChatNode?: (payload: { taskId: string; targetId: string; position: "as-child" }) => void
   }) => (
     <>
+      <div
+        data-testid="custom-map-props"
+        data-groups={groups.map(group => `${group.id}:${group.title}`).join("|")}
+        data-tasks={tasks.map(task => `${task.id}:${task.title}`).join("|")}
+      />
       <div data-testid="root-collapse-state">{collapsedTaskIds.has("root-1") ? "collapsed" : "expanded"}</div>
       <button type="button" onClick={() => onSelectNode("root-1")}>
         Root task
@@ -242,6 +251,47 @@ describe("MindMap controls", () => {
         project_id: "project-1",
       })
     })
+  })
+
+  test("does not render Codex Inbox or its unplaced chats on the desktop map", () => {
+    const inboxGroup = {
+      ...task,
+      id: "inbox-1",
+      title: "Codex Inbox",
+      source: "codex_inbox",
+    } as Task
+    const importedChat = {
+      ...task,
+      id: "chat-node-1",
+      title: "未配置のCodexチャット",
+      parent_task_id: "inbox-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      deleted_at: null,
+    } as Task
+    const placedChat = {
+      ...task,
+      id: "chat-node-2",
+      title: "配置済みCodexチャット",
+      parent_task_id: "root-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      deleted_at: null,
+    } as Task
+
+    render(
+      <MindMap
+        project={project}
+        groups={[task, inboxGroup]}
+        tasks={[importedChat, placedChat]}
+      />
+    )
+
+    const mapProps = screen.getByTestId("custom-map-props")
+    expect(mapProps.dataset.groups).toContain("root-1:Root task")
+    expect(mapProps.dataset.groups).not.toContain("Codex Inbox")
+    expect(mapProps.dataset.tasks).not.toContain("未配置のCodexチャット")
+    expect(mapProps.dataset.tasks).toContain("配置済みCodexチャット")
   })
 
   test("turns a long node title into memo detail and saves the generated heading", async () => {

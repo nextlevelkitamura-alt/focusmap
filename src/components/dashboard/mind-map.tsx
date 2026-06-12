@@ -20,6 +20,7 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion";
+import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
@@ -220,6 +221,18 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         onRemoveOptimisticEvent,
     });
     const mindMapTaskNodes = useMemo(() => [...groups, ...tasks], [groups, tasks]);
+    const hiddenCodexInboxTaskIds = useMemo(
+        () => getHiddenCodexInboxTaskIds(mindMapTaskNodes),
+        [mindMapTaskNodes]
+    );
+    const visibleMapGroups = useMemo(
+        () => groups.filter(group => !hiddenCodexInboxTaskIds.has(group.id)),
+        [groups, hiddenCodexInboxTaskIds]
+    );
+    const visibleMapTasks = useMemo(
+        () => tasks.filter(task => !hiddenCodexInboxTaskIds.has(task.id)),
+        [hiddenCodexInboxTaskIds, tasks]
+    );
     const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects]);
     const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project?.space_id ?? null);
     const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(() => project?.id ?? null);
@@ -1961,8 +1974,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 <div className="relative min-h-0 flex-1" onPointerDownCapture={closeKanbanFromMapInteraction}>
                     <CustomMindMapView
                         project={project}
-                        groups={groups}
-                        tasks={tasks}
+                        groups={visibleMapGroups}
+                        tasks={visibleMapTasks}
                         isMobile={isNarrow}
                         collapsedTaskIds={collapsedTaskIds}
                         selectedNodeId={selectedNodeId}

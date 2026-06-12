@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  FolderGit2,
   Loader2,
   RefreshCw,
   Trash2,
@@ -23,6 +24,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Switch } from "@/components/ui/switch"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import {
   codexMonitorToneClass,
@@ -82,6 +84,27 @@ export type TaskProgressImportItem = {
   updatedLabel: string
 }
 
+export type TaskProgressImportRepoOption = {
+  id: string
+  label: string
+  path: string
+  sourceLabel?: string | null
+}
+
+export type TaskProgressMobileImportRepoControl = {
+  selectedRepoPath: string | null
+  selectedRepoLabel?: string | null
+  importEnabled: boolean
+  importOwnerLabel?: string | null
+  importPending?: boolean
+  repoOptions: TaskProgressImportRepoOption[]
+  repoOptionsLoading?: boolean
+  repoError?: string | null
+  onSelectRepoPath?: (repoPath: string | null) => void | Promise<void>
+  onToggleImport?: () => void | Promise<void>
+  onRefreshRepos?: () => void | Promise<void>
+}
+
 type TaskProgressKanbanProps = {
   tasks: TaskProgressSnapshotTask[]
   sourceTasksById: ReadonlyMap<string, SourceTaskInfo>
@@ -96,6 +119,7 @@ type TaskProgressKanbanProps = {
   mobileOpenSignal?: number
   mobileTriggerVisible?: boolean
   mobileImportItems?: TaskProgressImportItem[]
+  mobileImportRepoControl?: TaskProgressMobileImportRepoControl | null
   isLoading?: boolean
   isRefreshing?: boolean
   error?: string | null
@@ -163,6 +187,10 @@ function readStoredDesktopBoardHeight() {
 function repoNameFromPath(value: string | null | undefined) {
   if (!value) return null
   return value.split(/[\\/]/).filter(Boolean).pop() || value
+}
+
+function normalizeRepoPath(value: string | null | undefined) {
+  return (value ?? "").trim().replace(/\/+$/, "")
 }
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
@@ -703,6 +731,150 @@ function KanbanScopeSwitcher({
   )
 }
 
+function MobileImportRepoControls({
+  control,
+}: {
+  control: TaskProgressMobileImportRepoControl
+}) {
+  const [localError, setLocalError] = useState<string | null>(null)
+  const selectedRepoPath = normalizeRepoPath(control.selectedRepoPath)
+  const hasRepoPath = selectedRepoPath.length > 0
+  const isBusy = Boolean(control.importPending)
+  const selectedRepoLabel = control.selectedRepoLabel || repoNameFromPath(selectedRepoPath) || "リポ未選択"
+  const options = useMemo(() => {
+    const map = new Map<string, TaskProgressImportRepoOption>()
+    for (const option of control.repoOptions) {
+      const path = normalizeRepoPath(option.path)
+      if (!path) continue
+      map.set(path, { ...option, path })
+    }
+    if (selectedRepoPath && !map.has(selectedRepoPath)) {
+      map.set(selectedRepoPath, {
+        id: selectedRepoPath,
+        path: selectedRepoPath,
+        label: repoNameFromPath(selectedRepoPath) || selectedRepoPath,
+      })
+    }
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, "ja"))
+  }, [control.repoOptions, selectedRepoPath])
+  const visibleError = localError || control.repoError || null
+
+  const runAction = useCallback(async (action: () => void | Promise<void>, fallbackMessage: string) => {
+    setLocalError(null)
+    try {
+      await action()
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : fallbackMessage)
+    }
+  }, [])
+
+  const handleSelectRepoPath = useCallback((nextRepoPath: string | null) => {
+    if (!control.onSelectRepoPath || isBusy) return
+    void runAction(
+      () => control.onSelectRepoPath?.(nextRepoPath && normalizeRepoPath(nextRepoPath) ? normalizeRepoPath(nextRepoPath) : null),
+      "取り込みリポを選択できませんでした",
+    )
+  }, [control, isBusy, runAction])
+
+  const handleToggleImport = useCallback(() => {
+    if (!control.onToggleImport || isBusy) return
+    if (!hasRepoPath) {
+      setLocalError("対象リポを選択してからONにできます")
+      return
+    }
+    void runAction(() => control.onToggleImport?.(), "リポ監視を更新できませんでした")
+  }, [control, hasRepoPath, isBusy, runAction])
+
+  const handleRefreshRepos = useCallback(() => {
+    if (!control.onRefreshRepos || isBusy) return
+    void runAction(() => control.onRefreshRepos?.(), "リポ候補を更新できませんでした")
+  }, [control, isBusy, runAction])
+
+  return (
+    <section className="rounded-lg border bg-card px-3 py-3 shadow-sm" aria-label="Codex取り込みリポ">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <FolderGit2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+            <span className="text-sm font-semibold">リポ監視</span>
+            <span className={cn(
+              "rounded-full px-2 py-0.5 text-[10px] font-medium",
+              control.importEnabled && hasRepoPath
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "bg-muted text-muted-foreground",
+            )}>
+              {control.importEnabled && hasRepoPath ? "ON" : "OFF"}
+            </span>
+          </div>
+          <div className="mt-1 min-w-0 truncate text-xs text-muted-foreground" title={hasRepoPath ? selectedRepoPath : undefined}>
+            {selectedRepoLabel}
+          </div>
+          {hasRepoPath && control.importOwnerLabel && (
+            <div className="mt-1 truncate text-[11px] text-muted-foreground" title={control.importOwnerLabel}>
+              監視: {control.importOwnerLabel}
+            </div>
+          )}
+        </div>
+        <Switch
+          checked={control.importEnabled && hasRepoPath}
+          onCheckedChange={handleToggleImport}
+          disabled={!hasRepoPath || isBusy || !control.onToggleImport}
+          aria-label="リポ監視"
+          className="h-7 w-12 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-6 [&>span]:w-6 [&>span[data-state=checked]]:translate-x-5"
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-[minmax(0,1fr)_44px_auto] gap-2">
+        <label htmlFor="mobile-codex-import-repo" className="sr-only">取り込みリポを選択</label>
+        <select
+          id="mobile-codex-import-repo"
+          value={selectedRepoPath}
+          onChange={(event) => handleSelectRepoPath(event.target.value || null)}
+          disabled={isBusy || !control.onSelectRepoPath}
+          className="min-h-11 min-w-0 rounded-md border bg-background px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          aria-label="取り込みリポを選択"
+        >
+          <option value="">
+            {control.repoOptionsLoading ? "リポ候補を確認中" : "リポを選択"}
+          </option>
+          {options.map(option => (
+            <option key={option.path} value={option.path}>
+              {option.sourceLabel ? `${option.label} / ${option.sourceLabel}` : option.label}
+            </option>
+          ))}
+        </select>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-11 w-11"
+          onClick={handleRefreshRepos}
+          disabled={isBusy || !control.onRefreshRepos}
+          aria-label="リポ候補を更新"
+          title="リポ候補を更新"
+        >
+          <RefreshCw className={cn("h-4 w-4", control.repoOptionsLoading && "animate-spin")} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-11 px-2 text-xs text-muted-foreground"
+          onClick={() => handleSelectRepoPath(null)}
+          disabled={!hasRepoPath || isBusy || !control.onSelectRepoPath}
+        >
+          選択解除
+        </Button>
+      </div>
+      {visibleError && (
+        <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-200">
+          {visibleError}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function TaskProgressKanban({
   tasks,
   sourceTasksById,
@@ -717,6 +889,7 @@ export function TaskProgressKanban({
   mobileOpenSignal,
   mobileTriggerVisible = true,
   mobileImportItems = [],
+  mobileImportRepoControl = null,
   isLoading = false,
   isRefreshing = false,
   error,
@@ -739,6 +912,7 @@ export function TaskProgressKanban({
   const lastMobileOpenSignalRef = useRef<number | undefined>(mobileOpenSignal)
   const desktopResizeCleanupRef = useRef<(() => void) | null>(null)
   const runnerState = useRunnerConnection()
+  const hasMobileImportRepoControl = Boolean(mobileImportRepoControl)
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNowMs(Date.now()), HEARTBEAT_POLL_INTERVAL_MS)
@@ -863,13 +1037,13 @@ export function TaskProgressKanban({
   }, [onDeleteSourceTask])
 
   const openMobileKanban = useCallback((tab?: MobileCodexSheetTab) => {
-    setActiveMobileTab(tab ?? (mobileImportItems.length > 0 ? "import" : "board"))
+    setActiveMobileTab(tab ?? (mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board"))
     setActiveMobileLaneId(current => {
       if (counts[current] > 0) return current
       return LANES.find(lane => counts[lane.id] > 0)?.id ?? current
     })
     setMobileOpen(true)
-  }, [counts, mobileImportItems.length])
+  }, [counts, hasMobileImportRepoControl, mobileImportItems.length])
 
   useEffect(() => {
     if (!isMobile) return
@@ -877,10 +1051,10 @@ export function TaskProgressKanban({
     if (lastMobileOpenSignalRef.current === mobileOpenSignal) return
     lastMobileOpenSignalRef.current = mobileOpenSignal
     const timeoutId = window.setTimeout(() => {
-      openMobileKanban(mobileImportItems.length > 0 ? "import" : "board")
+      openMobileKanban(mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [isMobile, mobileImportItems.length, mobileOpenSignal, openMobileKanban])
+  }, [hasMobileImportRepoControl, isMobile, mobileImportItems.length, mobileOpenSignal, openMobileKanban])
 
   const handlePlaceImportItem = useCallback((taskId: string) => {
     onPlaceImportItem?.(taskId)
@@ -1070,9 +1244,14 @@ export function TaskProgressKanban({
               )}
               {activeMobileTab === "import" ? (
                 <div className="space-y-2">
+                  {mobileImportRepoControl && (
+                    <MobileImportRepoControls control={mobileImportRepoControl} />
+                  )}
                   {mobileImportItems.length === 0 ? (
                     <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
-                      取り込めるCodexチャットはありません
+                      {mobileImportRepoControl && !normalizeRepoPath(mobileImportRepoControl.selectedRepoPath)
+                        ? "リポを選択すると取り込みチャットを表示します"
+                        : "このリポで取り込めるCodexチャットはありません"}
                     </div>
                   ) : mobileImportItems.map(item => (
                     <div key={item.id} className="rounded-lg border bg-card p-3 shadow-sm">

@@ -41,6 +41,20 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
   }),
 }))
 
+vi.mock("@/hooks/useAvailableRepos", () => ({
+  useAvailableRepos: () => ({
+    repos: [],
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+    requestRescan: vi.fn(),
+  }),
+}))
+
+vi.mock("@/lib/auth/supabase-auth-fetch", () => ({
+  fetchWithSupabaseAuth: vi.fn(() => new Promise(() => {})),
+}))
+
 import { CustomMindMapView } from "./custom-mind-map-view"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
 import {
@@ -823,6 +837,42 @@ describe("CustomMindMapView keyboard operations", () => {
       expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: false })
       expect(onCreateTask).toHaveBeenCalledWith("root-1", "", "root-1")
     })
+  })
+
+  test("does not render Codex Inbox or unplaced imported chats on the mobile map", () => {
+    const rootTask = makeTask({ id: "root-1", title: "Root task" })
+    const inboxGroup = makeTask({
+      id: "inbox-1",
+      title: "Codex Inbox",
+      source: "codex_inbox",
+    })
+    const unplacedChat = makeTask({
+      id: "chat-node-1",
+      title: "未配置のCodexチャット",
+      parent_task_id: "inbox-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+    })
+    const placedChat = makeTask({
+      id: "chat-node-2",
+      title: "配置済みCodexチャット",
+      parent_task_id: "root-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+    })
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask, inboxGroup]}
+        tasks={[unplacedChat, placedChat]}
+      />
+    )
+
+    expect(screen.getByText("Root task")).toBeInTheDocument()
+    expect(screen.getByText("配置済みCodexチャット")).toBeInTheDocument()
+    expect(screen.queryByText("Codex Inbox")).not.toBeInTheDocument()
+    expect(screen.queryByText("未配置のCodexチャット")).not.toBeInTheDocument()
   })
 
   test("focuses an externally requested first mobile root node", async () => {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
-import { TaskProgressKanban, type TaskProgressImportItem } from "@/components/task-progress/task-progress-kanban"
+import { TaskProgressKanban, type TaskProgressImportItem, type TaskProgressImportRepoOption } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state"
 import {
     CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS,
@@ -12,12 +12,14 @@ import {
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
+import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source"
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui"
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
+import { useAvailableRepos } from "@/hooks/useAvailableRepos"
 import type { AiTask } from "@/types/ai-task"
 import type { Project, Space, Task } from "@/types/database"
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
@@ -39,6 +41,16 @@ function formatChatImportUpdatedLabel(value: string | null | undefined) {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return "更新不明"
     return `最終 ${date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })} ${date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`
+}
+
+function normalizeRepoPath(value: string | null | undefined) {
+    return (value ?? "").trim().replace(/\/+$/, "")
+}
+
+function repoNameFromPath(value: string | null | undefined) {
+    const normalized = normalizeRepoPath(value)
+    if (!normalized) return null
+    return normalized.split(/[\\/]/).filter(Boolean).pop() || normalized
 }
 
 function shouldUseTaskProgressFixture() {
@@ -109,6 +121,8 @@ export function MobileMindMap({
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
     const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set())
     const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null)
+    const [codexRepoPathOverride, setCodexRepoPathOverride] = useState<string | null | undefined>(undefined)
+    const [codexImportRepoPathOverride, setCodexImportRepoPathOverride] = useState<string | null | undefined>(undefined)
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false)
     const [hiddenCodexChatImportIds, setHiddenCodexChatImportIds] = useState<Set<string>>(() => new Set())
     const [placingCodexImportTaskId, setPlacingCodexImportTaskId] = useState<string | null>(null)
@@ -123,9 +137,33 @@ export function MobileMindMap({
         return map
     }, [groups, tasks])
     const allMindMapTasks = useMemo(() => [...groups, ...tasks], [groups, tasks])
-    const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects])
+    const hiddenCodexInboxTaskIds = useMemo(
+        () => getHiddenCodexInboxTaskIds(allMindMapTasks),
+        [allMindMapTasks],
+    )
+    const visibleMapGroups = useMemo(
+        () => groups.filter(group => !hiddenCodexInboxTaskIds.has(group.id)),
+        [groups, hiddenCodexInboxTaskIds],
+    )
+    const visibleMapTasks = useMemo(
+        () => tasks.filter(task => !hiddenCodexInboxTaskIds.has(task.id)),
+        [hiddenCodexInboxTaskIds, tasks],
+    )
+    const kanbanProjects = useMemo(() => {
+        const map = new Map<string, Project>()
+        for (const candidate of projects) map.set(candidate.id, candidate)
+        map.set(project.id, project)
+        return Array.from(map.values())
+    }, [project, projects])
     const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project.space_id ?? null)
     const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(() => project.id)
+    const {
+        repos: availableRepos,
+        isLoading: isAvailableReposLoading,
+        error: availableReposError,
+        refresh: refreshAvailableRepos,
+        requestRescan: requestAvailableReposRescan,
+    } = useAvailableRepos()
 
     useEffect(() => {
         const next = new Set(persistedCollapsedTaskIds)
@@ -136,45 +174,105 @@ export function MobileMindMap({
         setKanbanSpaceId(project.space_id ?? null)
         setKanbanProjectId(project.id)
         setCodexThreadImportOverride(null)
+        setCodexRepoPathOverride(undefined)
+        setCodexImportRepoPathOverride(undefined)
         setHiddenCodexChatImportIds(new Set())
         setPlacingCodexImportTaskId(null)
     }, [project.id, project.space_id])
 
-    const projectRepoPath = useMemo(() => (project.repo_path ?? "").trim(), [project.repo_path])
+    const projectRepoPath = useMemo(() => (
+        normalizeRepoPath(codexRepoPathOverride !== undefined ? codexRepoPathOverride : project.repo_path)
+    ), [codexRepoPathOverride, project.repo_path])
+    const selectedCodexImportRepoPath = useMemo(() => (
+        normalizeRepoPath(codexImportRepoPathOverride !== undefined ? codexImportRepoPathOverride : projectRepoPath)
+    ), [codexImportRepoPathOverride, projectRepoPath])
     const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project.codex_thread_import_enabled)
-    const toggleCodexThreadImport = useCallback(async () => {
-        if (!project.id || !projectRepoPath || isCodexThreadImportSaving) return
-        const nextEnabled = !codexThreadImportEnabled
-        const previous = codexThreadImportEnabled
-        setCodexThreadImportOverride(nextEnabled)
+    const projectsForSelectedImportRepo = useMemo(() => {
+        if (!selectedCodexImportRepoPath) return []
+        return kanbanProjects.filter(candidate => normalizeRepoPath(candidate.repo_path) === selectedCodexImportRepoPath)
+    }, [kanbanProjects, selectedCodexImportRepoPath])
+    const selectedRepoImportProjects = useMemo(() => (
+        projectsForSelectedImportRepo.filter(candidate => Boolean(candidate.codex_thread_import_enabled))
+    ), [projectsForSelectedImportRepo])
+    const selectedRepoImportEnabled = selectedRepoImportProjects.length > 0 ||
+        (projectRepoPath === selectedCodexImportRepoPath && codexThreadImportEnabled)
+    const selectedRepoImportOwnerLabel = selectedRepoImportProjects
+        .map(candidate => candidate.title)
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(" / ") || (selectedRepoImportEnabled ? project.title : null)
+
+    const patchProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
+        if (onPatchProject) {
+            await onPatchProject(projectId, updates)
+            return
+        }
+
+        const res = await fetch(`/api/projects/${projectId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updates),
+        })
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error(typeof data.error === "string" ? data.error : "Codex thread import update failed")
+        }
+    }, [onPatchProject])
+
+    const selectCodexImportRepoPath = useCallback((repoPath: string | null) => {
+        setCodexImportRepoPathOverride(normalizeRepoPath(repoPath) || null)
+    }, [])
+
+    const toggleSelectedRepoImport = useCallback(async () => {
+        if (!project.id || !selectedCodexImportRepoPath || isCodexThreadImportSaving) return
+        const previousImportOverride = codexThreadImportOverride
+        const previousRepoOverride = codexRepoPathOverride
         setIsCodexThreadImportSaving(true)
         try {
-            const updates: Partial<Project> = { codex_thread_import_enabled: nextEnabled }
-            if (onPatchProject) {
-                await onPatchProject(project.id, updates)
-            } else {
-                const res = await fetch(`/api/projects/${project.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(updates),
-                })
-                if (!res.ok) {
-                    const data = await res.json().catch(() => ({}))
-                    throw new Error(typeof data.error === "string" ? data.error : "Codex thread import update failed")
-                }
+            if (selectedRepoImportEnabled) {
+                const targets = selectedRepoImportProjects.length > 0
+                    ? selectedRepoImportProjects
+                    : (projectRepoPath === selectedCodexImportRepoPath ? [project] : [])
+                await Promise.all(targets.map(candidate => (
+                    patchProject(candidate.id, { codex_thread_import_enabled: false })
+                )))
+                if (projectRepoPath === selectedCodexImportRepoPath) setCodexThreadImportOverride(false)
+                return
             }
+
+            await patchProject(project.id, {
+                repo_path: selectedCodexImportRepoPath,
+                codex_thread_import_enabled: true,
+            })
+            setCodexRepoPathOverride(selectedCodexImportRepoPath)
+            setCodexThreadImportOverride(true)
         } catch (error) {
-            setCodexThreadImportOverride(previous)
-            console.error("[MobileMindMap] Failed to toggle Codex thread import:", error)
+            setCodexThreadImportOverride(previousImportOverride)
+            setCodexRepoPathOverride(previousRepoOverride)
+            console.error("[MobileMindMap] Failed to toggle repo-scoped Codex thread import:", error)
         } finally {
             setIsCodexThreadImportSaving(false)
         }
-    }, [codexThreadImportEnabled, isCodexThreadImportSaving, onPatchProject, project.id, projectRepoPath])
+    }, [
+        codexRepoPathOverride,
+        codexThreadImportOverride,
+        isCodexThreadImportSaving,
+        patchProject,
+        project,
+        projectRepoPath,
+        selectedCodexImportRepoPath,
+        selectedRepoImportEnabled,
+        selectedRepoImportProjects,
+    ])
+
+    const handleRefreshAvailableRepos = useCallback(async () => {
+        await requestAvailableReposRescan()
+        await refreshAvailableRepos()
+    }, [refreshAvailableRepos, requestAvailableReposRescan])
 
     const kanbanProject = useMemo(() => (
         kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
     ), [kanbanProjectId, kanbanProjects, project])
-    const kanbanProjectRepoPath = useMemo(() => (kanbanProject?.repo_path ?? "").trim(), [kanbanProject?.repo_path])
     const kanbanTaskNodes = useMemo(() => {
         if (!kanbanProject?.id) return allMindMapTasks
         if (kanbanProject.id === project.id) return allMindMapTasks
@@ -186,9 +284,27 @@ export function MobileMindMap({
         for (const task of kanbanTaskNodes) map.set(task.id, task)
         return Array.from(map.values())
     }, [allMindMapTasks, kanbanTaskNodes])
-    const fallbackSourceTasksByIdForCodex = useMemo(() => new Map(knownCodexTaskNodes.map(task => [task.id, task])), [knownCodexTaskNodes])
+    const repoScopedCodexTaskNodes = useMemo(() => {
+        const map = new Map<string, Task>()
+        const source = allTasks.length > 0 ? allTasks : allMindMapTasks
+        for (const task of source) {
+            if (task.deleted_at == null) map.set(task.id, task)
+        }
+        for (const task of allMindMapTasks) map.set(task.id, task)
+        return Array.from(map.values())
+    }, [allMindMapTasks, allTasks])
+    const repoScopedTasksById = useMemo(
+        () => new Map(repoScopedCodexTaskNodes.map(task => [task.id, task])),
+        [repoScopedCodexTaskNodes],
+    )
+    const fallbackSourceTasksByIdForCodex = useMemo(() => {
+        const map = new Map<string, Task>()
+        for (const task of repoScopedCodexTaskNodes) map.set(task.id, task)
+        for (const task of knownCodexTaskNodes) map.set(task.id, task)
+        return map
+    }, [knownCodexTaskNodes, repoScopedCodexTaskNodes])
     const kanbanSourceTasksById = useMemo(() => new Map(kanbanTaskNodes.map(task => [task.id, task])), [kanbanTaskNodes])
-    const codexSourceTaskIds = useMemo(() => knownCodexTaskNodes.map(task => task.id).filter(Boolean), [knownCodexTaskNodes])
+    const codexSourceTaskIds = useMemo(() => Array.from(fallbackSourceTasksByIdForCodex.keys()).filter(Boolean), [fallbackSourceTasksByIdForCodex])
     const memoAiTasks = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds })
     const bySourceId = memoAiTasks.bySourceId ?? emptyAiTaskMap
     const getMemoAiTaskBySourceId = memoAiTasks.getBySourceId
@@ -439,7 +555,7 @@ export function MobileMindMap({
 
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {}
-        for (const task of knownCodexTaskNodes) {
+        for (const task of fallbackSourceTasksByIdForCodex.values()) {
             const aiTask = getBySourceId(task.id)
             const uiState = getCodexTaskUiState(aiTask)
             if (!aiTask || !uiState) continue
@@ -456,7 +572,7 @@ export function MobileMindMap({
             }
         }
         return result
-    }, [getBySourceId, knownCodexTaskNodes])
+    }, [fallbackSourceTasksByIdForCodex, getBySourceId])
 
     const taskProgressByNodeId = useMemo(() => {
         const result: Record<string, TaskProgressSnapshotTask> = {}
@@ -466,37 +582,38 @@ export function MobileMindMap({
                 result[progressTask.source_id] = progressTask
             }
         }
-        for (const task of knownCodexTaskNodes) {
+        for (const task of fallbackSourceTasksByIdForCodex.values()) {
             if (result[task.id]) continue
             const aiTask = getBySourceId(task.id)
             const progressTask = aiTask ? snapshotByAiTaskId.get(aiTask.id) : null
             if (progressTask) result[task.id] = progressTask
         }
         return result
-    }, [fallbackSourceTasksByIdForCodex, getBySourceId, knownCodexTaskNodes, taskProgressDisplayTasks])
+    }, [fallbackSourceTasksByIdForCodex, getBySourceId, taskProgressDisplayTasks])
+
+    const codexInboxGroupIds = useMemo(() => {
+        const ids = new Set<string>()
+        for (const task of repoScopedCodexTaskNodes) {
+            if (task.deleted_at != null) continue
+            if (task.source === "codex_inbox" || task.title === "Codex Inbox") ids.add(task.id)
+        }
+        return ids
+    }, [repoScopedCodexTaskNodes])
 
     const codexChatImportItems = useMemo<TaskProgressImportItem[]>(() => {
-        const pool = allTasks.length > 0 ? allTasks : allMindMapTasks
-        const codexInboxGroupIds = new Set(
-            pool
-                .filter(task => task.deleted_at == null)
-                .filter(task => task.source === "codex_inbox" || task.title === "Codex Inbox")
-                .filter(task => !kanbanProject?.id || task.project_id === kanbanProject.id)
-                .map(task => task.id),
-        )
+        if (!selectedCodexImportRepoPath) return []
         if (codexInboxGroupIds.size === 0) return []
 
-        return pool
+        return repoScopedCodexTaskNodes
             .filter(task => task.source === "codex_app_thread" && task.deleted_at == null)
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
             .filter(task => !!task.parent_task_id && codexInboxGroupIds.has(task.parent_task_id))
-            .filter(task => !kanbanProjectRepoPath || (task.codex_work_dir ?? "").trim() === kanbanProjectRepoPath)
+            .filter(task => normalizeRepoPath(task.codex_work_dir) === selectedCodexImportRepoPath)
             .flatMap(task => {
                 const progressTask = taskProgressByNodeId[task.id]
                 const codexRun = codexRunByNodeId[task.id]
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === "unsent") return []
                 if (codexRun?.state === "prompt_waiting") return []
-                if (!progressTask && !codexRun) return []
                 return [{
                     id: task.id,
                     title: task.title,
@@ -508,20 +625,61 @@ export function MobileMindMap({
                 }]
             })
             .sort((a, b) => {
-                const taskA = fallbackSourceTasksByIdForCodex.get(a.id)
-                const taskB = fallbackSourceTasksByIdForCodex.get(b.id)
+                const taskA = repoScopedTasksById.get(a.id)
+                const taskB = repoScopedTasksById.get(b.id)
                 return (taskB?.updated_at ?? "").localeCompare(taskA?.updated_at ?? "")
             })
     }, [
-        allMindMapTasks,
-        allTasks,
+        codexInboxGroupIds,
         codexRunByNodeId,
-        fallbackSourceTasksByIdForCodex,
         hiddenCodexChatImportIds,
-        kanbanProject?.id,
-        kanbanProjectRepoPath,
+        repoScopedCodexTaskNodes,
+        repoScopedTasksById,
+        selectedCodexImportRepoPath,
         taskProgressByNodeId,
     ])
+
+    const mobileImportRepoOptions = useMemo<TaskProgressImportRepoOption[]>(() => {
+        const map = new Map<string, TaskProgressImportRepoOption>()
+        const put = (pathValue: string | null | undefined, labelValue?: string | null, sourceLabel?: string | null) => {
+            const path = normalizeRepoPath(pathValue)
+            if (!path) return
+            const existing = map.get(path)
+            const label = labelValue?.trim() || repoNameFromPath(path) || path
+            if (existing) {
+                if (!existing.sourceLabel && sourceLabel) {
+                    map.set(path, { ...existing, sourceLabel })
+                }
+                return
+            }
+            map.set(path, {
+                id: path,
+                path,
+                label,
+                sourceLabel: sourceLabel ?? null,
+            })
+        }
+
+        for (const repo of availableRepos) {
+            put(repo.absolute_path, repo.display_name, repo.hostname)
+        }
+        for (const candidate of kanbanProjects) {
+            put(candidate.repo_path, repoNameFromPath(candidate.repo_path), candidate.title)
+        }
+        for (const task of repoScopedCodexTaskNodes) {
+            put(task.codex_work_dir, repoNameFromPath(task.codex_work_dir), "取り込み済み")
+        }
+        put(selectedCodexImportRepoPath, repoNameFromPath(selectedCodexImportRepoPath), "選択中")
+
+        return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, "ja"))
+    }, [availableRepos, kanbanProjects, repoScopedCodexTaskNodes, selectedCodexImportRepoPath])
+
+    const selectedCodexImportRepoLabel = useMemo(() => {
+        if (!selectedCodexImportRepoPath) return null
+        return mobileImportRepoOptions.find(option => option.path === selectedCodexImportRepoPath)?.label ||
+            repoNameFromPath(selectedCodexImportRepoPath) ||
+            selectedCodexImportRepoPath
+    }, [mobileImportRepoOptions, selectedCodexImportRepoPath])
 
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null
@@ -886,8 +1044,8 @@ export function MobileMindMap({
         <>
             <CustomMindMapView
                 project={project}
-                groups={groups}
-                tasks={tasks}
+                groups={visibleMapGroups}
+                tasks={visibleMapTasks}
                 isMobile
                 collapsedTaskIds={collapsedTaskIds}
                 selectedNodeId={selectedNodeId}
@@ -916,11 +1074,11 @@ export function MobileMindMap({
                 generatingHeadingNodeIds={generatingHeadingNodeIds}
                 onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
                 codexRunByNodeId={codexRunByNodeId}
-                codexThreadImportEnabled={codexThreadImportEnabled}
-                codexThreadImportAvailable={!!projectRepoPath}
+                codexThreadImportEnabled={selectedRepoImportEnabled}
+                codexThreadImportAvailable={!!selectedCodexImportRepoPath}
                 codexThreadImportPending={isCodexThreadImportSaving}
-                codexThreadImportRepoPath={projectRepoPath || null}
-                onToggleCodexThreadImport={toggleCodexThreadImport}
+                codexThreadImportRepoPath={selectedCodexImportRepoPath || null}
+                onToggleCodexThreadImport={toggleSelectedRepoImport}
                 taskProgressByNodeId={taskProgressByNodeId}
                 onOpenTaskProgress={(task) => setTaskProgressPanelTaskId(task.id)}
                 onMoveTask={handleMoveTask}
@@ -947,6 +1105,19 @@ export function MobileMindMap({
                 mobileOpenSignal={codexOpenSignal}
                 mobileTriggerVisible={false}
                 mobileImportItems={codexChatImportItems}
+                mobileImportRepoControl={{
+                    selectedRepoPath: selectedCodexImportRepoPath || null,
+                    selectedRepoLabel: selectedCodexImportRepoLabel,
+                    importEnabled: selectedRepoImportEnabled,
+                    importOwnerLabel: selectedRepoImportOwnerLabel,
+                    importPending: isCodexThreadImportSaving,
+                    repoOptions: mobileImportRepoOptions,
+                    repoOptionsLoading: isAvailableReposLoading,
+                    repoError: availableReposError,
+                    onSelectRepoPath: selectCodexImportRepoPath,
+                    onToggleImport: toggleSelectedRepoImport,
+                    onRefreshRepos: handleRefreshAvailableRepos,
+                }}
                 onPlaceImportItem={handleBeginPlaceCodexImportItem}
             />
             {placingCodexImportTaskId && (
