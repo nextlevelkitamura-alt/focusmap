@@ -1,13 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useChat } from "@ai-sdk/react"
 import {
-  DefaultChatTransport,
   isFileUIPart,
   isToolUIPart,
   getToolName,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
   type FileUIPart,
   type UIMessage,
   type ToolUIPart,
@@ -50,7 +47,7 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useAgentChatSessions, type AgentChatSession } from "@/hooks/useAgentChatSessions"
 import { cn } from "@/lib/utils"
 import { useAgentConnection } from "@/components/chat/agent-status-chip"
-import { MAX_CURRENT_IMAGE_DATA_URL_CHARS, sanitizeUIMessagesForModel } from "@/lib/ai/ui-message-sanitize"
+import { MAX_CURRENT_IMAGE_DATA_URL_CHARS } from "@/lib/ai/ui-message-sanitize"
 import type { Project } from "@/types/database"
 
 interface UnifiedChatProps {
@@ -128,7 +125,6 @@ const MAX_CHAT_ATTACHMENTS = 4
 const MAX_IMAGE_SIDE = 1600
 const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024
 const CHAT_SLOW_NOTICE_MS = 45_000
-const CHAT_WATCHDOG_MS = 180_000
 const DEFAULT_VISIBLE_HISTORY_COUNT = 3
 
 const TOOL_LABELS: Record<string, string> = {
@@ -288,66 +284,23 @@ export function UnifiedChat({
   const chatMode: ChatMode = activeProjectChatIdForRequest ? "project" : "general"
   const chatScopeKey = activeProjectChatIdForRequest ? `project:${activeProjectChatIdForRequest}` : "general"
 
-  const transport = useMemo(
-    () => new DefaultChatTransport({
-      api: "/api/ai/agent",
-      body: { spaceId, projectId: activeProjectChatIdForRequest, chatMode },
-      prepareSendMessagesRequest: ({ messages, body, headers, credentials, api, messageId }) => ({
-        api,
-        headers,
-        credentials,
-        body: {
-          ...(body ?? {}),
-          messages: sanitizeUIMessagesForModel(messages, { currentUserMessageId: messageId }),
-        },
-      }),
-    }),
-    [activeProjectChatIdForRequest, chatMode, spaceId],
-  )
-
-  const { messages, sendMessage, setMessages, status, stop, addToolApprovalResponse, error, clearError } = useChat({
-    transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-    onError: error => {
-      setRuntimeNotice({ tone: "error", message: friendlyChatError(error) })
-    },
-    onFinish: ({ isAbort, isDisconnect, isError }) => {
-      if (isAbort) {
-        setRuntimeNotice({ tone: "info", message: "応答を停止しました。入力欄は使えます。" })
-        return
-      }
-      if (isDisconnect || isError) {
-        setRuntimeNotice({ tone: "error", message: "応答が途中で止まりました。もう一度送れます。" })
-        return
-      }
-      setRuntimeNotice(null)
-    },
-  })
-
   const sessions = useAgentChatSessions(chatScopeKey)
-  const { hydrated, loadedScopeKey, saveMessages } = sessions
+  const messages = sessions.activeSession?.messages ?? []
+  const isBusy = sessions.activeSession?.status === "running"
+  const addToolApprovalResponse = useCallback<ApprovalHandler>(() => {
+    setRuntimeNotice({ tone: "info", message: "このチャットは裏側で実行中です。確認が必要な操作は返信内で案内します。" })
+  }, [])
   const restoredScopeRef = useRef<string | null>(null)
 
   // Restore the active session whenever the user switches between general and project chats.
   useEffect(() => {
-    if (!hydrated || loadedScopeKey !== chatScopeKey || restoredScopeRef.current === chatScopeKey) return
+    if (!sessions.hydrated || sessions.loadedScopeKey !== chatScopeKey || restoredScopeRef.current === chatScopeKey) return
     restoredScopeRef.current = chatScopeKey
-    const restore = sessions.activeSession
-    setMessages(restore?.messages ?? [])
     setInput("")
     setAttachments([])
     setAttachmentError(null)
     setRuntimeNotice(null)
-  }, [chatScopeKey, hydrated, loadedScopeKey, sessions.activeSession, setMessages])
-
-  // Persist messages into the active session once a turn settles.
-  useEffect(() => {
-    if (!hydrated) return
-    if (loadedScopeKey !== chatScopeKey) return
-    if (status !== "ready" && status !== "error") return
-    if (messages.length === 0) return
-    saveMessages(messages)
-  }, [messages, status, hydrated, loadedScopeKey, chatScopeKey, saveMessages])
+  }, [chatScopeKey, sessions.hydrated, sessions.loadedScopeKey])
 
   useEffect(() => {
     if (!activeProjectChatId || activeProjectChat) return
@@ -365,9 +318,7 @@ export function UnifiedChat({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
-  }, [messages.length, status])
-
-  const isBusy = status === "submitted" || status === "streaming"
+  }, [messages.length, isBusy])
 
   const handleTranscribed = useCallback((text: string) => {
     setInput(prev => (prev ? `${prev} ${text}` : text))
@@ -376,24 +327,14 @@ export function UnifiedChat({
   const { isRecording, isTranscribing, analyserRef, startRecording, stopRecording } = useVoiceRecorder(handleTranscribed)
 
   useEffect(() => {
-    if (status !== "error" || !error) return
-    setRuntimeNotice({ tone: "error", message: friendlyChatError(error) })
-  }, [status, error])
-
-  useEffect(() => {
     if (!isBusy) return
     const slowTimer = window.setTimeout(() => {
-      setRuntimeNotice({ tone: "info", message: "応答待ちが続いています。停止しても入力欄は戻ります。" })
+      setRuntimeNotice({ tone: "info", message: "裏側で実行中です。別画面へ移動しても履歴から戻れます。" })
     }, CHAT_SLOW_NOTICE_MS)
-    const watchdogTimer = window.setTimeout(() => {
-      void stop()
-      setRuntimeNotice({ tone: "error", message: "応答が3分以上止まったため自動停止しました。もう一度送れます。" })
-    }, CHAT_WATCHDOG_MS)
     return () => {
       window.clearTimeout(slowTimer)
-      window.clearTimeout(watchdogTimer)
     }
-  }, [isBusy, stop])
+  }, [isBusy])
 
   const addAttachmentFiles = useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
@@ -433,9 +374,14 @@ export function UnifiedChat({
     const trimmed = text.trim()
     if ((!trimmed && attachments.length === 0) || isBusy) return
     const files = attachments
-    if (status === "error") clearError()
     setRuntimeNotice(null)
-    void sendMessage(trimmed ? { text: trimmed, files } : { files }).catch(error => {
+    void sessions.startRun({
+      text: trimmed,
+      files,
+      spaceId,
+      projectId: activeProjectChatIdForRequest,
+      chatMode,
+    }).catch(error => {
       setRuntimeNotice({ tone: "error", message: error instanceof Error ? friendlyChatError(error) : "送信に失敗しました。もう一度送れます。" })
     })
     setInput("")
@@ -450,25 +396,21 @@ export function UnifiedChat({
 
   const handleNewSession = useCallback(() => {
     sessions.createSession()
-    setMessages([])
     setInput("")
     setAttachments([])
     setAttachmentError(null)
     setRuntimeNotice(null)
     setMobileHistoryOpen(false)
     setTimeout(() => inputRef.current?.focus(), 0)
-  }, [sessions, setMessages])
+  }, [sessions])
 
   const handleSelectSession = (session: AgentChatSession) => {
     sessions.selectSession(session.id)
-    setMessages(session.messages)
     setMobileHistoryOpen(false)
   }
 
   const handleDeleteSession = (id: string) => {
-    const wasActive = sessions.activeSessionId === id
     sessions.deleteSession(id)
-    if (wasActive) setMessages([])
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -611,7 +553,7 @@ export function UnifiedChat({
                   onApproval={addToolApprovalResponse}
                 />
               ))}
-              {status === "submitted" && (
+              {isBusy && (
                 <AssistantThinking />
               )}
             </div>
@@ -708,8 +650,14 @@ export function UnifiedChat({
                     {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
                   </Button>
                   {isBusy ? (
-                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full bg-white text-zinc-950 hover:bg-zinc-200" onClick={() => void stop()} title="停止">
-                      <Square className="h-3.5 w-3.5" />
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 rounded-full bg-white text-zinc-950 hover:bg-zinc-200"
+                      onClick={() => setRuntimeNotice({ tone: "info", message: "実行は裏側で継続中です。完了するとこの履歴へ戻ります。" })}
+                      title="裏側で実行中"
+                    >
+                      <Loader2 className="h-4 w-4 animate-spin" />
                     </Button>
                   ) : (
                     <Button
