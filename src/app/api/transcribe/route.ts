@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { isSilenceOnlyTranscription, normalizeTranscriptionText } from '@/lib/transcription-filter'
 import { NextResponse } from 'next/server'
 
 // POST /api/transcribe - 音声ファイルをテキストに変換（Groq Whisper API）
@@ -59,9 +60,14 @@ export async function POST(request: Request) {
     }
 
     const result = await groqResponse.json()
+    const text = normalizeTranscriptionText(result.text)
+
+    if (isSilenceOnlyTranscription(text)) {
+      return NextResponse.json({ text: '', ignored: true, reason: 'silence_only_transcription' })
+    }
 
     // 音声データは保存しない（トランスクリプト後に破棄）
-    return NextResponse.json({ text: result.text })
+    return NextResponse.json({ text })
   } catch (error) {
     console.error('Transcription error:', error)
     return NextResponse.json({ error: 'Transcription failed' }, { status: 500 })

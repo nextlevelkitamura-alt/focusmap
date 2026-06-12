@@ -1,6 +1,12 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
+import { isSilenceOnlyTranscription, normalizeTranscriptionText } from "@/lib/transcription-filter"
+
+interface TranscribeResponse {
+  text?: unknown
+  ignored?: boolean
+}
 
 interface UseVoiceRecorderReturn {
   isRecording: boolean
@@ -106,9 +112,13 @@ export function useVoiceRecorder(
             throw new Error(errMsg || 'Transcription failed')
           }
 
-          const { text } = await res.json()
-          if (text && text.trim()) {
-            onTranscribed(text.trim())
+          const { text, ignored } = await res.json() as TranscribeResponse
+          const normalizedText = normalizeTranscriptionText(text)
+          if (ignored || isSilenceOnlyTranscription(normalizedText)) {
+            return
+          }
+          if (normalizedText) {
+            onTranscribed(normalizedText)
           } else {
             setError('音声を認識できませんでした')
           }
