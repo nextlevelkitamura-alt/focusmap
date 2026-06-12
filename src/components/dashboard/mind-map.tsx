@@ -20,6 +20,7 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion";
+import { codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display";
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
@@ -615,7 +616,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 return [{
                     id: task.id,
                     title: task.title,
-                    snippet: task.memo?.trim() || null,
+                    snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
                     projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,

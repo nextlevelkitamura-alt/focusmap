@@ -227,6 +227,7 @@ export async function POST(
     }
 
     const sourceTaskTitle = normalizeSourceTaskTitle(isRecord(body) ? body.source_task_title : null)
+    let sourceTaskTitleForSnapshot: string | null = null
     if (sourceTaskTitle && task.source_task_id) {
       const { data: sourceTask, error: sourceTaskError } = await supabase
         .from('tasks')
@@ -238,31 +239,38 @@ export async function POST(
 
       if (sourceTaskError) return NextResponse.json({ error: sourceTaskError.message }, { status: 500 })
 
-      if (sourceTask?.source === 'codex_app_thread' && shouldApplyCodexThreadTitleToSourceTask({
-        currentTitle: sourceTask.title,
-        nextTitle: sourceTaskTitle,
-        prompt: task.prompt,
-        previousResult: isRecord(task.result) ? task.result : null,
-      })) {
-        const taskUpdates: Record<string, unknown> = {
-          title: sourceTaskTitle,
-          updated_at: new Date().toISOString(),
-        }
-        const nextMemo = memoWithUpdatedImportedThreadTitle({
-          memo: sourceTask.memo,
+      if (sourceTask?.source === 'codex_app_thread') {
+        const currentSourceTitle = normalizeSourceTaskTitle(sourceTask.title)
+        const shouldApplySourceTaskTitle = shouldApplyCodexThreadTitleToSourceTask({
           currentTitle: sourceTask.title,
           nextTitle: sourceTaskTitle,
+          prompt: task.prompt,
+          previousResult: isRecord(task.result) ? task.result : null,
         })
-        if (nextMemo) taskUpdates.memo = nextMemo
+        if (currentSourceTitle === sourceTaskTitle || shouldApplySourceTaskTitle) {
+          sourceTaskTitleForSnapshot = sourceTaskTitle
+        }
+        if (shouldApplySourceTaskTitle) {
+          const taskUpdates: Record<string, unknown> = {
+            title: sourceTaskTitle,
+            updated_at: new Date().toISOString(),
+          }
+          const nextMemo = memoWithUpdatedImportedThreadTitle({
+            memo: sourceTask.memo,
+            currentTitle: sourceTask.title,
+            nextTitle: sourceTaskTitle,
+          })
+          if (nextMemo) taskUpdates.memo = nextMemo
 
-        const { error: titleUpdateError } = await supabase
-          .from('tasks')
-          .update(taskUpdates)
-          .eq('id', String(task.source_task_id))
-          .eq('user_id', String(task.user_id))
-          .is('deleted_at', null)
+          const { error: titleUpdateError } = await supabase
+            .from('tasks')
+            .update(taskUpdates)
+            .eq('id', String(task.source_task_id))
+            .eq('user_id', String(task.user_id))
+            .is('deleted_at', null)
 
-        if (titleUpdateError) return NextResponse.json({ error: titleUpdateError.message }, { status: 500 })
+          if (titleUpdateError) return NextResponse.json({ error: titleUpdateError.message }, { status: 500 })
+        }
       }
     }
 
@@ -309,6 +317,7 @@ export async function POST(
           id,
           user_id: String(task.user_id),
           space_id: typeof task.space_id === 'string' ? task.space_id : null,
+          title: sourceTaskTitleForSnapshot,
           status,
           current_step: currentStep,
           summary,

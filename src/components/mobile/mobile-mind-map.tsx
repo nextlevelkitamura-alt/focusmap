@@ -11,6 +11,7 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion"
+import { codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
@@ -617,7 +618,7 @@ export function MobileMindMap({
                 return [{
                     id: task.id,
                     title: task.title,
-                    snippet: task.memo?.trim() || null,
+                    snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
