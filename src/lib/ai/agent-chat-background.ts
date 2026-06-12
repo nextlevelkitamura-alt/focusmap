@@ -15,6 +15,7 @@ import {
   type AgentCalendarPreferences,
 } from '@/lib/ai/agent-preferences'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
+import { withoutAgentProgressMessages } from '@/lib/ai/agent-chat-progress'
 
 export type AgentChatMode = 'general' | 'project'
 
@@ -244,15 +245,19 @@ export async function generateAgentChatReply({
   spaceId,
   projectId,
   chatMode,
+  onToolCallStart,
+  onToolCallFinish,
 }: {
   userId: string
   messages: UIMessage[]
   spaceId: string | null
   projectId: string | null
   chatMode: AgentChatMode
+  onToolCallStart?: NonNullable<Parameters<typeof generateText>[0]['experimental_onToolCallStart']>
+  onToolCallFinish?: NonNullable<Parameters<typeof generateText>[0]['experimental_onToolCallFinish']>
 }) {
   const supabase = await createClient()
-  const modelInputMessages = sanitizeUIMessagesForModel(messages)
+  const modelInputMessages = sanitizeUIMessagesForModel(withoutAgentProgressMessages(messages))
   const usesVision = agentMessagesHaveImage(modelInputMessages)
   const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
   const { tools, runner } = await buildAgentTools(userId, spaceId)
@@ -291,5 +296,7 @@ export async function generateAgentChatReply({
     tools,
     stopWhen: stepCountIs(12),
     timeout: { totalMs: 300_000 },
+    experimental_onToolCallStart: onToolCallStart,
+    experimental_onToolCallFinish: onToolCallFinish,
   })
 }

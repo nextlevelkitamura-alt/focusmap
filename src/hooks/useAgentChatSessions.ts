@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { FileUIPart, UIMessage } from "ai"
+import { createClient as createBrowserSupabaseClient } from "@/utils/supabase/client"
 
 export type AgentChatStatus = "idle" | "running" | "completed" | "failed"
 export type AgentChatMode = "general" | "project"
@@ -29,6 +30,18 @@ interface StartRunInput {
   spaceId?: string | null
   projectId?: string | null
   chatMode: AgentChatMode
+}
+
+interface AgentChatSessionRow {
+  id: string
+  title?: string | null
+  messages?: UIMessage[] | null
+  status?: AgentChatStatus | null
+  last_error?: string | null
+  run_started_at?: string | null
+  run_completed_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 const STORAGE_KEY = "focusmap:agent-chat:sessions"
@@ -91,6 +104,29 @@ function normalizeRemoteSession(value: unknown): AgentChatSession | null {
     lastError: session.lastError ?? null,
     runStartedAt: session.runStartedAt ?? null,
     runCompletedAt: session.runCompletedAt ?? null,
+  }
+}
+
+function parseDateMs(value: unknown, fallback = Date.now()) {
+  if (typeof value !== "string") return fallback
+  const ms = new Date(value).getTime()
+  return Number.isFinite(ms) ? ms : fallback
+}
+
+function normalizeRealtimeSession(value: unknown): AgentChatSession | null {
+  const row = value as AgentChatSessionRow | null
+  if (!row || typeof row !== "object" || typeof row.id !== "string") return null
+  const now = Date.now()
+  return {
+    id: row.id,
+    title: typeof row.title === "string" ? row.title : "新しいチャット",
+    messages: Array.isArray(row.messages) ? row.messages : [],
+    createdAt: parseDateMs(row.created_at, now),
+    updatedAt: parseDateMs(row.updated_at, now),
+    status: row.status ?? "idle",
+    lastError: row.last_error ?? null,
+    runStartedAt: row.run_started_at ?? null,
+    runCompletedAt: row.run_completed_at ?? null,
   }
 }
 
@@ -176,6 +212,46 @@ export function useAgentChatSessions(scopeKey = "general") {
     if (!hydrated || loadedScopeKey !== scopeKey) return
     save(storageKey, state)
   }, [state, hydrated, loadedScopeKey, scopeKey, storageKey])
+
+  useEffect(() => {
+    if (!hydrated || loadedScopeKey !== scopeKey) return
+    const supabase = createBrowserSupabaseClient()
+    const channel = supabase
+      .channel(`agent-chat-sessions:${scopeKey}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "agent_chat_sessions",
+          filter: `scope_key=eq.${scopeKey}`,
+        },
+        payload => {
+          if (payload.eventType === "DELETE") {
+            const deletedId = typeof payload.old?.id === "string" ? payload.old.id : null
+            if (!deletedId) return
+            setState(prev => {
+              const sessions = prev.sessions.filter(session => session.id !== deletedId)
+              const activeSessionId = prev.activeSessionId === deletedId ? (sessions[0]?.id ?? null) : prev.activeSessionId
+              return { sessions, activeSessionId }
+            })
+            return
+          }
+
+          const session = normalizeRealtimeSession(payload.new)
+          if (!session) return
+          setState(prev => ({
+            sessions: upsertSession(prev.sessions, session),
+            activeSessionId: prev.activeSessionId ?? session.id,
+          }))
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [hydrated, loadedScopeKey, scopeKey])
 
   const hasRunningSession = state.sessions.some(session => session.status === "running")
   useEffect(() => {
@@ -294,26 +370,46 @@ export function useAgentChatSessions(scopeKey = "general") {
       previousMessages,
       userMessage,
     })
-    const response = await fetch("/api/ai/agent/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      keepalive: files.length === 0 && body.length < 60_000,
-      body,
-    })
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({})) as { error?: string }
-      throw new Error(data.error || "Failed to start chat run")
+    try {
+      const response = await fetch("/api/ai/agent/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        keepalive: files.length === 0 && body.length < 60_000,
+        body,
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error || "Failed to start chat run")
+      }
+      const data = await response.json() as { session?: unknown }
+      const remoteSession = normalizeRemoteSession(data.session)
+      if (remoteSession) {
+        setState(prev => ({
+          sessions: upsertSession(prev.sessions, remoteSession),
+          activeSessionId: remoteSession.id,
+        }))
+      }
+      return remoteSession ?? optimisticSession
+    } catch (error) {
+      const failedAt = new Date().toISOString()
+      const message = error instanceof Error ? error.message : "Failed to start chat run"
+      setState(prev => {
+        const currentSession = prev.sessions.find(session => session.id === targetId) ?? optimisticSession
+        const failedSession: AgentChatSession = {
+          ...currentSession,
+          status: "failed",
+          lastError: message,
+          updatedAt: Date.now(),
+          runCompletedAt: failedAt,
+        }
+        return {
+          sessions: upsertSession(prev.sessions, failedSession),
+          activeSessionId: targetId,
+        }
+      })
+      throw new Error(message)
     }
-    const data = await response.json() as { session?: unknown }
-    const remoteSession = normalizeRemoteSession(data.session)
-    if (remoteSession) {
-      setState(prev => ({
-        sessions: upsertSession(prev.sessions, remoteSession),
-        activeSessionId: remoteSession.id,
-      }))
-    }
-    return remoteSession ?? optimisticSession
   }, [scopeKey])
 
   const activeSession = useMemo(

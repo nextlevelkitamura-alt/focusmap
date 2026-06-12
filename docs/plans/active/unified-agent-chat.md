@@ -54,7 +54,7 @@ related: [focusmap-lite-mac-agent.md]
 - [ ] Mac必要ツール(terminal/browser/file)が agent_command 経由で動く
 - [ ] Macオフライン時はツールが理由を返し、モデルがユーザーに伝える
 - [ ] 破壊的ツール(terminal等)はUI承認を挟む
-- [ ] ツール呼び出しがUIにライブ表示される(ストリーミング)
+- [x] ツール呼び出しがUIに表示される。永続runでは `agent_chat_sessions.messages` のprogressメッセージをRealtime/pollで戻し、開きっぱなしでも復帰後でも進行ログを見せる
 - [ ] 既存の通常/自動化分離コードを削除しても回帰しない
 
 ## 実装対象ファイル（重要）
@@ -103,7 +103,7 @@ related: [focusmap-lite-mac-agent.md]
 
 ### Phase 3: 統合チャットUI
 - [ ] `unified-chat.tsx`: `useChat({ api: '/api/ai/agent' })`
-- [ ] tool-call parts をライブ表示(「ターミナル実行中…」「ブラウザ操作中…」)
+- [x] 永続runのtool lifecycleをprogressメッセージとしてDB保存し、UIで「予定確認中…」「マップ全体確認完了」のようなログ行として表示する
 - [x] dashboard / nav から 通常・自動化の重い分離を廃止し、単一チャットUIへ統合
 - [ ] mode別state/localStorage を単一化
 

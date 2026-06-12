@@ -6,6 +6,15 @@ import {
   generateAgentChatReply,
   type AgentChatMode,
 } from '@/lib/ai/agent-chat-background'
+import {
+  agentToolLabel,
+  createAgentProgressMessage,
+  upsertAgentProgressMessage,
+} from '@/lib/ai/agent-chat-progress'
+import {
+  AGENT_CHAT_SESSIONS_NOT_READY_MESSAGE,
+  isMissingAgentChatSessionsTable,
+} from '@/lib/ai/agent-chat-db'
 
 export const maxDuration = 600
 
@@ -113,18 +122,64 @@ async function runPersistentAgentSession(sessionId: string, userId: string) {
   if (!session || (session as AgentChatSessionRow).status !== 'running') return
 
   const row = session as AgentChatSessionRow
-  const messages = Array.isArray(row.messages) ? row.messages : []
+  let liveMessages: UIMessage[] = Array.isArray(row.messages) ? row.messages : []
+  const toolStartedAt = new Map<string, string>()
+
+  async function persistProgressMessage(progressMessage: UIMessage) {
+    liveMessages = upsertAgentProgressMessage(liveMessages, progressMessage)
+    const { error } = await supabase
+      .from('agent_chat_sessions')
+      .update({ messages: liveMessages })
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+      .eq('status', 'running')
+
+    if (error) {
+      console.error('[agent/runs] progress update failed:', error)
+    }
+  }
 
   try {
     const result = await generateAgentChatReply({
       userId,
-      messages,
+      messages: liveMessages,
       spaceId: row.space_id,
       projectId: row.project_id,
       chatMode: row.chat_mode,
+      onToolCallStart: async event => {
+        const toolCallId = event.toolCall.toolCallId
+        const toolName = event.toolCall.toolName
+        const startedAt = new Date().toISOString()
+        toolStartedAt.set(toolCallId, startedAt)
+        await persistProgressMessage(createAgentProgressMessage({
+          id: `agent-progress:${toolCallId}`,
+          state: 'running',
+          label: agentToolLabel(toolName),
+          toolName,
+          stepNumber: event.stepNumber,
+          startedAt,
+        }))
+      },
+      onToolCallFinish: async event => {
+        const toolCallId = event.toolCall.toolCallId
+        const toolName = event.toolCall.toolName
+        const completedAt = new Date().toISOString()
+        const startedAt = toolStartedAt.get(toolCallId) ??
+          new Date(Date.now() - Math.max(0, event.durationMs)).toISOString()
+        await persistProgressMessage(createAgentProgressMessage({
+          id: `agent-progress:${toolCallId}`,
+          state: event.success ? 'done' : 'failed',
+          label: agentToolLabel(toolName),
+          toolName,
+          stepNumber: event.stepNumber,
+          startedAt,
+          completedAt,
+          durationMs: event.durationMs,
+        }))
+      },
     })
     const replyText = result.text?.trim() || '完了しました。'
-    const nextMessages = [...messages, createAssistantMessage(replyText)]
+    const nextMessages = [...liveMessages, createAssistantMessage(replyText)]
     const completedAt = new Date().toISOString()
 
     const { error } = await supabase
@@ -142,7 +197,7 @@ async function runPersistentAgentSession(sessionId: string, userId: string) {
   } catch (error) {
     const message = friendlyAgentError(error)
     const failedAt = new Date().toISOString()
-    const nextMessages = [...messages, createAssistantMessage(message)]
+    const nextMessages = [...liveMessages, createAssistantMessage(message)]
     const { error: updateError } = await supabase
       .from('agent_chat_sessions')
       .update({
@@ -191,6 +246,9 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   if (existingError) {
+    if (isMissingAgentChatSessionsTable(existingError)) {
+      return NextResponse.json({ error: AGENT_CHAT_SESSIONS_NOT_READY_MESSAGE }, { status: 503 })
+    }
     console.error('[agent/runs] existing session lookup failed:', existingError)
     return NextResponse.json({ error: 'Failed to load chat session' }, { status: 500 })
   }
@@ -239,6 +297,9 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) {
+    if (isMissingAgentChatSessionsTable(error)) {
+      return NextResponse.json({ error: AGENT_CHAT_SESSIONS_NOT_READY_MESSAGE }, { status: 503 })
+    }
     console.error('[agent/runs] start failed:', error)
     return NextResponse.json({ error: 'Failed to start chat run' }, { status: 500 })
   }

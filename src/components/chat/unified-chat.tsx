@@ -47,6 +47,12 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useAgentChatSessions, type AgentChatSession } from "@/hooks/useAgentChatSessions"
 import { cn } from "@/lib/utils"
 import { useAgentConnection } from "@/components/chat/agent-status-chip"
+import {
+  agentProgressText,
+  agentToolLabel,
+  getAgentProgressMetadata,
+  type AgentChatProgressMetadata,
+} from "@/lib/ai/agent-chat-progress"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS } from "@/lib/ai/ui-message-sanitize"
 import type { Project } from "@/types/database"
 
@@ -127,46 +133,8 @@ const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024
 const CHAT_SLOW_NOTICE_MS = 45_000
 const DEFAULT_VISIBLE_HISTORY_COUNT = 3
 
-const TOOL_LABELS: Record<string, string> = {
-  runTerminal: "ターミナル実行",
-  listFiles: "フォルダ一覧",
-  runOpenCode: "OpenCode実行",
-  browserNavigate: "ブラウザで開く",
-  browserClick: "クリック",
-  browserFill: "入力",
-  browserScreenshot: "スクリーンショット",
-  readFile: "ファイル読み取り",
-  writeFile: "ファイル書き込み",
-  webResearch: "Web調査",
-  listProjects: "プロジェクト検索",
-  getProjectContext: "プロジェクト確認",
-  saveProjectContext: "プロジェクト記録",
-  updateProject: "プロジェクト更新",
-  listProjectTasks: "DBタスク確認",
-  listNotesForOrganization: "ノート整理確認",
-  getNoteOrganizationDetail: "ノート詳細確認",
-  getMindmapOverview: "マップ全体確認",
-  getMindmapNodeDetail: "ノード詳細確認",
-  updateMindmapNode: "ノード更新",
-  moveMindmapNode: "ノード移動",
-  updateMindmapMemoLink: "メモ紐づき変更",
-  addTask: "タスク追加",
-  listCalendarEvents: "予定確認",
-  findCalendarOpenSlots: "空き枠検索",
-  checkCalendarAvailability: "空き時間確認",
-  addCalendarEvent: "予定登録",
-  updateCalendarEvent: "予定更新",
-  addMindmapGroup: "グループ追加",
-  addMindmapTask: "タスク追加",
-  deleteMindmapNode: "ノード削除",
-}
-
 function isDesktopViewport() {
   return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches
-}
-
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name
 }
 
 function formatDate(value: number) {
@@ -935,8 +903,13 @@ function EmptyChat() {
 
 function AssistantThinking() {
   return (
-    <div className="px-0 py-1 text-sm text-zinc-400">
-      考え中
+    <div className="flex items-center gap-2 px-0 py-1 text-sm text-zinc-400" aria-live="polite">
+      <span className="motion-safe:animate-pulse motion-reduce:opacity-80">考えています</span>
+      <span className="flex items-center gap-1" aria-hidden="true">
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse" />
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse [animation-delay:150ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse [animation-delay:300ms]" />
+      </span>
     </div>
   )
 }
@@ -944,6 +917,9 @@ function AssistantThinking() {
 type ApprovalHandler = (args: { id: string; approved: boolean; reason?: string }) => void | PromiseLike<void>
 
 function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval: ApprovalHandler }) {
+  const progress = getAgentProgressMetadata(message)
+  if (progress) return <ProgressLogMessage progress={progress} />
+
   const isUser = message.role === "user"
 
   return (
@@ -974,6 +950,33 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
           }
           return null
         })}
+      </div>
+    </div>
+  )
+}
+
+function ProgressLogMessage({ progress }: { progress: AgentChatProgressMetadata }) {
+  const running = progress.state === "running" || progress.state === "thinking"
+  const done = progress.state === "done"
+  const failed = progress.state === "failed"
+  return (
+    <div className="flex justify-start py-0.5" aria-live={running ? "polite" : undefined}>
+      <div
+        className={cn(
+          "inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border px-3 text-xs transition",
+          running && "border-blue-400/20 bg-blue-400/10 text-blue-200 motion-safe:animate-pulse",
+          done && "border-emerald-400/20 bg-emerald-400/10 text-emerald-300",
+          failed && "border-red-400/25 bg-red-400/10 text-red-300",
+        )}
+      >
+        {running ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+        ) : done ? (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <XCircle className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <span className="min-w-0 truncate">{agentProgressText(progress)}</span>
       </div>
     </div>
   )
@@ -1069,7 +1072,7 @@ function ToolPart({
   const output = done ? (part as { output?: unknown }).output as ToolOutput | undefined : undefined
   const offline = output?.success === false && output.offline === true
   const ok = done && output?.success !== false && !offline
-  const toolImages = done ? collectToolImages(output?.result ?? output, toolLabel(name)) : []
+  const toolImages = done ? collectToolImages(output?.result ?? output, agentToolLabel(name)) : []
 
   const approvalId = (awaitingApproval || state === "approval-responded")
     ? (part as { approval?: { id: string } }).approval?.id
@@ -1090,7 +1093,7 @@ function ToolPart({
       <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
         <div className="flex items-center gap-2 font-medium text-amber-600 dark:text-amber-400">
           <Wrench className="h-3.5 w-3.5 shrink-0" />
-          <span>{toolLabel(name)}の実行を確認してください</span>
+          <span>{agentToolLabel(name)}の実行を確認してください</span>
         </div>
         {commandPreview && (
           <pre className="overflow-x-auto rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed whitespace-pre-wrap break-all">{commandPreview}</pre>
@@ -1149,7 +1152,7 @@ function ToolPart({
           <Wrench className="h-3.5 w-3.5 shrink-0" />
         )}
         <span className="min-w-0 truncate">
-          {toolLabel(name)}
+          {agentToolLabel(name)}
           {running && "…"}
           {denied && " — キャンセルしました"}
           {done && output?.message ? ` — ${output.message}` : ""}

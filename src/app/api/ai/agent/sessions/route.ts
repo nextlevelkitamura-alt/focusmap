@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { UIMessage } from 'ai'
 import { createClient } from '@/utils/supabase/server'
 import type { AgentChatMode } from '@/lib/ai/agent-chat-background'
+import {
+  AGENT_CHAT_SESSIONS_NOT_READY_MESSAGE,
+  isMissingAgentChatSessionsTable,
+} from '@/lib/ai/agent-chat-db'
 
 const MAX_SESSIONS = 50
 
@@ -75,6 +79,9 @@ export async function GET(request: NextRequest) {
     .limit(limit)
 
   if (error) {
+    if (isMissingAgentChatSessionsTable(error)) {
+      return NextResponse.json({ sessions: [], dbReady: false })
+    }
     console.error('[agent/sessions] list failed:', error)
     return NextResponse.json({ error: 'Failed to load chat sessions' }, { status: 500 })
   }
@@ -114,6 +121,9 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) {
+    if (isMissingAgentChatSessionsTable(error)) {
+      return NextResponse.json({ error: AGENT_CHAT_SESSIONS_NOT_READY_MESSAGE }, { status: 503 })
+    }
     console.error('[agent/sessions] create failed:', error)
     return NextResponse.json({ error: 'Failed to create chat session' }, { status: 500 })
   }
