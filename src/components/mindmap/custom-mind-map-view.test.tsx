@@ -51,6 +51,14 @@ vi.mock("@/hooks/useAvailableRepos", () => ({
   }),
 }))
 
+vi.mock("@/hooks/useCodexRunnerStatus", () => ({
+  useCodexRunnerStatus: () => ({
+    loading: false,
+    checked: true,
+    ready: true,
+  }),
+}))
+
 vi.mock("@/lib/auth/supabase-auth-fetch", () => ({
   fetchWithSupabaseAuth: vi.fn(() => new Promise(() => {})),
 }))
@@ -871,6 +879,39 @@ describe("CustomMindMapView keyboard operations", () => {
       expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: false })
       expect(screen.getByText("Child task")).toBeInTheDocument()
     })
+  })
+
+  test("keeps a mobile local collapse action when stale task props re-render before save catches up", async () => {
+    const rootTask = makeTask({ id: "root-1", title: "Root task", mindmap_collapsed: false })
+    const childTask = makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1" })
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+
+    const view = render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask]}
+        tasks={[childTask]}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    fireEvent.click(within(getNode("Root task", "root-1")).getByTitle("折りたたむ"))
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: true })
+      expect(screen.queryByText("Child task")).not.toBeInTheDocument()
+    })
+
+    view.rerender(
+      <MobileMindMap
+        project={project}
+        groups={[{ ...rootTask, title: "Root task updated", mindmap_collapsed: false }]}
+        tasks={[childTask]}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    expect(screen.queryByText("Child task")).not.toBeInTheDocument()
   })
 
   test("saves mobile auto-expand when adding a child under a collapsed node", async () => {

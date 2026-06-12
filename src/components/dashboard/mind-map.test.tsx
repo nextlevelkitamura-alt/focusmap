@@ -202,6 +202,33 @@ describe("MindMap controls", () => {
     })
   })
 
+  test("keeps a local collapse action when stale task props re-render before save catches up", async () => {
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(
+      <MindMap project={project} groups={[{ ...task, mindmap_collapsed: false }]} tasks={[]} onUpdateTask={onUpdateTask} />
+    )
+
+    expect(screen.getByTestId("root-collapse-state")).toHaveTextContent("expanded")
+
+    fireEvent.click(screen.getByRole("button", { name: "折りたたみ切替" }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId("root-collapse-state")).toHaveTextContent("collapsed")
+    })
+
+    rerender(
+      <MindMap
+        project={project}
+        groups={[{ ...task, title: "Root task updated", mindmap_collapsed: false }]}
+        tasks={[]}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    expect(screen.getByTestId("root-collapse-state")).toHaveTextContent("collapsed")
+    expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: true })
+  })
+
   test("shows repo-scoped unplaced chats from another project and moves them into the current map", async () => {
     const onKanbanUpdateTask = vi.fn().mockResolvedValue(undefined)
     const otherProject = {

@@ -28,6 +28,7 @@ import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
+import { useMindMapCollapsedTaskIds } from "@/hooks/useMindMapCollapsedTaskIds";
 import { createClient } from "@/utils/supabase/client";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
@@ -39,14 +40,6 @@ const waitForTaskStateFlush = () => new Promise<void>(resolve => {
     }
     window.requestAnimationFrame(() => resolve());
 });
-
-const areSetsEqual = <T,>(first: Set<T>, second: Set<T>) => {
-    if (first.size !== second.size) return false;
-    for (const value of first) {
-        if (!second.has(value)) return false;
-    }
-    return true;
-};
 
 type MindMapCallbacks = {
     saveTaskTitle: (taskId: string, newTitle: string) => Promise<void>;
@@ -686,22 +679,11 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [clipboardFeedback, setClipboardFeedback] = useState<string | null>(null);
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null);
-    const persistedCollapsedTaskIds = useMemo(
-        () => [...groups, ...tasks]
-            .filter(task => task.mindmap_collapsed === true)
-            .map(task => task.id)
-            .sort(),
-        [groups, tasks]
-    );
-    const persistedCollapsedTaskSignature = persistedCollapsedTaskIds.join('|');
-    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
-        () => new Set(persistedCollapsedTaskIds)
-    );
-
-    useEffect(() => {
-        const next = new Set(persistedCollapsedTaskIds);
-        setCollapsedTaskIds(prev => areSetsEqual(prev, next) ? prev : next);
-    }, [projectId, persistedCollapsedTaskIds, persistedCollapsedTaskSignature]);
+    const { collapsedTaskIds, setTaskCollapsed: setTaskCollapsedState } = useMindMapCollapsedTaskIds({
+        projectId,
+        groups,
+        tasks,
+    });
     const selectedNodeIdRef = useRef<string | null>(null);
     const clipboardFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1115,23 +1097,13 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     }, []);
 
     const setTaskCollapsed = useCallback((taskId: string, collapsed: boolean) => {
-        setCollapsedTaskIds(prev => {
-            const isCollapsed = prev.has(taskId);
-            if (isCollapsed === collapsed) return prev;
-            const next = new Set(prev);
-            if (collapsed) {
-                next.add(taskId);
-            } else {
-                next.delete(taskId);
-            }
-            return next;
-        });
+        setTaskCollapsedState(taskId, collapsed);
 
         const savePromise = onUpdateTask?.(taskId, { mindmap_collapsed: collapsed });
         void savePromise?.catch(error => {
             console.error('[MindMap] Failed to persist collapsed state:', error);
         });
-    }, [onUpdateTask]);
+    }, [onUpdateTask, setTaskCollapsedState]);
 
     const pasteClipboardTree = useCallback(async (payload: MindMapClipboardPayload, placement?: MindMapClipboardPlacement) => {
         if (payload.roots.length === 0) return;

@@ -21,6 +21,7 @@ import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
 import { useAvailableRepos } from "@/hooks/useAvailableRepos"
+import { useMindMapCollapsedTaskIds } from "@/hooks/useMindMapCollapsedTaskIds"
 import type { AiTask } from "@/types/ai-task"
 import type { Project, Space, Task } from "@/types/database"
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
@@ -28,14 +29,6 @@ import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-
 type MobileCustomDropPosition = "above" | "below" | "as-child"
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiting_approval", "completed", "failed"]
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input"])
-
-const areSetsEqual = <T,>(first: Set<T>, second: Set<T>) => {
-    if (first.size !== second.size) return false
-    for (const value of first) {
-        if (!second.has(value)) return false
-    }
-    return true
-}
 
 function formatChatImportUpdatedLabel(value: string | null | undefined) {
     if (!value) return "更新不明"
@@ -104,17 +97,11 @@ export function MobileMindMap({
     onKanbanDeleteTask,
     codexOpenSignal,
 }: MobileMindMapProps) {
-    const persistedCollapsedTaskIds = useMemo(
-        () => [...groups, ...tasks]
-            .filter(task => task.mindmap_collapsed === true)
-            .map(task => task.id)
-            .sort(),
-        [groups, tasks]
-    )
-    const persistedCollapsedTaskSignature = persistedCollapsedTaskIds.join("|")
-    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
-        () => new Set(persistedCollapsedTaskIds)
-    )
+    const { collapsedTaskIds, setTaskCollapsed: setTaskCollapsedState } = useMindMapCollapsedTaskIds({
+        projectId: project.id,
+        groups,
+        tasks,
+    })
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
@@ -165,11 +152,6 @@ export function MobileMindMap({
         refresh: refreshAvailableRepos,
         requestRescan: requestAvailableReposRescan,
     } = useAvailableRepos()
-
-    useEffect(() => {
-        const next = new Set(persistedCollapsedTaskIds)
-        setCollapsedTaskIds(prev => areSetsEqual(prev, next) ? prev : next)
-    }, [project.id, persistedCollapsedTaskIds, persistedCollapsedTaskSignature])
 
     useEffect(() => {
         setKanbanSpaceId(project.space_id ?? null)
@@ -463,22 +445,12 @@ export function MobileMindMap({
     }, [fallbackSourceTasksByIdForCodex, onKanbanUpdateTask, onUpdateTask, project.id])
 
     const setTaskCollapsed = useCallback((taskId: string, collapsed: boolean) => {
-        setCollapsedTaskIds(prev => {
-            const isCollapsed = prev.has(taskId)
-            if (isCollapsed === collapsed) return prev
-            const next = new Set(prev)
-            if (collapsed) {
-                next.add(taskId)
-            } else {
-                next.delete(taskId)
-            }
-            return next
-        })
+        setTaskCollapsedState(taskId, collapsed)
 
         void updateTaskForCodexScope(taskId, { mindmap_collapsed: collapsed }).catch(error => {
             console.error("[MobileMindMap] Failed to persist collapsed state:", error)
         })
-    }, [updateTaskForCodexScope])
+    }, [setTaskCollapsedState, updateTaskForCodexScope])
 
     const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
         await updateTaskForCodexScope(taskId, { status })
