@@ -170,11 +170,14 @@ describe("CodexChatImportSidebar", () => {
     await waitFor(() => {
       expect(screen.getByText("DBに保存してから表示します")).toBeInTheDocument()
     })
-    expect(screen.getByRole("button", { name: "戻る" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "戻る" }).className).toContain("hover:bg-muted/60")
+    expect(screen.queryByRole("switch", { name: "リポ監視" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /既存リポ選択/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Finderでリポフォルダを選択" })).not.toBeInTheDocument()
     expect(screen.queryByLabelText("チャットを検索")).not.toBeInTheDocument()
     expect(screen.getByText("送信内容")).toBeInTheDocument()
     expect(screen.getByText("Codexの返答")).toBeInTheDocument()
-    expect(screen.getByText("右側サイドバーにチャット一覧を表示する")).toBeInTheDocument()
+    expect(screen.getByText("右側サイドバーにチャット一覧を表示する").className).toContain("bg-sky-500/[0.11]")
 
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
     expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })

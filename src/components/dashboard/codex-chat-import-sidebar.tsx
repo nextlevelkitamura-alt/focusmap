@@ -442,142 +442,144 @@ export function CodexChatImportSidebar({
       aria-label="チャット取り込み"
       title={projectTitle}
     >
-      <div className="space-y-2 border-b p-2.5">
-        <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="shrink-0 text-xs font-medium">リポ監視</span>
-            <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={hasRepoPath ? currentRepoPath : undefined}>
-              {hasRepoPath ? currentRepoLabel : "リポ未選択"}
-            </span>
-            {hasRepoPath && importOwnerLabel && (
-              <span className="max-w-[96px] shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={importOwnerLabel}>
-                監視: {importOwnerLabel}
+      {!selectedChatItem && (
+        <div className="space-y-2 border-b p-2.5">
+          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="shrink-0 text-xs font-medium">リポ監視</span>
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={hasRepoPath ? currentRepoPath : undefined}>
+                {hasRepoPath ? currentRepoLabel : "リポ未選択"}
               </span>
-            )}
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                codexRunnerStatus.ready
-                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                  : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
+              {hasRepoPath && importOwnerLabel && (
+                <span className="max-w-[96px] shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={importOwnerLabel}>
+                  監視: {importOwnerLabel}
+                </span>
               )}
-            >
-              {codexRunnerStatus.loading || !codexRunnerStatus.checked
-                ? "Mac確認中"
-                : codexRunnerStatus.ready
-                  ? "Mac online"
-                  : "Mac offline"}
-            </span>
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                  codexRunnerStatus.ready
+                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
+                )}
+              >
+                {codexRunnerStatus.loading || !codexRunnerStatus.checked
+                  ? "Mac確認中"
+                  : codexRunnerStatus.ready
+                    ? "Mac online"
+                    : "Mac offline"}
+              </span>
+            </div>
+            <Switch
+              checked={importEnabled && hasRepoPath}
+              onCheckedChange={() => void handleToggleImport()}
+              disabled={!hasRepoPath || isBusy || runnerUnavailable}
+              aria-label="リポ監視"
+              title={runnerUnavailable ? runnerUnavailableMessage : undefined}
+              className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
+            />
           </div>
-          <Switch
-            checked={importEnabled && hasRepoPath}
-            onCheckedChange={() => void handleToggleImport()}
-            disabled={!hasRepoPath || isBusy || runnerUnavailable}
-            aria-label="リポ監視"
-            title={runnerUnavailable ? runnerUnavailableMessage : undefined}
-            className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
-          />
-        </div>
 
-        <div className="relative">
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2"
-              onClick={() => setRepoPickerOpen(open => !open)}
-              disabled={isBusy}
-              aria-expanded={repoPickerOpen}
-              aria-controls="codex-repo-picker"
-            >
-              <FolderGit2 className="h-3.5 w-3.5" />
-              <span className="ml-1.5 text-xs">既存リポ選択</span>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2"
-              onClick={chooseFolder}
-              disabled={isBusy}
-              aria-label="Finderでリポフォルダを選択"
-              title="Finderでリポフォルダを選択"
-            >
-              {pickerPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
-              <span className="ml-1.5 text-xs">Finder</span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={handleRefreshRepos}
-              disabled={isBusy}
-              aria-label="リポ候補を更新"
-              title="リポ候補を更新"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-            </Button>
-            {currentRepoPath && (
+          <div className="relative">
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                onClick={() => setRepoPickerOpen(open => !open)}
+                disabled={isBusy}
+                aria-expanded={repoPickerOpen}
+                aria-controls="codex-repo-picker"
+              >
+                <FolderGit2 className="h-3.5 w-3.5" />
+                <span className="ml-1.5 text-xs">既存リポ選択</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                onClick={chooseFolder}
+                disabled={isBusy}
+                aria-label="Finderでリポフォルダを選択"
+                title="Finderでリポフォルダを選択"
+              >
+                {pickerPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
+                <span className="ml-1.5 text-xs">Finder</span>
+              </Button>
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs text-muted-foreground"
-                onClick={() => void selectRepoPath(null)}
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleRefreshRepos}
                 disabled={isBusy}
+                aria-label="リポ候補を更新"
+                title="リポ候補を更新"
               >
-                選択解除
+                <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
               </Button>
+              {currentRepoPath && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-muted-foreground"
+                  onClick={() => void selectRepoPath(null)}
+                  disabled={isBusy}
+                >
+                  選択解除
+                </Button>
+              )}
+            </div>
+
+            {repoPickerOpen && (
+              <div
+                id="codex-repo-picker"
+                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover p-1 shadow-xl"
+              >
+                {repos.length === 0 ? (
+                  <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                    リポ候補がありません
+                  </div>
+                ) : (
+                  repos.slice(0, 8).map(repo => {
+                    const selected = currentRepoPath === repo.absolute_path
+                    return (
+                      <button
+                        key={repo.id}
+                        type="button"
+                        aria-label={`対象リポを選択 ${repo.display_name || repoNameFromPath(repo.absolute_path)}`}
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
+                          selected && "bg-muted",
+                        )}
+                        onClick={() => void selectRepoPath(repo.absolute_path)}
+                        disabled={isBusy}
+                        title={repo.absolute_path}
+                      >
+                        <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                          {repo.display_name || repoNameFromPath(repo.absolute_path)}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">agent</span>
+                        {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
             )}
           </div>
 
-          {repoPickerOpen && (
-            <div
-              id="codex-repo-picker"
-              className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover p-1 shadow-xl"
-            >
-              {repos.length === 0 ? (
-                <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-                  リポ候補がありません
-                </div>
-              ) : (
-                repos.slice(0, 8).map(repo => {
-                  const selected = currentRepoPath === repo.absolute_path
-                  return (
-                    <button
-                      key={repo.id}
-                      type="button"
-                      aria-label={`対象リポを選択 ${repo.display_name || repoNameFromPath(repo.absolute_path)}`}
-                      className={cn(
-                        "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
-                        selected && "bg-muted",
-                      )}
-                      onClick={() => void selectRepoPath(repo.absolute_path)}
-                      disabled={isBusy}
-                      title={repo.absolute_path}
-                    >
-                      <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                        {repo.display_name || repoNameFromPath(repo.absolute_path)}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">agent</span>
-                      {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
-                    </button>
-                  )
-                })
-              )}
-            </div>
+          {(repoError || reposError) && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+              {repoError ?? reposError}
+            </p>
           )}
         </div>
-
-        {(repoError || reposError) && (
-          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
-            {repoError ?? reposError}
-          </p>
-        )}
-      </div>
+      )}
 
       {selectedChatItem ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -585,13 +587,13 @@ export function CodexChatImportSidebar({
             <div className="flex min-w-0 items-center gap-2">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="h-8 shrink-0 px-2 text-xs"
+                className="-ml-1 h-8 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 onClick={() => setSelectedChatId(null)}
               >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span className="ml-1">戻る</span>
+                <ArrowLeft className="h-4 w-4" />
+                <span>戻る</span>
               </Button>
               <div className="min-w-0 flex-1 truncate text-xs font-semibold" title={selectedChatItem.title}>
                 {selectedChatItem.title}
@@ -644,13 +646,27 @@ export function CodexChatImportSidebar({
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="mb-1 flex min-w-0 items-center gap-2">
-                          <span className="shrink-0 text-xs font-semibold">{label}</span>
-                          {timeLabel && <span className="truncate text-[11px] text-muted-foreground">{timeLabel}</span>}
+                          <span className={cn(
+                            "shrink-0 text-xs font-semibold",
+                            isUserMessage && "text-sky-700 dark:text-sky-200",
+                          )}>
+                            {label}
+                          </span>
+                          {timeLabel && (
+                            <span className={cn(
+                              "truncate text-[11px] text-muted-foreground",
+                              isUserMessage && "text-sky-700/70 dark:text-sky-200/60",
+                            )}>
+                              {timeLabel}
+                            </span>
+                          )}
                         </div>
                         <div
                           className={cn(
                             "whitespace-pre-wrap break-words rounded-lg border px-3 py-2 text-xs leading-relaxed text-foreground shadow-sm",
-                            isUserMessage ? "bg-card" : "bg-muted/20",
+                            isUserMessage
+                              ? "border-sky-400/25 bg-sky-500/[0.11] dark:border-sky-300/20 dark:bg-sky-400/[0.12]"
+                              : "bg-muted/20",
                             message.importance === "important" && "border-amber-400/50 bg-amber-500/10",
                           )}
                         >
