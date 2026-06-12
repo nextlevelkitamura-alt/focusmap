@@ -31,8 +31,9 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
         queueMicrotask(() => {
             const requestedView = new URLSearchParams(window.location.search).get('view') as DashboardView | null
             if (requestedView && VALID_VIEWS.includes(requestedView)) {
-                try { localStorage.setItem(STORAGE_KEY, requestedView) } catch {}
-                setActiveViewState(requestedView)
+                const normalizedView = requestedView === 'automation' ? 'ai' : requestedView
+                try { localStorage.setItem(STORAGE_KEY, normalizedView) } catch {}
+                setActiveViewState(normalizedView)
                 setIsViewReady(true)
                 return
             }

@@ -14,16 +14,18 @@ import {
   type DynamicToolUIPart,
 } from "ai"
 import {
+  Activity,
   BriefcaseBusiness,
   CalendarDays,
+  ChevronRight,
   CheckCircle2,
+  Download,
   FileText,
   History,
   Image as ImageIcon,
   ListTodo,
   Loader2,
   Menu,
-  MessageCircle,
   MessageSquarePlus,
   Mic,
   PanelLeftClose,
@@ -38,6 +40,7 @@ import {
   Wrench,
   X,
   XCircle,
+  WifiOff,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -48,13 +51,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useAgentChatSessions, type AgentChatSession } from "@/hooks/useAgentChatSessions"
 import { cn } from "@/lib/utils"
-import { AgentStatusChip, useAgentConnection } from "@/components/chat/agent-status-chip"
-import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
+import { AgentStatusChip, useAgentConnection, type AgentConnectionState } from "@/components/chat/agent-status-chip"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS, sanitizeUIMessagesForModel } from "@/lib/ai/ui-message-sanitize"
 
@@ -115,8 +117,6 @@ const AUTOMATION_SHORTCUTS = [
     icon: Workflow,
   },
 ]
-
-type ChatTab = "chat" | "automation"
 
 const MAX_CHAT_ATTACHMENTS = 4
 const MAX_IMAGE_SIDE = 1600
@@ -225,7 +225,6 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   void _projectId
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
-  const [activeTab, setActiveTab] = useState<ChatTab>("chat")
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<FileUIPart[]>([])
@@ -234,6 +233,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const swipeRef = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null)
 
   const transport = useMemo(
     () => new DefaultChatTransport({
@@ -377,11 +377,9 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     setInput("")
     setAttachments([])
     setAttachmentError(null)
-    setActiveTab("chat")
   }
 
   const insertAutomationPrompt = useCallback((prompt: string) => {
-    setActiveTab("chat")
     setInput(prev => (prev.trim() ? `${prev.trim()}\n${prompt}` : prompt))
     setTimeout(() => inputRef.current?.focus(), 0)
   }, [])
@@ -424,11 +422,46 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     void addAttachmentFiles(imageFiles)
   }
 
-  const sendLabel = connectionState === "offline" ? "予約して送信" : "送信"
+  const sendLabel = connectionState === "online" ? "送信" : "予約して送信"
   const canSend = input.trim().length > 0 || attachments.length > 0
+  const activeSessionTitle = sessions.activeSession?.title ?? "新しいチャット"
+
+  const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches) return
+    const touch = event.touches[0]
+    if (!touch) return
+    swipeRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      tracking: touch.clientX <= 44,
+    }
+  }, [])
+
+  const handleTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const current = swipeRef.current
+    if (!current?.tracking || mobileHistoryOpen) return
+    const touch = event.touches[0]
+    if (!touch) return
+    const dx = touch.clientX - current.startX
+    const dy = touch.clientY - current.startY
+    if (dx > 72 && Math.abs(dy) < 64) {
+      setMobileHistoryOpen(true)
+      swipeRef.current = { ...current, tracking: false }
+    }
+  }, [mobileHistoryOpen])
+
+  const handleTouchEnd = useCallback(() => {
+    swipeRef.current = null
+  }, [])
 
   return (
-    <div className="flex h-full min-h-0 bg-background text-foreground">
+    <div
+      className="relative flex h-full min-h-0 bg-background text-foreground"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+    >
       {sidebarOpen && (
         <HistorySidebar
           sessions={sessions.sessions}
@@ -441,28 +474,44 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b px-3 md:px-4">
+        <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-3 backdrop-blur md:px-4">
           <div className="flex min-w-0 items-center gap-2">
-            <Button variant="ghost" size="icon" className="hidden h-9 w-9 md:inline-flex" onClick={() => setSidebarOpen(v => !v)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden h-9 w-9 md:inline-flex"
+              onClick={() => setSidebarOpen(v => !v)}
+              aria-label={sidebarOpen ? "履歴を閉じる" : "履歴を開く"}
+            >
               {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
             </Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" onClick={() => setMobileHistoryOpen(true)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 rounded-full md:hidden"
+              onClick={() => setMobileHistoryOpen(true)}
+              aria-label="チャット履歴を開く"
+            >
               <Menu className="h-4 w-4" />
             </Button>
-            <ChatTabs value={activeTab} onChange={setActiveTab} />
+            <div className="min-w-0">
+              <h1 className="truncate text-lg font-semibold leading-tight md:text-base">チャット</h1>
+              <p className="hidden max-w-[46vw] truncate text-[11px] text-muted-foreground sm:block md:max-w-[360px]">
+                {activeSessionTitle}
+              </p>
+            </div>
           </div>
-          {activeTab === "chat" && (
-            <Button variant="outline" size="sm" className="hidden h-8 gap-1.5 text-xs sm:inline-flex" onClick={handleNewSession}>
+          <div className="flex shrink-0 items-center gap-2">
+            <MacStatusPill state={connectionState} />
+            <Button variant="outline" size="sm" className="hidden h-9 gap-1.5 rounded-full text-xs sm:inline-flex" onClick={handleNewSession}>
               <MessageSquarePlus className="h-3.5 w-3.5" />
               新規
             </Button>
-          )}
+          </div>
         </header>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
-          {activeTab === "automation" ? (
-            <AutomationDashboard spaceId={spaceId} onPrompt={insertAutomationPrompt} />
-          ) : messages.length === 0 ? (
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6">
+          {messages.length === 0 ? (
             <EmptyChat onPrompt={submit} />
           ) : (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
@@ -481,7 +530,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
           )}
         </div>
 
-        <div className="shrink-0 border-t bg-background p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] md:px-6">
+        <div className="shrink-0 border-t bg-background/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] backdrop-blur md:px-6">
           <div className="mx-auto w-full max-w-3xl space-y-2">
             <AgentStatusChip state={connectionState} />
             {isRecording && (
@@ -550,14 +599,14 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 onChange={event => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder={activeTab === "automation" ? "例: 毎朝予定を確認して、調整案を出して" : "例: 今日やることを整理して"}
+                placeholder="例: 今日やることを整理して"
                 rows={1}
-                className="max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-lg border bg-background px-3.5 py-3 text-sm outline-none focus:ring-1 focus:ring-primary"
+                className="max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-primary"
               />
               <Button
                 variant={isRecording ? "destructive" : "outline"}
                 size="icon"
-                className="h-12 w-11 shrink-0 rounded-lg"
+                className="h-12 w-11 shrink-0 rounded-2xl"
                 onClick={isRecording ? stopRecording : startRecording}
                 disabled={isTranscribing}
                 title={isRecording ? "録音停止" : "音声入力"}
@@ -565,14 +614,14 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
               </Button>
               {isBusy ? (
-                <Button size="icon" variant="ghost" className="h-12 w-11 shrink-0 rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void stop()} title="停止">
+                <Button size="icon" variant="ghost" className="h-12 w-11 shrink-0 rounded-2xl text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void stop()} title="停止">
                   <Square className="h-3.5 w-3.5" />
                 </Button>
               ) : (
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="h-12 w-11 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                  className="h-12 w-11 shrink-0 rounded-2xl text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
                   disabled={!canSend}
                   onClick={() => submit(input)}
                   title={sendLabel}
@@ -585,21 +634,34 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
         </div>
       </div>
 
+      <button
+        type="button"
+        className="absolute left-0 top-1/2 z-20 flex h-24 w-8 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 bg-muted/80 text-muted-foreground shadow-sm backdrop-blur transition active:bg-muted md:hidden"
+        onClick={() => setMobileHistoryOpen(true)}
+        aria-label="チャット履歴を開く"
+      >
+        <ChevronRight className="h-5 w-5" />
+      </button>
+
+      <Button
+        type="button"
+        size="icon"
+        className="absolute bottom-[calc(6.75rem+env(safe-area-inset-bottom,0px))] right-4 z-20 h-14 w-14 rounded-full shadow-lg md:hidden"
+        onClick={handleNewSession}
+        aria-label="新規チャット"
+      >
+        <MessageSquarePlus className="h-5 w-5" />
+      </Button>
+
       <Sheet open={mobileHistoryOpen} onOpenChange={setMobileHistoryOpen}>
-        <SheetContent side="left" className="w-[86vw] max-w-[340px] p-0">
-          <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle className="flex items-center gap-2 text-sm">
-              <History className="h-4 w-4" />
-              チャット履歴
-            </SheetTitle>
-          </SheetHeader>
+        <SheetContent side="left" className="w-[88vw] max-w-[390px] p-0">
           <HistorySidebar
             sessions={sessions.sessions}
             activeSessionId={sessions.activeSessionId}
             onNew={handleNewSession}
             onSelect={handleSelectSession}
             onDelete={handleDeleteSession}
-            className="flex h-full border-r-0"
+            className="flex h-full w-full border-r-0"
           />
         </SheetContent>
       </Sheet>
@@ -607,34 +669,47 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   )
 }
 
-function ChatTabs({ value, onChange }: { value: ChatTab; onChange: (value: ChatTab) => void }) {
-  const tabs: Array<{ value: ChatTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-    { value: "chat", label: "チャット", icon: MessageCircle },
-    { value: "automation", label: "自動化", icon: Workflow },
-  ]
+function MacStatusPill({ state }: { state: AgentConnectionState }) {
+  const meta = (() => {
+    if (state === "online") {
+      return {
+        label: "Mac online",
+        Icon: Activity,
+        className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        iconClassName: "animate-pulse",
+      }
+    }
+    if (state === "offline") {
+      return {
+        label: "Mac offline",
+        Icon: WifiOff,
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+        iconClassName: "",
+      }
+    }
+    if (state === "absent") {
+      return {
+        label: "Mac未接続",
+        Icon: Download,
+        className: "border-border bg-muted/40 text-muted-foreground",
+        iconClassName: "",
+      }
+    }
+    return {
+      label: "確認中",
+      Icon: Loader2,
+      className: "border-border bg-muted/40 text-muted-foreground",
+      iconClassName: "animate-spin",
+    }
+  })()
+  const Icon = meta.Icon
 
   return (
-    <div className="grid h-8 grid-cols-2 rounded-lg border bg-muted/30 p-0.5 text-xs">
-      {tabs.map(tab => {
-        const Icon = tab.icon
-        const selected = value === tab.value
-        return (
-          <button
-            key={tab.value}
-            type="button"
-            aria-label={tab.label}
-            onClick={() => onChange(tab.value)}
-            className={cn(
-              "inline-flex min-w-24 items-center justify-center gap-1.5 rounded-md px-3 font-medium transition-colors",
-              selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {tab.label}
-          </button>
-        )
-      })}
-    </div>
+    <span className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium", meta.className)}>
+      <Icon className={cn("h-3.5 w-3.5", meta.iconClassName)} />
+      <span className="hidden sm:inline">{meta.label}</span>
+      <span className="sm:hidden">{state === "online" ? "online" : state === "offline" ? "offline" : state === "absent" ? "未接続" : "確認中"}</span>
+    </span>
   )
 }
 
@@ -665,7 +740,7 @@ function AutomationPromptMenu({
           <span className="text-sm font-medium">写真を添付</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-xs text-muted-foreground">自動化を選ぶ</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-xs text-muted-foreground">よく使う依頼</DropdownMenuLabel>
         {AUTOMATION_SHORTCUTS.map(item => {
           const Icon = item.icon
           return (
@@ -703,17 +778,20 @@ function HistorySidebar({
   className?: string
 }) {
   return (
-    <aside className={cn("h-full w-[280px] shrink-0 flex-col border-r bg-muted/20", className)}>
-      <div className="flex shrink-0 items-center justify-between border-b px-3 py-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <History className="h-4 w-4" />
-          履歴
+    <aside className={cn("relative h-full w-[280px] shrink-0 flex-col border-r bg-background", className)}>
+      <div className="flex shrink-0 items-center justify-between px-4 py-4">
+        <div className="min-w-0">
+          <div className="text-xl font-semibold leading-tight md:text-sm">Focusmap</div>
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <History className="h-3.5 w-3.5" />
+            最近
+          </div>
         </div>
-        <Button variant="outline" size="icon" className="h-8 w-8" onClick={onNew} title="新規チャット">
+        <Button variant="outline" size="icon" className="hidden h-8 w-8 md:inline-flex" onClick={onNew} title="新規チャット">
           <MessageSquarePlus className="h-4 w-4" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-24">
         {sessions.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">履歴はまだありません</p>
         ) : (
@@ -724,8 +802,8 @@ function HistorySidebar({
                   type="button"
                   onClick={() => onSelect(session)}
                   className={cn(
-                    "flex min-h-14 w-full flex-col rounded-md px-3 py-2 text-left transition",
-                    activeSessionId === session.id ? "bg-background shadow-sm" : "hover:bg-background/70",
+                    "flex min-h-13 w-full flex-col rounded-lg px-3 py-2.5 text-left transition",
+                    activeSessionId === session.id ? "bg-muted text-foreground" : "hover:bg-muted/70",
                   )}
                 >
                   <span className="w-[200px] truncate text-sm font-medium">{session.title}</span>
@@ -743,6 +821,16 @@ function HistorySidebar({
             ))}
           </div>
         )}
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-background via-background/95 to-transparent p-4 md:hidden">
+        <button
+          type="button"
+          className="pointer-events-auto inline-flex min-h-14 items-center gap-2 rounded-full bg-foreground px-6 text-sm font-semibold text-background shadow-xl"
+          onClick={onNew}
+        >
+          <MessageSquarePlus className="h-5 w-5" />
+          チャット
+        </button>
       </div>
     </aside>
   )
@@ -769,33 +857,6 @@ function EmptyChat({ onPrompt }: { onPrompt: (text: string) => void }) {
             {prompt}
           </button>
         ))}
-      </div>
-    </div>
-  )
-}
-
-function AutomationDashboard({ spaceId, onPrompt }: { spaceId: string | null; onPrompt: (prompt: string) => void }) {
-  return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <AutomationStatusPanel spaceId={spaceId} embedded />
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {AUTOMATION_SHORTCUTS.map(item => {
-          const Icon = item.icon
-          return (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => onPrompt(item.prompt)}
-              className="min-h-20 rounded-md border bg-background px-3 py-3 text-left transition hover:bg-muted/50"
-            >
-              <span className="flex items-center gap-2 text-sm font-medium">
-                <Icon className="h-4 w-4 text-muted-foreground" />
-                {item.label}
-              </span>
-              <span className="mt-1 block text-xs text-muted-foreground">{item.description}</span>
-            </button>
-          )
-        })}
       </div>
     </div>
   )
@@ -835,7 +896,7 @@ function MessageBubble({ message, isActive = false, onApproval }: { message: UIM
       {!isUser && (
         <FocusmapAssistantIcon active={isActive} />
       )}
-      <div className={cn("flex min-w-0 max-w-[86%] flex-col gap-2", isUser && "items-end")}>
+      <div className={cn("flex min-w-0 max-w-[88%] flex-col gap-2 sm:max-w-[84%]", isUser && "items-end")}>
         {message.parts.map((part, index) => {
           if (part.type === "text") {
             if (!part.text) return null
@@ -843,8 +904,10 @@ function MessageBubble({ message, isActive = false, onApproval }: { message: UIM
               <div
                 key={index}
                 className={cn(
-                  "rounded-lg px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
-                  isUser ? "bg-primary text-primary-foreground" : "bg-muted/70",
+                  "text-sm leading-6 whitespace-pre-wrap",
+                  isUser
+                    ? "rounded-3xl bg-muted px-4 py-2.5 text-foreground"
+                    : "px-0 py-1 text-foreground",
                 )}
               >
                 {part.text}

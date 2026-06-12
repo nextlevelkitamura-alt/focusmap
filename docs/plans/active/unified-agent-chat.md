@@ -3,7 +3,7 @@ status: active
 category: feature
 priority: high
 created: 2026-05-29
-updated: 2026-05-29
+updated: 2026-06-12
 related: [focusmap-lite-mac-agent.md]
 ---
 
@@ -13,7 +13,7 @@ related: [focusmap-lite-mac-agent.md]
 
 現状「通常チャット(Gemini Flash-Lite)」と「自動化チャット(DeepSeek intent判定→ai_tasks)」が
 `FocusmapChatMode` で完全分離している。これを **1つのチャット基盤・1つのモデル(DeepSeek V4 Pro)・
-1つのエンドポイント** に統合する。UIは `チャット / 自動化` の2タブに整理し、`自動化` は状態確認と自動化ショートカットの入口にする。
+1つのエンドポイント** に統合する。2026-06-12時点のUI方針は、`チャット / 自動化` の2タブではなく **単一の全画面チャット** にする。予定整理・タスク化・調査などのショートカットは入力欄左の `+` メニューから同じチャットへプロンプト挿入し、Mac online/offline はヘッダーと入力欄上のステータスチップで常時表示する。
 
 中核思想: **ツール対応モデルにツール群を渡せば、モデルがメッセージごとに「ただ答える/ツールを呼ぶ」を
 自律判断する**。モード切り替え・intent分類・キーワードルーターは不要になり、「必要な時だけエージェントが動く」
@@ -23,7 +23,7 @@ related: [focusmap-lite-mac-agent.md]
 ## 決定事項 (ユーザー確定)
 
 - モデル: **DeepSeek V4 Pro**(全メッセージ共通。雑談もV4 Proを通る代償は許容)
-- チャット: **通常/自動化を1つのチャット基盤に統合**。UIは `チャット / 自動化` の小さいタブで役割だけ分ける
+- チャット: **通常/自動化を1つのチャット基盤に統合**。UIも単一チャットにし、専用の `自動化` タブ/チャットは出さない
 - エージェント動作: 1チャット内で必要時のみツール実行(モデルが判断)
 - 脳の置き場所: **サーバー側 (Vercel AI SDK)**
 
@@ -72,8 +72,8 @@ related: [focusmap-lite-mac-agent.md]
 - [ ] 変更するファイル:
   - `src/lib/ai/providers/index.ts` — エージェント用にDeepSeek V4 Pro(Thinking ON)を返す関数を追加
   - `src/lib/ai/tools/index.ts` — `TOOL_ENABLED_SKILLS`(空Set)を撤廃 or 統合ToolSetに移行
-  - `src/app/dashboard/dashboard-client.tsx` — AiView/AutoChatView 分岐を統合ビューに置換
-  - `src/contexts/ViewContext.tsx` — 'ai'|'automation' を単一ビューへ
+  - [x] `src/app/dashboard/dashboard-client.tsx` — AiView/AutoChatView 分岐を統合ビューに置換
+  - [x] `src/contexts/ViewContext.tsx` — 'ai'|'automation' を単一ビューへ
   - `src/components/mobile/bottom-nav.tsx` / `header.tsx` — タブ統合
   - `package.json` — `@ai-sdk/react` 追加(useChat用)
   - `scripts/focusmap-agent/src/command-loop.ts` — コマンドポーリング 5s→1-2s or Realtime push
@@ -104,7 +104,7 @@ related: [focusmap-lite-mac-agent.md]
 ### Phase 3: 統合チャットUI
 - [ ] `unified-chat.tsx`: `useChat({ api: '/api/ai/agent' })`
 - [ ] tool-call parts をライブ表示(「ターミナル実行中…」「ブラウザ操作中…」)
-- [ ] dashboard / nav から 通常・自動化の重い分離を廃止し、`チャット / 自動化` の軽いタブに統合
+- [x] dashboard / nav から 通常・自動化の重い分離を廃止し、単一チャットUIへ統合
 - [ ] mode別state/localStorage を単一化
 
 ### Phase 4: ガードレール

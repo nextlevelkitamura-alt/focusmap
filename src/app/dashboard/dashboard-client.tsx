@@ -66,10 +66,6 @@ const AiView = dynamic(
     () => import("@/components/ai/ai-view").then(mod => ({ default: mod.AiView })),
     { loading: DashboardPaneFallback, ssr: false },
 )
-const AutoChatView = dynamic(
-    () => import("@/components/chat/auto-chat-view").then(mod => ({ default: mod.AutoChatView })),
-    { loading: DashboardPaneFallback, ssr: false },
-)
 const IdealView = dynamic(
     () => import("@/components/ideal/ideal-view").then(mod => ({ default: mod.IdealView })),
     { loading: DashboardPaneFallback, ssr: false },
@@ -1380,7 +1376,12 @@ export function DashboardClient({
 
                 {isViewReady && isMobileViewport && activeView === 'automation' && (
                     <div className="flex-1 md:hidden overflow-hidden">
-                        <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
+                        <MobileAiExecutionView
+                            selectedSpaceId={selectedSpaceId}
+                            selectedProjectId={selectedProjectId}
+                            onMindmapUpdated={refreshFromServer}
+                            onCalendarEventCreated={handleCalendarEventCreated}
+                        />
                     </div>
                 )}
 
@@ -1478,7 +1479,10 @@ export function DashboardClient({
 
                 {!isMobileViewport && activeView === 'automation' && (
                     <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
-                        <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
+                        <AiView
+                            selectedSpaceId={selectedSpaceId}
+                            selectedProjectId={selectedProjectId}
+                        />
                     </div>
                 )}
 

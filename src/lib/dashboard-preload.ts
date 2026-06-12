@@ -40,7 +40,8 @@ export function preloadDashboardView(view: DashboardView) {
   }
 
   if (view === "automation") {
-    preloadOnce("auto-chat", () => import("@/components/chat/auto-chat-view"))
+    preloadOnce("mobile-ai-execution", () => import("@/components/ai/mobile-ai-execution-view"))
+    preloadOnce("desktop-ai", () => import("@/components/ai/ai-view"))
     return
   }
 
