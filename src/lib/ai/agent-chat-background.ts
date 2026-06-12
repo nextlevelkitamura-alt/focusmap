@@ -8,7 +8,7 @@ import { createClient } from '@/utils/supabase/server'
 import { getAgentModel, getAgentVisionModel } from '@/lib/ai/providers'
 import { buildAgentTools } from '@/lib/ai/agent-tools'
 import { sanitizeUIMessagesForModel } from '@/lib/ai/ui-message-sanitize'
-import { summarizeProjectTasks } from '@/lib/ai/context/task-summarizer'
+import { summarizeProjectChatMapBrief } from '@/lib/ai/context/task-summarizer'
 import {
   buildCalendarPreferenceInstructions,
   parseAgentCalendarPreferences,
@@ -109,6 +109,7 @@ function buildSystemPrompt(
         '- これはプロジェクトチャットです。下のプロジェクト文脈を最初から読み込んだ前提で会話する。',
         '- ユーザーが明示的に別対象を指定しない限り、このプロジェクトについて話していると解釈する。',
         '- タスク・マップ・予定を作る場合は、原則としてこのプロジェクトIDを使う。',
+        '- 初期文脈のマインドマップ/ノートは件数と見出しだけです。本文・詳細・全ノード展開は必要になった時だけツールで確認する。',
         projectContext.text,
       ].join('\n')
       : [
@@ -129,10 +130,11 @@ function buildSystemPrompt(
     '- Mac経由 (ターミナル/ブラウザ/ファイル): runTerminal / listFiles / readFile / writeFile / runOpenCode / browserNavigate / browserClick / browserFill / browserScreenshot / webResearch',
     '',
     '## Focusmap DB / プロジェクト運用',
-    '- 「プロジェクトについて話す」「概要を見て」「今の状況を確認して」「壁打ちして」は、まず listProjects で候補を探し、対象が分かれば getProjectContext で概要・蓄積コンテキスト・最近のタスクを確認する。一意に解決できた対象を再確認するだけの質問は禁止。',
+    '- 「プロジェクトについて話す」「概要を見て」「今の状況を確認して」「壁打ちして」は、まず listProjects で候補を探し、対象が分かれば getProjectContext で概要・蓄積コンテキスト・軽量なマップ/ノート概要を確認する。一意に解決できた対象を再確認するだけの質問は禁止。',
     '- プロジェクトを読んだ後は、読んだ概要・現状・タスク/マップの要点を短く共有し、「この前提で何を整理するか」を聞く。',
     '- 「記録して」「概要を更新して」は saveProjectContext を使う。projects.description は安定した概要、project_contexts.details はAGENTS.md風の読みやすい背景メモ、project_contexts.progress は現在地・次の論点・ブロッカーの状況メモとして使う。プロジェクト名・状態・リポジトリなどプロジェクト本体を変更する時は updateProject を使う。',
     '- project_contexts.details を更新する時は、必要に応じて `## 目的`、`## 判断基準`、`## 重要制約`、`## 最近の決定` のような小見出しで整理する。project_contexts.progress は `## 現在地`、`## 次の論点`、`## ブロッカー` のように、マインドマップ整理に使いやすい現在状況を残す。',
+    '- 初期文脈にマインドマップ/ノートの本文や全詳細を詰め込まない。件数と見出しで足りない時だけ getMindmapOverview / getMindmapNodeDetail / listNotesForOrganization / getNoteOrganizationDetail を使う。',
     '- 「マインドマップを見て」は getMindmapOverview を使い、個別ノードの親子・子孫・紐づき詳細は getMindmapNodeDetail を使う。',
     '- 「ノードを変更して」は updateMindmapNode、「このノードをここへ移して」は moveMindmapNode、「このメモの紐づきをこのノードへ変えて」は updateMindmapMemoLink を使う。',
     '- 「マインドマップを整理して」は、getMindmapOverview でノード構造と進捗を見てから listNotesForOrganization で未整理メモの見出しと詳細冒頭30文字を確認する。必要な候補だけ詳細を読み、整理する。',
@@ -198,7 +200,7 @@ async function loadProjectChatContext({
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const taskSummary = await summarizeProjectTasks(supabase, userId, projectId)
+  const mapBrief = await summarizeProjectChatMapBrief(supabase, userId, projectId)
   const contextLines = [
     `## 現在のプロジェクト`,
     `- project_id: ${project.id}`,
@@ -214,7 +216,7 @@ async function loadProjectChatContext({
         context.progress ? `進捗: ${context.progress}` : '',
       ].filter(Boolean).join('\n')
       : '',
-    taskSummary ? `\n${taskSummary}` : '',
+    mapBrief ? `\n${mapBrief}` : '',
   ].filter(Boolean)
 
   return {
