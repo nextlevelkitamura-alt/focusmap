@@ -24,10 +24,24 @@ const codexLaunchMock = vi.hoisted(() => ({
   })),
 }))
 
+const codexRunnerStatusMock = vi.hoisted(() => ({
+  status: {
+    checked: true,
+    loading: false,
+    ready: true,
+    lastSeenAt: '2026-05-21T00:00:00.000Z',
+    refresh: vi.fn(),
+  },
+}))
+
 vi.mock('@/hooks/useMemoAiTasks', () => ({
   useMemoAiTasks: () => ({
     getBySourceId: () => memoAiTaskMock.task,
   }),
+}))
+
+vi.mock('@/hooks/useCodexRunnerStatus', () => ({
+  useCodexRunnerStatus: () => codexRunnerStatusMock.status,
 }))
 
 vi.mock('@/lib/image-compression', () => ({
@@ -119,6 +133,13 @@ describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    codexRunnerStatusMock.status = {
+      checked: true,
+      loading: false,
+      ready: true,
+      lastSeenAt: '2026-05-21T00:00:00.000Z',
+      refresh: vi.fn(),
+    }
     imageCompressionMock.compressImageFileForUpload.mockClear()
     codexLaunchMock.copyCodexImageToClipboard.mockClear()
     imageCompressionMock.compressImageFileForUpload.mockImplementation(async (file: File) => (
@@ -211,6 +232,49 @@ describe('WishlistCardDetail', () => {
     expectVisualOrder(imageSection, 'order-2')
     expectVisualOrder(codexButton, 'order-3')
     expectVisualOrder(scheduleSection, 'order-4')
+  })
+
+  test('MacがofflineのときはCodexに送れない', async () => {
+    codexRunnerStatusMock.status = {
+      checked: true,
+      loading: false,
+      ready: false,
+      lastSeenAt: '2026-05-21T00:00:00.000Z',
+      refresh: vi.fn(),
+    }
+    const onLaunchCodex = vi.fn(async () => undefined)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ category: '未完了', project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={onLaunchCodex}
+      />,
+    )
+
+    const codexButton = await screen.findByRole('button', { name: /Codexに送る/ })
+    expect(codexButton).toBeDisabled()
+    expect(screen.getByText('Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。')).toBeInTheDocument()
+    fireEvent.click(codexButton)
+    expect(onLaunchCodex).not.toHaveBeenCalled()
   })
 
   test('スマホ表示ではモック型の下部編集シートを表示する', async () => {

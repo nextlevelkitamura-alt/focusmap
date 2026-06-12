@@ -12,6 +12,7 @@ import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useCodexManualHandoffConfirmation } from "@/hooks/useCodexManualHandoffConfirmation"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
+import { useCodexRunnerStatus } from "@/hooks/useCodexRunnerStatus"
 import {
   appendCodexHandoffToken,
   beginCopyPromptForCodexHandoff,
@@ -70,23 +71,12 @@ type CodexNodePanelProps = {
 
 type SaveStatus = "saved" | "saving" | "error"
 type CodexSendStatus = "idle" | "sending" | "sent"
-type CodexRunnerStatus = {
-  checked: boolean
-  ready: boolean
-}
-
-type AiRunner = {
-  executors?: string[]
-  last_heartbeat_at?: string | null
-}
 
 type CodexChatEntry = {
   kind: "assistant" | "event" | "user" | "process"
   text: string
 }
 
-const RUNNER_ONLINE_WINDOW_MS = 5 * 60 * 1000
-const RUNNER_STATUS_POLL_MS = 30_000
 const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
 const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
 const CODEX_PANEL_WATCH_PING_INTERVAL_MS = 10_000
@@ -108,37 +98,10 @@ function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
 
-function hasOnlineCodexRunner(runners: AiRunner[]) {
-  const now = Date.now()
-  return runners.some((runner) => {
-    const executors = Array.isArray(runner.executors) ? runner.executors : []
-    if (!executors.includes("codex_app") && !executors.includes("codex")) return false
-    const lastHeartbeatAt = runner.last_heartbeat_at ? new Date(runner.last_heartbeat_at).getTime() : 0
-    return Number.isFinite(lastHeartbeatAt) && lastHeartbeatAt > 0 && now - lastHeartbeatAt < RUNNER_ONLINE_WINDOW_MS
-  })
-}
-
-function buildAttachmentImageSection(attachments: TaskAttachmentPreview[]) {
-  const imageLines = attachments
-    .filter(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim())
-    .map((attachment, index) => {
-      const details = [
-        attachment.file_type?.trim() || null,
-        formatFileSize(attachment.file_size ?? null),
-      ].filter(Boolean).join(", ")
-      const suffix = details ? ` (${details})` : ""
-      return `${index + 1}. ${attachment.file_name || `image-${index + 1}`}${suffix}\n   ${attachment.file_url.trim()}`
-    })
-  if (imageLines.length === 0) return ""
-  return ["添付画像:", ...imageLines].join("\n")
-}
-
-function buildCodexPrompt(heading: string, detail: string, attachments: TaskAttachmentPreview[] = []) {
+function buildCodexPrompt(heading: string, detail: string) {
   const normalizedHeading = normalizeCodexPrompt(heading)
   const normalizedDetail = normalizeCodexPrompt(detail)
-  const body = [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
-  const imageSection = buildAttachmentImageSection(attachments)
-  return [body, imageSection].filter(Boolean).join("\n\n")
+  return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
 }
 
 function toDateInputValue(value: string | null) {
@@ -356,7 +319,7 @@ export function CodexNodePanel({
   const [codexFeedback, setCodexFeedback] = useState<string | null>(null)
   const [codexSendStatus, setCodexSendStatus] = useState<CodexSendStatus>("idle")
   const [justSentPrompt, setJustSentPrompt] = useState("")
-  const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
+  const codexRunnerStatus = useCodexRunnerStatus(open)
   const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
   const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
   const [isCopyingCodexPrompt, setIsCopyingCodexPrompt] = useState(false)
@@ -427,7 +390,6 @@ export function CodexNodePanel({
     setCodexSendStatus("idle")
     codexSyncInFlightRef.current = false
     setJustSentPrompt("")
-    setCodexRunnerStatus({ checked: false, ready: false })
     setCodexActivityMessages([])
     setCodexActivityError(null)
     setIsCopyingCodexPrompt(false)
@@ -503,32 +465,6 @@ export function CodexNodePanel({
       cancelled = true
     }
   }, [open, node.taskId])
-
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-
-    const fetchRunnerStatus = async () => {
-      try {
-        const res = await fetchWithSupabaseAuth("/api/ai-runners", { cache: "no-store" })
-        const data = await res.json().catch(() => ({})) as { runners?: AiRunner[] }
-        if (cancelled) return
-        setCodexRunnerStatus({
-          checked: true,
-          ready: res.ok && hasOnlineCodexRunner(Array.isArray(data.runners) ? data.runners : []),
-        })
-      } catch {
-        if (!cancelled) setCodexRunnerStatus({ checked: true, ready: false })
-      }
-    }
-
-    void fetchRunnerStatus()
-    const interval = window.setInterval(() => void fetchRunnerStatus(), RUNNER_STATUS_POLL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [open])
 
   const moveFocusToPanel = useCallback(() => {
     const active = document.activeElement
@@ -910,13 +846,17 @@ export function CodexNodePanel({
   }, [detail, handleHeadingChange, heading])
 
   const promptHeadingForCodex = heading || node.title
-  const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail, attachments)
+  const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail)
   const codexCopyableImages = useMemo(
     () => attachments.filter(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim()),
     [attachments],
   )
   const displayedAttachments: Array<TaskAttachmentPreview | PendingTaskAttachmentPreview> = [...pendingAttachments, ...attachments]
   const isWaitingForImageSave = isUploadingImage || pendingAttachments.length > 0
+  const isCodexRunnerUnavailable = !codexRunnerStatus.ready
+  const codexRunnerUnavailableMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
+    ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
+    : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
   const codexTask = getAiTaskBySourceId(node.taskId)
   const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
@@ -1065,6 +1005,11 @@ export function CodexNodePanel({
       setCodexFeedback("画像を保存中です。保存が終わるとCodexへ送れます。")
       return
     }
+    if (isCodexRunnerUnavailable) {
+      event?.preventDefault()
+      setCodexFeedback(codexRunnerUnavailableMessage)
+      return
+    }
     if (!normalizeCodexPrompt(prompt)) {
       event?.preventDefault()
       setError("Codexに渡す内容を入力してください")
@@ -1159,7 +1104,7 @@ export function CodexNodePanel({
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [codexAiTaskId, codexCopyableImages.length, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
+  }, [codexAiTaskId, codexCopyableImages.length, codexPrompt, codexRepoPath, codexRunnerUnavailableMessage, codexUiState?.state, confirmManualHandoffNow, isCodexRunnerUnavailable, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -1237,13 +1182,18 @@ export function CodexNodePanel({
       setCodexFeedback("画像を保存中です。保存が終わるとCodexへ送れます。")
       return
     }
+    if (isCodexRunnerUnavailable) {
+      event?.preventDefault()
+      setCodexFeedback(codexRunnerUnavailableMessage)
+      return
+    }
     if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(detail)) {
       event?.preventDefault()
       setError("Codexに渡す内容を入力してください")
       return
     }
 
-    const basePrompt = buildCodexPrompt(promptHeading, detail, attachments)
+    const basePrompt = buildCodexPrompt(promptHeading, detail)
     const handoffToken = buildCodexHandoffToken(node.taskId)
     const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
@@ -1419,12 +1369,11 @@ export function CodexNodePanel({
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [attachments, candidates, codexCopyableImages.length, detail, heading, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [candidates, codexCopyableImages.length, codexRunnerUnavailableMessage, detail, heading, isCodexRunnerUnavailable, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
-  const showCodexSetupPrompt =
-    !canUseLocalCodexOpenApi() &&
-    codexRunnerStatus.checked &&
-    !codexRunnerStatus.ready
+  const showCodexSetupPrompt = codexRunnerStatus.checked && !codexRunnerStatus.ready
+  const initialCodexSendDisabled = codexSendStatus === "sending" || isWaitingForImageSave || isCodexRunnerUnavailable
+  const codexOpenDisabled = isOpeningCodex || isWaitingForImageSave || isCodexRunnerUnavailable
   const selectedCalendar = calendarOptions.find(calendar => calendar.id === calendarId) ?? calendarOptions[0]
   const nodeMetaTags = useMemo(() => {
     const tags: string[] = []
@@ -1806,10 +1755,10 @@ export function CodexNodePanel({
                 <a
                   href={codexHref}
                   onClick={sendToCodex}
-                  aria-disabled={codexSendStatus === "sending" || isWaitingForImageSave}
+                  aria-disabled={initialCodexSendDisabled}
                   className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-neutral-700 bg-neutral-50 px-4 text-sm font-semibold text-neutral-950 transition-colors hover:bg-neutral-200 aria-disabled:pointer-events-none aria-disabled:opacity-50"
                   aria-label="コピーしてCodexに送る"
-                  title="コピーしてCodexに送る"
+                  title={isCodexRunnerUnavailable ? codexRunnerUnavailableMessage : "コピーしてCodexに送る"}
                 >
                   {codexSendStatus === "sending" ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1896,10 +1845,10 @@ export function CodexNodePanel({
                         <a
                           href={codexHref}
                           onClick={(event) => void handleOpenCodexWithPrompt(event)}
-                          aria-disabled={isOpeningCodex || isWaitingForImageSave}
+                          aria-disabled={codexOpenDisabled}
                           className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 sm:flex-none dark:text-emerald-200"
                           aria-label="プロンプトをコピーしてCodexを開く"
-                          title="プロンプトをコピーしてCodexを開く"
+                          title={isCodexRunnerUnavailable ? codexRunnerUnavailableMessage : "プロンプトをコピーしてCodexを開く"}
                         >
                           {isOpeningCodex ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />

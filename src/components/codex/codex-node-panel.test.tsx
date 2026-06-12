@@ -7,6 +7,16 @@ const fetchWithSupabaseAuthMock = vi.hoisted(() => ({
   fetchWithSupabaseAuth: vi.fn(),
 }))
 
+const codexRunnerStatusMock = vi.hoisted(() => ({
+  status: {
+    checked: true,
+    loading: false,
+    ready: true,
+    lastSeenAt: "2026-05-21T00:00:00.000Z",
+    refresh: vi.fn(),
+  },
+}))
+
 vi.mock("@/hooks/useIsMobile", () => ({
   useIsMobile: () => false,
 }))
@@ -21,6 +31,10 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
     refresh: vi.fn(),
     refreshStatus: vi.fn(),
   }),
+}))
+
+vi.mock("@/hooks/useCodexRunnerStatus", () => ({
+  useCodexRunnerStatus: () => codexRunnerStatusMock.status,
 }))
 
 vi.mock("@/hooks/useVoiceRecorder", () => ({
@@ -96,6 +110,13 @@ describe("CodexNodePanel", () => {
     }))
     fetchWithSupabaseAuthMock.fetchWithSupabaseAuth.mockReset()
     fetchWithSupabaseAuthMock.fetchWithSupabaseAuth.mockResolvedValue(jsonResponse({ runners: [] }))
+    codexRunnerStatusMock.status = {
+      checked: true,
+      loading: false,
+      ready: true,
+      lastSeenAt: "2026-05-21T00:00:00.000Z",
+      refresh: vi.fn(),
+    }
   })
 
   test("desktop opens as a right-side edit sheet with the memo-style controls", async () => {

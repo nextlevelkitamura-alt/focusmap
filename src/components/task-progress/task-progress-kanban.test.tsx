@@ -378,6 +378,17 @@ describe('TaskProgressKanban', () => {
   })
 
   test('スマホCodexシートで取り込みリポを選択・解除・監視できる', async () => {
+    fetchWithSupabaseAuthMock.mockResolvedValue(jsonResponse({
+      source: 'turso',
+      heartbeats: [
+        {
+          runner_id: 'runner-1',
+          status: 'online',
+          last_seen_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }))
     const onSelectRepoPath = vi.fn()
     const onToggleImport = vi.fn()
     const onRefreshRepos = vi.fn()
@@ -428,6 +439,51 @@ describe('TaskProgressKanban', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '選択解除' }))
     expect(onSelectRepoPath).toHaveBeenCalledWith(null)
+  })
+
+  test('スマホCodexシートのリポ監視はMac offlineでは切り替えられない', async () => {
+    const staleSeenAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    fetchWithSupabaseAuthMock.mockResolvedValue(jsonResponse({
+      source: 'turso',
+      heartbeats: [
+        {
+          runner_id: 'runner-1',
+          status: 'online',
+          last_seen_at: staleSeenAt,
+          updated_at: staleSeenAt,
+        },
+      ],
+    }))
+    const onToggleImport = vi.fn()
+
+    const renderKanban = (mobileOpenSignal: number) => (
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={mobileOpenSignal}
+        mobileImportItems={[]}
+        mobileImportRepoControl={{
+          selectedRepoPath: '/Users/me/work',
+          selectedRepoLabel: 'work',
+          importEnabled: false,
+          repoOptions: [{ id: 'work', label: 'work', path: '/Users/me/work' }],
+          onToggleImport,
+        }}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+      />
+    )
+    const { rerender } = render(renderKanban(0))
+    rerender(renderKanban(1))
+
+    const monitorSwitch = await screen.findByRole('switch', { name: 'リポ監視' })
+    expect(monitorSwitch).toBeDisabled()
+    fireEvent.click(monitorSwitch)
+    expect(onToggleImport).not.toHaveBeenCalled()
+    expect(screen.getByText('offline')).toBeInTheDocument()
   })
 
   test('デスクトップ看板カードから元ノードを完了チェック・削除できる', async () => {

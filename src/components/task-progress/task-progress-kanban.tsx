@@ -733,13 +733,19 @@ function KanbanScopeSwitcher({
 
 function MobileImportRepoControls({
   control,
+  runnerState,
 }: {
   control: TaskProgressMobileImportRepoControl
+  runnerState: RunnerConnectionState
 }) {
   const [localError, setLocalError] = useState<string | null>(null)
   const selectedRepoPath = normalizeRepoPath(control.selectedRepoPath)
   const hasRepoPath = selectedRepoPath.length > 0
   const isBusy = Boolean(control.importPending)
+  const runnerUnavailable = runnerState.loading || !runnerState.online
+  const runnerUnavailableMessage = runnerState.loading
+    ? "Macの通信状態を確認中です。確認後にリポ監視を切り替えられます"
+    : "Macがオンラインではありません。Focusmap Macを起動するとリポ監視を切り替えられます"
   const selectedRepoLabel = control.selectedRepoLabel || repoNameFromPath(selectedRepoPath) || "リポ未選択"
   const options = useMemo(() => {
     const map = new Map<string, TaskProgressImportRepoOption>()
@@ -782,8 +788,12 @@ function MobileImportRepoControls({
       setLocalError("対象リポを選択してからONにできます")
       return
     }
+    if (runnerUnavailable) {
+      setLocalError(runnerUnavailableMessage)
+      return
+    }
     void runAction(() => control.onToggleImport?.(), "リポ監視を更新できませんでした")
-  }, [control, hasRepoPath, isBusy, runAction])
+  }, [control, hasRepoPath, isBusy, runAction, runnerUnavailable, runnerUnavailableMessage])
 
   const handleRefreshRepos = useCallback(() => {
     if (!control.onRefreshRepos || isBusy) return
@@ -814,12 +824,16 @@ function MobileImportRepoControls({
               監視: {control.importOwnerLabel}
             </div>
           )}
+          <div className="mt-1">
+            <RunnerCompactStatus state={runnerState} />
+          </div>
         </div>
         <Switch
           checked={control.importEnabled && hasRepoPath}
           onCheckedChange={handleToggleImport}
-          disabled={!hasRepoPath || isBusy || !control.onToggleImport}
+          disabled={!hasRepoPath || isBusy || runnerUnavailable || !control.onToggleImport}
           aria-label="リポ監視"
+          title={runnerUnavailable ? runnerUnavailableMessage : undefined}
           className="h-7 w-12 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-6 [&>span]:w-6 [&>span[data-state=checked]]:translate-x-5"
         />
       </div>
@@ -1245,7 +1259,7 @@ export function TaskProgressKanban({
               {activeMobileTab === "import" ? (
                 <div className="space-y-2">
                   {mobileImportRepoControl && (
-                    <MobileImportRepoControls control={mobileImportRepoControl} />
+                    <MobileImportRepoControls control={mobileImportRepoControl} runnerState={runnerState} />
                   )}
                   {mobileImportItems.length === 0 ? (
                     <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">

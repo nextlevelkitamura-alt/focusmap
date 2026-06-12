@@ -24,6 +24,7 @@ import { IosWheelColumn } from "@/components/ui/ios-wheel-column"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { useCodexRunnerStatus } from "@/hooks/useCodexRunnerStatus"
 import type { UserCalendar } from "@/hooks/useCalendars"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
@@ -994,6 +995,7 @@ export function WishlistCardDetail({
   const [isCalendarPopoverOpen, setIsCalendarPopoverOpen] = useState(false)
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
+  const codexRunnerStatus = useCodexRunnerStatus(open && Boolean(onLaunchCodex || onLaunchCodexApp))
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [isPastingClipboardImage, setIsPastingClipboardImage] = useState(false)
   const [isImageDragActive, setIsImageDragActive] = useState(false)
@@ -3050,12 +3052,16 @@ export function WishlistCardDetail({
               const needsRepoConfig = !item.project_id || !repoConfigured
               const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
               const isWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
+              const codexRunnerUnavailable = !codexRunnerStatus.ready
+              const codexRunnerMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
+                ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
+                : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"
               const codexDraftItem = {
                 ...item,
                 title: draftTitle,
                 description: draftDescription || null,
               } as IdealGoalWithItems
-              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active || isWaitingForImageSave
+              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active || isWaitingForImageSave || codexRunnerUnavailable
               const logEntries = buildMemoCodexLogEntries({ task: aiTask, launchStep, launchError })
               const currentLog = logEntries.find(entry => entry.active) ?? logEntries[logEntries.length - 1]
 
@@ -3081,6 +3087,7 @@ export function WishlistCardDetail({
                       <Button
                         type="button"
                         disabled={codexDisabled || isLaunchingCodex}
+                        title={codexRunnerUnavailable ? codexRunnerMessage : undefined}
                         onClick={async () => {
                           setLaunchError(null)
                           setLaunchStep('sending')
@@ -3110,6 +3117,8 @@ export function WishlistCardDetail({
                             ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
                             : isWaitingForImageSave
                               ? "画像を保存中です。保存が終わるとCodexへ送れます。"
+                              : codexRunnerUnavailable
+                                ? codexRunnerMessage
                               : "見出しとメモ本文をCodex用の追跡taskとして送ります。"}
                         </div>
                     </div>

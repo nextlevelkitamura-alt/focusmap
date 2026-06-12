@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useAvailableRepos } from "@/hooks/useAvailableRepos"
+import { useCodexRunnerStatus } from "@/hooks/useCodexRunnerStatus"
 import {
   CODEX_CHAT_IMPORT_DRAG_TYPE,
   encodeCodexChatImportDragPayload,
@@ -108,10 +109,15 @@ export function CodexChatImportSidebar({
   const [expandedChatId, setExpandedChatId] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const { repos, isLoading, error: reposError, refresh, requestRescan } = useAvailableRepos()
+  const codexRunnerStatus = useCodexRunnerStatus()
 
   const currentRepoPath = normalizeRepoPath(selectedRepoPath ?? "")
   const hasRepoPath = currentRepoPath.length > 0
   const isBusy = importPending || pickerPending
+  const runnerUnavailable = !codexRunnerStatus.ready
+  const runnerUnavailableMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
+    ? "Macの通信状態を確認中です。確認後にリポ監視を切り替えられます"
+    : "Macがオンラインではありません。Focusmap Macを起動するとリポ監視を切り替えられます"
   const currentRepoLabel = repos.find(repo => repo.absolute_path === currentRepoPath)?.display_name || repoNameFromPath(currentRepoPath)
   const normalizedQuery = query.trim().toLowerCase()
   const filteredChatItems = React.useMemo(() => {
@@ -180,13 +186,17 @@ export function CodexChatImportSidebar({
       if (!hasRepoPath) setRepoError("対象リポを選択してからONにできます")
       return
     }
+    if (runnerUnavailable) {
+      setRepoError(runnerUnavailableMessage)
+      return
+    }
     setRepoError(null)
     try {
       await onToggleImport()
     } catch (error) {
       setRepoError(error instanceof Error ? error.message : "取り込み設定を更新できませんでした")
     }
-  }, [hasRepoPath, isBusy, onToggleImport])
+  }, [hasRepoPath, isBusy, onToggleImport, runnerUnavailable, runnerUnavailableMessage])
 
   const handleRefreshRepos = React.useCallback(async () => {
     setRepoError(null)
@@ -257,12 +267,27 @@ export function CodexChatImportSidebar({
                 監視: {importOwnerLabel}
               </span>
             )}
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                codexRunnerStatus.ready
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
+              )}
+            >
+              {codexRunnerStatus.loading || !codexRunnerStatus.checked
+                ? "Mac確認中"
+                : codexRunnerStatus.ready
+                  ? "Mac online"
+                  : "Mac offline"}
+            </span>
           </div>
           <Switch
             checked={importEnabled && hasRepoPath}
             onCheckedChange={() => void handleToggleImport()}
-            disabled={!hasRepoPath || isBusy}
+            disabled={!hasRepoPath || isBusy || runnerUnavailable}
             aria-label="リポ監視"
+            title={runnerUnavailable ? runnerUnavailableMessage : undefined}
             className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
           />
           <Button

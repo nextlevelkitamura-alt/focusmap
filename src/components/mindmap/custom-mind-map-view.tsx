@@ -7,6 +7,7 @@ import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
+import { useCodexRunnerStatus } from "@/hooks/useCodexRunnerStatus";
 import { KeyboardAccessoryBar } from "@/components/mobile/keyboard-accessory-bar";
 import {
     NODE_MIN_WIDTH,
@@ -1405,6 +1406,7 @@ export function CustomMindMapView({
     const [floatingEditValue, setFloatingEditValue] = useState("");
     const [mobileKeyboardAccessoryPinned, setMobileKeyboardAccessoryPinned] = useState(false);
     const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight();
+    const codexRunnerStatus = useCodexRunnerStatus(Boolean(onToggleCodexThreadImport));
     const viewportRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const keyboardAnchorRef = useRef<HTMLInputElement>(null);
@@ -3056,10 +3058,18 @@ export function CustomMindMapView({
         : null;
     const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
     const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
+    const codexRunnerUnavailable = codexRunnerStatus.loading || !codexRunnerStatus.ready;
+    const codexRunnerTitle = codexRunnerStatus.loading || !codexRunnerStatus.checked
+        ? "Macの通信状態を確認中です"
+        : codexRunnerStatus.ready
+            ? "Mac online"
+            : "Mac offline";
     const codexThreadImportTitle = codexThreadImportAvailable
-        ? codexThreadImportEnabled
-            ? `Codex thread取り込み: ON (${codexThreadImportRepoPath ?? "repo設定済み"})`
-            : `Codex thread取り込み: OFF (${codexThreadImportRepoPath ?? "repo設定済み"})`
+        ? codexRunnerUnavailable
+            ? `${codexRunnerTitle}: Focusmap Macを起動するとCodex thread取り込みを切り替えられます`
+            : codexThreadImportEnabled
+                ? `Codex thread取り込み: ON (${codexThreadImportRepoPath ?? "repo設定済み"})`
+                : `Codex thread取り込み: OFF (${codexThreadImportRepoPath ?? "repo設定済み"})`
         : "プロジェクトにリポジトリを設定するとCodex threadを取り込めます";
 
     return (
@@ -3094,7 +3104,7 @@ export function CustomMindMapView({
                                 event.stopPropagation();
                                 void onToggleCodexThreadImport();
                             }}
-                            disabled={!codexThreadImportAvailable || codexThreadImportPending}
+                            disabled={!codexThreadImportAvailable || codexThreadImportPending || codexRunnerUnavailable}
                             aria-label={codexThreadImportEnabled ? "Codex thread取り込みをOFFにする" : "Codex thread取り込みをONにする"}
                             aria-pressed={codexThreadImportEnabled}
                             title={codexThreadImportTitle}
@@ -3109,6 +3119,7 @@ export function CustomMindMapView({
                                     "absolute bottom-2 right-2 h-2 w-2 rounded-full border border-background bg-muted-foreground/50",
                                     codexThreadImportEnabled && codexThreadImportAvailable && "bg-sky-500",
                                     !codexThreadImportAvailable && "bg-amber-500",
+                                    codexThreadImportAvailable && codexRunnerUnavailable && "bg-amber-500",
                                 )}
                             />
                         </button>
