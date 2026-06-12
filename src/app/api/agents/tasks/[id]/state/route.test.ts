@@ -75,6 +75,17 @@ describe('shouldApplyCodexThreadTitleToSourceTask', () => {
     })).toBe(true)
   })
 
+  test('updates imported thread titles that are truncated from a long first prompt', () => {
+    expect(shouldApplyCodexThreadTitleToSourceTask({
+      currentTitle: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
+      nextTitle: 'メモ下部をコンパクト化して予約ボタンを整理',
+      prompt: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
+      previousResult: {
+        codex_thread_id: '019ea7d8-8e53-7413-a548-739b19820e6c',
+      },
+    })).toBe(true)
+  })
+
   test('updates titles that match the previously applied Codex suggestion', () => {
     expect(shouldApplyCodexThreadTitleToSourceTask({
       currentTitle: 'Codex取り込み見出しの改善',

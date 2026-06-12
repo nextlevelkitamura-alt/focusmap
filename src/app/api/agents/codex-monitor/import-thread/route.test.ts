@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  codexGeneratedTitleFromImportedThread,
   importedThreadResult,
   isImportedThreadMatchingManualHandoff,
   isThreadWithinProjectImportScope,
@@ -28,20 +29,41 @@ describe('codex orphan thread import helpers', () => {
     })).toBe('Codex thread from app')
   })
 
-  test('uses first prompt line when Codex title is a raw long prompt', () => {
-    expect(titleFromImportedThread({
+  test('does not use the first prompt line when Codex title is a raw long prompt', () => {
+    const rawPromptThread = {
       ...thread,
       title: 'これは長すぎるプロンプトの見出しです。Codex Desktopのsidebar titleではなく、ユーザーが入力した本文全体がそのまま入ってしまっているケースを想定します。さらに長くします。',
       first_user_message: '短い要約タイトル\n本文です',
-    })).toBe('短い要約タイトル')
+    }
+
+    expect(codexGeneratedTitleFromImportedThread(rawPromptThread)).toBeNull()
+    expect(titleFromImportedThread(rawPromptThread)).toBe('Codex thread 019ea7d8')
   })
 
-  test('falls back to first user message and preview for display title and prompt', () => {
+  test('does not treat a truncated prompt prefix as a generated Codex title', () => {
+    const firstUserMessage = 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。'
+    const promptPrefixThread = {
+      ...thread,
+      title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
+      first_user_message: firstUserMessage,
+    }
+
+    expect(codexGeneratedTitleFromImportedThread(promptPrefixThread)).toBeNull()
+    expect(titleFromImportedThread(promptPrefixThread)).toBe('Codex thread 019ea7d8')
+
+    expect(codexGeneratedTitleFromImportedThread({
+      ...thread,
+      title: 'メモ下部をコンパクト化して予約ボタンを整理',
+      first_user_message: firstUserMessage,
+    })).toBe('メモ下部をコンパクト化して予約ボタンを整理')
+  })
+
+  test('does not use first user message for display title but keeps it as prompt', () => {
     expect(titleFromImportedThread({
       ...thread,
       title: null,
       first_user_message: '\n未分類のCodex依頼\n本文',
-    })).toBe('未分類のCodex依頼')
+    })).toBe('Codex thread 019ea7d8')
 
     expect(promptFromImportedThread({
       ...thread,

@@ -91,21 +91,39 @@ function parseThread(input: unknown): ImportedCodexThread | null {
   }
 }
 
-export function titleFromImportedThread(thread: ImportedCodexThread) {
+function normalizedInlineText(value: unknown, max = 2_000) {
+  return typeof value === 'string' && value.trim()
+    ? value.replace(/\s+/g, ' ').trim().slice(0, max)
+    : null
+}
+
+function looksLikePromptPrefixTitle(title: string, firstUserMessage: unknown) {
+  const normalizedTitle = normalizedInlineText(title, 240)
+  const normalizedPrompt = normalizedInlineText(firstUserMessage, MAX_PROMPT_CHARS)
+  if (!normalizedTitle || !normalizedPrompt) return false
+  if (normalizedTitle.length < 24) return false
+  return normalizedPrompt.length >= normalizedTitle.length + 12 &&
+    normalizedPrompt.startsWith(normalizedTitle)
+}
+
+export function codexGeneratedTitleFromImportedThread(thread: ImportedCodexThread) {
   const threadTitle = compactString(thread.title, 240)
-  if (threadTitle && !looksLikeRawPromptTitle(threadTitle)) {
+  if (threadTitle && !looksLikeRawPromptTitle(threadTitle) && !looksLikePromptPrefixTitle(threadTitle, thread.first_user_message)) {
     const normalizedTitle = oneLineTitle(threadTitle)
     if (normalizedTitle) return normalizedTitle
   }
 
-  const promptTitle = oneLineTitle(firstNonEmptyLine(thread.first_user_message))
-  if (promptTitle) return promptTitle
+  return null
+}
 
-  const previewTitle = oneLineTitle(thread.preview)
-  if (previewTitle) return previewTitle
-
+export function titleFromImportedThread(thread: ImportedCodexThread) {
+  const generatedTitle = codexGeneratedTitleFromImportedThread(thread)
+  if (generatedTitle) return generatedTitle
+  const threadTitle = compactString(thread.title, 240)
   const fallbackTitle = oneLineTitle(threadTitle)
-  if (fallbackTitle) return fallbackTitle
+  if (fallbackTitle && !looksLikeRawPromptTitle(threadTitle ?? fallbackTitle) && !looksLikePromptPrefixTitle(threadTitle ?? fallbackTitle, thread.first_user_message)) {
+    return fallbackTitle
+  }
   return `Codex thread ${thread.id.slice(0, 8)}`
 }
 
@@ -202,11 +220,6 @@ export function linkedManualHandoffThreadResult(
       cwd: thread.cwd ?? null,
     },
   }
-}
-
-function firstNonEmptyLine(value: unknown) {
-  if (typeof value !== 'string') return null
-  return value.split('\n').map(line => line.trim()).find(Boolean) ?? null
 }
 
 function oneLineTitle(value: unknown, max = 80) {
@@ -547,6 +560,11 @@ export async function POST(request: NextRequest) {
         linked: true,
         ...linked,
       })
+    }
+
+    const generatedTitle = codexGeneratedTitleFromImportedThread(thread)
+    if (!generatedTitle) {
+      return NextResponse.json({ imported: false, reason: 'codex_generated_title_unavailable' })
     }
 
     const { project, reason } = await findEnabledImportProject(supabase, token, thread)

@@ -55,6 +55,10 @@ describe('codex-thread-monitor state detection', () => {
     expect(codexThreadGeneratedTitle({ title: '  Codex   thread title  ' })).toBe('Codex thread title');
     expect(codexThreadGeneratedTitle({ title: '# AGENTS.md instructions\n<environment_context>' })).toBeNull();
     expect(codexThreadGeneratedTitle({ title: 'x'.repeat(91) })).toBeNull();
+    expect(codexThreadGeneratedTitle({
+      title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
+      first_user_message: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
+    })).toBeNull();
   });
 
   test('only treats completed tasks with pending archive request as archive candidates', () => {
@@ -229,6 +233,15 @@ describe('codex-thread-monitor state detection', () => {
     expect(isOrphanThreadImportCandidate({
       ...base,
       first_user_message: '# AGENTS.md instructions\n<environment_context>',
+    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({
+      ...base,
+      title: null,
+    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({
+      ...base,
+      title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
+      first_user_message: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
     }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
   });
 

@@ -113,6 +113,15 @@ function sourceTitleCandidates(input: {
   return candidates
 }
 
+function looksLikePromptDerivedTitle(currentTitle: unknown, prompt: unknown) {
+  const current = normalizeSourceTaskTitle(currentTitle)
+  const firstPromptLine = normalizeSourceTaskTitle(firstNonEmptyLine(prompt), 500)
+  if (!current || !firstPromptLine) return false
+  if (current.length < 40) return false
+  return firstPromptLine.length > current.length &&
+    firstPromptLine.startsWith(current)
+}
+
 export function shouldApplyCodexThreadTitleToSourceTask(input: {
   currentTitle?: unknown
   nextTitle?: unknown
@@ -122,7 +131,7 @@ export function shouldApplyCodexThreadTitleToSourceTask(input: {
   const currentTitle = normalizeSourceTaskTitle(input.currentTitle)
   const nextTitle = normalizeSourceTaskTitle(input.nextTitle)
   if (!currentTitle || !nextTitle || currentTitle === nextTitle) return false
-  if (looksLikeRawPromptTitle(input.currentTitle)) return true
+  if (looksLikeRawPromptTitle(input.currentTitle) || looksLikePromptDerivedTitle(input.currentTitle, input.prompt)) return true
   return sourceTitleCandidates(input).has(currentTitle)
 }
 

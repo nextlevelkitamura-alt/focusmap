@@ -97,6 +97,12 @@ function compactStep(value: string, maxChars = 240): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
 }
 
+function normalizedInlineText(value: unknown, maxChars = 2_000): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const text = value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
+  return text || null;
+}
+
 function oneLineTitle(value: unknown, maxChars = 80): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   const text = value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
@@ -111,9 +117,18 @@ function looksLikeRawPromptTitle(value: string): boolean {
   return text.startsWith('# AGENTS.md instructions') || text.includes('<environment_context>');
 }
 
-export function codexThreadGeneratedTitle(row: Pick<CodexThreadRow, 'title'>): string | null {
+function looksLikePromptPrefixTitle(title: string, firstUserMessage: unknown): boolean {
+  const normalizedTitle = normalizedInlineText(title, 240);
+  const normalizedPrompt = normalizedInlineText(firstUserMessage, 8_000);
+  if (!normalizedTitle || !normalizedPrompt) return false;
+  if (normalizedTitle.length < 24) return false;
+  return normalizedPrompt.length >= normalizedTitle.length + 12 &&
+    normalizedPrompt.startsWith(normalizedTitle);
+}
+
+export function codexThreadGeneratedTitle(row: { title?: string | null; first_user_message?: string | null }): string | null {
   const title = oneLineTitle(row.title);
-  if (!title || looksLikeRawPromptTitle(String(row.title ?? ''))) return null;
+  if (!title || looksLikeRawPromptTitle(String(row.title ?? '')) || looksLikePromptPrefixTitle(String(row.title ?? ''), row.first_user_message)) return null;
   return title;
 }
 
@@ -417,6 +432,7 @@ export function isOrphanThreadImportCandidate(
   if (!matchingScope.enabled_since && nowMs - updatedMs > windowMs) return false;
   const firstUserMessage = compactText(row.first_user_message ?? '', 400);
   if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
+  if (!codexThreadGeneratedTitle(row)) return false;
   return true;
 }
 
