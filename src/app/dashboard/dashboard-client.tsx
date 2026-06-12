@@ -1369,6 +1369,8 @@ export function DashboardClient({
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
                             selectedProjectTitle={selectedProject?.title ?? null}
+                            projects={projects}
+                            onSelectProject={setSelectedProjectId}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
@@ -1381,6 +1383,8 @@ export function DashboardClient({
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
                             selectedProjectTitle={selectedProject?.title ?? null}
+                            projects={projects}
+                            onSelectProject={setSelectedProjectId}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
@@ -1476,6 +1480,8 @@ export function DashboardClient({
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
                             selectedProjectTitle={selectedProject?.title ?? null}
+                            projects={projects}
+                            onSelectProject={setSelectedProjectId}
                         />
                     </div>
                 )}
@@ -1486,6 +1492,8 @@ export function DashboardClient({
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
                             selectedProjectTitle={selectedProject?.title ?? null}
+                            projects={projects}
+                            onSelectProject={setSelectedProjectId}
                         />
                     </div>
                 )}

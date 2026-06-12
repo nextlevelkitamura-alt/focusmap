@@ -17,20 +17,28 @@ export default async function ChatPage({ searchParams }: PageProps) {
 
   const { space } = await searchParams;
   let spaceId: string | null = space ?? null;
-  if (!spaceId) {
-    const { data: ownedSpace } = await supabase
+  const [ownedSpaceResult, projectsResult] = await Promise.all([
+    !spaceId
+      ? supabase
       .from('spaces')
       .select('id')
       .eq('user_id', user.id)
       .order('created_at', { ascending: true })
       .limit(1)
-      .maybeSingle();
-    spaceId = ownedSpace?.id ?? null;
-  }
+      .maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from('projects')
+      .select('*')
+      .order('created_at', { ascending: false }),
+  ]);
+
+  if (!spaceId) spaceId = ownedSpaceResult.data?.id ?? null;
+  const projects = projectsResult.data ?? [];
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <UnifiedChat spaceId={spaceId} />
+      <UnifiedChat spaceId={spaceId} projects={projects} />
     </div>
   );
 }

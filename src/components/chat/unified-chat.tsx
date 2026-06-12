@@ -19,6 +19,7 @@ import {
   ChevronRight,
   CheckCircle2,
   FileText,
+  Folder,
   Image as ImageIcon,
   ListTodo,
   Loader2,
@@ -53,11 +54,14 @@ import { cn } from "@/lib/utils"
 import { useAgentConnection } from "@/components/chat/agent-status-chip"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS, sanitizeUIMessagesForModel } from "@/lib/ai/ui-message-sanitize"
+import type { Project } from "@/types/database"
 
 interface UnifiedChatProps {
   spaceId?: string | null
   projectId?: string | null
   projectTitle?: string | null
+  projects?: Project[]
+  onSelectProject?: (id: string) => void
 }
 
 const AUTOMATION_SHORTCUTS = [
@@ -209,8 +213,13 @@ type RuntimeNotice = {
   message: string
 } | null
 
-export function UnifiedChat({ spaceId = null, projectId: _projectId = null, projectTitle = null }: UnifiedChatProps) {
-  void _projectId
+export function UnifiedChat({
+  spaceId = null,
+  projectId: selectedProjectId = null,
+  projectTitle = null,
+  projects = [],
+  onSelectProject,
+}: UnifiedChatProps) {
   void projectTitle
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
@@ -467,6 +476,10 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null, proj
           onNew={handleNewSession}
           onSelect={handleSelectSession}
           onDelete={handleDeleteSession}
+          projects={projects}
+          selectedSpaceId={spaceId}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={onSelectProject}
           className="hidden md:flex"
         />
       )}
@@ -635,6 +648,10 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null, proj
             onNew={handleNewSession}
             onSelect={handleSelectSession}
             onDelete={handleDeleteSession}
+            projects={projects}
+            selectedSpaceId={spaceId}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={onSelectProject}
             className="flex h-full w-full border-r-0"
           />
         </SheetContent>
@@ -698,6 +715,10 @@ function HistorySidebar({
   onNew,
   onSelect,
   onDelete,
+  projects,
+  selectedSpaceId,
+  selectedProjectId,
+  onSelectProject,
   className,
 }: {
   sessions: AgentChatSession[]
@@ -705,6 +726,10 @@ function HistorySidebar({
   onNew: () => void
   onSelect: (session: AgentChatSession) => void
   onDelete: (id: string) => void
+  projects: Project[]
+  selectedSpaceId: string | null
+  selectedProjectId: string | null
+  onSelectProject?: (id: string) => void
   className?: string
 }) {
   const [query, setQuery] = useState("")
@@ -719,6 +744,11 @@ function HistorySidebar({
   const displayedSessions = isHistoryCollapsed
     ? visibleSessions.slice(0, DEFAULT_VISIBLE_HISTORY_COUNT)
     : visibleSessions
+  const visibleProjects = useMemo(() => {
+    return projects
+      .filter(project => project.status !== "archived" && project.status !== "completed")
+      .filter(project => !selectedSpaceId || project.space_id === selectedSpaceId)
+  }, [projects, selectedSpaceId])
 
   return (
     <aside className={cn("relative h-full w-[260px] shrink-0 flex-col border-r border-[#303030] bg-[#171717] text-zinc-100", className)}>
@@ -743,10 +773,53 @@ function HistorySidebar({
             <MessageSquarePlus className="h-4 w-4" />
             チャット
           </button>
-          <button type="button" className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold text-zinc-300 hover:bg-white/10 hover:text-white">
-            <FileText className="h-4 w-4" />
-            ライブラリ
-          </button>
+        </div>
+
+        <div className="border-b border-[#303030] py-3">
+          <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">プロジェクト</div>
+          {visibleProjects.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-zinc-500">プロジェクトはありません</p>
+          ) : (
+            <div className="space-y-0.5">
+              {visibleProjects.map(project => {
+                const active = project.id === selectedProjectId
+                const content = (
+                  <>
+                    <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
+                    <span className="min-w-0 flex-1 truncate">{project.title}</span>
+                  </>
+                )
+
+                if (!onSelectProject) {
+                  return (
+                    <div
+                      key={project.id}
+                      className={cn(
+                        "flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-sm",
+                        active ? "bg-white/10 text-white" : "text-zinc-300",
+                      )}
+                    >
+                      {content}
+                    </div>
+                  )
+                }
+
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    className={cn(
+                      "flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition",
+                      active ? "bg-white/10 text-white" : "text-zinc-300 hover:bg-white/10 hover:text-white",
+                    )}
+                    onClick={() => onSelectProject(project.id)}
+                  >
+                    {content}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         <div className="py-3">

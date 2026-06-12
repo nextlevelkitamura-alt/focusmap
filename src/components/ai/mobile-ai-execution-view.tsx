@@ -1,11 +1,14 @@
 "use client"
 
 import { UnifiedChat } from "@/components/chat/unified-chat"
+import type { Project } from "@/types/database"
 
 interface MobileAiExecutionViewProps {
   selectedSpaceId: string | null
   selectedProjectId: string | null
   selectedProjectTitle?: string | null
+  projects?: Project[]
+  onSelectProject?: (id: string) => void
   onMindmapUpdated: () => Promise<void>
   onCalendarEventCreated?: (eventData?: {
     id: string
@@ -20,6 +23,8 @@ export function MobileAiExecutionView({
   selectedSpaceId,
   selectedProjectId,
   selectedProjectTitle = null,
+  projects = [],
+  onSelectProject,
   onMindmapUpdated,
   onCalendarEventCreated,
 }: MobileAiExecutionViewProps) {
@@ -28,7 +33,13 @@ export function MobileAiExecutionView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <UnifiedChat spaceId={selectedSpaceId} projectId={selectedProjectId} projectTitle={selectedProjectTitle} />
+      <UnifiedChat
+        spaceId={selectedSpaceId}
+        projectId={selectedProjectId}
+        projectTitle={selectedProjectTitle}
+        projects={projects}
+        onSelectProject={onSelectProject}
+      />
     </div>
   )
 }
