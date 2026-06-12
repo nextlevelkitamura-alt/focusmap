@@ -662,6 +662,58 @@ describe('useMindMapSync', () => {
       expect(result.current.tasks.find(t => t.id === 't1')?.title).toBe('New Title')
     })
 
+    test('mindmap_collapsedの保存失敗はUIを戻さず保留して再試行する', async () => {
+      const onSyncError = vi.fn()
+      const group = createMockRootTask({ id: 'g1', mindmap_collapsed: false })
+      const pendingKey = 'focusmap:mindmap:project:project-1:pending-collapses'
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          json: () => Promise.resolve({ message: 'schema cache miss' }),
+          text: () => Promise.resolve('schema cache miss'),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ success: true, task: { ...group, mindmap_collapsed: true } }),
+          text: () => Promise.resolve(''),
+        })
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: [group],
+          initialTasks: EMPTY_TASKS,
+          onSyncError,
+        })
+      )
+
+      await act(async () => {
+        await result.current.updateTask('g1', { mindmap_collapsed: true })
+      })
+
+      expect(result.current.groups.find(t => t.id === 'g1')?.mindmap_collapsed).toBe(true)
+      expect(onSyncError).not.toHaveBeenCalled()
+      expect(JSON.parse(window.localStorage.getItem(pendingKey) ?? '{}')).toMatchObject({
+        projectId: 'project-1',
+        collapses: [{ taskId: 'g1', collapsed: true }],
+      })
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        window.dispatchEvent(new Event('online'))
+      })
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
+      expect(JSON.parse(String((mockFetch.mock.calls[1][1] as RequestInit).body))).toEqual({
+        mindmap_collapsed: true,
+      })
+      await waitFor(() => expect(window.localStorage.getItem(pendingKey)).toBeNull())
+    })
+
     test('status=doneで全兄弟が完了なら親を自動完了する', async () => {
       const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', status: 'done' })

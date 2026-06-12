@@ -88,6 +88,18 @@ type MindmapPendingDeletePayload = {
     operations?: PendingMindmapDelete[]
 }
 
+type PendingMindmapCollapse = {
+    projectId: string
+    taskId: string
+    collapsed: boolean
+    requestedAt: number
+}
+
+type MindmapPendingCollapsePayload = {
+    projectId?: string
+    collapses?: PendingMindmapCollapse[]
+}
+
 function isPageVisible() {
     return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
@@ -98,6 +110,10 @@ function getMindmapCacheKey(projectId: string) {
 
 function getMindmapPendingDeleteKey(projectId: string) {
     return `${MINDMAP_CACHE_PREFIX}${projectId}:pending-deletes`
+}
+
+function getMindmapPendingCollapseKey(projectId: string) {
+    return `${MINDMAP_CACHE_PREFIX}${projectId}:pending-collapses`
 }
 
 function readMindmapPendingDeletes(projectId: string | null): Map<string, PendingMindmapDelete> {
@@ -129,6 +145,33 @@ function readMindmapPendingDeletes(projectId: string | null): Map<string, Pendin
     return operations
 }
 
+function readMindmapPendingCollapses(projectId: string | null): Map<string, PendingMindmapCollapse> {
+    const collapses = new Map<string, PendingMindmapCollapse>()
+    if (!projectId || typeof window === 'undefined') return collapses
+
+    try {
+        const raw = window.localStorage.getItem(getMindmapPendingCollapseKey(projectId))
+        if (!raw) return collapses
+
+        const parsed = JSON.parse(raw) as MindmapPendingCollapsePayload
+        if (parsed.projectId !== projectId || !Array.isArray(parsed.collapses)) return collapses
+
+        for (const collapse of parsed.collapses) {
+            if (
+                collapse?.projectId === projectId &&
+                typeof collapse.taskId === 'string' &&
+                typeof collapse.collapsed === 'boolean'
+            ) {
+                collapses.set(collapse.taskId, collapse)
+            }
+        }
+    } catch {
+        window.localStorage.removeItem(getMindmapPendingCollapseKey(projectId))
+    }
+
+    return collapses
+}
+
 function writeMindmapPendingDeletes(projectId: string, operations: Map<string, PendingMindmapDelete>) {
     if (typeof window === 'undefined') return
 
@@ -147,6 +190,24 @@ function writeMindmapPendingDeletes(projectId: string, operations: Map<string, P
     }
 }
 
+function writeMindmapPendingCollapses(projectId: string, collapses: Map<string, PendingMindmapCollapse>) {
+    if (typeof window === 'undefined') return
+
+    try {
+        const values = Array.from(collapses.values()).filter(collapse => collapse.projectId === projectId)
+        if (values.length === 0) {
+            window.localStorage.removeItem(getMindmapPendingCollapseKey(projectId))
+            return
+        }
+        window.localStorage.setItem(getMindmapPendingCollapseKey(projectId), JSON.stringify({
+            projectId,
+            collapses: values,
+        }))
+    } catch {
+        // In-memory pending collapse states still protect the current UI session.
+    }
+}
+
 function getPendingDeleteTaskIds(projectId: string | null): Set<string> {
     const ids = new Set<string>()
     for (const operation of readMindmapPendingDeletes(projectId).values()) {
@@ -161,8 +222,39 @@ function filterPendingDeletedTasks(projectId: string | null, tasks: Task[]) {
     return tasks.filter(task => !pendingIds.has(task.id))
 }
 
-function isSameTaskListByReference(a: Task[], b: Task[]) {
-    return a.length === b.length && a.every((task, index) => task === b[index])
+function applyPendingMindmapCollapses(projectId: string | null, tasks: Task[]) {
+    const pending = readMindmapPendingCollapses(projectId)
+    if (pending.size === 0) return tasks
+
+    let changed = false
+    const next = tasks.map(task => {
+        const collapse = pending.get(task.id)
+        if (!collapse || task.mindmap_collapsed === collapse.collapsed) return task
+        changed = true
+        return { ...task, mindmap_collapsed: collapse.collapsed }
+    })
+    return changed ? next : tasks
+}
+
+function getMindmapCollapseUpdateValue(updates: Partial<Task>) {
+    const keys = Object.keys(updates)
+    if (keys.length !== 1 || keys[0] !== 'mindmap_collapsed') return null
+    return typeof updates.mindmap_collapsed === 'boolean' ? updates.mindmap_collapsed : null
+}
+
+function isSameTaskValue(a: Task, b: Task) {
+    const keys = new Set<keyof Task>([
+        ...(Object.keys(a) as (keyof Task)[]),
+        ...(Object.keys(b) as (keyof Task)[]),
+    ])
+    for (const key of keys) {
+        if (!Object.is(a[key], b[key])) return false
+    }
+    return true
+}
+
+function isSameTaskListByValue(a: Task[], b: Task[]) {
+    return a.length === b.length && a.every((task, index) => isSameTaskValue(task, b[index]))
 }
 
 function readMindmapCache(projectId: string | null): Task[] {
@@ -181,10 +273,10 @@ function readMindmapCache(projectId: string | null): Task[] {
             return []
         }
 
-        return filterPendingDeletedTasks(
+        return applyPendingMindmapCollapses(projectId, filterPendingDeletedTasks(
             projectId,
             parsed.tasks.filter(task => task.project_id === projectId && task.deleted_at === null),
-        )
+        ))
     } catch {
         return []
     }
@@ -229,7 +321,10 @@ export function useMindMapSync({
 
     // 統合ステート管理（全タスクを1つのリストで管理）
     const [allTasks, setAllTasks] = useState<Task[]>(() => {
-        const initial = filterPendingDeletedTasks(projectId, [...initialRootTasks, ...initialTasks])
+        const initial = applyPendingMindmapCollapses(
+            projectId,
+            filterPendingDeletedTasks(projectId, [...initialRootTasks, ...initialTasks])
+        )
         return initial.length > 0 ? initial : readMindmapCache(projectId)
     })
     const [isLoading, setIsLoading] = useState(false)
@@ -242,6 +337,7 @@ export function useMindMapSync({
     // 楽観的に作成されたタスクを保護（INSERT 完了まで state からの削除を防止）
     const pendingOptimisticTasks = useRef(new Map<string, Task>())
     const pendingDeletes = useRef(readMindmapPendingDeletes(projectId))
+    const pendingCollapsedStates = useRef(readMindmapPendingCollapses(projectId))
 
     // タスクごとの保存順序を保証する。
     // UIは先に楽観更新し、DB保存だけをキュー化することで連打時も最後の操作が残る。
@@ -257,6 +353,12 @@ export function useMindMapSync({
     allTasksRef.current = allTasks
     const projectIdRef = useRef(projectId)
     projectIdRef.current = projectId
+
+    const persistPendingCollapsedStates = useCallback(() => {
+        const currentProjectId = projectIdRef.current
+        if (!currentProjectId) return
+        writeMindmapPendingCollapses(currentProjectId, pendingCollapsedStates.current)
+    }, [])
 
     const getLocalPendingDeleteIds = useCallback(() => {
         const ids = new Set<string>()
@@ -289,6 +391,33 @@ export function useMindMapSync({
             ...capturedTasks,
         ])
     }, [])
+
+    const applyCollapsedStateToState = useCallback((taskId: string, collapsed: boolean) => {
+        allTasksRef.current = allTasksRef.current.map(task =>
+            task.id === taskId ? { ...task, mindmap_collapsed: collapsed } : task
+        )
+        setAllTasks(prev => prev.map(task =>
+            task.id === taskId ? { ...task, mindmap_collapsed: collapsed } : task
+        ))
+    }, [])
+
+    const queuePendingCollapsedState = useCallback((taskId: string, collapsed: boolean) => {
+        const currentProjectId = projectIdRef.current
+        if (!currentProjectId) return
+        pendingCollapsedStates.current.set(taskId, {
+            projectId: currentProjectId,
+            taskId,
+            collapsed,
+            requestedAt: Date.now(),
+        })
+        persistPendingCollapsedStates()
+        applyCollapsedStateToState(taskId, collapsed)
+    }, [applyCollapsedStateToState, persistPendingCollapsedStates])
+
+    const clearPendingCollapsedState = useCallback((taskId: string) => {
+        if (!pendingCollapsedStates.current.delete(taskId)) return
+        persistPendingCollapsedStates()
+    }, [persistPendingCollapsedStates])
 
     const beginPendingDelete = useCallback((operation: PendingMindmapDelete) => {
         pendingDeletes.current.set(operation.operationId, operation)
@@ -410,49 +539,56 @@ export function useMindMapSync({
     }, [supabase])
 
     const applyRealtimeTask = useCallback((serverTask: Task) => {
-        if (!serverTask.id || serverTask.project_id !== projectId) return
-        if (getLocalPendingDeleteIds().has(serverTask.id)) return
-        if (serverTask.deleted_at !== null) {
-            pendingOptimisticTasks.current.delete(serverTask.id)
-            pendingInserts.current.delete(serverTask.id)
-            taskSaveQueues.current.delete(serverTask.id)
-            taskUpdateVersions.current.delete(serverTask.id)
-            removeTasksFromState(new Set([serverTask.id]))
+        const pendingCollapse = pendingCollapsedStates.current.get(serverTask.id)
+        const effectiveServerTask = pendingCollapse
+            ? { ...serverTask, mindmap_collapsed: pendingCollapse.collapsed }
+            : serverTask
+
+        if (!effectiveServerTask.id || effectiveServerTask.project_id !== projectId) return
+        if (getLocalPendingDeleteIds().has(effectiveServerTask.id)) return
+        if (effectiveServerTask.deleted_at !== null) {
+            pendingOptimisticTasks.current.delete(effectiveServerTask.id)
+            pendingInserts.current.delete(effectiveServerTask.id)
+            taskSaveQueues.current.delete(effectiveServerTask.id)
+            taskUpdateVersions.current.delete(effectiveServerTask.id)
+            pendingCollapsedStates.current.delete(effectiveServerTask.id)
+            persistPendingCollapsedStates()
+            removeTasksFromState(new Set([effectiveServerTask.id]))
             return
         }
 
         const hasLocalSaveInFlight =
-            pendingInserts.current.has(serverTask.id) ||
-            taskSaveQueues.current.has(serverTask.id) ||
-            pendingOptimisticTasks.current.has(serverTask.id)
+            pendingInserts.current.has(effectiveServerTask.id) ||
+            taskSaveQueues.current.has(effectiveServerTask.id) ||
+            pendingOptimisticTasks.current.has(effectiveServerTask.id)
 
         if (!hasLocalSaveInFlight) {
-            pendingOptimisticTasks.current.delete(serverTask.id)
+            pendingOptimisticTasks.current.delete(effectiveServerTask.id)
         }
 
         const mergeTask = (existing: Task | undefined): Task => {
-            if (!existing) return serverTask
-            if (!hasLocalSaveInFlight) return { ...existing, ...serverTask }
+            if (!existing) return effectiveServerTask
+            if (!hasLocalSaveInFlight) return { ...existing, ...effectiveServerTask }
 
             return {
-                ...serverTask,
+                ...effectiveServerTask,
                 ...existing,
-                user_id: serverTask.user_id ?? existing.user_id,
-                project_id: serverTask.project_id ?? existing.project_id,
-                created_at: serverTask.created_at ?? existing.created_at,
-                updated_at: existing.updated_at ?? serverTask.updated_at,
+                user_id: effectiveServerTask.user_id ?? existing.user_id,
+                project_id: effectiveServerTask.project_id ?? existing.project_id,
+                created_at: effectiveServerTask.created_at ?? existing.created_at,
+                updated_at: existing.updated_at ?? effectiveServerTask.updated_at,
             }
         }
 
         const applyServerTask = (tasks: Task[]) => {
-            const existing = tasks.find(task => task.id === serverTask.id)
-            if (!existing) return [...tasks, serverTask]
-            return tasks.map(task => task.id === serverTask.id ? mergeTask(task) : task)
+            const existing = tasks.find(task => task.id === effectiveServerTask.id)
+            if (!existing) return [...tasks, effectiveServerTask]
+            return tasks.map(task => task.id === effectiveServerTask.id ? mergeTask(task) : task)
         }
 
         allTasksRef.current = applyServerTask(allTasksRef.current)
         setAllTasks(prev => applyServerTask(prev))
-    }, [getLocalPendingDeleteIds, projectId, removeTasksFromState])
+    }, [getLocalPendingDeleteIds, persistPendingCollapsedStates, projectId, removeTasksFromState])
 
     const removeRealtimeTask = useCallback((taskId: string) => {
         if (!taskId) return
@@ -460,9 +596,11 @@ export function useMindMapSync({
         pendingInserts.current.delete(taskId)
         taskSaveQueues.current.delete(taskId)
         taskUpdateVersions.current.delete(taskId)
+        pendingCollapsedStates.current.delete(taskId)
+        persistPendingCollapsedStates()
         allTasksRef.current = allTasksRef.current.filter(task => task.id !== taskId)
         setAllTasks(prev => prev.filter(task => task.id !== taskId))
-    }, [])
+    }, [persistPendingCollapsedStates])
 
     const handleRealtimeTaskEvent = useCallback((payload: TaskRealtimePayload) => {
         if (payload.eventType === 'DELETE') {
@@ -475,6 +613,39 @@ export function useMindMapSync({
         if (!serverTask?.id) return
         applyRealtimeTask(serverTask as Task)
     }, [applyRealtimeTask, removeRealtimeTask])
+
+    const retryPendingCollapsedStates = useCallback(async () => {
+        const currentProjectId = projectIdRef.current
+        if (!currentProjectId) return
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+
+        const operations = Array.from(pendingCollapsedStates.current.values())
+            .filter(operation => operation.projectId === currentProjectId)
+
+        for (const operation of operations) {
+            try {
+                const response = await fetch(`/api/tasks/${operation.taskId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mindmap_collapsed: operation.collapsed }),
+                })
+
+                if (response.ok) {
+                    clearPendingCollapsedState(operation.taskId)
+                    const data = await response.json().catch(() => null) as { task?: Task } | null
+                    if (data?.task) applyRealtimeTask(data.task)
+                    continue
+                }
+
+                if (response.status === 404) {
+                    clearPendingCollapsedState(operation.taskId)
+                }
+            } catch (error) {
+                console.warn('[Sync] pending collapse retry failed:', error)
+                break
+            }
+        }
+    }, [applyRealtimeTask, clearPendingCollapsedState])
 
     // 計算プロパティ: ルートタスクと子タスクを分離
     const groups = useMemo(() => {
@@ -496,7 +667,7 @@ export function useMindMapSync({
             const pendingDeleteIds = getLocalPendingDeleteIds()
             const initial = [...initialRootTasks, ...initialTasks].filter(task => !pendingDeleteIds.has(task.id))
             const cached = initial.length > 0 ? [] : readMindmapCache(projectId)
-            const baseTasks = initial.length > 0 ? initial : cached
+            const baseTasks = applyPendingMindmapCollapses(projectId, initial.length > 0 ? initial : cached)
             const allInitialIds = new Set([
                 ...baseTasks.map(t => t.id),
             ]);
@@ -507,7 +678,7 @@ export function useMindMapSync({
                 ...baseTasks,
                 ...optimisticItems
             ];
-            return isSameTaskListByReference(prev, nextTasks) ? prev : nextTasks
+            return isSameTaskListByValue(prev, nextTasks) ? prev : nextTasks
         });
     }, [getLocalPendingDeleteIds, initialRootTasks, initialTasks, projectId])
 
@@ -546,6 +717,7 @@ export function useMindMapSync({
         taskSaveQueues.current.clear()
         taskUpdateVersions.current.clear()
         pendingDeletes.current = readMindmapPendingDeletes(projectId)
+        pendingCollapsedStates.current = readMindmapPendingCollapses(projectId)
         lastServerRefreshAt.current = 0
         refreshInFlight.current = null
         realtimeFallbackActiveRef.current = false
@@ -564,6 +736,25 @@ export function useMindMapSync({
         window.addEventListener('online', handleOnline)
         return () => window.removeEventListener('online', handleOnline)
     }, [projectId, retryPendingDeletes])
+
+    useEffect(() => {
+        pendingCollapsedStates.current = readMindmapPendingCollapses(projectId)
+        void retryPendingCollapsedStates()
+
+        if (typeof window === 'undefined') return
+        const handleOnline = () => {
+            void retryPendingCollapsedStates()
+        }
+        const handleVisibilityChange = () => {
+            if (isPageVisible()) void retryPendingCollapsedStates()
+        }
+        window.addEventListener('online', handleOnline)
+        document.addEventListener('visibilitychange', handleVisibilityChange)
+        return () => {
+            window.removeEventListener('online', handleOnline)
+            document.removeEventListener('visibilitychange', handleVisibilityChange)
+        }
+    }, [projectId, retryPendingCollapsedStates])
 
     useEffect(() => {
         if (!projectId) return
@@ -1121,6 +1312,7 @@ export function useMindMapSync({
         // Stage 自動遷移: updates に stage 影響フィールドが含まれていれば stage も更新
         const stageUpdate = beforeTask ? deriveStageUpdate(updates, beforeTask) : {}
         const updatesWithStage = { ...updates, ...stageUpdate }
+        const collapsedOnlyValue = getMindmapCollapseUpdateValue(updatesWithStage)
 
         if (!beforeTask) {
             // Task not in current project state (e.g. habit child from another project)
@@ -1142,14 +1334,25 @@ export function useMindMapSync({
                         body: JSON.stringify(updatesWithStage),
                     })
                     if (!response.ok) {
+                        if (collapsedOnlyValue !== null) {
+                            queuePendingCollapsedState(taskId, collapsedOnlyValue)
+                            return
+                        }
                         console.error('[Sync] updateTask direct API error:', await response.text())
                         return
+                    }
+                    if (collapsedOnlyValue !== null) {
+                        clearPendingCollapsedState(taskId)
                     }
                     const data = await response.json().catch(() => null) as { task?: Task } | null
                     if (data?.task?.project_id === projectIdRef.current) {
                         applyRealtimeTask(data.task)
                     }
                 } catch (e) {
+                    if (collapsedOnlyValue !== null) {
+                        queuePendingCollapsedState(taskId, collapsedOnlyValue)
+                        return
+                    }
                     console.error('[Sync] updateTask direct API failed:', e)
                 }
             })
@@ -1188,6 +1391,10 @@ export function useMindMapSync({
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({ message: response.statusText }))
                     console.error('[Sync] updateTask API error:', errorData)
+                    if (collapsedOnlyValue !== null) {
+                        queuePendingCollapsedState(taskId, collapsedOnlyValue)
+                        return
+                    }
                     if (isLatestUpdate()) {
                         onSyncError?.(`保存に失敗しました: ${errorData.message || response.statusText}`)
                         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
@@ -1198,6 +1405,9 @@ export function useMindMapSync({
                     return
                 }
                 await response.json().catch(() => null)
+                if (collapsedOnlyValue !== null) {
+                    clearPendingCollapsedState(taskId)
+                }
                 didSave = true
 
                 if (!isLatestUpdate()) return
@@ -1284,6 +1494,10 @@ export function useMindMapSync({
                 }
             } catch (e) {
                 console.error('[Sync] updateTask failed:', e)
+                if (collapsedOnlyValue !== null) {
+                    queuePendingCollapsedState(taskId, collapsedOnlyValue)
+                    return
+                }
                 if (isLatestUpdate()) {
                     onSyncError?.('タスクの更新に失敗しました: ネットワークエラー')
                     setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
@@ -1361,7 +1575,7 @@ export function useMindMapSync({
                 }
             },
         })
-    }, [applyRealtimeTask, pushAction, onSyncError, enqueueTaskSave])
+    }, [applyRealtimeTask, clearPendingCollapsedState, enqueueTaskSave, onSyncError, pushAction, queuePendingCollapsedState])
 
     const deleteTask = useCallback(async (taskId: string) => {
         const currentAll = allTasksRef.current;
