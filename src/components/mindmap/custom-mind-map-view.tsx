@@ -782,7 +782,7 @@ function CustomTaskNode({
             data-id={node.id}
             tabIndex={0}
             className={cn(
-                "absolute z-10 rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
+                "absolute z-10 rounded-lg border bg-background px-1.5 py-1 text-[13px] text-foreground shadow-sm transition-colors dark:bg-[#171513] dark:text-neutral-200/95",
                 "group flex flex-col gap-0 outline-none",
                 showLongNodeHeadingAction && "pb-2.5",
                 floatingEditing && "opacity-0",
@@ -791,10 +791,10 @@ function CustomTaskNode({
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
                 node.isDone && "border-muted-foreground/25 bg-background text-muted-foreground grayscale",
                 codexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
-                codexState?.state === "running" && "border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
-                codexState?.state === "completed" && "border-emerald-400/70 shadow-[0_0_14px_rgba(16,185,129,0.18)]",
+                codexState?.state === "running" && "border-emerald-400/45 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
+                codexState?.state === "completed" && "border-emerald-400/55 shadow-[0_0_12px_rgba(16,185,129,0.14)]",
                 codexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
-                taskProgress?.status === "running" && "border-emerald-400/80 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
+                taskProgress?.status === "running" && "border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
                 (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 selected && node.isDone && "ring-muted-foreground/40",

@@ -37,13 +37,13 @@ export function codexMonitorUiLabel(status: TaskProgressStatus | string | null |
 export function codexMonitorToneClass(status: TaskProgressStatus | string | null | undefined) {
   switch (getCodexMonitorUiStatus(status)) {
     case "running":
-      return "border-emerald-400/70 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+      return "border-emerald-400/45 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-200/85"
     case "connection_failed":
       return "border-red-400/70 bg-red-500/10 text-red-700 dark:text-red-200"
     case "unsent":
       return "border-sky-400/70 bg-sky-500/10 text-sky-800 dark:text-sky-200"
     case "done":
-      return "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+      return "border-emerald-400/45 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-200/85"
     case "review":
     default:
       return "border-amber-400/70 bg-amber-500/10 text-amber-800 dark:text-amber-200"
