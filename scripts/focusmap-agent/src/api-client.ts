@@ -234,7 +234,7 @@ export class AgentApiClient {
   async importCodexThread(
     runnerId: string,
     thread: CodexThreadImportPayload,
-  ): Promise<{ imported: boolean; reason?: string; ai_task_id?: string; source_task_id?: string }> {
+  ): Promise<{ imported: boolean; reason?: string; linked?: boolean; ai_task_id?: string; source_task_id?: string }> {
     return this.request('/agents/codex-monitor/import-thread', {
       runner_id: runnerId,
       thread,

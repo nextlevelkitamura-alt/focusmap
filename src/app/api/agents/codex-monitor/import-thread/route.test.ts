@@ -3,6 +3,7 @@ import {
   importedThreadResult,
   isImportedThreadMatchingManualHandoff,
   isThreadWithinProjectImportScope,
+  linkedManualHandoffThreadResult,
   memoFromImportedThread,
   promptFromImportedThread,
   threadUpdatedAtIso,
@@ -133,5 +134,19 @@ describe('codex orphan thread import helpers', () => {
       ...handoffTask,
       codex_thread_id: 'other-thread-id',
     })).toBe(false)
+
+    const linkedResult = linkedManualHandoffThreadResult(thread, {
+      result: {
+        codex_manual_handoff: true,
+        codex_handoff_token: 'FM-token',
+        codex_run_state: 'prompt_waiting',
+      },
+      source_task_id: 'mindmap-node-1',
+    }, '2026-06-10T10:01:00.000Z')
+    expect(linkedResult.codex_manual_handoff).toBe(true)
+    expect(linkedResult.codex_handoff_token).toBe('FM-token')
+    expect(linkedResult.codex_thread_id).toBe(thread.id)
+    expect(linkedResult.codex_run_state).toBe('running')
+    expect(linkedResult.codex_source_task_id).toBe('mindmap-node-1')
   })
 })

@@ -29,6 +29,20 @@ type TargetProject = {
   codex_thread_import_enabled_since?: string | null
 }
 
+type ManualHandoffAiTask = {
+  id: string
+  user_id: string
+  space_id: string | null
+  source_task_id: string | null
+  prompt: string | null
+  cwd: string | null
+  executor: string | null
+  codex_thread_id: string | null
+  result: Record<string, unknown> | null
+  created_at: string | null
+  started_at: string | null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -155,6 +169,36 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
       imported_by: 'focusmap-agent',
       thread_title: thread.title ?? null,
       thread_preview_chars: thread.preview?.length ?? 0,
+      cwd: thread.cwd ?? null,
+    },
+  }
+}
+
+export function linkedManualHandoffThreadResult(
+  thread: ImportedCodexThread,
+  task: Pick<ManualHandoffAiTask, 'result' | 'source_task_id'>,
+  nowIso: string,
+) {
+  const current = isRecord(task.result) ? task.result : {}
+  const currentMeta = isRecord(current.meta) ? current.meta : {}
+  const lastActivityAt = threadUpdatedAtIso(thread, new Date(nowIso))
+  const sourceTaskId = compactString(task.source_task_id, 120)
+  return {
+    ...current,
+    executor: 'codex_app',
+    codex_manual_handoff: true,
+    codex_thread_id: thread.id,
+    codex_thread_url: `codex://threads/${thread.id}`,
+    codex_run_state: 'running',
+    codex_review_reason: 'manual_handoff_thread_detected',
+    codex_source_task_id: sourceTaskId,
+    current_step: 'Codex.appで実行中',
+    message: 'Focusmapから送ったCodexスレッドを検出しました。',
+    last_activity_at: lastActivityAt,
+    meta: {
+      ...currentMeta,
+      linked_by: 'codex-monitor-import-thread',
+      thread_title: thread.title ?? null,
       cwd: thread.cwd ?? null,
     },
   }
@@ -375,7 +419,7 @@ async function existingManualHandoffForThread(
 
   const { data, error } = await supabase
     .from('ai_tasks')
-    .select('id, source_task_id, prompt, cwd, executor, codex_thread_id, result, created_at, started_at')
+    .select('id, user_id, space_id, source_task_id, prompt, cwd, executor, codex_thread_id, result, created_at, started_at')
     .eq('user_id', token.user_id)
     .eq('executor', 'codex_app')
     .not('source_task_id', 'is', null)
@@ -384,12 +428,76 @@ async function existingManualHandoffForThread(
   if (error) throw error
 
   const match = (Array.isArray(data) ? data : [])
-    .map(row => row as Record<string, unknown>)
+    .map(row => row as ManualHandoffAiTask)
     .find(row => isImportedThreadMatchingManualHandoff(thread, row))
-  if (!match) return null
+  return match ?? null
+}
+
+async function linkManualHandoffThread(
+  supabase: SupabaseServiceClient,
+  task: ManualHandoffAiTask,
+  thread: ImportedCodexThread,
+) {
+  const nowIso = new Date().toISOString()
+  const sourceTaskId = compactString(task.source_task_id, 120)
+  const result = linkedManualHandoffThreadResult(thread, task, nowIso)
+  const startedAt = compactString(task.started_at, 80) ?? nowIso
+  const cwd = compactString(task.cwd, 500) ?? thread.cwd ?? null
+
+  const { error: taskError } = await supabase
+    .from('ai_tasks')
+    .update({
+      status: 'running',
+      started_at: startedAt,
+      codex_thread_id: thread.id,
+      cwd,
+      result,
+    })
+    .eq('id', task.id)
+    .eq('user_id', task.user_id)
+  if (taskError) throw taskError
+
+  if (sourceTaskId) {
+    const { error: sourceTaskError } = await supabase
+      .from('tasks')
+      .update({
+        codex_thread_id: thread.id,
+        codex_status: 'running',
+        codex_work_dir: cwd,
+        updated_at: nowIso,
+      })
+      .eq('id', sourceTaskId)
+      .eq('user_id', task.user_id)
+      .is('deleted_at', null)
+    if (sourceTaskError) throw sourceTaskError
+  }
+
+  if (isTursoConfigured()) {
+    try {
+      await upsertTursoAiTask({
+        id: task.id,
+        user_id: task.user_id,
+        space_id: task.space_id,
+        status: 'running',
+        executor: 'codex_app',
+        dispatch_mode: 'manual',
+        source_type: sourceTaskId ? 'mindmap' : null,
+        source_id: sourceTaskId,
+        codex_thread_id: thread.id,
+        current_step: result.current_step,
+        summary: result.message,
+        created_at: compactString(task.created_at, 80) ?? nowIso,
+        started_at: startedAt,
+        updated_at: result.last_activity_at,
+      })
+    } catch (tursoError) {
+      console.error('[codex-monitor/import-thread manual handoff turso]', tursoError)
+    }
+  }
+
   return {
-    ai_task_id: String(match.id),
-    source_task_id: compactString(match.source_task_id, 120),
+    ai_task_id: task.id,
+    source_task_id: sourceTaskId,
   }
 }
 
@@ -432,10 +540,12 @@ export async function POST(request: NextRequest) {
 
     const focusmapManualHandoff = await existingManualHandoffForThread(supabase, token, thread)
     if (focusmapManualHandoff) {
+      const linked = await linkManualHandoffThread(supabase, focusmapManualHandoff, thread)
       return NextResponse.json({
         imported: false,
         reason: 'focusmap_manual_handoff',
-        ...focusmapManualHandoff,
+        linked: true,
+        ...linked,
       })
     }
 
