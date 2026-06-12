@@ -10,6 +10,7 @@ import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
 import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
+import { parseAgentCalendarPreferences } from '@/lib/ai/agent-preferences'
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
@@ -542,6 +543,25 @@ async function getSelectedCalendarIds(
   return primary ? [primary] : ['primary']
 }
 
+async function listUserCalendarSummaries(
+  supabase: SupabaseServerClient,
+  userId: string,
+): Promise<UserCalendarSummary[]> {
+  const { data, error } = await supabase
+    .from('user_calendars')
+    .select('google_calendar_id, name, access_level, selected, is_primary')
+    .eq('user_id', userId)
+  if (error) throw error
+
+  return (data || []).map(row => ({
+    calendar_id: row.google_calendar_id,
+    name: row.name ?? null,
+    access_level: row.access_level ?? null,
+    selected: row.selected ?? null,
+    is_primary: row.is_primary ?? null,
+  }))
+}
+
 function calendarNameMatches(value: string, calendar: UserCalendarSummary): boolean {
   const needle = value.trim().toLowerCase()
   if (!needle) return false
@@ -638,15 +658,48 @@ export const addCalendarEvent = tool({
     scheduledAt: z.string().describe('開始日時（ISO 8601形式、例: 2026-03-01T10:00:00+09:00）'),
     estimatedTime: z.number().optional().describe('所要時間（分）。デフォルト60分'),
     calendarId: z.string().optional().describe('GoogleカレンダーID。未指定ならデフォルトカレンダー'),
+    description: z.string().optional().describe('予定詳細。ユーザーが内容を指定した時だけ入れる'),
     projectId: z.string().optional().describe('紐付けるプロジェクトID'),
   }),
-  execute: async ({ title, scheduledAt, estimatedTime, calendarId, projectId }) => {
+  execute: async ({ title, scheduledAt, estimatedTime, calendarId, description, projectId }) => {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { success: false, error: '認証エラー' }
 
+    const { data: userContext } = await supabase
+      .from('ai_user_context')
+      .select('preferences')
+      .eq('user_id', user.id)
+      .maybeSingle()
+    const calendarPreferences = parseAgentCalendarPreferences(userContext?.preferences)
+    if (calendarPreferences.askCalendarOnEventCreate && !calendarId) {
+      const calendars = await listUserCalendarSummaries(supabase, user.id)
+      const candidates = calendars.length > 0
+        ? calendars
+        : [{
+          calendar_id: 'primary',
+          name: 'デフォルトカレンダー',
+          access_level: 'owner',
+          selected: true,
+          is_primary: true,
+        }]
+      const writableCalendars = candidates.filter(calendar => isWritableCalendar(calendar.access_level) || calendar.calendar_id === 'primary')
+      return {
+        success: false,
+        needs_calendar_selection: true,
+        available_calendars: (writableCalendars.length > 0 ? writableCalendars : candidates).map(calendar => ({
+          calendar_id: calendar.calendar_id,
+          name: calendar.name,
+          selected: calendar.selected,
+          is_primary: calendar.is_primary,
+        })),
+        message: '予定を登録する前に、追加先カレンダーをユーザーに確認してください',
+        error: 'カレンダー選択が必要です',
+      }
+    }
+
     // カレンダー所有権チェック
-    if (calendarId) {
+    if (calendarId && calendarId !== 'primary') {
       const { data: ownedCalendar } = await supabase
         .from('user_calendars')
         .select('google_calendar_id')
@@ -668,6 +721,7 @@ export const addCalendarEvent = tool({
       scheduled_at: scheduledAt,
       estimated_time: estMin,
       calendar_id: calendarId || null,
+      memo: description ? compactText(description, 12000) : null,
       stage: 'scheduled',
       status: 'todo',
       priority: 3,
@@ -677,6 +731,7 @@ export const addCalendarEvent = tool({
     // Google Calendar 同期
     let calendarSynced = false
     let resolvedCalendarId = calendarId || null
+    let googleEventId: string | null = null
     if (scheduledAt && estMin > 0) {
       if (!resolvedCalendarId) {
         const { data: settings } = await supabase
@@ -692,12 +747,14 @@ export const addCalendarEvent = tool({
       if (resolvedCalendarId) {
         try {
           const { syncTaskToCalendar } = await import('@/lib/google-calendar')
-          await syncTaskToCalendar(user.id, taskId, {
+          const syncResult = await syncTaskToCalendar(user.id, taskId, {
             title,
             scheduled_at: scheduledAt,
             estimated_time: estMin,
             calendar_id: resolvedCalendarId,
+            memo: description ? compactText(description, 12000) : null,
           })
+          googleEventId = syncResult.googleEventId
           calendarSynced = true
         } catch (e) {
           console.error('[tool:addCalendarEvent] Calendar sync failed:', e)
@@ -710,6 +767,10 @@ export const addCalendarEvent = tool({
       taskId,
       title,
       scheduledAt,
+      estimatedTime: estMin,
+      calendarId: resolvedCalendarId,
+      googleEventId,
+      description: description ?? null,
       calendarSynced,
       message: calendarSynced
         ? `予定「${title}」をカレンダーに登録しました`
@@ -2117,6 +2178,9 @@ export const updateCalendarEvent = tool({
         calendar_id: resolvedDestinationCalendarId,
         google_event_id: effectiveGoogleEventId,
         updated_at: now,
+      }
+      if (description !== undefined) {
+        taskUpdates.memo = nextDescription ? compactText(nextDescription, 12000) : null
       }
       await supabase
         .from('tasks')

@@ -2,9 +2,14 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { Bot, CheckCircle2, Clipboard, DownloadCloud, Inbox, Play, Power, PowerOff, RefreshCw, WifiOff, Workflow } from "lucide-react"
+import { Bot, CalendarCheck, CheckCircle2, Clipboard, DownloadCloud, Inbox, Loader2, Play, Power, PowerOff, RefreshCw, WifiOff, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { AgentStatusBadge } from "@/components/settings/agent-status-badge"
+import {
+  AGENT_PREF_ASK_CALENDAR_ON_EVENT_CREATE,
+  parseAgentCalendarPreferences,
+} from "@/lib/ai/agent-preferences"
 import type { FocusmapDesktopAutomationStatus } from "@/lib/external-auth-launch"
 
 interface SpaceOption {
@@ -358,12 +363,107 @@ function FocusmapLiteInstallPanel() {
   )
 }
 
+function AiCalendarBehaviorSettings() {
+  const [askCalendar, setAskCalendar] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    void fetch("/api/ai/context", { cache: "no-store" })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!mounted) return
+        const preferences = parseAgentCalendarPreferences(data?.preferences)
+        setAskCalendar(preferences.askCalendarOnEventCreate)
+      })
+      .catch(() => {
+        if (mounted) setMessage("AI設定を読み込めませんでした。")
+      })
+      .finally(() => {
+        if (mounted) setLoading(false)
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const updateAskCalendar = async (nextValue: boolean) => {
+    const previous = askCalendar
+    setAskCalendar(nextValue)
+    setSaving(true)
+    setMessage(null)
+
+    try {
+      const res = await fetch("/api/ai/context", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          preferences: {
+            [AGENT_PREF_ASK_CALENDAR_ON_EVENT_CREATE]: nextValue,
+          },
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) {
+        throw new Error(typeof data.error === "string" ? data.error : "AI設定を保存できませんでした")
+      }
+      setMessage(nextValue
+        ? "予定を入れる前に、毎回カレンダーを確認します。"
+        : "予定作成時はデフォルトカレンダーを使える状態に戻しました。")
+    } catch (error) {
+      setAskCalendar(previous)
+      setMessage(error instanceof Error ? error.message : "AI設定を保存できませんでした")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+          <CalendarCheck className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-medium uppercase text-zinc-500">Calendar behavior</p>
+          <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">予定作成時の確認</h2>
+          <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
+            チャットから予定を作る前に、AIが追加先カレンダーを毎回確認します。
+          </p>
+        </div>
+        {loading ? (
+          <Loader2 className="mt-2 h-5 w-5 shrink-0 animate-spin text-zinc-400" />
+        ) : (
+          <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 rounded-md px-1">
+            <span className="sr-only">予定作成時に毎回カレンダーを聞く</span>
+            <Switch
+              checked={askCalendar}
+              onCheckedChange={value => void updateAskCalendar(value)}
+              disabled={saving}
+              aria-label="予定作成時に毎回カレンダーを聞く"
+            />
+          </label>
+        )}
+      </div>
+      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600 dark:border-white/[0.08] dark:bg-black/30 dark:text-zinc-400">
+        ONにすると、時間と予定名だけを伝えた場合でも、AIは予定を登録する前に「どのカレンダーに入れますか？」と聞きます。予定登録後は、必要なら予定詳細も追記できます。
+      </div>
+      {message && <p className="mt-3 text-xs leading-5 text-zinc-600 dark:text-zinc-400">{message}</p>}
+    </section>
+  )
+}
+
 export function AutomationSettings() {
   return (
     <div className="space-y-5">
       <AgentStatusBadge />
 
       <MacCodexConnectionPanel />
+
+      <AiCalendarBehaviorSettings />
 
       <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

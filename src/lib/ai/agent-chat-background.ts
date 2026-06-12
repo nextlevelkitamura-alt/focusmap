@@ -9,6 +9,11 @@ import { getAgentModel, getAgentVisionModel } from '@/lib/ai/providers'
 import { buildAgentTools } from '@/lib/ai/agent-tools'
 import { sanitizeUIMessagesForModel } from '@/lib/ai/ui-message-sanitize'
 import { summarizeProjectTasks } from '@/lib/ai/context/task-summarizer'
+import {
+  buildCalendarPreferenceInstructions,
+  parseAgentCalendarPreferences,
+  type AgentCalendarPreferences,
+} from '@/lib/ai/agent-preferences'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
 
 export type AgentChatMode = 'general' | 'project'
@@ -68,14 +73,17 @@ function buildSystemPrompt(
   {
     chatMode,
     projectContext,
+    calendarPreferences,
   }: {
     chatMode: AgentChatMode
     projectContext?: ProjectChatContext | null
+    calendarPreferences: AgentCalendarPreferences
   },
 ): string {
   const online = runner !== null
   const osLabel = online ? describeOs(runner.os) : null
   const runnerHints = online ? formatRunnerHints(runner) : []
+  const calendarPreferenceInstructions = buildCalendarPreferenceInstructions(calendarPreferences)
   return [
     'あなたは Focusmap の統合AIアシスタントです。日本語で応答します。',
     '',
@@ -125,8 +133,10 @@ function buildSystemPrompt(
     '- 「DBを確認して」は、Focusmapの許可されたDBツールで projects / project_contexts / tasks / memo_node_links / memo_items / calendar_events 相当を確認する意味として扱う。任意SQLや秘密情報の取得はしない。',
     '',
     '## 予定操作',
+    calendarPreferenceInstructions,
     '- 「どこが空いてる」「予定を入れる候補を出して」は findCalendarOpenSlots で複数日の空き枠を取得する。候補を示し、ユーザーが選んだら checkCalendarAvailability で直前確認してから addCalendarEvent で作成する。',
     '- 「既存の予定の見出し/内容/時間/カレンダーを変更して」は、まず listCalendarEvents で対象候補、現在の google_event_id / calendar_id、available_calendars の移動先IDを確認してから updateCalendarEvent を使う。',
+    '- addCalendarEvent が成功した直後は、作成完了に続けて「もしよければ、この予定の詳細も予定詳細に記載できます。内容を入れますか？」と確認する。ユーザーが詳細本文を返したら、直近の予定の googleEventId / calendarId を使って updateCalendarEvent の description へ保存する。直近IDが不明なら listCalendarEvents で対象を特定してから更新する。',
     '- 対象候補が複数ある予定変更は、誤更新を避けるためユーザーへどれを変更するか確認する。',
     '',
     '## 仕事リポ・求人運用',
@@ -246,6 +256,12 @@ export async function generateAgentChatReply({
   const usesVision = agentMessagesHaveImage(modelInputMessages)
   const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
   const { tools, runner } = await buildAgentTools(userId, spaceId)
+  const { data: userContext } = await supabase
+    .from('ai_user_context')
+    .select('preferences')
+    .eq('user_id', userId)
+    .maybeSingle()
+  const calendarPreferences = parseAgentCalendarPreferences(userContext?.preferences)
   const projectContext = chatMode === 'project' && projectId
     ? await loadProjectChatContext({
       supabase,
@@ -269,6 +285,7 @@ export async function generateAgentChatReply({
     system: buildSystemPrompt(runner, {
       chatMode: projectContext ? 'project' : 'general',
       projectContext,
+      calendarPreferences,
     }),
     messages: modelMessages,
     tools,
