@@ -3408,33 +3408,46 @@ export function WishlistView({
         </>
         )}
         {isMobileMemoLayout && !linkedMemoFocus && (
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {MOBILE_COLUMN_ORDER.map(column => {
-              const section = mobileSections[column]
-              const active = activeMobileColumn === column
-              return (
-                <button
-                  key={column}
-                  type="button"
-                  onClick={() => scrollToMobileColumn(column)}
-                  className={cn(
-                    "min-h-8 shrink-0 rounded-full border px-3 text-xs transition-colors",
-                    active
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                  aria-pressed={active}
-                >
-                  {section.title}
-                  <span className={cn(
-                    "ml-1 rounded-full px-1.5 text-[10px]",
-                    active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground",
-                  )}>
-                    {section.count}
-                  </span>
-                </button>
-              )
-            })}
+          <div className="flex items-center gap-2 pb-1 md:hidden">
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {MOBILE_COLUMN_ORDER.map(column => {
+                const section = mobileSections[column]
+                const active = activeMobileColumn === column
+                return (
+                  <button
+                    key={column}
+                    type="button"
+                    onClick={() => scrollToMobileColumn(column)}
+                    className={cn(
+                      "min-h-8 shrink-0 rounded-full border px-3 text-xs transition-colors",
+                      active
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                    aria-pressed={active}
+                  >
+                    {section.title}
+                    <span className={cn(
+                      "ml-1 rounded-full px-1.5 text-[10px]",
+                      active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground",
+                    )}>
+                      {section.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <Button
+              type="button"
+              onClick={handleAddMemoFromComposer}
+              disabled={disableMemoAdd}
+              size="icon"
+              className="h-11 w-11 shrink-0 rounded-full bg-neutral-100 text-neutral-950 shadow-[0_8px_22px_rgba(255,255,255,0.14)] hover:bg-white disabled:bg-neutral-700 disabled:text-neutral-400 disabled:opacity-100"
+              aria-label="メモを追加"
+              title={hasIntakeText ? "入力内容をメモとして追加" : "新しいメモを追加"}
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
           </div>
         )}
         {SHOW_MEMO_MINDMAP_ENTRY && selectMode && (
@@ -4008,6 +4021,7 @@ export function WishlistView({
                           tagColors={tagColors}
                           nativeMemoDrag={(column === "unsorted" || column === "today") && isCalendarSplitVisible}
                           className="h-full"
+                          showHeader={false}
                           selectMode={selectMode}
                           selectedMemoIds={selectedMemoIds}
                           onToggleSelect={toggleMemoSelection}
@@ -4187,8 +4201,7 @@ export function WishlistView({
                 {voiceError && <span className="min-w-0 flex-1 truncate text-red-200">{voiceError}</span>}
               </div>
             )}
-            <div className="rounded-[22px] border border-white/10 bg-[#0d0e10]/95 px-2 py-1.5 shadow-[0_10px_34px_rgba(0,0,0,0.32)]">
-              <div className="flex items-end gap-1.5">
+            <div className="rounded-[1.15rem] border border-[#34363a] bg-[#15171a]/95 p-2 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
               <textarea
                 value={intakeText}
                 onChange={e => setIntakeText(e.target.value)}
@@ -4198,62 +4211,45 @@ export function WishlistView({
                 }}
                 placeholder="話した内容やメモを入力"
                 rows={1}
-                className="min-h-11 max-h-24 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-[15px] leading-5 text-neutral-100 outline-none placeholder:text-neutral-500"
+                className="max-h-28 min-h-8 w-full resize-none border-0 bg-transparent px-1 py-0 text-[15px] leading-5 text-neutral-100 outline-none placeholder:text-neutral-500"
                 disabled={isAnalyzing || isTranscribing}
               />
-              <div className="flex shrink-0 items-center gap-1 pb-0.5">
-              <Button
-                type="button"
-                onClick={handleVoiceToggle}
-                disabled={isTranscribing}
-                variant="outline"
-                size="icon"
-                className={cn(
-                  "h-11 w-11 shrink-0 rounded-full border-transparent bg-transparent text-neutral-400 shadow-none hover:bg-white/[0.08] hover:text-neutral-100",
-                  isRecording && "border-red-400/40 bg-red-500/20 text-red-100",
+              <div className="mt-0 flex min-h-8 items-center justify-end gap-1.5">
+                {hasIntakeText && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => { void handleScheduleMemoFromComposer() }}
+                    disabled={isRecording || isAnalyzing || isTranscribing}
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-full text-lime-100 hover:bg-lime-300/15 hover:text-lime-50 disabled:text-neutral-500 disabled:opacity-100"
+                    aria-label="AIでメモを予約"
+                    title="AIでメモを予約"
+                  >
+                    {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  </Button>
                 )}
-                aria-label={isRecording ? "録音を停止" : "音声入力"}
-                title={isRecording ? "録音を停止" : "音声入力"}
-              >
-                {isTranscribing ? (
-                  <Loader2 className="h-[18px] w-[18px] animate-spin" />
-                ) : isRecording ? (
-                  <Square className="h-[18px] w-[18px]" />
-                ) : (
-                  <Mic className="h-[18px] w-[18px]" />
-                )}
-              </Button>
-              {hasIntakeText && (
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={() => { void handleScheduleMemoFromComposer() }}
-                  disabled={isRecording || isAnalyzing || isTranscribing}
+                  onClick={handleVoiceToggle}
+                  disabled={isTranscribing}
+                  variant="ghost"
                   size="icon"
-                  className="h-11 w-11 shrink-0 rounded-full border-lime-300/25 bg-lime-300/[0.12] text-lime-100 shadow-[0_0_18px_rgba(163,230,53,0.18)] hover:bg-lime-300/20 disabled:opacity-40"
-                  aria-label="AIでメモを予約"
-                  title="AIでメモを予約"
+                  className={cn(
+                    "h-8 w-8 shrink-0 rounded-full text-neutral-300 hover:bg-white/10 hover:text-white",
+                    isRecording && "bg-red-500/15 text-red-300 hover:bg-red-500/20 hover:text-red-200",
+                  )}
+                  aria-label={isRecording ? "録音を停止" : "音声入力"}
+                  title={isRecording ? "録音を停止" : "音声入力"}
                 >
-                  {isAnalyzing ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <Sparkles className="h-[18px] w-[18px]" />}
+                  {isTranscribing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : isRecording ? (
+                    <Square className="h-3.5 w-3.5" />
+                  ) : (
+                    <Mic className="h-4 w-4" />
+                  )}
                 </Button>
-              )}
-              <Button
-                type="button"
-                onClick={handleAddMemoFromComposer}
-                disabled={disableMemoAdd}
-                size="icon"
-                className={cn(
-                  "h-11 w-11 shrink-0 rounded-full disabled:opacity-50",
-                  hasIntakeText
-                    ? "bg-white/[0.08] text-neutral-100 shadow-none hover:bg-white/[0.14]"
-                    : "bg-neutral-100 text-neutral-950 shadow-[0_8px_22px_rgba(255,255,255,0.14)] hover:bg-white",
-                )}
-                aria-label="メモを追加"
-                title="メモを追加"
-              >
-                <Plus className="h-5 w-5" />
-              </Button>
-              </div>
               </div>
             </div>
           </div>
@@ -4481,6 +4477,7 @@ function MemoSection({
   selectMode = false,
   selectedMemoIds,
   onToggleSelect,
+  showHeader = true,
 }: {
   columnKey: ColumnKey
   title: string
@@ -4500,26 +4497,31 @@ function MemoSection({
   selectMode?: boolean
   selectedMemoIds?: Set<string>
   onToggleSelect?: (memoId: string) => void
+  showHeader?: boolean
 }) {
   return (
     <section className={cn("flex min-h-0 min-w-0 flex-col", className)}>
-      <div className="mb-2 flex min-h-8 shrink-0 items-center gap-2">
-        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
-        {onAdd && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onAdd}
-            className="ml-auto h-8 w-8 shrink-0 rounded-md"
-            aria-label={`${title}にメモを追加`}
-            title={`${title}にメモを追加`}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
+      {showHeader ? (
+        <div className="mb-2 flex min-h-8 shrink-0 items-center gap-2">
+          <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
+          {onAdd && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onAdd}
+              className="ml-auto h-8 w-8 shrink-0 rounded-md"
+              aria-label={`${title}にメモを追加`}
+              title={`${title}にメモを追加`}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      ) : (
+        <h2 className="sr-only">{title} {count}</h2>
+      )}
       <Droppable droppableId={columnKey}>
         {(provided, snapshot) => (
           <div

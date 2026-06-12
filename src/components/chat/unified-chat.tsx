@@ -593,7 +593,7 @@ export function UnifiedChat({
                 </button>
               </div>
             )}
-            <div className="rounded-[1.15rem] border border-[#343434] bg-[#111111] p-2 shadow-[0_16px_48px_rgba(0,0,0,0.22)]">
+            <div className="rounded-[1.15rem] border border-[#3a3b40] bg-[#17181b] p-2 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
               <input
                 ref={fileInputRef}
                 type="file"
