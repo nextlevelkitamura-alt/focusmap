@@ -16,14 +16,12 @@ import {
 import {
   BriefcaseBusiness,
   CalendarDays,
-  ChevronRight,
   CheckCircle2,
   FileText,
-  Folder,
   Image as ImageIcon,
   ListTodo,
   Loader2,
-  MessageSquarePlus,
+  Menu,
   Mic,
   Plus,
   Search,
@@ -46,13 +44,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useAgentChatSessions, type AgentChatSession } from "@/hooks/useAgentChatSessions"
 import { cn } from "@/lib/utils"
 import { useAgentConnection } from "@/components/chat/agent-status-chip"
-import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS, sanitizeUIMessagesForModel } from "@/lib/ai/ui-message-sanitize"
 import type { Project } from "@/types/database"
 
@@ -174,6 +171,15 @@ function toolLabel(name: string): string {
 
 function formatDate(value: number) {
   return new Date(value).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
+}
+
+type AgentConnectionStatus = ReturnType<typeof useAgentConnection>["state"]
+
+function connectionStatusLabel(state: AgentConnectionStatus) {
+  if (state === "online") return "Mac online"
+  if (state === "offline") return "Mac offline"
+  if (state === "absent") return "Mac未接続"
+  return "確認中"
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -362,10 +368,6 @@ export function UnifiedChat({
   }, [messages.length, status])
 
   const isBusy = status === "submitted" || status === "streaming"
-  const lastAssistantMessageId = useMemo(
-    () => [...messages].reverse().find(message => message.role === "assistant")?.id ?? null,
-    [messages],
-  )
 
   const handleTranscribed = useCallback((text: string) => {
     setInput(prev => (prev ? `${prev} ${text}` : text))
@@ -485,6 +487,7 @@ export function UnifiedChat({
   }
 
   const sendLabel = connectionState === "online" ? "送信" : "予約して送信"
+  const connectionLabel = connectionStatusLabel(connectionState)
   const canSend = input.trim().length > 0 || attachments.length > 0
   const inputPlaceholder = activeProjectChat
     ? `${activeProjectChat.title} について質問`
@@ -553,19 +556,58 @@ export function UnifiedChat({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-6">
+        <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-[#1f1f1f]/95 px-3 pb-2 pt-[calc(0.6rem+env(safe-area-inset-top,0px))] backdrop-blur md:hidden">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 rounded-lg text-zinc-200 hover:bg-white/10 hover:text-white"
+            onClick={() => setMobileHistoryOpen(true)}
+            aria-label="チャット履歴を開く"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-[21px] font-semibold tracking-normal text-white">Focusmap</div>
+              <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-zinc-300">
+                {activeProjectChat ? "プロジェクト" : "全体チャット"}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-400">
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  connectionState === "online" ? "bg-lime-400" : "bg-zinc-500",
+                )}
+              />
+              <span>{connectionLabel}</span>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 rounded-lg text-zinc-200 hover:bg-white/10 hover:text-white"
+            onClick={handleNewSession}
+            aria-label="新規チャット"
+          >
+            <SquarePen className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-6 md:py-8">
           {activeProjectChat && (
             <ProjectChatHeader project={activeProjectChat} hasMessages={messages.length > 0} />
           )}
           {messages.length === 0 ? (
             <EmptyChat />
           ) : (
-            <div className="mx-auto flex w-full max-w-[760px] flex-col gap-7 pb-6">
+            <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pb-6">
               {messages.map(message => (
                 <MessageBubble
                   key={message.id}
                   message={message}
-                  isActive={isBusy && message.id === lastAssistantMessageId}
                   onApproval={addToolApprovalResponse}
                 />
               ))}
@@ -690,25 +732,21 @@ export function UnifiedChat({
 
       <button
         type="button"
-        className="absolute left-0 top-1/2 z-20 flex h-20 w-7 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 border-white/10 bg-[#171717]/85 text-zinc-400 shadow-sm backdrop-blur transition active:bg-[#242424] md:hidden"
+        className="absolute left-0 top-1/2 z-20 flex h-20 w-6 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 border-white/10 bg-[#171717]/85 text-zinc-400 shadow-sm backdrop-blur transition active:bg-[#242424] md:hidden"
         onClick={() => setMobileHistoryOpen(true)}
         aria-label="チャット履歴を開く"
       >
-        <ChevronRight className="h-4 w-4" />
+        <span className="flex flex-col gap-1" aria-hidden="true">
+          <span className="h-1 w-1 rounded-full bg-zinc-500" />
+          <span className="h-1 w-1 rounded-full bg-zinc-500" />
+          <span className="h-1 w-1 rounded-full bg-zinc-500" />
+        </span>
       </button>
-
-      <Button
-        type="button"
-        size="icon"
-        className="absolute bottom-[calc(7.25rem+env(safe-area-inset-bottom,0px))] right-4 z-20 h-12 w-12 rounded-full bg-white text-zinc-950 shadow-lg hover:bg-zinc-200 md:hidden"
-        onClick={handleNewSession}
-        aria-label="新規チャット"
-      >
-        <SquarePen className="h-4 w-4" />
-      </Button>
 
       <Sheet open={mobileHistoryOpen} onOpenChange={setMobileHistoryOpen}>
         <SheetContent side="left" className="w-[88vw] max-w-[390px] border-[#303030] bg-[#171717] p-0 text-zinc-100">
+          <SheetTitle className="sr-only">チャット履歴</SheetTitle>
+          <SheetDescription className="sr-only">チャット、プロジェクト、最近の履歴を選択します。</SheetDescription>
           <HistorySidebar
             sessions={sessions.sessions}
             activeSessionId={sessions.activeSessionId}
@@ -822,7 +860,12 @@ function HistorySidebar({
 
   return (
     <aside className={cn("relative h-full w-[260px] shrink-0 flex-col border-r border-[#303030] bg-[#171717] text-zinc-100", className)}>
-      <div className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-4">
+      <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-2 pt-[calc(0.85rem+env(safe-area-inset-top,0px))] md:hidden">
+        <div className="truncate text-[24px] font-semibold tracking-normal text-white">Focusmap</div>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-500 text-xs font-semibold text-white">NA</span>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-2 md:pt-4">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
           <input
@@ -832,9 +875,6 @@ function HistorySidebar({
             className="h-11 w-full rounded-lg border border-[#2d2d2d] bg-[#111111] pl-9 pr-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
           />
         </div>
-        <Button variant="ghost" size="icon" className="h-11 w-11 rounded-lg text-zinc-300 hover:bg-white/10 hover:text-white md:hidden" onClick={onNew} title="新規チャット">
-          <MessageSquarePlus className="h-4 w-4" />
-        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-20">
@@ -842,12 +882,11 @@ function HistorySidebar({
           <button
             type="button"
             className={cn(
-              "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition",
+              "flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm font-semibold transition",
               activeProjectChatId === null ? "bg-white/10 text-zinc-100" : "text-zinc-300 hover:bg-white/10 hover:text-white",
             )}
             onClick={onSelectGeneralChat}
           >
-            <MessageSquarePlus className="h-4 w-4" />
             チャット
           </button>
         </div>
@@ -860,24 +899,18 @@ function HistorySidebar({
             <div className="space-y-0.5">
               {visibleProjects.map(project => {
                 const active = project.id === activeProjectChatId
-                const content = (
-                  <>
-                    <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
-                    <span className="min-w-0 flex-1 truncate">{project.title}</span>
-                  </>
-                )
 
                 return (
                   <button
                     key={project.id}
                     type="button"
                     className={cn(
-                      "flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition",
+                      "flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm transition",
                       active ? "bg-white/10 text-white" : "text-zinc-300 hover:bg-white/10 hover:text-white",
                     )}
                     onClick={() => onSelectProjectChat(project.id)}
                   >
-                    {content}
+                    <span className="min-w-0 flex-1 truncate">{project.title}</span>
                   </button>
                 )
               })}
@@ -928,10 +961,17 @@ function HistorySidebar({
         </div>
       </div>
       <div className="absolute inset-x-0 bottom-0 border-t border-[#303030] bg-[#171717] p-3">
-        <div className="flex min-h-11 items-center gap-3 rounded-lg px-2 text-sm text-zinc-200">
+        <button
+          type="button"
+          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-zinc-950 shadow-[0_10px_30px_rgba(255,255,255,0.12)] transition hover:bg-zinc-200 md:hidden"
+          onClick={onNew}
+        >
+          <SquarePen className="h-4 w-4" />
+          新しいチャット
+        </button>
+        <div className="hidden min-h-11 items-center gap-3 rounded-lg px-2 text-sm text-zinc-200 md:flex">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-600 text-xs font-semibold text-white">N</span>
           <span className="min-w-0 flex-1 truncate">nao</span>
-          <ChevronRight className="h-4 w-4 rotate-90 text-zinc-500" />
         </div>
       </div>
     </aside>
@@ -945,9 +985,6 @@ function ProjectChatHeader({ project, hasMessages }: { project: Project; hasMess
         "flex items-start gap-3",
         hasMessages ? "rounded-xl border border-[#303030] bg-[#171717]/80 px-3 py-2.5" : "px-1",
       )}>
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10 text-zinc-100 ring-1 ring-white/10">
-          <Folder className="h-5 w-5" />
-        </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className={cn("min-w-0 max-w-full truncate font-semibold text-zinc-100", hasMessages ? "text-sm" : "text-xl md:text-2xl")}>
@@ -972,41 +1009,22 @@ function EmptyChat() {
   )
 }
 
-function FocusmapAssistantIcon({ active = false }: { active?: boolean }) {
-  return (
-    <div
-      className={cn(
-        "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#2a2a2a] text-zinc-100 ring-1 ring-white/10",
-        active && "animate-pulse ring-emerald-400/50",
-      )}
-    >
-      <FocusmapLogo variant="mark" accentDot={active} className="h-5 w-5" />
-    </div>
-  )
-}
-
 function AssistantThinking() {
   return (
-    <div className="flex gap-3 text-zinc-300">
-      <FocusmapAssistantIcon active />
-      <div className="px-0 py-2 text-sm">
-        考え中…
-      </div>
+    <div className="px-0 py-1 text-sm text-zinc-400">
+      考え中
     </div>
   )
 }
 
 type ApprovalHandler = (args: { id: string; approved: boolean; reason?: string }) => void | PromiseLike<void>
 
-function MessageBubble({ message, isActive = false, onApproval }: { message: UIMessage; isActive?: boolean; onApproval: ApprovalHandler }) {
+function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval: ApprovalHandler }) {
   const isUser = message.role === "user"
 
   return (
-    <div className={cn("flex gap-3", isUser && "justify-end")}>
-      {!isUser && (
-        <FocusmapAssistantIcon active={isActive} />
-      )}
-      <div className={cn("flex min-w-0 flex-col gap-2", isUser ? "max-w-[78%] items-end sm:max-w-[68%]" : "max-w-[calc(100%-44px)] flex-1")}>
+    <div className={cn("flex", isUser && "justify-end")}>
+      <div className={cn("flex min-w-0 flex-col gap-2", isUser ? "max-w-[78%] items-end sm:max-w-[68%]" : "w-full flex-1")}>
         {message.parts.map((part, index) => {
           if (part.type === "text") {
             if (!part.text) return null
