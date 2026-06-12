@@ -3470,13 +3470,13 @@ export function WishlistView({
               className={cn(
                 "grid h-full min-h-0 gap-3",
                 desktopComposerOpen
-                  ? "lg:grid-cols-[minmax(19rem,22rem)_minmax(0,1fr)] xl:grid-cols-[22rem_minmax(0,1fr)]"
+                  ? "lg:grid-cols-[minmax(0,1fr)_minmax(19rem,22rem)] xl:grid-cols-[minmax(0,1fr)_22rem]"
                   : "grid-cols-1",
               )}
             >
               {desktopComposerOpen && (
                 <section
-                  className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/70 shadow-sm"
+                  className="order-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card/70 shadow-sm"
                 >
                   <>
                     <div className="flex min-h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -3799,7 +3799,7 @@ export function WishlistView({
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
               >
-                <div className="flex h-full min-h-0 flex-col gap-2">
+                <div className="order-1 flex h-full min-h-0 min-w-0 flex-col gap-2">
                   {intakeError && !isAnalyzing && (
                     <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                       <span>{intakeError}</span>

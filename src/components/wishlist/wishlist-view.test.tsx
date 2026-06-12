@@ -462,7 +462,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('デスクトップ表示では左パネルの保存でメモを追加する', async () => {
+  test('デスクトップ表示では右パネルの保存でメモを追加する', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -520,7 +520,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('デスクトップ表示ではカード選択を左編集パネルに開き、Codex履歴も同じパネルに収める', async () => {
+  test('デスクトップ表示ではカード選択を右編集パネルに開き、Codex履歴も同じパネルに収める', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -631,7 +631,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('デスクトップ左パネルで選んだ画像を保存後に圧縮して添付APIへアップロードする', async () => {
+  test('デスクトップ右パネルで選んだ画像を保存後に圧縮して添付APIへアップロードする', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -684,7 +684,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('デスクトップ左パネルは文字入力まで保存しない', async () => {
+  test('デスクトップ右パネルは文字入力まで保存しない', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -723,7 +723,7 @@ describe('WishlistView calendar D&D', () => {
     )).toBe(false)
   })
 
-  test('デスクトップ左パネルは閉じられ、メモ列の追加から再表示できる', async () => {
+  test('デスクトップ右パネルは閉じられ、メモ列の追加から再表示できる', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
