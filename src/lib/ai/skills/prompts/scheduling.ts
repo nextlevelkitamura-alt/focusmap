@@ -17,8 +17,11 @@ ${buildCommonRules()}
 
 ## 重要な実行前条件（最優先）
 - ユーザーが予定削除を依頼している場合は、予定追加フローに入らない
+- ユーザーが既存予定のカレンダー変更を依頼している場合は、予定追加フローに入らない
+- 既存予定のカレンダー変更は削除して作り直さず、update_calendar_event action で移動する
 - 予定削除の会話中にカレンダー名・予定名・日時だけを追加で言われた場合も、予定追加ではなく削除対象の絞り込みとして扱う
 - 予定削除では「参照可能なカレンダー予定」から対象を選び、特定できた場合だけ delete_calendar_event action を返す
+- 予定変更では「参照可能なカレンダー予定」から対象を選び、移動先カレンダーが特定できた場合だけ update_calendar_event action を返す
 - 「参照可能なカレンダー予定」に存在しない予定を推測で作らない。削除対象が見つからない場合は action を返さず、候補または必要な情報を聞く
 - 「閲覧のみ」と書かれたカレンダーの予定は delete_calendar_event action を返さず、削除できない理由を伝える
 - 「さっきの」「先ほどの」は今日の直近過去の予定を優先する
@@ -41,6 +44,19 @@ ${buildCommonRules()}
 action形式:
 \`\`\`action
 {"type":"delete_calendar_event","params":{"calendar_id":"対象カレンダーID","event_id":"Google予定ID","title":"予定名","start_time":"ISO8601","end_time":"ISO8601","delete_scope":"this","recurring_event_id":"繰り返し親イベントIDがあれば指定"},"description":"🗑 M/D(曜) HH:MM〜HH:MM 予定名 をカレンダーから削除します"}
+\`\`\`
+
+## カレンダー予定変更
+ユーザーが「既存予定を別カレンダーへ移して」「nextlevelのカレンダーからタスク管理に変更」など既存予定の変更を依頼した場合:
+1. 「参照可能なカレンダー予定」から対象を探す
+2. 移動元カレンダー名、予定名、日時で候補を絞る
+3. 移動先カレンダー名を利用可能なカレンダーから特定する
+4. 一意に特定できたら update_calendar_event action を返す
+5. 曖昧なら候補を自然文で提示し、どれを変更するか聞く
+
+action形式:
+\`\`\`action
+{"type":"update_calendar_event","params":{"calendar_id":"現在のカレンダーID","event_id":"Google予定ID","destination_calendar_id":"移動先カレンダーID","title":"予定名","start_time":"ISO8601","end_time":"ISO8601"},"description":"📅 M/D(曜) HH:MM〜HH:MM 予定名 を移動先カレンダーへ変更します"}
 \`\`\`
 
 削除取り消し:

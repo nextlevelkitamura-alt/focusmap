@@ -228,6 +228,7 @@ Goals → Projects → TaskGroups → Tasks
 - Google Calendar APIの返却は表示にはそのまま使うが、`calendar_events` への保存前には `google_event_id` で重複排除する。DBは `UNIQUE(user_id, google_event_id)` のため、複数カレンダーで同じ `google_event_id` が返った場合に `ON CONFLICT` が同一行を二度更新してキャッシュ保存全体が失敗するのを防ぐ。
 - カレンダー色が未取得の予定も表示対象から落とさない。`Today` の日/3日/月表示では、カレンダー色がないGoogle予定にGoogle Calendar標準色 `#039BE5` を使う。
 - 既存Google予定またはGoogle連携済みタスクのカレンダーを変更する場合は、旧カレンダーから削除して新規作成せず、移動元 `source_calendar_id` と移動先 `calendar_id` を `/api/calendar/sync-task` / `/api/calendar/events/[eventId]` に渡して Google Calendar の `events.move` 後に `events.update` する。これにより既存予定の二重登録を避ける。カレンダー解除時の削除だけは、DB更新後でも旧予定を消せるようリクエストbodyの `calendar_id` を削除先として優先する。
+- チャットから既存予定の所属カレンダーを変える場合も同じ方針を使う。統合チャットの `updateCalendarEvent` は `listCalendarEvents` の `available_calendars` で移動先ID/名前を解決し、`destinationCalendarId` / `destinationCalendarName` を受けて Google Calendar の `events.move` 後に `events.update` する。旧AIパネルの確認actionは `update_calendar_event` として `/api/ai/chat/execute` に渡し、`calendar_events` と同じ `google_event_id` を持つ `tasks` / `ideal_goals` も移動後のIDとカレンダーIDへ同期する。
 
 ### マインドマップとCodex.app連携
 

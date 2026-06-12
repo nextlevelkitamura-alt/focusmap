@@ -180,6 +180,14 @@ type CalendarOpenSlot = {
   duration_minutes: number
 }
 
+type UserCalendarSummary = {
+  calendar_id: string
+  name: string | null
+  access_level: string | null
+  selected: boolean | null
+  is_primary: boolean | null
+}
+
 function toBusySlot(source: BusySlotSource): BusySlot | null {
   const start = source.start instanceof Date ? source.start : new Date(source.start)
   const end = source.end instanceof Date ? source.end : new Date(source.end)
@@ -532,6 +540,30 @@ async function getSelectedCalendarIds(
 
   const primary = (data || []).find(calendar => calendar.is_primary)?.google_calendar_id
   return primary ? [primary] : ['primary']
+}
+
+function calendarNameMatches(value: string, calendar: UserCalendarSummary): boolean {
+  const needle = value.trim().toLowerCase()
+  if (!needle) return false
+  const candidates = [
+    calendar.calendar_id,
+    calendar.name ?? '',
+  ].map(candidate => candidate.trim().toLowerCase()).filter(Boolean)
+  return candidates.some(candidate =>
+    candidate === needle ||
+    candidate.includes(needle) ||
+    needle.includes(candidate)
+  )
+}
+
+function resolveCalendarIdFromNameOrId(
+  calendars: UserCalendarSummary[],
+  value?: string,
+): string | null {
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+  if (trimmed === 'primary') return 'primary'
+  return calendars.find(calendar => calendarNameMatches(trimmed, calendar))?.calendar_id ?? null
 }
 
 async function findWritableCalendar(
@@ -1667,7 +1699,7 @@ export const updateMindmapMemoLink = tool({
 
 export const listCalendarEvents = tool({
   description:
-    '既存のGoogleカレンダー予定を確認する。予定の見出し/内容/時間を変更する前、空き状況を見る前、今日/明日/今週の予定確認に使う。',
+    '既存のGoogleカレンダー予定と利用可能カレンダー一覧を確認する。予定の見出し/内容/時間/所属カレンダーを変更する前、空き状況を見る前、今日/明日/今週の予定確認に使う。',
   inputSchema: z.object({
     timeMin: z.string().optional().describe('取得開始日時（ISO 8601）。未指定なら現在時刻。'),
     timeMax: z.string().optional().describe('取得終了日時（ISO 8601）。未指定なら7日後。'),
@@ -1687,6 +1719,18 @@ export const listCalendarEvents = tool({
     }
 
     try {
+      const { data: calendarRows } = await supabase
+        .from('user_calendars')
+        .select('google_calendar_id, name, access_level, selected, is_primary')
+        .eq('user_id', user.id)
+      const calendars = (calendarRows || []).map(row => ({
+        calendar_id: row.google_calendar_id,
+        name: row.name ?? null,
+        access_level: row.access_level ?? null,
+        selected: row.selected ?? null,
+        is_primary: row.is_primary ?? null,
+      }))
+      const calendarNameById = new Map(calendars.map(calendar => [calendar.calendar_id, calendar.name]))
       const resolvedCalendarIds = await getSelectedCalendarIds(supabase, user.id, calendarIds)
       const { fetchCalendarEvents, fetchMultipleCalendarEvents } = await import('@/lib/google-calendar')
       const rawEvents = resolvedCalendarIds.length > 1
@@ -1702,6 +1746,7 @@ export const listCalendarEvents = tool({
           id: event.google_event_id,
           google_event_id: event.google_event_id,
           calendar_id: event.calendar_id,
+          calendar_name: calendarNameById.get(event.calendar_id) ?? null,
           title: event.title,
           description: event.description ?? null,
           location: event.location ?? null,
@@ -1714,6 +1759,7 @@ export const listCalendarEvents = tool({
         success: true,
         timeMin: start.toISOString(),
         timeMax: end.toISOString(),
+        available_calendars: calendars,
         events,
         message: `${events.length}件の予定を取得しました`,
       }
@@ -1911,10 +1957,12 @@ export const findCalendarOpenSlots = tool({
 
 export const updateCalendarEvent = tool({
   description:
-    '既存のGoogleカレンダー予定の見出し、内容、場所、開始/終了時刻を変更する。先にlistCalendarEventsで対象のgoogle_event_idとcalendar_idを確認してから使う。',
+    '既存のGoogleカレンダー予定の見出し、内容、場所、開始/終了時刻、所属カレンダーを変更する。先にlistCalendarEventsで対象のgoogle_event_id、現在のcalendar_id、移動先calendar_idまたはカレンダー名を確認してから使う。',
   inputSchema: z.object({
     googleEventId: z.string().describe('Google Calendar のイベントID'),
     calendarId: z.string().optional().describe('現在その予定が入っているカレンダーID。未指定なら選択中カレンダーから探索する。'),
+    destinationCalendarId: z.string().optional().describe('移動先のGoogleカレンダーID。カレンダー変更しない場合は省略。'),
+    destinationCalendarName: z.string().optional().describe('移動先カレンダー名。IDが不明な場合に使う。'),
     title: z.string().optional().describe('新しい見出し。未指定なら変更しない。'),
     description: z.string().optional().describe('新しい内容/説明。空文字なら説明を消す。未指定なら変更しない。'),
     location: z.string().optional().describe('新しい場所。空文字なら場所を消す。未指定なら変更しない。'),
@@ -1922,16 +1970,28 @@ export const updateCalendarEvent = tool({
     endTime: z.string().optional().describe('新しい終了日時（ISO 8601）。durationMinutes指定時は省略可。'),
     durationMinutes: z.number().optional().describe('startTimeからの所要時間（分）。endTime未指定時に使う。'),
   }),
-  execute: async ({ googleEventId, calendarId, title, description, location, startTime, endTime, durationMinutes }) => {
+  execute: async ({ googleEventId, calendarId, destinationCalendarId, destinationCalendarName, title, description, location, startTime, endTime, durationMinutes }) => {
     const supabase = await createClient()
     const user = await requireAuthedUser(supabase)
     if (!user) return { success: false, error: '認証エラー' }
 
     const { data: calendarRows, error: calendarRowsError } = await supabase
       .from('user_calendars')
-      .select('google_calendar_id, access_level, selected, is_primary')
+      .select('google_calendar_id, name, access_level, selected, is_primary')
       .eq('user_id', user.id)
     if (calendarRowsError) return { success: false, error: calendarRowsError.message }
+
+    const calendars: UserCalendarSummary[] = (calendarRows || []).map(row => ({
+      calendar_id: row.google_calendar_id,
+      name: row.name ?? null,
+      access_level: row.access_level ?? null,
+      selected: row.selected ?? null,
+      is_primary: row.is_primary ?? null,
+    }))
+    const calendarAccessById = new Map(
+      calendars.map(calendar => [calendar.calendar_id, calendar.access_level] as const)
+    )
+    const calendarNameById = new Map(calendars.map(calendar => [calendar.calendar_id, calendar.name]))
 
     const candidateCalendarIds = Array.from(new Set([
       calendarId,
@@ -1950,9 +2010,24 @@ export const updateCalendarEvent = tool({
         return { success: false, error: 'このカレンダーは閲覧専用のため編集できません' }
       }
 
+      const resolvedDestinationCalendarId =
+        resolveCalendarIdFromNameOrId(calendars, destinationCalendarId)
+        || resolveCalendarIdFromNameOrId(calendars, destinationCalendarName)
+        || destinationCalendarId?.trim()
+        || found.calendarId
+      const destinationAccess = resolvedDestinationCalendarId === 'primary'
+        ? 'owner'
+        : calendarAccessById.get(resolvedDestinationCalendarId)
+      if (destinationAccess && !isWritableCalendar(destinationAccess)) {
+        return { success: false, error: '移動先カレンダーは閲覧専用のため変更できません' }
+      }
+      if (!destinationAccess && resolvedDestinationCalendarId !== found.calendarId) {
+        return { success: false, error: '移動先カレンダーが見つかりません' }
+      }
+
       const { getCalendarClient } = await import('@/lib/google-calendar')
       const { calendar } = await getCalendarClient(user.id)
-      const current = found.event
+      let current = found.event
       const currentStart = current.start?.dateTime || current.start?.date
       const currentEnd = current.end?.dateTime || current.end?.date
       if (!currentStart || !currentEnd) return { success: false, error: '予定の現在時刻を取得できませんでした' }
@@ -1970,10 +2045,22 @@ export const updateCalendarEvent = tool({
       const nextTitle = title ?? current.summary ?? '無題'
       const nextDescription = description !== undefined ? description : current.description
       const nextLocation = location !== undefined ? location : current.location
+      let effectiveGoogleEventId = googleEventId
+      const movedCalendar = found.calendarId !== resolvedDestinationCalendarId
+
+      if (movedCalendar) {
+        const moveResponse = await calendar.events.move({
+          calendarId: found.calendarId,
+          eventId: googleEventId,
+          destination: resolvedDestinationCalendarId,
+        })
+        effectiveGoogleEventId = moveResponse.data.id || googleEventId
+        current = moveResponse.data.id ? moveResponse.data : current
+      }
 
       await calendar.events.update({
-        calendarId: found.calendarId,
-        eventId: googleEventId,
+        calendarId: resolvedDestinationCalendarId,
+        eventId: effectiveGoogleEventId,
         requestBody: {
           ...current,
           summary: nextTitle,
@@ -1993,8 +2080,8 @@ export const updateCalendarEvent = tool({
       const now = new Date().toISOString()
       const eventPayload = {
         user_id: user.id,
-        google_event_id: googleEventId,
-        calendar_id: found.calendarId,
+        google_event_id: effectiveGoogleEventId,
+        calendar_id: resolvedDestinationCalendarId,
         title: nextTitle,
         description: nextDescription || null,
         location: nextLocation || null,
@@ -2005,15 +2092,30 @@ export const updateCalendarEvent = tool({
         updated_at: now,
         synced_at: now,
       }
-      await supabase
+      const { data: existingCachedEvent } = await supabase
         .from('calendar_events')
-        .upsert(eventPayload, { onConflict: 'user_id,google_event_id', ignoreDuplicates: false })
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('google_event_id', googleEventId)
+        .maybeSingle()
+      if (existingCachedEvent?.id) {
+        await supabase
+          .from('calendar_events')
+          .update(eventPayload)
+          .eq('user_id', user.id)
+          .eq('id', existingCachedEvent.id)
+      } else {
+        await supabase
+          .from('calendar_events')
+          .upsert(eventPayload, { onConflict: 'user_id,google_event_id', ignoreDuplicates: false })
+      }
 
       const taskUpdates: Record<string, unknown> = {
         title: nextTitle,
         scheduled_at: resolvedStart.toISOString(),
         estimated_time: Math.max(1, minutesBetween(resolvedStart.toISOString(), resolvedEnd.toISOString())),
-        calendar_id: found.calendarId,
+        calendar_id: resolvedDestinationCalendarId,
+        google_event_id: effectiveGoogleEventId,
         updated_at: now,
       }
       await supabase
@@ -2029,6 +2131,7 @@ export const updateCalendarEvent = tool({
           description: nextDescription || null,
           scheduled_at: resolvedStart.toISOString(),
           duration_minutes: taskUpdates.estimated_time,
+          google_event_id: effectiveGoogleEventId,
           memo_status: 'scheduled',
           updated_at: now,
         })
@@ -2037,12 +2140,18 @@ export const updateCalendarEvent = tool({
 
       return {
         success: true,
-        googleEventId,
-        calendarId: found.calendarId,
+        googleEventId: effectiveGoogleEventId,
+        originalGoogleEventId: googleEventId,
+        calendarId: resolvedDestinationCalendarId,
+        originalCalendarId: found.calendarId,
+        calendarName: calendarNameById.get(resolvedDestinationCalendarId) ?? null,
         title: nextTitle,
         startTime: resolvedStart.toISOString(),
         endTime: resolvedEnd.toISOString(),
-        message: `予定「${nextTitle}」を更新しました`,
+        movedCalendar,
+        message: movedCalendar
+          ? `予定「${nextTitle}」を「${calendarNameById.get(resolvedDestinationCalendarId) || resolvedDestinationCalendarId}」へ移動しました`
+          : `予定「${nextTitle}」を更新しました`,
       }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : '予定更新に失敗しました' }

@@ -614,6 +614,12 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
         setTimeout(() => setExecutionNotice(null), 4500)
       }
 
+      if (success && msg.action?.type === 'update_calendar_event') {
+        onCalendarEventCreated?.(eventData)
+        setExecutionNotice('予定を更新しました')
+        setTimeout(() => setExecutionNotice(null), 4500)
+      }
+
       // タスク作成成功時にマインドマップ更新
       if (success && msg.action?.type === 'add_task') {
         onTaskCreated?.(taskData)

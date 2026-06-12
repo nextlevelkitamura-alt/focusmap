@@ -202,6 +202,25 @@ async function resolveCalendarEventForDeletion(params: {
   return null
 }
 
+async function findCalendarContainingEvent(
+  calendar: calendar_v3.Calendar,
+  calendarIds: string[],
+  googleEventId: string,
+) {
+  for (const candidateCalendarId of Array.from(new Set(calendarIds))) {
+    try {
+      await calendar.events.get({
+        calendarId: candidateCalendarId,
+        eventId: googleEventId,
+      })
+      return candidateCalendarId
+    } catch (error) {
+      if (!isMissingCalendarEventError(error)) throw error
+    }
+  }
+  return null
+}
+
 // POST /api/ai/chat/execute - AIチャットのアクション実行
 export async function POST(request: Request) {
   try {
@@ -333,6 +352,245 @@ export async function POST(request: Request) {
             scheduled_at,
             estimated_time: estMin,
             calendar_id: resolvedCalendarId,
+          },
+        })
+      }
+
+      case 'update_calendar_event': {
+        const {
+          calendar_id,
+          calendarId,
+          event_id,
+          google_event_id,
+          googleEventId,
+          destination_calendar_id,
+          destinationCalendarId,
+          title,
+          description,
+          location,
+          start_time,
+          startTime,
+          end_time,
+          endTime,
+          estimated_time,
+        } = action.params as {
+          calendar_id?: string
+          calendarId?: string
+          event_id?: string
+          google_event_id?: string
+          googleEventId?: string
+          destination_calendar_id?: string
+          destinationCalendarId?: string
+          title?: string
+          description?: string
+          location?: string
+          start_time?: string
+          startTime?: string
+          end_time?: string
+          endTime?: string
+          estimated_time?: number
+        }
+        const sourceCalendarHint = (calendar_id || calendarId || '').trim()
+        const targetCalendarId = (destination_calendar_id || destinationCalendarId || '').trim()
+        const eventId = (event_id || google_event_id || googleEventId || '').trim()
+
+        if (!eventId || !targetCalendarId) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 変更対象の予定または移動先カレンダーを特定できませんでした',
+          }, { status: 400 })
+        }
+
+        const { data: calendarRows, error: calendarLookupError } = await supabase
+          .from('user_calendars')
+          .select('google_calendar_id, name, access_level')
+          .eq('user_id', user.id)
+        if (calendarLookupError) throw calendarLookupError
+
+        const calendarAccessById = new Map(
+          (calendarRows || []).map(row => [row.google_calendar_id, row.access_level] as const)
+        )
+        const calendarNameById = new Map(
+          (calendarRows || []).map(row => [row.google_calendar_id, row.name] as const)
+        )
+        const destinationAccess = targetCalendarId === 'primary' ? 'owner' : calendarAccessById.get(targetCalendarId)
+        if (destinationAccess && !['owner', 'writer'].includes(destinationAccess || '')) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 移動先カレンダーは閲覧専用のため変更できません',
+          }, { status: 403 })
+        }
+        if (!destinationAccess && targetCalendarId !== 'primary') {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 移動先カレンダーが見つかりません',
+          }, { status: 400 })
+        }
+
+        const { calendar } = await getCalendarClient(user.id)
+        const candidateCalendarIds = Array.from(new Set([
+          sourceCalendarHint,
+          targetCalendarId,
+          'primary',
+          ...(calendarRows || []).map(row => row.google_calendar_id),
+        ].filter((id): id is string => typeof id === 'string' && id.trim().length > 0)))
+
+        const found = sourceCalendarHint
+          ? await findCalendarContainingEvent(calendar, [sourceCalendarHint, ...candidateCalendarIds], eventId)
+          : await findCalendarContainingEvent(calendar, candidateCalendarIds, eventId)
+        if (!found) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 変更対象の予定が見つかりませんでした',
+          }, { status: 404 })
+        }
+
+        const sourceCalendarId = found
+        const sourceAccess = sourceCalendarId === 'primary' ? 'owner' : calendarAccessById.get(sourceCalendarId)
+        if (sourceAccess && !['owner', 'writer'].includes(sourceAccess || '')) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 移動元カレンダーは閲覧専用のため変更できません',
+          }, { status: 403 })
+        }
+
+        let currentEvent = (await calendar.events.get({
+          calendarId: sourceCalendarId,
+          eventId,
+        })).data
+        const currentStart = currentEvent.start?.dateTime || currentEvent.start?.date
+        const currentEnd = currentEvent.end?.dateTime || currentEvent.end?.date
+        if (!currentStart || !currentEnd) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 予定の現在日時を取得できませんでした',
+          }, { status: 400 })
+        }
+
+        const resolvedStart = new Date(start_time || startTime || currentStart)
+        const resolvedEnd = new Date(end_time || endTime || currentEnd)
+        if (Number.isNaN(resolvedStart.getTime()) || Number.isNaN(resolvedEnd.getTime()) || resolvedEnd <= resolvedStart) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 開始/終了日時が不正です',
+          }, { status: 400 })
+        }
+
+        const nextTitle = title || currentEvent.summary || '予定'
+        const nextDescription = description !== undefined ? description : currentEvent.description
+        const nextLocation = location !== undefined ? location : currentEvent.location
+        const movedCalendar = sourceCalendarId !== targetCalendarId
+        let effectiveGoogleEventId = eventId
+
+        if (movedCalendar) {
+          const moveResponse = await calendar.events.move({
+            calendarId: sourceCalendarId,
+            eventId,
+            destination: targetCalendarId,
+          })
+          effectiveGoogleEventId = moveResponse.data.id || eventId
+          currentEvent = moveResponse.data.id ? moveResponse.data : currentEvent
+        }
+
+        await calendar.events.update({
+          calendarId: targetCalendarId,
+          eventId: effectiveGoogleEventId,
+          requestBody: {
+            ...currentEvent,
+            summary: nextTitle,
+            description: nextDescription || undefined,
+            location: nextLocation || undefined,
+            start: {
+              dateTime: resolvedStart.toISOString(),
+              timeZone: 'Asia/Tokyo',
+            },
+            end: {
+              dateTime: resolvedEnd.toISOString(),
+              timeZone: 'Asia/Tokyo',
+            },
+          },
+        })
+
+        const now = new Date().toISOString()
+        const durationMinutes = estimated_time && Number.isFinite(estimated_time)
+          ? Math.max(1, Math.round(estimated_time))
+          : Math.max(1, Math.round((resolvedEnd.getTime() - resolvedStart.getTime()) / 60000))
+        const eventPayload = {
+          user_id: user.id,
+          google_event_id: effectiveGoogleEventId,
+          calendar_id: targetCalendarId,
+          title: nextTitle,
+          description: nextDescription || null,
+          location: nextLocation || null,
+          start_time: resolvedStart.toISOString(),
+          end_time: resolvedEnd.toISOString(),
+          is_all_day: false,
+          timezone: 'Asia/Tokyo',
+          updated_at: now,
+          synced_at: now,
+        }
+        const { data: existingCachedEvent } = await supabase
+          .from('calendar_events')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('google_event_id', eventId)
+          .maybeSingle()
+
+        if (existingCachedEvent?.id) {
+          await supabase
+            .from('calendar_events')
+            .update(eventPayload)
+            .eq('user_id', user.id)
+            .eq('id', existingCachedEvent.id)
+        } else {
+          await supabase
+            .from('calendar_events')
+            .upsert(eventPayload, { onConflict: 'user_id,google_event_id', ignoreDuplicates: false })
+        }
+
+        await supabase
+          .from('tasks')
+          .update({
+            title: nextTitle,
+            scheduled_at: resolvedStart.toISOString(),
+            estimated_time: durationMinutes,
+            calendar_id: targetCalendarId,
+            google_event_id: effectiveGoogleEventId,
+            updated_at: now,
+          })
+          .eq('user_id', user.id)
+          .eq('google_event_id', eventId)
+
+        await supabase
+          .from('ideal_goals')
+          .update({
+            title: nextTitle,
+            description: nextDescription || null,
+            scheduled_at: resolvedStart.toISOString(),
+            duration_minutes: durationMinutes,
+            google_event_id: effectiveGoogleEventId,
+            memo_status: 'scheduled',
+            updated_at: now,
+          })
+          .eq('user_id', user.id)
+          .eq('google_event_id', eventId)
+
+        const destinationLabel = calendarNameById.get(targetCalendarId) || targetCalendarId
+        return NextResponse.json({
+          success: true,
+          message: movedCalendar
+            ? `✅ 予定「${nextTitle}」を「${destinationLabel}」へ移動しました`
+            : `✅ 予定「${nextTitle}」を更新しました`,
+          eventData: {
+            id: existingCachedEvent?.id || eventId,
+            title: nextTitle,
+            scheduled_at: resolvedStart.toISOString(),
+            estimated_time: durationMinutes,
+            calendar_id: targetCalendarId,
+            google_event_id: effectiveGoogleEventId,
+            original_google_event_id: eventId,
+            start_time: resolvedStart.toISOString(),
+            end_time: resolvedEnd.toISOString(),
           },
         })
       }

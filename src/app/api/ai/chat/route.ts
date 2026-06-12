@@ -77,10 +77,19 @@ type CalendarDeletionCandidate = {
   recurring_event_id?: string | null
 }
 
+type CalendarEventCandidate = CalendarDeletionCandidate
+
 function isCalendarDeletionIntent(text: string): boolean {
   const hasDeleteWord = /(消して|消す|削除|キャンセル|取り消し|取消|なくして|外して)/.test(text)
   const hasCalendarWord = /(予定|カレンダー|会議|ミーティング|打ち合わせ|MTG|mtg|先ほど|さっき|下記)/i.test(text)
   return hasDeleteWord && hasCalendarWord
+}
+
+function isCalendarUpdateIntent(text: string): boolean {
+  const hasUpdateWord = /(変更|移動|移して|移す|変えて|切り替え|切り替えて|移せ|更新)/.test(text)
+  const hasCalendarWord = /(予定|カレンダー|会議|ミーティング|打ち合わせ|MTG|mtg|nextlevel|タスク管理|仕事|個人|private)/i.test(text)
+  const mentionsCalendarMove = /(カレンダー).{0,24}(変更|移動|移して|移す|変えて|切り替え)|(.+)(から|from).{0,40}(へ|に|to).{0,20}(変更|移動|移して|移す|変えて|切り替え)/i.test(text)
+  return hasUpdateWord && hasCalendarWord && mentionsCalendarMove
 }
 
 function isCalendarRestoreIntent(text: string): boolean {
@@ -103,6 +112,17 @@ function isDeletionThreadFollowUp(history: ChatMessage[], currentMessage: string
   )
   if (!hadDeletionRequest) return false
   return /(\d+\s*番|これ|それ|はい|お願い|もう一回|再度|削除|消して|ある|あります|カレンダー|予定|会議|タスク管理|仕事|個人|private|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/.test(currentMessage)
+}
+
+function isUpdateThreadFollowUp(history: ChatMessage[], currentMessage: string): boolean {
+  const recent = history.slice(-8)
+  const hadUpdateRequest = recent.some(message =>
+    message.role === 'user'
+      ? isCalendarUpdateIntent(message.content)
+      : /(変更|移動|移して|変えて|切り替え|どの予定|カレンダー名|移動先|変更したい予定)/.test(message.content)
+  )
+  if (!hadUpdateRequest) return false
+  return /(\d+\s*番|これ|それ|はい|お願い|変更|移動|移して|変えて|カレンダー|予定|会議|タスク管理|仕事|個人|private|nextlevel|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/i.test(currentMessage)
 }
 
 function formatCalendarEventsForPrompt(events: Array<{
@@ -351,6 +371,52 @@ function resolveCalendarIdFromText(
   return undefined
 }
 
+function resolveLastCalendarIdFromText(
+  text: string,
+  calendars: Array<{ id: string; name: string }>,
+): string | undefined {
+  const normalized = text.toLowerCase()
+  let best: { id: string; index: number } | undefined
+  for (const cal of calendars) {
+    const candidates = [cal.name, cal.id].map(value => value.trim()).filter(Boolean)
+    for (const candidate of candidates) {
+      const needle = candidate.toLowerCase()
+      let index = normalized.indexOf(needle)
+      while (index >= 0) {
+        if (!best || index >= best.index) best = { id: cal.id, index }
+        index = normalized.indexOf(needle, index + needle.length)
+      }
+    }
+  }
+  return best?.id
+}
+
+function resolveLastCalendarIdFromTexts(
+  texts: string[],
+  calendars: Array<{ id: string; name: string }>,
+): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const found = resolveLastCalendarIdFromText(texts[i], calendars)
+    if (found) return found
+  }
+  return undefined
+}
+
+function resolveSourceCalendarIdFromTexts(
+  texts: string[],
+  calendars: Array<{ id: string; name: string }>,
+): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const text = texts[i]
+    const markerIndexes = ['から', 'from'].map(marker => text.toLowerCase().lastIndexOf(marker)).filter(index => index > 0)
+    if (markerIndexes.length === 0) continue
+    const beforeMarker = text.slice(0, Math.max(...markerIndexes))
+    const found = resolveLastCalendarIdFromText(beforeMarker, calendars)
+    if (found) return found
+  }
+  return undefined
+}
+
 function resolveCalendarIdFromTexts(
   texts: string[],
   calendars: Array<{ id: string; name: string }>,
@@ -360,6 +426,72 @@ function resolveCalendarIdFromTexts(
     if (found) return found
   }
   return undefined
+}
+
+function buildUpdateCalendarActionFromCandidates(
+  events: CalendarEventCandidate[],
+  texts: string[],
+  calendars: CalendarResolution[],
+): ChatMessage['action'] | undefined {
+  if (events.length === 0) return undefined
+
+  const targetCalendarId = resolveLastCalendarIdFromTexts(texts, calendars)
+  if (!targetCalendarId) return undefined
+
+  const targetCalendar = calendars.find(calendar => calendar.id === targetCalendarId)
+  if (targetCalendar && !['owner', 'writer'].includes(targetCalendar.accessLevel || '')) return undefined
+
+  const sourceCalendarId = resolveSourceCalendarIdFromTexts(texts, calendars)
+  const range = extractDeletionDateTimeRange(texts)
+
+  let candidates = events.filter(event =>
+    ['owner', 'writer'].includes(event.calendar_access_level || '')
+  )
+  if (sourceCalendarId) {
+    candidates = candidates.filter(event => event.calendar_id === sourceCalendarId)
+  }
+  if (range) {
+    candidates = candidates.filter(event =>
+      sameMinuteWithin(event.start_time, range.start) &&
+      sameMinuteWithin(event.end_time, range.end)
+    )
+  }
+
+  const titleMentioned = candidates.filter(event => textMentionsTitle(texts, event.title))
+  if (titleMentioned.length > 0) candidates = titleMentioned
+  candidates = candidates.filter(event => event.calendar_id !== targetCalendarId)
+
+  if (candidates.length !== 1) return undefined
+
+  const event = candidates[0]
+  const startLabel = new Date(event.start_time).toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const endLabel = new Date(event.end_time).toLocaleTimeString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const targetName = targetCalendar?.name || targetCalendarId
+  const sourceName = event.calendar_name || event.calendar_id
+
+  return {
+    type: 'update_calendar_event',
+    params: {
+      calendar_id: event.calendar_id,
+      event_id: event.google_event_id,
+      destination_calendar_id: targetCalendarId,
+      title: event.title,
+      start_time: event.start_time,
+      end_time: event.end_time,
+    },
+    description: `📅 ${startLabel}〜${endLabel} ${event.title} を「${sourceName}」から「${targetName}」へ移動します`,
+  }
 }
 
 function isValidDateString(value: unknown): value is string {
@@ -786,11 +918,15 @@ export async function POST(request: Request) {
       && /(\d+\s*番|これ|それ|はい|お願い|削除|消して|ある|あります|カレンダー|予定|会議|タスク管理|仕事|個人|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/.test(message)
     const isDeletionThread = isDeletionThreadFollowUp(history, message)
     const isDeletionIntent = isCalendarDeletionIntent(message) || isDeletionFollowUp || isDeletionThread
+    const isUpdateFollowUp = /(変更|移動|移して|変えて|切り替え|カレンダー名|どの予定|移動先)/.test(previousAssistantText)
+      && /(\d+\s*番|これ|それ|はい|お願い|変更|移動|移して|変えて|カレンダー|予定|会議|タスク管理|仕事|個人|nextlevel|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/i.test(message)
+    const isUpdateThread = isUpdateThreadFollowUp(history, message)
+    const isUpdateIntent = !isDeletionIntent && (isCalendarUpdateIntent(message) || isUpdateFollowUp || isUpdateThread)
     const isRestoreIntent = isCalendarRestoreIntent(message)
     const currentMessageSchedulingIntent = !isCalendarSelectionOnly(message) && SCHEDULING_KEYWORDS.some(kw =>
       message.includes(kw)
     )
-    const isSchedulingIntent = !isDeletionIntent && currentMessageSchedulingIntent
+    const isSchedulingIntent = !isDeletionIntent && !isUpdateIntent && currentMessageSchedulingIntent
     const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
     // Duration prompt bypass を廃止: AIが対話ステップで所要時間を聞くようにする
 
@@ -817,7 +953,7 @@ export async function POST(request: Request) {
 
     let calendarEventsContext = ''
     let deletionCandidateEvents: CalendarDeletionCandidate[] = []
-    if (isDeletionIntent && calendarSettings?.is_sync_enabled && userCalendarsForResolution.length > 0) {
+    if ((isDeletionIntent || isUpdateIntent) && calendarSettings?.is_sync_enabled && userCalendarsForResolution.length > 0) {
       try {
         const now = new Date()
         const timeMin = new Date(now)
@@ -1402,6 +1538,30 @@ export async function POST(request: Request) {
     let pendingAction: ChatMessage['action'] | undefined
     let calendarChoices: Array<{ id: string; name: string; isDefault: boolean }> | undefined
     let missingFields: MissingField[] | undefined
+
+    if (isUpdateIntent) {
+      const deterministicUpdateAction = buildUpdateCalendarActionFromCandidates(
+        deletionCandidateEvents,
+        allUserTexts,
+        userCalendarsForResolution,
+      )
+      if (deterministicUpdateAction) {
+        action = deterministicUpdateAction
+        bestProposal = undefined
+        pendingAction = undefined
+        calendarChoices = undefined
+        options = undefined
+        plannerState = 'confirm_and_execute'
+        replyText = '変更対象を確認しました。問題なければ実行してください。'
+      } else if (action?.type === 'add_calendar_event') {
+        action = undefined
+        bestProposal = undefined
+        plannerState = 'capture_intent'
+        replyText = calendarEventsContext && !calendarEventsContext.includes('失敗')
+          ? '変更したい予定を候補から選び直してください。予定名・時間・移動先カレンダー名を指定してください。'
+          : '変更対象の予定を取得できませんでした。予定名・日時・移動先カレンダー名をもう一度教えてください。'
+      }
+    }
 
     if (isDeletionIntent) {
       const deterministicDeleteAction = buildDeleteActionFromCandidates(
