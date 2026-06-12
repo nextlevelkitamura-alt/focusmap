@@ -874,7 +874,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('スマホ表示ではAI生成後に保存前の詳細シートを開く', async () => {
+  test('スマホ表示では入力後のキラキラでメモを予定化する', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: true,
       media: query,
@@ -886,17 +886,53 @@ describe('WishlistView calendar D&D', () => {
       dispatchEvent: vi.fn(),
     })))
 
-    const fetchMock = vi.fn<Window['fetch']>(async input => {
+    const scheduledAt = '2026-06-13T03:00:00.000Z'
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
       const url = requestUrl(input)
       if (url === '/api/ai-ingest') {
         return jsonResponse({
           suggestion: {
             title: '商談内容の整理',
             description: 'AI summary should not replace original',
+            scheduled_at: scheduledAt,
+            duration_minutes: 60,
             tags: [],
-            time_candidates: [],
+            time_candidates: [{
+              label: '指定日時',
+              scheduled_at: scheduledAt,
+              duration_minutes: 60,
+              reason: '入力から日時を抽出',
+            }],
             subtask_suggestions: [],
           },
+        })
+      }
+      if (url === '/api/wishlist' && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}')
+        return jsonResponse({
+          item: createMemoItem({
+            id: 'scheduled-memo',
+            title: body.title,
+            description: body.description,
+            scheduled_at: body.scheduled_at,
+            duration_minutes: body.duration_minutes,
+            memo_status: body.memo_status,
+            is_today: body.is_today,
+          }),
+        }, { status: 201 })
+      }
+      if (url === '/api/wishlist/scheduled-memo/calendar') {
+        return jsonResponse({
+          google_event_id: 'google-event-1',
+          item: createMemoItem({
+            id: 'scheduled-memo',
+            title: '商談内容の整理',
+            description: '商談で話した内容を整理したい',
+            scheduled_at: scheduledAt,
+            duration_minutes: 60,
+            google_event_id: 'google-event-1',
+            memo_status: 'scheduled',
+          }),
         })
       }
       if (url === '/api/wishlist') return jsonResponse({ items: [] })
@@ -911,11 +947,23 @@ describe('WishlistView calendar D&D', () => {
     fireEvent.change(screen.getByPlaceholderText('話した内容やメモを入力'), {
       target: { value: '商談で話した内容を整理したい' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'AIで整理して生成' }))
+    fireEvent.click(screen.getByRole('button', { name: 'AIでメモを予約' }))
 
-    expect(await screen.findByTestId('memo-detail')).toHaveTextContent('商談内容の整理')
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([input, init]) =>
+        requestUrl(input) === '/api/wishlist' && init?.method === 'POST',
+      )
+      expect(createCall).toBeDefined()
+      expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
+        title: '商談内容の整理',
+        description: '商談で話した内容を整理したい',
+        scheduled_at: scheduledAt,
+        duration_minutes: 60,
+        memo_status: 'scheduled',
+      })
+    })
     expect(fetchMock.mock.calls.some(([input, init]) =>
-      requestUrl(input) === '/api/wishlist' && init?.method === 'POST',
-    )).toBe(false)
+      requestUrl(input) === '/api/wishlist/scheduled-memo/calendar' && init?.method === 'POST',
+    )).toBe(true)
   })
 })

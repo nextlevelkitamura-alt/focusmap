@@ -2456,6 +2456,98 @@ export function WishlistView({
     return true
   }, [handleUpdate, targetCalendarId])
 
+  const handleScheduleMemoFromComposer = async () => {
+    const sourceText = intakeText.trim()
+    if (!sourceText || isRecording || isAnalyzing || isTranscribing) return
+
+    setIntakeError(null)
+    setIsAnalyzing(true)
+    setAnalyzeStartedAt(Date.now())
+    try {
+      const res = await fetch("/api/ai-ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: sourceText, model: selectedAiModel }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) {
+        throw new Error(typeof data.error === "string" ? data.error : "予約に失敗しました")
+      }
+
+      const suggestion = readRecord(data.suggestion)
+      const timeCandidates = Array.isArray(suggestion.time_candidates)
+        ? suggestion.time_candidates
+            .map(candidate => readRecord(candidate))
+            .filter(candidate => typeof candidate.scheduled_at === "string")
+            .map(candidate => ({
+              label: typeof candidate.label === "string" ? candidate.label : "指定日時",
+              scheduled_at: String(candidate.scheduled_at),
+              duration_minutes: typeof candidate.duration_minutes === "number" ? candidate.duration_minutes : 60,
+              reason: typeof candidate.reason === "string" ? candidate.reason : "入力から日時を抽出",
+            }))
+        : []
+      const selectedCandidate = timeCandidates[0] ?? null
+      const scheduledAt = selectedCandidate?.scheduled_at
+        ?? (typeof suggestion.scheduled_at === "string" ? suggestion.scheduled_at : null)
+      const durationMinutes = selectedCandidate?.duration_minutes
+        ?? (typeof suggestion.duration_minutes === "number" ? suggestion.duration_minutes : 60)
+      const title = typeof suggestion.title === "string" && suggestion.title.trim()
+        ? suggestion.title.trim()
+        : deriveDraftMemoTitle(sourceText)
+      const tags = Array.isArray(suggestion.tags)
+        ? suggestion.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+        : []
+      const baseAiSourcePayload = { suggestion, intakeText: sourceText }
+      const targetColumn = scheduledAt ? "scheduled" : getMemoCreateDestinationColumn(activeMobileColumn)
+      const mobileColumnOverrides = isMobileMemoLayout
+        ? getMobileColumnCreateOverrides(targetColumn, baseAiSourcePayload)
+        : {}
+
+      const item = await createWishlistMemo({
+        title,
+        project_id: selectedProjectId,
+        category: typeof suggestion.category === "string" && suggestion.category.trim() ? suggestion.category.trim() : null,
+        tags,
+        description: sourceText,
+        time_candidates: timeCandidates,
+        subtask_suggestions: Array.isArray(suggestion.subtask_suggestions) ? suggestion.subtask_suggestions : [],
+        scheduled_at: scheduledAt,
+        duration_minutes: durationMinutes,
+        memo_status: scheduledAt ? "time_candidates" : "unsorted",
+        ai_source_payload: baseAiSourcePayload,
+        ...mobileColumnOverrides,
+      }) as MemoItem
+
+      invalidateWishlistItemsCache()
+      setItems(prev => prev.some(existing => existing.id === item.id) ? prev : [item, ...prev])
+      setTagFilter("all")
+      setSelectedItem(item)
+      setIntakeText("")
+      await refreshTags()
+
+      if (scheduledAt) {
+        const scheduled = await handleCalendarAdd({
+          ...item,
+          scheduled_at: scheduledAt,
+          duration_minutes: durationMinutes,
+          memo_status: "scheduled",
+          is_today: false,
+        } as MemoItem)
+        if (scheduled) {
+          window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+          return
+        }
+      }
+
+      setDetailOpen(true)
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "予約に失敗しました")
+    } finally {
+      setIsAnalyzing(false)
+      setAnalyzeStartedAt(null)
+    }
+  }
+
   const handleMemoCalendarDrop = useCallback(async (memoId: string, startTime: Date, durationMinutes: number) => {
     const target = items.find(item => item.id === memoId)
     if (!target || target.is_completed || target.memo_status === "completed") return
@@ -4056,10 +4148,10 @@ export function WishlistView({
       />
 
       {isMobileMemoLayout && !linkedMemoFocus && !compactComposer && (
-        <div className="fixed inset-x-0 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-40 border-t border-white/10 bg-[#050607]/95 px-3 py-2 shadow-[0_-16px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl md:hidden">
+        <div className="fixed inset-x-0 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-40 border-t border-white/10 bg-[#050607]/92 px-3 py-2 shadow-[0_-16px_36px_rgba(0,0,0,0.42)] backdrop-blur-xl md:hidden">
           <div className="mx-auto max-w-md space-y-2">
             {isAnalyzing && (
-              <div className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-neutral-300">
+              <div className="flex min-h-8 items-center gap-2 rounded-xl border border-lime-300/20 bg-lime-300/[0.08] px-3 py-1.5 text-xs text-lime-100">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 <span className="min-w-0 flex-1 truncate">
                   {ANALYZE_STATUS_MESSAGES[Math.min(Math.floor(analyzeElapsedSeconds / 4), ANALYZE_STATUS_MESSAGES.length - 1)]}
@@ -4090,7 +4182,8 @@ export function WishlistView({
                 {voiceError && <span className="min-w-0 flex-1 truncate text-red-200">{voiceError}</span>}
               </div>
             )}
-            <div className="flex items-center gap-2">
+            <div className="rounded-[22px] border border-white/10 bg-[#0d0e10]/95 px-2 py-1.5 shadow-[0_10px_34px_rgba(0,0,0,0.32)]">
+              <div className="flex items-end gap-1.5">
               <textarea
                 value={intakeText}
                 onChange={e => setIntakeText(e.target.value)}
@@ -4100,9 +4193,10 @@ export function WishlistView({
                 }}
                 placeholder="話した内容やメモを入力"
                 rows={1}
-                className="min-h-[56px] min-w-0 flex-1 resize-none rounded-xl border border-white/10 bg-[#101010] px-4 py-4 text-[15px] leading-5 text-neutral-100 outline-none placeholder:text-neutral-500 focus:border-white/25 focus:ring-2 focus:ring-white/10"
+                className="min-h-11 max-h-24 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-[15px] leading-5 text-neutral-100 outline-none placeholder:text-neutral-500"
                 disabled={isAnalyzing || isTranscribing}
               />
+              <div className="flex shrink-0 items-center gap-1 pb-0.5">
               <Button
                 type="button"
                 onClick={handleVoiceToggle}
@@ -4110,43 +4204,52 @@ export function WishlistView({
                 variant="outline"
                 size="icon"
                 className={cn(
-                  "h-14 w-14 shrink-0 rounded-xl border-white/10 bg-[#101010] text-neutral-100 hover:bg-white/10",
+                  "h-11 w-11 shrink-0 rounded-full border-transparent bg-transparent text-neutral-400 shadow-none hover:bg-white/[0.08] hover:text-neutral-100",
                   isRecording && "border-red-400/40 bg-red-500/20 text-red-100",
                 )}
                 aria-label={isRecording ? "録音を停止" : "音声入力"}
                 title={isRecording ? "録音を停止" : "音声入力"}
               >
                 {isTranscribing ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Loader2 className="h-[18px] w-[18px] animate-spin" />
                 ) : isRecording ? (
-                  <Square className="h-5 w-5" />
+                  <Square className="h-[18px] w-[18px]" />
                 ) : (
-                  <Mic className="h-5 w-5" />
+                  <Mic className="h-[18px] w-[18px]" />
                 )}
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => { void handleAnalyze() }}
-                disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
-                size="icon"
-                className="h-14 w-14 shrink-0 rounded-xl border-white/10 bg-[#101010] text-neutral-100 hover:bg-white/10 disabled:opacity-40"
-                aria-label="AIで整理して生成"
-                title="AIで整理して生成"
-              >
-                <Sparkles className="h-6 w-6" />
-              </Button>
+              {hasIntakeText && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => { void handleScheduleMemoFromComposer() }}
+                  disabled={isRecording || isAnalyzing || isTranscribing}
+                  size="icon"
+                  className="h-11 w-11 shrink-0 rounded-full border-lime-300/25 bg-lime-300/[0.12] text-lime-100 shadow-[0_0_18px_rgba(163,230,53,0.18)] hover:bg-lime-300/20 disabled:opacity-40"
+                  aria-label="AIでメモを予約"
+                  title="AIでメモを予約"
+                >
+                  {isAnalyzing ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <Sparkles className="h-[18px] w-[18px]" />}
+                </Button>
+              )}
               <Button
                 type="button"
                 onClick={handleAddMemoFromComposer}
                 disabled={disableMemoAdd}
                 size="icon"
-                className="h-14 w-14 shrink-0 rounded-full bg-neutral-100 text-neutral-950 shadow-[0_8px_24px_rgba(255,255,255,0.16)] hover:bg-white disabled:opacity-50"
+                className={cn(
+                  "h-11 w-11 shrink-0 rounded-full disabled:opacity-50",
+                  hasIntakeText
+                    ? "bg-white/[0.08] text-neutral-100 shadow-none hover:bg-white/[0.14]"
+                    : "bg-neutral-100 text-neutral-950 shadow-[0_8px_22px_rgba(255,255,255,0.14)] hover:bg-white",
+                )}
                 aria-label="メモを追加"
                 title="メモを追加"
               >
-                <Plus className="h-7 w-7" />
+                <Plus className="h-5 w-5" />
               </Button>
+              </div>
+              </div>
             </div>
           </div>
         </div>
