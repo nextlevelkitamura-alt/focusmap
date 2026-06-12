@@ -3452,7 +3452,11 @@ export function WishlistView({
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className={cn(
           "h-full min-h-0",
-          useDesktopMemoBoard ? "overflow-hidden p-3" : "overflow-y-auto px-4 py-4 pb-24 md:px-6",
+          useDesktopMemoBoard
+            ? "overflow-hidden p-3"
+            : isMobileMemoLayout && !linkedMemoFocus
+              ? "overflow-hidden px-4 py-4 pb-24"
+              : "overflow-y-auto px-4 py-4 pb-24 md:px-6",
         )}>
           {linkedMemoFocus && (
             <div className="mb-3 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs">
@@ -3979,16 +3983,16 @@ export function WishlistView({
               <div
                 ref={mobileColumnsRef}
                 onScroll={handleMobileColumnsScroll}
-                className="-mx-4 overflow-x-auto scroll-smooth pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="-mx-4 h-full min-h-0 overflow-x-auto scroll-smooth pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 style={{ scrollSnapType: "x mandatory" }}
               >
-                <div className="flex min-w-full">
+                <div className="flex h-full min-w-full">
                   {MOBILE_COLUMN_ORDER.map(column => {
                     const section = mobileSections[column]
                     return (
                       <div
                         key={column}
-                        className="w-full shrink-0 px-4"
+                        className="h-full w-full shrink-0 px-4"
                         style={{ scrollSnapAlign: "start" }}
                       >
                         <MemoSection
@@ -4003,6 +4007,7 @@ export function WishlistView({
                           projectById={projectById}
                           tagColors={tagColors}
                           nativeMemoDrag={(column === "unsorted" || column === "today") && isCalendarSplitVisible}
+                          className="h-full"
                           selectMode={selectMode}
                           selectedMemoIds={selectedMemoIds}
                           onToggleSelect={toggleMemoSelection}
