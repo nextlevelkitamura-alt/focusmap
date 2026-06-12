@@ -6,6 +6,9 @@ import { upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 const CODEX_INBOX_GROUP_TITLE = 'Codex Inbox'
 const MAX_PROMPT_CHARS = 8_000
+const FOCUSMAP_HANDOFF_THREAD_WINDOW_MS = 24 * 60 * 60 * 1000
+const PROMPT_MATCH_PREFIX_CHARS = 500
+const MIN_PROMPT_MATCH_CHARS = 120
 
 type SupabaseServiceClient = Awaited<ReturnType<typeof authenticateAgent>>['supabase']
 
@@ -32,6 +35,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function compactString(value: unknown, max = 2_000) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
+}
+
+function promptMatchText(value: unknown) {
+  return compactString(value, MAX_PROMPT_CHARS)
+    ?.toLowerCase()
+    .replace(/\s+/g, ' ') ?? ''
+}
+
+function promptsLikelyMatch(leftValue: unknown, rightValue: unknown) {
+  const left = promptMatchText(leftValue)
+  const right = promptMatchText(rightValue)
+  if (!left || !right) return false
+  if (left === right) return true
+
+  const prefixLength = Math.min(PROMPT_MATCH_PREFIX_CHARS, left.length, right.length)
+  return prefixLength >= MIN_PROMPT_MATCH_CHARS &&
+    left.slice(0, prefixLength) === right.slice(0, prefixLength)
 }
 
 function parseThreadId(value: unknown) {
@@ -166,6 +186,40 @@ function timeMs(value: unknown): number | null {
     return Number.isFinite(ms) ? ms : null
   }
   return null
+}
+
+function isThreadNearManualHandoffTime(thread: ImportedCodexThread, task: Record<string, unknown>) {
+  const threadMs = timeMs(thread.updated_at_ms)
+  const taskMs = timeMs(task.started_at) ?? timeMs(task.created_at)
+  if (threadMs === null || taskMs === null) return true
+  return threadMs >= taskMs - 5 * 60 * 1000 &&
+    threadMs - taskMs <= FOCUSMAP_HANDOFF_THREAD_WINDOW_MS
+}
+
+export function isImportedThreadMatchingManualHandoff(
+  thread: ImportedCodexThread,
+  task: Record<string, unknown>,
+) {
+  const firstUserMessage = compactString(thread.first_user_message, MAX_PROMPT_CHARS)
+  if (!firstUserMessage || isInternalCodexUserMessage(firstUserMessage)) return false
+  if (compactString(task.executor, 80) !== 'codex_app') return false
+  if (!compactString(task.source_task_id, 120)) return false
+  if (compactString(task.codex_thread_id, 200)) return false
+  const result = isRecord(task.result) ? task.result : {}
+  if (compactString(result.codex_thread_id, 200)) return false
+  if (result.codex_manual_handoff !== true) return false
+  const threadCwd = compactString(thread.cwd, 500)
+  const taskCwd = compactString(task.cwd, 500)
+  if (threadCwd && taskCwd && threadCwd !== taskCwd) return false
+  if (!isThreadNearManualHandoffTime(thread, task)) return false
+  return promptsLikelyMatch(task.prompt, firstUserMessage)
+}
+
+function isInternalCodexUserMessage(value: string) {
+  const text = value.trim()
+  return text.startsWith('# AGENTS.md instructions') ||
+    text.startsWith('<environment_context>') ||
+    text.includes('\n<environment_context>')
 }
 
 export function isThreadWithinProjectImportScope(
@@ -312,6 +366,33 @@ async function existingImport(
   return null
 }
 
+async function existingManualHandoffForThread(
+  supabase: SupabaseServiceClient,
+  token: AgentTokenRecord,
+  thread: ImportedCodexThread,
+) {
+  if (!compactString(thread.first_user_message, MAX_PROMPT_CHARS)) return null
+
+  const { data, error } = await supabase
+    .from('ai_tasks')
+    .select('id, source_task_id, prompt, cwd, executor, codex_thread_id, result, created_at, started_at')
+    .eq('user_id', token.user_id)
+    .eq('executor', 'codex_app')
+    .not('source_task_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (error) throw error
+
+  const match = (Array.isArray(data) ? data : [])
+    .map(row => row as Record<string, unknown>)
+    .find(row => isImportedThreadMatchingManualHandoff(thread, row))
+  if (!match) return null
+  return {
+    ai_task_id: String(match.id),
+    source_task_id: compactString(match.source_task_id, 120),
+  }
+}
+
 async function assertRunnerCanImport(
   supabase: SupabaseServiceClient,
   token: AgentTokenRecord,
@@ -347,6 +428,15 @@ export async function POST(request: NextRequest) {
     const imported = await existingImport(supabase, token, thread.id)
     if (imported?.ai_task_id) {
       return NextResponse.json({ imported: false, reason: 'already_imported', ...imported })
+    }
+
+    const focusmapManualHandoff = await existingManualHandoffForThread(supabase, token, thread)
+    if (focusmapManualHandoff) {
+      return NextResponse.json({
+        imported: false,
+        reason: 'focusmap_manual_handoff',
+        ...focusmapManualHandoff,
+      })
     }
 
     const { project, reason } = await findEnabledImportProject(supabase, token, thread)

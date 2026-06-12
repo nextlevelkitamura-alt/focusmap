@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   importedThreadResult,
+  isImportedThreadMatchingManualHandoff,
   isThreadWithinProjectImportScope,
   memoFromImportedThread,
   promptFromImportedThread,
@@ -96,6 +97,41 @@ describe('codex orphan thread import helpers', () => {
       space_id: 'space-1',
       repo_path: '/Users/me/other',
       codex_thread_import_enabled_since: '2026-06-10T09:59:00.000Z',
+    })).toBe(false)
+  })
+
+  test('matches Focusmap manual handoff tasks so repo import can skip them', () => {
+    const handoffTask = {
+      id: 'ai-task-1',
+      source_task_id: 'mindmap-node-1',
+      prompt: '最初の依頼です\n詳細',
+      cwd: '/Users/me/project',
+      executor: 'codex_app',
+      codex_thread_id: null,
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: 'prompt_waiting',
+      },
+      created_at: '2026-06-10T09:58:00.000Z',
+      started_at: '2026-06-10T09:58:00.000Z',
+    }
+
+    expect(isImportedThreadMatchingManualHandoff(thread, handoffTask)).toBe(true)
+    expect(isImportedThreadMatchingManualHandoff(thread, {
+      ...handoffTask,
+      source_task_id: null,
+    })).toBe(false)
+    expect(isImportedThreadMatchingManualHandoff(thread, {
+      ...handoffTask,
+      cwd: '/Users/me/other',
+    })).toBe(false)
+    expect(isImportedThreadMatchingManualHandoff(thread, {
+      ...handoffTask,
+      result: { codex_manual_handoff: false },
+    })).toBe(false)
+    expect(isImportedThreadMatchingManualHandoff(thread, {
+      ...handoffTask,
+      codex_thread_id: 'other-thread-id',
     })).toBe(false)
   })
 })

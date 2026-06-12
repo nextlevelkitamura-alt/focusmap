@@ -24,6 +24,9 @@ const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) 
   : 2 * 60 * 60 * 1000;
 const ORPHAN_IMPORT_RETRY_MS = 5 * 60 * 1000;
 const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
+const FOCUSMAP_HANDOFF_THREAD_WINDOW_MS = 24 * 60 * 60 * 1000;
+const PROMPT_MATCH_PREFIX_CHARS = 500;
+const MIN_PROMPT_MATCH_CHARS = 120;
 let orphanImportApiUnavailableUntil = 0;
 let importScopesApiUnavailableUntil = 0;
 
@@ -116,6 +119,23 @@ export function codexThreadGeneratedTitle(row: Pick<CodexThreadRow, 'title'>): s
 
 function textFingerprint(value: string): string {
   return compactText(value, 500).toLowerCase().replace(/\s+/g, ' ').slice(0, 180);
+}
+
+function promptMatchText(value: unknown): string {
+  return compactText(typeof value === 'string' ? value : '', 8_000)
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function promptsLikelyMatch(leftValue: unknown, rightValue: unknown): boolean {
+  const left = promptMatchText(leftValue);
+  const right = promptMatchText(rightValue);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const prefixLength = Math.min(PROMPT_MATCH_PREFIX_CHARS, left.length, right.length);
+  return prefixLength >= MIN_PROMPT_MATCH_CHARS &&
+    left.slice(0, prefixLength) === right.slice(0, prefixLength);
 }
 
 function timestampToIso(value: unknown): string | null {
@@ -353,15 +373,43 @@ export function knownCodexThreadIds(tasks: AiTask[]): Set<string> {
   return ids;
 }
 
+function isThreadNearManualHandoffTime(row: CodexThreadRow, task: AiTask): boolean {
+  const threadMs = timeMs(row.created_at_ms) ?? timeMs(row.updated_at_ms);
+  const taskMs = timeMs(task.started_at) ?? timeMs(task.created_at);
+  if (threadMs === null || taskMs === null) return true;
+  return threadMs >= taskMs - 5 * 60 * 1000 &&
+    threadMs - taskMs <= FOCUSMAP_HANDOFF_THREAD_WINDOW_MS;
+}
+
+export function isFocusmapManualHandoffThread(row: CodexThreadRow, tasks: AiTask[]): boolean {
+  const firstUserMessage = compactText(row.first_user_message ?? '', 8_000);
+  if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
+  const rowCwd = row.cwd?.trim() ?? '';
+
+  return tasks.some(task => {
+    if (task.executor !== 'codex_app') return false;
+    if (!task.source_task_id) return false;
+    if (taskThreadId(task)) return false;
+    const result = taskResult(task);
+    if (result.codex_manual_handoff !== true) return false;
+    const taskCwd = task.cwd?.trim() ?? '';
+    if (rowCwd && taskCwd && rowCwd !== taskCwd) return false;
+    if (!isThreadNearManualHandoffTime(row, task)) return false;
+    return promptsLikelyMatch(task.prompt, firstUserMessage);
+  });
+}
+
 export function isOrphanThreadImportCandidate(
   row: CodexThreadRow,
   knownThreadIds: Set<string>,
   importScopes: CodexThreadImportScope[],
   nowMs = Date.now(),
   windowMs = ORPHAN_IMPORT_WINDOW_MS,
+  focusmapTasks: AiTask[] = [],
 ): boolean {
   if (!row.id || knownThreadIds.has(row.id)) return false;
   if (boolValue(row.archived)) return false;
+  if (isFocusmapManualHandoffThread(row, focusmapTasks)) return false;
   const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
   if (updatedMs <= 0) return false;
   const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs);
@@ -665,7 +713,7 @@ async function importOrphanThreads(
 
   for (const row of rows) {
     if (imported >= ORPHAN_IMPORT_LIMIT) break;
-    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now)) continue;
+    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now, ORPHAN_IMPORT_WINDOW_MS, tasks)) continue;
     const cachedAt = orphanImportCache.get(row.id) ?? 0;
     if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;
     orphanImportCache.set(row.id, now);
@@ -676,7 +724,7 @@ async function importOrphanThreads(
         imported += 1;
         knownThreadIds.add(row.id);
         info(`codex orphan thread imported thread=${row.id.slice(0, 8)} task=${result.ai_task_id ?? 'unknown'}`);
-      } else if (result.reason === 'already_imported') {
+      } else if (result.reason === 'already_imported' || result.reason === 'focusmap_manual_handoff') {
         knownThreadIds.add(row.id);
       } else {
         debug(`codex orphan thread skipped thread=${row.id.slice(0, 8)} reason=${result.reason ?? 'unknown'}`);

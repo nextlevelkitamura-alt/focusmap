@@ -3,6 +3,7 @@ import {
   activityMessages,
   codexThreadGeneratedTitle,
   hasPendingArchiveRequest,
+  isFocusmapManualHandoffThread,
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
@@ -229,6 +230,54 @@ describe('codex-thread-monitor state detection', () => {
       ...base,
       first_user_message: '# AGENTS.md instructions\n<environment_context>',
     }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+  });
+
+  test('does not import Focusmap manual handoff threads as orphan repo chats', () => {
+    const nowMs = Date.parse('2026-06-10T10:00:00.000Z');
+    const importScopes = [{
+      project_id: 'project-1',
+      repo_path: '/Users/me/project',
+      enabled_since: '2026-06-10T09:00:00.000Z',
+    }];
+    const row = {
+      ...threadRow,
+      id: 'thread-focusmap-handoff',
+      cwd: '/Users/me/project',
+      archived: 0,
+      first_user_message: 'マインドマップから送ったCodex依頼\n詳細',
+      created_at_ms: Date.parse('2026-06-10T09:58:30.000Z'),
+      updated_at_ms: Date.parse('2026-06-10T09:59:00.000Z'),
+    };
+    const handoffTask = task({
+      prompt: 'マインドマップから送ったCodex依頼\n詳細',
+      cwd: '/Users/me/project',
+      source_task_id: 'mindmap-node-1',
+      status: 'needs_input',
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: 'prompt_waiting',
+      },
+      created_at: '2026-06-10T09:58:00.000Z',
+      started_at: '2026-06-10T09:58:00.000Z',
+    });
+
+    expect(isFocusmapManualHandoffThread(row, [handoffTask] as never)).toBe(true);
+    expect(isOrphanThreadImportCandidate(
+      row,
+      new Set(),
+      importScopes,
+      nowMs,
+      10 * 60_000,
+      [handoffTask] as never,
+    )).toBe(false);
+    expect(isFocusmapManualHandoffThread(row, [
+      task({
+        prompt: 'マインドマップから送ったCodex依頼\n詳細',
+        cwd: '/Users/me/project',
+        source_task_id: null,
+        result: { codex_manual_handoff: true, codex_run_state: 'prompt_waiting' },
+      }),
+    ] as never)).toBe(false);
   });
 
   test('matches import scope by repo path and enabled time', () => {
