@@ -280,6 +280,13 @@ const isInteractiveMapTarget = (target: EventTarget | null) =>
 const isMindMapNodeTarget = (target: EventTarget | null) =>
     target instanceof HTMLElement && Boolean(target.closest("[data-id]"));
 
+const clearMindMapTextSelection = () => {
+    if (typeof window === "undefined") return;
+    const selection = window.getSelection?.();
+    if (!selection || selection.rangeCount === 0) return;
+    selection.removeAllRanges();
+};
+
 type PersistedMindmapTitleDraft = {
     taskId: string;
     title: string;
@@ -830,7 +837,7 @@ function CustomTaskNode({
             tabIndex={0}
             className={cn(
                 "absolute z-10 rounded-lg border bg-background px-1.5 py-1 text-[13px] text-foreground shadow-sm transition-colors dark:bg-[#171513] dark:text-neutral-200/95",
-                "group flex flex-col gap-0 outline-none",
+                "group flex select-none flex-col gap-0 outline-none",
                 showLongNodeHeadingAction && "pb-2.5",
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
@@ -989,7 +996,7 @@ function CustomTaskNode({
                         rows={1}
                         value={editValue}
                         className={cn(
-                            "min-w-0 flex-1 resize-none overflow-hidden bg-transparent px-0.5 font-bold leading-tight outline-none",
+                            "min-w-0 flex-1 resize-none overflow-hidden bg-transparent px-0.5 font-bold leading-tight outline-none select-text",
                             "whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
                             node.isDone && "line-through text-muted-foreground"
                         )}
@@ -1006,7 +1013,7 @@ function CustomTaskNode({
                     />
                 ) : (
                     <div className={cn(
-                        "max-h-full min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-0.5 font-bold leading-tight [overflow-wrap:anywhere]",
+                        "max-h-full min-w-0 flex-1 select-none overflow-y-auto whitespace-pre-wrap break-words px-0.5 font-bold leading-tight [overflow-wrap:anywhere]",
                         showLongNodeHeadingAction && !isGeneratingHeading && "pr-5",
                         isGeneratingHeading && "pr-7 text-sky-50",
                         node.isDone && "line-through text-muted-foreground",
@@ -1359,7 +1366,7 @@ function CustomProjectNode({
             aria-label={isEditing ? undefined : node.title}
             tabIndex={0}
             className={cn(
-                "absolute z-10 flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm outline-none",
+                "absolute z-10 flex select-none items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm outline-none",
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 externalDropActive && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]",
@@ -1397,7 +1404,7 @@ function CustomProjectNode({
                     rows={1}
                     value={editValue}
                     aria-label="プロジェクト名"
-                    className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-center font-bold leading-tight text-primary-foreground outline-none placeholder:text-primary-foreground/60"
+                    className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-center font-bold leading-tight text-primary-foreground outline-none placeholder:text-primary-foreground/60 select-text"
                     onChange={(event) => {
                         setEditValue(event.currentTarget.value);
                         event.currentTarget.style.height = "auto";
@@ -1408,7 +1415,7 @@ function CustomProjectNode({
                     onKeyDown={handleInputKeyDown}
                 />
             ) : (
-                <span className={cn("truncate", floatingEditing && "opacity-0")}>{node.title}</span>
+                <span className={cn("select-none truncate", floatingEditing && "opacity-0")}>{node.title}</span>
             )}
         </div>
     );
@@ -2379,6 +2386,8 @@ export function CustomMindMapView({
             return;
         }
 
+        clearMindMapTextSelection();
+
         if (isMobile && event.pointerType === "touch") {
             event.stopPropagation();
             event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -2733,6 +2742,8 @@ export function CustomMindMapView({
         if (!dragState) return;
 
         const handlePointerMove = (event: PointerEvent) => {
+            if (event.cancelable) event.preventDefault();
+            clearMindMapTextSelection();
             const prev = dragStateRef.current;
             if (!prev) return;
             const next = getDragStateForClientPoint(prev, event.clientX, event.clientY);
@@ -2746,6 +2757,7 @@ export function CustomMindMapView({
 
         const handlePointerUp = (event: PointerEvent) => {
             const prev = dragStateRef.current;
+            if (prev) clearMindMapTextSelection();
             if (prev?.dragging) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
                 const dropElement = typeof document.elementFromPoint === "function"
@@ -2794,6 +2806,16 @@ export function CustomMindMapView({
             window.removeEventListener("pointercancel", handlePointerUp);
         };
     }, [commitViewportTransform, dragState, getDragStateForClientPoint, onDuplicateTasks, onMoveTask, onMoveTasks, publishNodeCalendarDrag]);
+
+    const shouldLockTextSelection = !!dragState || !!selectionBox || !!panState;
+
+    useEffect(() => {
+        if (!shouldLockTextSelection || typeof document === "undefined") return;
+        document.body.classList.add("mindmap-selection-lock");
+        return () => {
+            document.body.classList.remove("mindmap-selection-lock");
+        };
+    }, [shouldLockTextSelection]);
 
     useEffect(() => {
         if (!selectionBox) return;
@@ -3293,7 +3315,7 @@ export function CustomMindMapView({
                 ref={viewportRef}
                 data-testid="custom-mind-map-viewport"
                 className={cn(
-                    "h-full w-full overflow-hidden bg-[radial-gradient(circle,rgba(255,255,255,0.16)_1px,transparent_1px)] [background-size:20px_20px]",
+                    "mindmap-touch-guard h-full w-full overflow-hidden bg-[radial-gradient(circle,rgba(255,255,255,0.16)_1px,transparent_1px)] [background-size:20px_20px]",
                     panState ? "cursor-grabbing select-none" : spacePressed ? "cursor-grab" : "cursor-default"
                 )}
                 style={{ touchAction: "none", overscrollBehavior: "contain" }}
@@ -3462,7 +3484,7 @@ export function CustomMindMapView({
                             aria-label={floatingEditKind === "project" ? "プロジェクト名" : "ノード名"}
                             value={floatingEditValue}
                             className={cn(
-                                "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 text-base font-bold leading-5 outline-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
+                                "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 text-base font-bold leading-5 outline-none select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
                                 floatingEditKind === "project"
                                     ? "h-5 min-h-5 text-center text-primary-foreground placeholder:text-primary-foreground/60"
                                     : "h-5 min-h-5 px-0.5 text-foreground placeholder:text-muted-foreground"

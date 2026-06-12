@@ -505,6 +505,29 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
   })
 
+  test("clears text selection and locks user selection while a mobile node drag is active", async () => {
+    mockViewportRect()
+    renderMap({ isMobile: true })
+
+    const rootText = screen.getByText("Root task")
+    const range = document.createRange()
+    range.selectNodeContents(rootText)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    expect(selection?.toString()).toBe("Root task")
+
+    const rootNode = getNode("Root task", "root-1")
+    fireEvent.pointerDown(rootNode, { button: 0, pointerId: 1, pointerType: "touch", clientX: 280, clientY: 280 })
+
+    expect(window.getSelection()?.rangeCount).toBe(0)
+    await waitFor(() => expect(document.body).toHaveClass("mindmap-selection-lock"))
+
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "touch", clientX: 280, clientY: 280 })
+
+    await waitFor(() => expect(document.body).not.toHaveClass("mindmap-selection-lock"))
+  })
+
   test("auto-pans the mobile viewport while a dragged task is held near the edge", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 })
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 })

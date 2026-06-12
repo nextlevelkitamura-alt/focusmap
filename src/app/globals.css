@@ -141,9 +141,13 @@
   -webkit-touch-callout: none;
 }
 
-/* iOS long-press guard for interactive timeline surfaces. */
+/* iOS long-press guard for interactive drag surfaces. */
 .timeline-touch-guard,
-.timeline-touch-guard * {
+.timeline-touch-guard *,
+.mindmap-touch-guard,
+.mindmap-touch-guard *,
+.mindmap-selection-lock,
+.mindmap-selection-lock * {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
@@ -152,7 +156,15 @@
 .timeline-touch-guard input,
 .timeline-touch-guard textarea,
 .timeline-touch-guard select,
-.timeline-touch-guard [contenteditable="true"] {
+.timeline-touch-guard [contenteditable="true"],
+.mindmap-touch-guard input,
+.mindmap-touch-guard textarea,
+.mindmap-touch-guard select,
+.mindmap-touch-guard [contenteditable="true"],
+.mindmap-selection-lock input,
+.mindmap-selection-lock textarea,
+.mindmap-selection-lock select,
+.mindmap-selection-lock [contenteditable="true"] {
   -webkit-touch-callout: default;
   -webkit-user-select: text;
   user-select: text;
