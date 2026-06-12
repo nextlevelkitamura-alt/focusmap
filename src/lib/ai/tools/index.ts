@@ -9,6 +9,7 @@ import { z } from 'zod/v3'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
+import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
@@ -16,6 +17,8 @@ const PROJECT_CONTEXT_STATUSES = ['not_started', 'in_progress', 'blocked', 'done
 const TASK_STAGES = ['plan', 'scheduled', 'executing', 'done', 'archived'] as const
 const MEMO_LINK_ACTIONS = ['link', 'move', 'unlink'] as const
 const MEMO_SOURCE_TYPES = ['wishlist', 'note'] as const
+const NOTE_ORGANIZATION_RECORD_TYPES = ['wishlist', 'memo_item'] as const
+const TOKYO_TIME_ZONE = 'Asia/Tokyo'
 
 type MindmapTaskRow = {
   id: string
@@ -85,7 +88,177 @@ function recordTextMatches(record: Record<string, unknown>, keys: string[], quer
 function compactPreview(value: string | null | undefined, limit = 120): string | null {
   const text = (value ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return null
-  return text.length > limit ? `${text.slice(0, limit)}...` : text
+  const chars = Array.from(text)
+  return chars.length > limit ? `${chars.slice(0, limit).join('')}...` : text
+}
+
+function normalizedTextLength(value: string | null | undefined): number {
+  return Array.from((value ?? '').replace(/\s+/g, ' ').trim()).length
+}
+
+function pushLinkId(map: Map<string, Set<string>>, key: string | null | undefined, taskId: string | null | undefined) {
+  if (!key || !taskId) return
+  const current = map.get(key) ?? new Set<string>()
+  current.add(taskId)
+  map.set(key, current)
+}
+
+function setToSortedArray(value: Set<string> | undefined): string[] {
+  return Array.from(value ?? []).sort()
+}
+
+const tokyoDateKeyFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TOKYO_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+function formatTokyoDateKey(date: Date): string {
+  return tokyoDateKeyFormatter.format(date)
+}
+
+function parseTokyoDateKey(value: string | undefined): string | null {
+  if (!value?.trim()) return formatTokyoDateKey(new Date())
+  const trimmed = value.trim()
+  const dateOnly = trimmed.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
+  if (dateOnly) return dateOnly
+  const parsed = new Date(trimmed)
+  if (isNaN(parsed.getTime())) return null
+  return formatTokyoDateKey(parsed)
+}
+
+function addTokyoDays(dateKey: string, days: number): string {
+  const base = new Date(`${dateKey}T00:00:00+09:00`)
+  return formatTokyoDateKey(new Date(base.getTime() + days * 24 * 60 * 60 * 1000))
+}
+
+function tokyoDateTime(dateKey: string, timeString: string): Date | null {
+  if (!/^\d{2}:\d{2}$/.test(timeString)) return null
+  const [hours, minutes] = timeString.split(':').map(Number)
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null
+  }
+  return new Date(`${dateKey}T${timeString}:00+09:00`)
+}
+
+function normalizeWorkingHours(value: WorkingHours | undefined): WorkingHours | null {
+  const hours = value ?? DEFAULT_WORKING_HOURS
+  if (!tokyoDateTime('2026-01-01', hours.start) || !tokyoDateTime('2026-01-01', hours.end)) return null
+  const start = tokyoDateTime('2026-01-01', hours.start)!
+  const end = tokyoDateTime('2026-01-01', hours.end)!
+  if (end <= start) return null
+  return hours
+}
+
+type BusySlotSource = {
+  id?: string | null
+  title?: string | null
+  start: string | Date
+  end: string | Date
+  source: 'calendar' | 'task'
+  calendar_id?: string | null
+  project_id?: string | null
+}
+
+type BusySlot = {
+  id: string | null
+  title: string
+  source: 'calendar' | 'task'
+  calendar_id: string | null
+  project_id: string | null
+  start: Date
+  end: Date
+}
+
+type CalendarOpenSlot = {
+  date: string
+  start_time: string
+  end_time: string
+  free_until: string
+  free_minutes: number
+  duration_minutes: number
+}
+
+function toBusySlot(source: BusySlotSource): BusySlot | null {
+  const start = source.start instanceof Date ? source.start : new Date(source.start)
+  const end = source.end instanceof Date ? source.end : new Date(source.end)
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) return null
+  return {
+    id: source.id ?? null,
+    title: source.title ?? '無題',
+    source: source.source,
+    calendar_id: source.calendar_id ?? null,
+    project_id: source.project_id ?? null,
+    start,
+    end,
+  }
+}
+
+function findOpenSlotsForDay({
+  dateKey,
+  busySlots,
+  durationMinutes,
+  workingHours,
+  limit,
+}: {
+  dateKey: string
+  busySlots: BusySlot[]
+  durationMinutes: number
+  workingHours: WorkingHours
+  limit: number
+}): CalendarOpenSlot[] {
+  const workStart = tokyoDateTime(dateKey, workingHours.start)
+  const workEnd = tokyoDateTime(dateKey, workingHours.end)
+  if (!workStart || !workEnd) return []
+
+  const durationMs = durationMinutes * 60_000
+  const dayBusy = busySlots
+    .filter(slot => slot.start < workEnd && slot.end > workStart)
+    .map(slot => ({
+      ...slot,
+      start: slot.start < workStart ? workStart : slot.start,
+      end: slot.end > workEnd ? workEnd : slot.end,
+    }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime())
+
+  const results: Array<{
+    date: string
+    start_time: string
+    end_time: string
+    free_until: string
+    free_minutes: number
+    duration_minutes: number
+  }> = []
+  let cursor = workStart
+  for (const slot of dayBusy) {
+    if (slot.end <= cursor) continue
+    if (slot.start.getTime() - cursor.getTime() >= durationMs) {
+      const freeMinutes = Math.floor((slot.start.getTime() - cursor.getTime()) / 60_000)
+      results.push({
+        date: dateKey,
+        start_time: cursor.toISOString(),
+        end_time: addMinutes(cursor, durationMinutes).toISOString(),
+        free_until: slot.start.toISOString(),
+        free_minutes: freeMinutes,
+        duration_minutes: durationMinutes,
+      })
+    }
+    if (slot.end > cursor) cursor = slot.end
+    if (results.length >= limit) return results
+  }
+  if (workEnd.getTime() - cursor.getTime() >= durationMs) {
+    const freeMinutes = Math.floor((workEnd.getTime() - cursor.getTime()) / 60_000)
+    results.push({
+      date: dateKey,
+      start_time: cursor.toISOString(),
+      end_time: addMinutes(cursor, durationMinutes).toISOString(),
+      free_until: workEnd.toISOString(),
+      free_minutes: freeMinutes,
+      duration_minutes: durationMinutes,
+    })
+  }
+  return results.slice(0, limit)
 }
 
 function buildMindmapOrder(nodes: MindmapTaskRow[]) {
@@ -766,6 +939,263 @@ export const listProjectTasks = tool({
   },
 })
 
+export const listNotesForOrganization = tool({
+  description:
+    'ノート/メモ整理用に、未整理メモや構造化メモの見出しと詳細冒頭だけを軽量取得する。マインドマップ整理やノート整理では最初に使い、本文全量を読まずに候補を判定する。',
+  inputSchema: z.object({
+    projectId: z.string().optional().describe('対象プロジェクトID。プロジェクトチャットでは原則このIDを指定する。'),
+    query: z.string().optional().describe('見出し・本文冒頭の検索語。'),
+    recordTypes: z.array(z.enum(NOTE_ORGANIZATION_RECORD_TYPES)).optional().describe('wishlist / memo_item のどちらを見るか。未指定なら両方。'),
+    includeCompleted: z.boolean().optional().describe('完了・却下・アーカイブ済みも含めるか。通常はfalse。'),
+    previewChars: z.number().optional().describe('詳細冒頭の文字数。通常は30文字、最大120文字。'),
+    limit: z.number().optional().describe('返す件数。最大100件。'),
+  }),
+  execute: async ({ projectId, query, recordTypes, includeCompleted, previewChars, limit }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const maxRows = normalizeLimit(limit, 40, 100)
+    const previewLimit = normalizeLimit(previewChars, 30, 120)
+    const includeWishlist = !recordTypes || recordTypes.includes('wishlist')
+    const includeMemoItems = !recordTypes || recordTypes.includes('memo_item')
+    const records: Array<Record<string, unknown>> = []
+
+    if (includeWishlist) {
+      let wishlistQuery = supabase
+        .from('ideal_goals')
+        .select('id, title, description, project_id, memo_status, status, scheduled_at, duration_minutes, google_event_id, tags, ai_source_payload, is_completed, created_at, updated_at')
+        .eq('user_id', user.id)
+        .in('status', ['wishlist', 'memo'])
+        .order('updated_at', { ascending: false })
+        .limit(Math.min(maxRows * 3, 300))
+      if (projectId) wishlistQuery = wishlistQuery.eq('project_id', projectId)
+
+      const { data, error } = await wishlistQuery
+      if (error) return { success: false, error: error.message }
+
+      const wishlistRows = (data || [])
+        .filter(row => includeCompleted || (!row.is_completed && !['done', 'dismissed', 'archived'].includes(row.memo_status ?? '')))
+        .filter(row => recordTextMatches(row, ['title', 'description'], query))
+        .slice(0, maxRows)
+
+      const wishlistIds = wishlistRows.map(row => row.id)
+      const linkMap = new Map<string, Set<string>>()
+      const { data: structuredLinks } = wishlistIds.length > 0
+        ? await supabase
+          .from('memo_node_links')
+          .select('source_id, task_id')
+          .eq('user_id', user.id)
+          .eq('source_type', 'wishlist')
+          .eq('link_type', 'mindmap_node')
+          .eq('status', 'active')
+          .in('source_id', wishlistIds)
+        : { data: [] }
+      for (const link of structuredLinks || []) {
+        pushLinkId(linkMap, link.source_id, link.task_id)
+      }
+      for (const row of wishlistRows) {
+        for (const link of readMindmapLinks(row.ai_source_payload)) {
+          if (typeof link.task_id === 'string') pushLinkId(linkMap, row.id, link.task_id)
+        }
+      }
+
+      for (const row of wishlistRows) {
+        const preview = compactPreview(row.description, previewLimit)
+        const linkedTaskIds = setToSortedArray(linkMap.get(row.id))
+        records.push({
+          record_type: 'wishlist',
+          id: row.id,
+          title: row.title,
+          detail_preview: preview,
+          preview_chars: previewLimit,
+          detail_chars: normalizedTextLength(row.description),
+          detail_available: normalizedTextLength(row.description) > previewLimit,
+          project_id: row.project_id,
+          status: row.status,
+          memo_status: row.memo_status,
+          scheduled_at: row.scheduled_at,
+          duration_minutes: row.duration_minutes,
+          google_event_id: row.google_event_id,
+          tags: row.tags,
+          linked_mindmap_task_ids: linkedTaskIds,
+          linked_mindmap_count: linkedTaskIds.length,
+          updated_at: row.updated_at,
+          created_at: row.created_at,
+        })
+      }
+    }
+
+    if (includeMemoItems) {
+      let memoQuery = supabase
+        .from('memo_items')
+        .select('id, title, body, item_kind, status, source_type, source_id, parent_item_id, project_id, confidence, metadata, created_at, updated_at')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(Math.min(maxRows * 3, 300))
+      if (projectId) memoQuery = memoQuery.eq('project_id', projectId)
+
+      const { data, error } = await memoQuery
+      if (error) return { success: false, error: error.message }
+
+      const memoRows = (data || [])
+        .filter(row => includeCompleted || !['done', 'dismissed', 'archived'].includes(row.status))
+        .filter(row => recordTextMatches(row, ['title', 'body'], query))
+        .slice(0, maxRows)
+
+      const memoItemIds = memoRows.map(row => row.id)
+      const linkMap = new Map<string, Set<string>>()
+      const { data: links } = memoItemIds.length > 0
+        ? await supabase
+          .from('memo_node_links')
+          .select('memo_item_id, task_id')
+          .eq('user_id', user.id)
+          .eq('link_type', 'mindmap_node')
+          .eq('status', 'active')
+          .in('memo_item_id', memoItemIds)
+        : { data: [] }
+      for (const link of links || []) {
+        pushLinkId(linkMap, link.memo_item_id, link.task_id)
+      }
+
+      for (const row of memoRows) {
+        const preview = compactPreview(row.body, previewLimit)
+        const linkedTaskIds = setToSortedArray(linkMap.get(row.id))
+        records.push({
+          record_type: 'memo_item',
+          id: row.id,
+          title: row.title,
+          detail_preview: preview,
+          preview_chars: previewLimit,
+          detail_chars: normalizedTextLength(row.body),
+          detail_available: normalizedTextLength(row.body) > previewLimit,
+          project_id: row.project_id,
+          item_kind: row.item_kind,
+          status: row.status,
+          source_type: row.source_type,
+          source_id: row.source_id,
+          parent_item_id: row.parent_item_id,
+          confidence: row.confidence,
+          linked_mindmap_task_ids: linkedTaskIds,
+          linked_mindmap_count: linkedTaskIds.length,
+          updated_at: row.updated_at,
+          created_at: row.created_at,
+        })
+      }
+    }
+
+    const sortedRecords = records
+      .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))
+      .slice(0, maxRows)
+
+    return {
+      success: true,
+      preview_chars: previewLimit,
+      records: sortedRecords,
+      truncated: records.length > maxRows,
+      message: `${sortedRecords.length}件のノート/メモ候補を取得しました`,
+    }
+  },
+})
+
+export const getNoteOrganizationDetail = tool({
+  description:
+    'ノート/メモ整理で必要な候補だけ詳細を確認する。デフォルトは詳細冒頭30文字で、深い解析が必要な場合だけ detailChars を増やす。',
+  inputSchema: z.object({
+    recordType: z.enum(NOTE_ORGANIZATION_RECORD_TYPES).describe('wishlist または memo_item'),
+    id: z.string().describe('確認するレコードID'),
+    detailChars: z.number().optional().describe('返す詳細文字数。通常30文字、最大2000文字。'),
+    includeLinks: z.boolean().optional().describe('マインドマップ紐づきも返すか。通常はtrue。'),
+  }),
+  execute: async ({ recordType, id, detailChars, includeLinks }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const detailLimit = normalizeLimit(detailChars, 30, 2000)
+    let record: Record<string, unknown> | null = null
+    let detailSource = ''
+    const linkedTaskIds = new Set<string>()
+
+    if (recordType === 'wishlist') {
+      const { data, error } = await supabase
+        .from('ideal_goals')
+        .select('id, title, description, project_id, memo_status, status, scheduled_at, duration_minutes, google_event_id, tags, ai_source_payload, is_completed, created_at, updated_at')
+        .eq('user_id', user.id)
+        .eq('id', id)
+        .maybeSingle()
+      if (error) return { success: false, error: error.message }
+      if (!data) return { success: false, error: 'メモが見つかりません' }
+      record = data
+      detailSource = data.description ?? ''
+      for (const link of readMindmapLinks(data.ai_source_payload)) {
+        if (typeof link.task_id === 'string') linkedTaskIds.add(link.task_id)
+      }
+
+      if (includeLinks !== false) {
+        const { data: links } = await supabase
+          .from('memo_node_links')
+          .select('task_id')
+          .eq('user_id', user.id)
+          .eq('source_type', 'wishlist')
+          .eq('source_id', id)
+          .eq('link_type', 'mindmap_node')
+          .eq('status', 'active')
+        for (const link of links || []) {
+          if (link.task_id) linkedTaskIds.add(link.task_id)
+        }
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('memo_items')
+        .select('id, title, body, item_kind, status, source_type, source_id, parent_item_id, project_id, confidence, metadata, created_at, updated_at')
+        .eq('user_id', user.id)
+        .eq('id', id)
+        .maybeSingle()
+      if (error) return { success: false, error: error.message }
+      if (!data) return { success: false, error: '構造化メモが見つかりません' }
+      record = data
+      detailSource = data.body ?? ''
+
+      if (includeLinks !== false) {
+        const { data: links } = await supabase
+          .from('memo_node_links')
+          .select('task_id')
+          .eq('user_id', user.id)
+          .eq('memo_item_id', id)
+          .eq('link_type', 'mindmap_node')
+          .eq('status', 'active')
+        for (const link of links || []) {
+          if (link.task_id) linkedTaskIds.add(link.task_id)
+        }
+      }
+    }
+
+    const linkedIds = Array.from(linkedTaskIds)
+    const { data: linkedTasks } = linkedIds.length > 0
+      ? await supabase
+        .from('tasks')
+        .select('id, title, project_id, parent_task_id, status, stage, scheduled_at, estimated_time, updated_at')
+        .eq('user_id', user.id)
+        .in('id', linkedIds)
+        .is('deleted_at', null)
+      : { data: [] }
+
+    return {
+      success: true,
+      record_type: recordType,
+      record,
+      detail_text: compactPreview(detailSource, detailLimit),
+      detail_chars: normalizedTextLength(detailSource),
+      returned_chars: detailLimit,
+      detail_truncated: normalizedTextLength(detailSource) > detailLimit,
+      linked_mindmap_task_ids: linkedIds,
+      linked_tasks: linkedTasks || [],
+      message: `「${String(record?.title ?? '無題')}」の詳細を取得しました`,
+    }
+  },
+})
+
 export const getMindmapOverview = tool({
   description:
     '指定プロジェクトのマインドマップDB全体を確認する。ノード一覧、親子関係、進捗、予定化、メモ紐づきをまとめて見る時に使う。',
@@ -1353,6 +1783,128 @@ export const checkCalendarAvailability = tool({
       }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : '空き時間確認に失敗しました' }
+    }
+  },
+})
+
+export const findCalendarOpenSlots = tool({
+  description:
+    'Googleカレンダー予定とFocusmapの予定化済みタスクを合わせて、指定日から数日分の空き時間候補を探す。「どこが空いてる」「この予定を入れる候補を出して」の時に使う。',
+  inputSchema: z.object({
+    date: z.string().optional().describe('検索開始日。YYYY-MM-DD または ISO 8601。未指定なら今日（Asia/Tokyo）。'),
+    days: z.number().optional().describe('検索日数。デフォルト7日、最大14日。'),
+    durationMinutes: z.number().optional().describe('入れたい予定の長さ（分）。デフォルト60分、最大480分。'),
+    workingHours: z.object({
+      start: z.string().describe('検索する開始時刻 HH:mm。例: 09:00'),
+      end: z.string().describe('検索する終了時刻 HH:mm。例: 18:00'),
+    }).optional().describe('空き時間を探す時間帯。未指定なら9:00-18:00。'),
+    calendarIds: z.array(z.string()).optional().describe('対象カレンダーID。未指定なら選択中カレンダー。'),
+    includeScheduledTasks: z.boolean().optional().describe('Focusmap内の予定化済みタスクも埋まっている時間として扱うか。通常はtrue。'),
+    limit: z.number().optional().describe('返す候補枠数。最大80件。'),
+  }),
+  execute: async ({ date, days, durationMinutes, workingHours, calendarIds, includeScheduledTasks, limit }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const startDateKey = parseTokyoDateKey(date)
+    if (!startDateKey) return { success: false, error: 'date が有効な日付ではありません' }
+    const dayCount = normalizeLimit(days, 7, 14)
+    const duration = normalizeLimit(durationMinutes, 60, 480)
+    const maxRows = normalizeLimit(limit, 20, 80)
+    const hours = normalizeWorkingHours(workingHours)
+    if (!hours) return { success: false, error: 'workingHours は start/end とも HH:mm 形式で、end が start より後である必要があります' }
+
+    const endDateKey = addTokyoDays(startDateKey, dayCount)
+    const rangeStart = tokyoDateTime(startDateKey, '00:00')
+    const rangeEnd = tokyoDateTime(endDateKey, '00:00')
+    if (!rangeStart || !rangeEnd) return { success: false, error: '検索期間を作成できませんでした' }
+
+    try {
+      const resolvedCalendarIds = await getSelectedCalendarIds(supabase, user.id, calendarIds)
+      const { fetchCalendarEvents, fetchMultipleCalendarEvents } = await import('@/lib/google-calendar')
+      const rawEvents = resolvedCalendarIds.length > 1
+        ? await fetchMultipleCalendarEvents(user.id, resolvedCalendarIds, { timeMin: rangeStart, timeMax: rangeEnd })
+        : await fetchCalendarEvents(user.id, { calendarId: resolvedCalendarIds[0], timeMin: rangeStart, timeMax: rangeEnd })
+
+      const eventBusySlots = rawEvents
+        .map(event => toBusySlot({
+          id: event.google_event_id,
+          title: event.title,
+          start: event.start_time,
+          end: event.end_time,
+          source: 'calendar',
+          calendar_id: event.calendar_id,
+        }))
+        .filter((slot): slot is BusySlot => slot !== null)
+
+      let taskBusySlots: BusySlot[] = []
+      if (includeScheduledTasks !== false) {
+        const { data: tasks, error: taskError } = await supabase
+          .from('tasks')
+          .select('id, title, project_id, scheduled_at, estimated_time')
+          .eq('user_id', user.id)
+          .is('deleted_at', null)
+          .not('scheduled_at', 'is', null)
+          .gte('scheduled_at', rangeStart.toISOString())
+          .lt('scheduled_at', rangeEnd.toISOString())
+        if (taskError) return { success: false, error: taskError.message }
+
+        taskBusySlots = (tasks || [])
+          .map(task => {
+            const start = new Date(task.scheduled_at!)
+            const end = addMinutes(start, Math.max(1, task.estimated_time || duration))
+            return toBusySlot({
+              id: task.id,
+              title: task.title,
+              start,
+              end,
+              source: 'task',
+              project_id: task.project_id,
+            })
+          })
+          .filter((slot): slot is BusySlot => slot !== null)
+      }
+
+      const busySlots = [...eventBusySlots, ...taskBusySlots]
+      const openSlots: CalendarOpenSlot[] = []
+      for (let offset = 0; offset < dayCount; offset += 1) {
+        const dateKey = addTokyoDays(startDateKey, offset)
+        const remaining = maxRows - openSlots.length
+        if (remaining <= 0) break
+        openSlots.push(...findOpenSlotsForDay({
+          dateKey,
+          busySlots,
+          durationMinutes: duration,
+          workingHours: hours,
+          limit: remaining,
+        }))
+      }
+
+      return {
+        success: true,
+        date: startDateKey,
+        days: dayCount,
+        duration_minutes: duration,
+        working_hours: hours,
+        calendar_ids: resolvedCalendarIds,
+        open_slots: openSlots,
+        busy_summary: busySlots
+          .sort((a, b) => a.start.getTime() - b.start.getTime())
+          .slice(0, 30)
+          .map(slot => ({
+            id: slot.id,
+            title: slot.title,
+            source: slot.source,
+            calendar_id: slot.calendar_id,
+            project_id: slot.project_id,
+            start_time: slot.start.toISOString(),
+            end_time: slot.end.toISOString(),
+          })),
+        message: `${openSlots.length}件の空き時間候補を取得しました`,
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '空き時間候補の取得に失敗しました' }
     }
   },
 })
