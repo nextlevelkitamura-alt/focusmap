@@ -30,6 +30,11 @@ type MobileCustomDropPosition = "above" | "below" | "as-child"
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiting_approval", "completed", "failed"]
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input"])
 
+type OptimisticCodexPlacement = {
+    parentTaskId: string
+    projectId: string
+}
+
 function formatChatImportUpdatedLabel(value: string | null | undefined) {
     if (!value) return "更新不明"
     const date = new Date(value)
@@ -114,28 +119,75 @@ export function MobileMindMap({
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false)
     const [hiddenCodexChatImportIds, setHiddenCodexChatImportIds] = useState<Set<string>>(() => new Set())
     const [placingCodexImportTaskId, setPlacingCodexImportTaskId] = useState<string | null>(null)
+    const [optimisticCodexPlacements, setOptimisticCodexPlacements] = useState<Record<string, OptimisticCodexPlacement>>({})
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
-    const taskMap = useMemo(() => {
+    const currentMapTaskIds = useMemo(() => {
+        const ids = new Set<string>()
+        for (const task of [...groups, ...tasks]) {
+            if (task?.id) ids.add(task.id)
+        }
+        return ids
+    }, [groups, tasks])
+    const allTasksById = useMemo(() => {
         const map = new Map<string, Task>()
+        for (const task of allTasks) {
+            if (task?.id) map.set(task.id, task)
+        }
         for (const task of [...groups, ...tasks]) {
             if (task?.id) map.set(task.id, task)
         }
         return map
-    }, [groups, tasks])
-    const allMindMapTasks = useMemo(() => [...groups, ...tasks], [groups, tasks])
+    }, [allTasks, groups, tasks])
+    const applyOptimisticCodexPlacement = useCallback((task: Task): Task => {
+        const placement = optimisticCodexPlacements[task.id]
+        if (!placement) return task
+        return {
+            ...task,
+            parent_task_id: placement.parentTaskId,
+            project_id: placement.projectId,
+            deleted_at: null,
+        }
+    }, [optimisticCodexPlacements])
+    const mapGroups = useMemo(
+        () => groups.map(applyOptimisticCodexPlacement),
+        [applyOptimisticCodexPlacement, groups],
+    )
+    const mapTasks = useMemo(() => {
+        const next = tasks.map(applyOptimisticCodexPlacement)
+        for (const [taskId, placement] of Object.entries(optimisticCodexPlacements)) {
+            if (currentMapTaskIds.has(taskId)) continue
+            const task = allTasksById.get(taskId)
+            if (!task || task.deleted_at != null) continue
+            next.push({
+                ...task,
+                parent_task_id: placement.parentTaskId,
+                project_id: placement.projectId,
+                deleted_at: null,
+            })
+        }
+        return next
+    }, [allTasksById, applyOptimisticCodexPlacement, currentMapTaskIds, optimisticCodexPlacements, tasks])
+    const taskMap = useMemo(() => {
+        const map = new Map<string, Task>()
+        for (const task of [...mapGroups, ...mapTasks]) {
+            if (task?.id) map.set(task.id, task)
+        }
+        return map
+    }, [mapGroups, mapTasks])
+    const allMindMapTasks = useMemo(() => [...mapGroups, ...mapTasks], [mapGroups, mapTasks])
     const hiddenCodexInboxTaskIds = useMemo(
         () => getHiddenCodexInboxTaskIds(allMindMapTasks),
         [allMindMapTasks],
     )
     const visibleMapGroups = useMemo(
-        () => groups.filter(group => !hiddenCodexInboxTaskIds.has(group.id)),
-        [groups, hiddenCodexInboxTaskIds],
+        () => mapGroups.filter(group => !hiddenCodexInboxTaskIds.has(group.id)),
+        [hiddenCodexInboxTaskIds, mapGroups],
     )
     const visibleMapTasks = useMemo(
-        () => tasks.filter(task => !hiddenCodexInboxTaskIds.has(task.id)),
-        [hiddenCodexInboxTaskIds, tasks],
+        () => mapTasks.filter(task => !hiddenCodexInboxTaskIds.has(task.id)),
+        [hiddenCodexInboxTaskIds, mapTasks],
     )
     const kanbanProjects = useMemo(() => {
         const map = new Map<string, Project>()
@@ -161,7 +213,28 @@ export function MobileMindMap({
         setCodexImportRepoPathOverride(undefined)
         setHiddenCodexChatImportIds(new Set())
         setPlacingCodexImportTaskId(null)
+        setOptimisticCodexPlacements({})
     }, [project.id, project.space_id])
+
+    useEffect(() => {
+        setOptimisticCodexPlacements(prev => {
+            let changed = false
+            const next = { ...prev }
+            for (const [taskId, placement] of Object.entries(prev)) {
+                const task = allTasksById.get(taskId)
+                if (!task || task.deleted_at != null) {
+                    delete next[taskId]
+                    changed = true
+                    continue
+                }
+                if (task.parent_task_id === placement.parentTaskId && task.project_id === placement.projectId) {
+                    delete next[taskId]
+                    changed = true
+                }
+            }
+            return changed ? next : prev
+        })
+    }, [allTasksById])
 
     const projectRepoPath = useMemo(() => (
         normalizeRepoPath(codexRepoPathOverride !== undefined ? codexRepoPathOverride : project.repo_path)
@@ -744,6 +817,13 @@ export function MobileMindMap({
         })
         setPlacingCodexImportTaskId(null)
         setTaskCollapsed(targetId, false)
+        setOptimisticCodexPlacements(prev => ({
+            ...prev,
+            [taskId]: {
+                parentTaskId: targetId,
+                projectId: project.id,
+            },
+        }))
 
         try {
             await updateTaskForCodexScope(taskId, {
@@ -756,6 +836,12 @@ export function MobileMindMap({
             setHiddenCodexChatImportIds(prev => {
                 const next = new Set(prev)
                 next.delete(taskId)
+                return next
+            })
+            setOptimisticCodexPlacements(prev => {
+                if (!prev[taskId]) return prev
+                const next = { ...prev }
+                delete next[taskId]
                 return next
             })
             setPlacingCodexImportTaskId(taskId)

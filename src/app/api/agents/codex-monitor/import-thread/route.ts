@@ -619,6 +619,8 @@ export async function POST(request: NextRequest) {
           status: 'running',
           executor: 'codex_app',
           dispatch_mode: 'manual',
+          source_type: 'mindmap',
+          source_id: taskId,
           codex_thread_id: thread.id,
           current_step: result.current_step,
           summary: result.message,

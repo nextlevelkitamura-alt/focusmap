@@ -1,6 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 
+const memoAiTasksMock = vi.hoisted(() => {
+  const state = {
+    bySourceId: new Map<string, unknown>(),
+    refreshStatus: vi.fn(),
+  }
+
+  return {
+    bySourceId: state.bySourceId,
+    getBySourceId: vi.fn((sourceId: string) => state.bySourceId.get(sourceId) ?? null),
+    refreshStatus: state.refreshStatus,
+  }
+})
+
 vi.mock("@/hooks/useCalendars", () => ({
   useCalendars: () => ({
     calendars: [
@@ -35,9 +48,9 @@ vi.mock("@/hooks/useCalendars", () => ({
 
 vi.mock("@/hooks/useMemoAiTasks", () => ({
   useMemoAiTasks: () => ({
-    bySourceId: new Map(),
-    getBySourceId: () => null,
-    refreshStatus: vi.fn(),
+    bySourceId: memoAiTasksMock.bySourceId,
+    getBySourceId: memoAiTasksMock.getBySourceId,
+    refreshStatus: memoAiTasksMock.refreshStatus,
   }),
 }))
 
@@ -70,6 +83,7 @@ import {
   encodeCodexChatImportDragPayload,
 } from "@/lib/codex-chat-import-dnd"
 import type { Project, Task } from "@/types/database"
+import type { AiTask } from "@/types/ai-task"
 
 const project = {
   id: "project-1",
@@ -95,6 +109,39 @@ const makeTask = (overrides: Partial<Task>): Task => ({
   habit_end_date: null,
   ...overrides,
 } as Task)
+
+const makeAiTask = (overrides: Partial<AiTask>): AiTask => ({
+  id: "ai-task-1",
+  user_id: "user-1",
+  space_id: "space-1",
+  package_id: null,
+  package_version_id: null,
+  claimed_runner_id: null,
+  claim_expires_at: null,
+  run_visibility: "private",
+  package_snapshot: null,
+  prompt: "Codexで実行して",
+  skill_id: null,
+  approval_type: "auto",
+  status: "running",
+  result: { codex_run_state: "running" },
+  error: null,
+  parent_task_id: null,
+  created_at: "2026-06-12T10:00:00.000Z",
+  started_at: "2026-06-12T10:00:00.000Z",
+  completed_at: null,
+  scheduled_at: null,
+  recurrence_cron: null,
+  cwd: null,
+  source_note_id: null,
+  source_ideal_goal_id: null,
+  source_task_id: "chat-node-1",
+  remote_session_url: null,
+  tmux_session_name: null,
+  executor: "codex_app",
+  codex_thread_id: "thread-1",
+  ...overrides,
+} as AiTask)
 
 const renderMap = (props: Partial<React.ComponentProps<typeof CustomMindMapView>> = {}) => {
   const rootTask = makeTask({ id: "root-1", title: "Root task" })
@@ -189,6 +236,9 @@ const mockViewportRect = (rect: Partial<DOMRect> = {}) => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  memoAiTasksMock.bySourceId.clear()
+  memoAiTasksMock.getBySourceId.mockClear()
+  memoAiTasksMock.refreshStatus.mockClear()
   Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth })
   Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
   Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined })
@@ -1003,6 +1053,82 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.getByText("配置済みCodexチャット")).toBeInTheDocument()
     expect(screen.queryByText("Codex Inbox")).not.toBeInTheDocument()
     expect(screen.queryByText("未配置のCodexチャット")).not.toBeInTheDocument()
+  })
+
+  test("shows a running Codex import on the mobile map immediately after choosing a destination", async () => {
+    const rootTask = makeTask({
+      id: "root-1",
+      title: "Root task",
+      codex_work_dir: "/Users/me/focusmap",
+    })
+    const inboxGroup = makeTask({
+      id: "inbox-1",
+      title: "Codex Inbox",
+      source: "codex_inbox",
+    })
+    const importedChat = makeTask({
+      id: "chat-node-1",
+      title: "実行中Codexチャット",
+      parent_task_id: "inbox-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      codex_thread_id: "thread-1",
+    })
+    const projectWithRepo = {
+      ...project,
+      repo_path: "/Users/me/focusmap",
+      codex_thread_import_enabled: true,
+    } as Project
+    const onUpdateTask = vi.fn(() => new Promise<void>(() => {}))
+
+    memoAiTasksMock.bySourceId.set("chat-node-1", makeAiTask({
+      id: "ai-task-1",
+      source_task_id: "chat-node-1",
+      status: "running",
+      result: {
+        codex_run_state: "running",
+        last_activity_at: "2026-06-12T10:00:30.000Z",
+      },
+    }))
+
+    const view = render(
+      <MobileMindMap
+        project={projectWithRepo}
+        groups={[rootTask, inboxGroup]}
+        tasks={[importedChat]}
+        allTasks={[rootTask, inboxGroup, importedChat]}
+        onUpdateTask={onUpdateTask}
+        codexOpenSignal={0}
+      />
+    )
+
+    expect(screen.queryByText("実行中Codexチャット")).not.toBeInTheDocument()
+
+    view.rerender(
+      <MobileMindMap
+        project={projectWithRepo}
+        groups={[rootTask, inboxGroup]}
+        tasks={[importedChat]}
+        allTasks={[rootTask, inboxGroup, importedChat]}
+        onUpdateTask={onUpdateTask}
+        codexOpenSignal={1}
+      />
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: "配置先を選ぶ" }))
+    fireEvent.click(getNode("Root task", "root-1"))
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("chat-node-1", {
+        parent_task_id: "root-1",
+        project_id: "project-1",
+      })
+      expect(screen.getByText("実行中Codexチャット")).toBeInTheDocument()
+    })
+
+    const placedNode = getNode("実行中Codexチャット", "chat-node-1")
+    expect(within(placedNode).getByRole("button", { name: "Codex状態: 実行中 を開く" })).toBeInTheDocument()
+    expect(within(placedNode).getByLabelText("Codex 実行中")).toHaveClass("codex-node-running-orbit")
   })
 
   test("focuses an externally requested first mobile root node", async () => {
