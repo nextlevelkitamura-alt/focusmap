@@ -17,8 +17,11 @@ import { tool, type ToolSet } from 'ai'
 import { z } from 'zod/v3'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
+import { isTursoConfigured } from '@/lib/turso/client'
+import { listRunnerHeartbeats, type TursoRunnerHeartbeat } from '@/lib/turso/codex-monitoring'
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 5 * 60 * 1000 // 5分以内の heartbeat をオンラインとみなす
+const MONITORING_HEARTBEAT_ONLINE_WINDOW_MS = 90 * 1000
 const DEFAULT_TIMEOUT_MS = 120_000 // 1ツール最大2分
 const DEFAULT_POLL_MS = 1_500
 const DEFAULT_SHELL_TIMEOUT_MS = 180_000
@@ -75,6 +78,38 @@ function canExecuteRemoteCommands(metadata: unknown): boolean {
   return meta.app === 'focusmap-lite' || meta.agent === 'focusmap-agent'
 }
 
+function isFreshHeartbeat(value: string | null | undefined, windowMs: number, now = Date.now()): boolean {
+  const seenMs = value ? Date.parse(value) : Number.NaN
+  return Number.isFinite(seenMs) && seenMs > 0 && now - seenMs < windowMs
+}
+
+async function listFreshMonitoringHeartbeats(userId: string): Promise<Map<string, TursoRunnerHeartbeat>> {
+  if (!isTursoConfigured()) return new Map()
+  try {
+    const now = Date.now()
+    const heartbeats = await listRunnerHeartbeats(userId, 20)
+    return new Map(
+      heartbeats
+        .filter(heartbeat => (
+          heartbeat.status !== 'offline' &&
+          isFreshHeartbeat(heartbeat.last_seen_at, MONITORING_HEARTBEAT_ONLINE_WINDOW_MS, now)
+        ))
+        .map(heartbeat => [heartbeat.runner_id, heartbeat]),
+    )
+  } catch {
+    return new Map()
+  }
+}
+
+function mergeMetadata(primary: unknown, secondary: unknown): unknown {
+  if (!primary || typeof primary !== 'object' || Array.isArray(primary)) return secondary
+  if (!secondary || typeof secondary !== 'object' || Array.isArray(secondary)) return primary
+  return {
+    ...(primary as Record<string, unknown>),
+    ...(secondary as Record<string, unknown>),
+  }
+}
+
 /**
  * heartbeat が直近 5 分以内で、かつ agent_commands を実行できる focusmap-agent を1台返す。
  * 無ければ null (= Macオフライン)。最新 heartbeat のものを優先する。
@@ -84,27 +119,34 @@ export async function resolveOnlineRunner(
   userId: string,
 ): Promise<OnlineRunner | null> {
   const since = new Date(Date.now() - HEARTBEAT_ONLINE_WINDOW_MS).toISOString()
+  const freshMonitoringHeartbeats = await listFreshMonitoringHeartbeats(userId)
   const { data, error } = await supabase
     .from('ai_runners')
     .select('id, hostname, display_name, metadata, last_heartbeat_at')
     .eq('user_id', userId)
-    .gte('last_heartbeat_at', since)
     .order('last_heartbeat_at', { ascending: false })
-    .limit(10)
+    .limit(20)
   if (error || !data) return null
 
-  const capable = data.find(row => canExecuteRemoteCommands(row.metadata))
+  const capable = data.find(row => {
+    const monitoringHeartbeat = freshMonitoringHeartbeats.get(row.id)
+    const metadata = mergeMetadata(row.metadata, monitoringHeartbeat?.metadata_json)
+    if (!canExecuteRemoteCommands(metadata)) return false
+    return Boolean(monitoringHeartbeat) || (row.last_heartbeat_at && row.last_heartbeat_at >= since)
+  })
   if (!capable) return null
+  const heartbeat = freshMonitoringHeartbeats.get(capable.id)
+  const metadata = mergeMetadata(capable.metadata, heartbeat?.metadata_json)
   return {
     id: capable.id,
     hostname: capable.hostname,
     displayName: capable.display_name ?? null,
-    os: extractOs(capable.metadata),
-    googleDriveRoots: extractStringArray(capable.metadata, 'google_drive_roots'),
-    inaccessibleGoogleDriveRoots: extractStringArray(capable.metadata, 'inaccessible_google_drive_roots'),
-    cloudStorageRoots: extractStringArray(capable.metadata, 'cloud_storage_roots'),
-    codingHarnesses: extractStringArray(capable.metadata, 'coding_harnesses'),
-    folderAccess: extractObject(capable.metadata, 'folder_access'),
+    os: extractOs(metadata),
+    googleDriveRoots: extractStringArray(metadata, 'google_drive_roots'),
+    inaccessibleGoogleDriveRoots: extractStringArray(metadata, 'inaccessible_google_drive_roots'),
+    cloudStorageRoots: extractStringArray(metadata, 'cloud_storage_roots'),
+    codingHarnesses: extractStringArray(metadata, 'coding_harnesses'),
+    folderAccess: extractObject(metadata, 'folder_access'),
   }
 }
 
