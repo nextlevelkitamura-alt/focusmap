@@ -76,6 +76,11 @@ function fromDateTimeLocalValue(value: string) {
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? undefined : date
 }
+function shouldIgnoreSheetContentDrag(target: EventTarget | null) {
+    if (!(target instanceof Element)) return false
+    return Boolean(target.closest('button, input, textarea, select, [contenteditable="true"], [data-sheet-drag-ignore="true"]'))
+}
+
 
 function CalendarWheelPicker({
     calendars,
@@ -136,6 +141,7 @@ function CalendarWheelPicker({
     if (calendars.length === 0) return null
 
     return (
+            data-sheet-drag-ignore="true"
         <div
             className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.12),rgba(0,0,0,0.45)_54%,rgba(0,0,0,0.72))] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_-18px_38px_rgba(0,0,0,0.38)]"
             style={{ height: CALENDAR_WHEEL_VISIBLE_HEIGHT, perspective: 420 }}
@@ -266,6 +272,10 @@ export function MobileEventEditModal({
 
     const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
+    const contentDragStartY = useRef<number | null>(null)
+    const contentDragStartX = useRef(0)
+    const contentDragStartScrollTop = useRef(0)
+    const isContentDragActive = useRef(false)
     const dragStartY = useRef(0)
     const currentTranslateY = useRef(0)
     const openedAtRef = useRef(0)
@@ -471,7 +481,7 @@ export function MobileEventEditModal({
         }
     }, [])
 
-    const handleTouchEnd = useCallback(() => {
+    const finishSheetDrag = useCallback(() => {
         if (sheetRef.current) {
             sheetRef.current.style.transition = 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)'
             if (currentTranslateY.current > 96) {
@@ -482,6 +492,80 @@ export function MobileEventEditModal({
             }
             currentTranslateY.current = 0
         }
+    const handleTouchEnd = useCallback(() => {
+        finishSheetDrag()
+    }, [finishSheetDrag])
+
+    const resetContentDrag = useCallback(() => {
+        contentDragStartY.current = null
+        contentDragStartX.current = 0
+        contentDragStartScrollTop.current = 0
+        isContentDragActive.current = false
+    }, [])
+
+    const handleContentTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+        if (shouldIgnoreSheetContentDrag(e.target)) {
+            resetContentDrag()
+            return
+        }
+
+        const touch = e.touches[0]
+        contentDragStartY.current = touch?.clientY ?? null
+        contentDragStartX.current = touch?.clientX ?? 0
+        contentDragStartScrollTop.current = e.currentTarget.scrollTop
+        isContentDragActive.current = false
+    }, [resetContentDrag])
+
+    const handleContentTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+        const startY = contentDragStartY.current
+        if (startY === null) return
+
+        const touch = e.touches[0]
+        if (!touch) return
+
+        const diffY = touch.clientY - startY
+        const diffX = touch.clientX - contentDragStartX.current
+
+        if (!isContentDragActive.current) {
+            if (Math.abs(diffY) < 8) return
+            if (
+                diffY < 0 ||
+                Math.abs(diffY) < Math.abs(diffX) * 1.2 ||
+                contentDragStartScrollTop.current > 1
+            ) {
+                resetContentDrag()
+                return
+            }
+
+            isContentDragActive.current = true
+            if (sheetRef.current) {
+                sheetRef.current.style.transition = 'none'
+            }
+        }
+
+        if (diffY > 0 && sheetRef.current) {
+            e.preventDefault()
+            currentTranslateY.current = diffY
+            sheetRef.current.style.transform = `translateY(${diffY}px)`
+        }
+    }, [resetContentDrag])
+
+    const handleContentTouchEnd = useCallback(() => {
+        if (isContentDragActive.current) {
+            finishSheetDrag()
+        }
+        resetContentDrag()
+    }, [finishSheetDrag, resetContentDrag])
+
+    const handleContentTouchCancel = useCallback(() => {
+        if (isContentDragActive.current && sheetRef.current) {
+            sheetRef.current.style.transition = 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)'
+            sheetRef.current.style.transform = 'translateY(0)'
+            currentTranslateY.current = 0
+        }
+        resetContentDrag()
+    }, [resetContentDrag])
+
     }, [onClose])
 
     // Save handler — 即座に閉じ、保存はバックグラウンドで実行
@@ -600,7 +684,14 @@ export function MobileEventEditModal({
                     </button>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] no-scrollbar">
+                <div
+                    data-testid="mobile-event-edit-scroll"
+                    className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] no-scrollbar"
+                    onTouchStart={handleContentTouchStart}
+                    onTouchMove={handleContentTouchMove}
+                    onTouchEnd={handleContentTouchEnd}
+                    onTouchCancel={handleContentTouchCancel}
+                >
                     <div className="flex min-h-0 flex-col gap-2">
                     <div>
                         <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>

@@ -18,6 +18,7 @@ vi.mock('@/contexts/TimerContext', () => ({
 }))
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -103,6 +104,40 @@ describe('MobileEventEditModal', () => {
     fireEvent.click(screen.getByRole('button', { name: '削除する' }))
 
     expect(onDeleteEvent).toHaveBeenCalledWith('event-cache-1', 'google-event-1', 'calendar-1')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('本文エリアの中央から下へ引くと編集シートを閉じる', () => {
+    vi.useFakeTimers()
+    const onClose = vi.fn()
+
+    render(
+      <MobileEventEditModal
+        target={calendarEventBlock()}
+        isOpen
+        onClose={onClose}
+        onSaveTask={vi.fn()}
+        onSaveEvent={vi.fn()}
+        onDeleteEvent={vi.fn()}
+        availableCalendars={[]}
+      />,
+    )
+
+    const scroller = screen.getByTestId('mobile-event-edit-scroll')
+    scroller.scrollTop = 0
+
+    fireEvent.touchStart(scroller, {
+      touches: [{ clientX: 180, clientY: 360 }],
+    })
+    fireEvent.touchMove(scroller, {
+      touches: [{ clientX: 180, clientY: 475 }],
+    })
+    fireEvent.touchEnd(scroller, {
+      changedTouches: [{ clientX: 180, clientY: 475 }],
+    })
+
+    vi.advanceTimersByTime(160)
+
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
