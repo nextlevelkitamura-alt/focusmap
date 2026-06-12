@@ -33,9 +33,10 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Tags, Trash2, TriangleAlert, X } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert, X } from "lucide-react"
 import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
 import { useCalendars } from "@/hooks/useCalendars"
+import { OPEN_TODAY_CALENDAR_EVENT, type OpenTodayCalendarEventDetail } from "@/lib/calendar-constants"
 import type { Task, TaskAttachment } from "@/types/database"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 
@@ -66,7 +67,6 @@ type CodexNodePanelProps = {
   onSaveHeading?: (taskId: string, heading: string) => Promise<void> | void
   onSaveDraft?: (taskId: string, draft: { title: string; memo: string | null }) => Promise<void> | void
   onSaveTaskDetails?: (taskId: string, updates: Partial<Task>) => Promise<void> | void
-  onRegisterSchedule?: (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<{ googleEventId?: string | null } | void> | { googleEventId?: string | null } | void
 }
 
 type SaveStatus = "saved" | "saving" | "error"
@@ -82,6 +82,7 @@ const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
 const CODEX_PANEL_WATCH_PING_INTERVAL_MS = 10_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 const QUICK_ESTIMATED_MINUTES = [5, 15, 30, 60, 120] as const
+const DEFAULT_ESTIMATED_MINUTES = 15
 
 type TaskAttachmentPreview = Pick<TaskAttachment, "id" | "file_name" | "file_url" | "file_type" | "file_size">
 type PendingTaskAttachmentPreview = TaskAttachmentPreview & {
@@ -108,41 +109,6 @@ function buildCodexPrompt(heading: string, detail: string) {
   const normalizedHeading = normalizeCodexPrompt(heading)
   const normalizedDetail = normalizeCodexPrompt(detail)
   return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
-}
-
-function toDateInputValue(value: string | null) {
-  if (!value) return ""
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  const year = date.getFullYear()
-  const month = `${date.getMonth() + 1}`.padStart(2, "0")
-  const day = `${date.getDate()}`.padStart(2, "0")
-  return `${year}-${month}-${day}`
-}
-
-function toTimeInputValue(value: string | null) {
-  if (!value) return ""
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  const hour = `${date.getHours()}`.padStart(2, "0")
-  const minute = `${date.getMinutes()}`.padStart(2, "0")
-  return `${hour}:${minute}`
-}
-
-function todayDateInputValue() {
-  const date = new Date()
-  const year = date.getFullYear()
-  const month = `${date.getMonth() + 1}`.padStart(2, "0")
-  const day = `${date.getDate()}`.padStart(2, "0")
-  return `${year}-${month}-${day}`
-}
-
-function combineLocalDateTime(dateValue: string, timeValue: string) {
-  if (!dateValue) return null
-  const [year, month, day] = dateValue.split("-").map(Number)
-  const [hour, minute] = (timeValue || "09:00").split(":").map(Number)
-  if (!year || !month || !day) return null
-  return new Date(year, month - 1, day, hour || 0, minute || 0, 0, 0).toISOString()
 }
 
 function formatDurationLabel(minutes: number | null) {
@@ -308,7 +274,6 @@ export function CodexNodePanel({
   onSaveHeading,
   onSaveDraft,
   onSaveTaskDetails,
-  onRegisterSchedule,
 }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -337,10 +302,8 @@ export function CodexNodePanel({
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
-  const [scheduledAt, setScheduledAt] = useState<string | null>(null)
-  const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(null)
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(DEFAULT_ESTIMATED_MINUTES)
   const [calendarId, setCalendarId] = useState("")
-  const [googleEventId, setGoogleEventId] = useState<string | null>(null)
   const [isRegisteringSchedule, setIsRegisteringSchedule] = useState(false)
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<TaskAttachmentPreview[]>([])
@@ -406,7 +369,6 @@ export function CodexNodePanel({
     setCodexImageCopyNotice(null)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
-    setGoogleEventId(null)
     setIsRegisteringSchedule(false)
     setScheduleNotice(null)
     setImageNotice(null)
@@ -447,10 +409,13 @@ export function CodexNodePanel({
         if (cancelled) return
 
         if (taskRes.ok && taskData.task) {
-          setScheduledAt(taskData.task.scheduled_at ?? null)
-          setEstimatedMinutes(taskData.task.estimated_time ?? null)
+          const loadedEstimatedMinutes = taskData.task.estimated_time
+          setEstimatedMinutes(
+            loadedEstimatedMinutes && loadedEstimatedMinutes > 0
+              ? loadedEstimatedMinutes
+              : DEFAULT_ESTIMATED_MINUTES,
+          )
           setCalendarId(taskData.task.calendar_id ?? "")
-          setGoogleEventId(taskData.task.google_event_id ?? null)
         }
 
         if (attachmentsRes.ok && Array.isArray(attachmentsData.attachments)) {
@@ -577,7 +542,7 @@ export function CodexNodePanel({
         ? prev
         : calendarOptions[0]?.id ?? "primary"
     ))
-  }, [calendarOptions, open])
+  }, [calendarId, calendarOptions, open])
 
   const patchTaskDetail = useCallback(async (updates: Record<string, unknown>) => {
     setError(null)
@@ -596,30 +561,15 @@ export function CodexNodePanel({
         if (!res.ok) {
           throw new Error(typeof data?.error?.message === "string" ? data.error.message : "タスク詳細の保存に失敗しました")
         }
-        if (typeof data?.task?.google_event_id === "string") {
-          setGoogleEventId(data.task.google_event_id)
-        }
       }
       setSaveStatus("saved")
+      return true
     } catch (err) {
       setSaveStatus("error")
       setError(err instanceof Error ? err.message : "タスク詳細の保存に失敗しました")
+      return false
     }
   }, [node.taskId, onSaveTaskDetails])
-
-  const dateValue = useMemo(() => toDateInputValue(scheduledAt), [scheduledAt])
-  const timeValue = useMemo(() => toTimeInputValue(scheduledAt), [scheduledAt])
-
-  const updateScheduledAt = useCallback((nextScheduledAt: string | null) => {
-    setScheduledAt(nextScheduledAt)
-    void patchTaskDetail({ scheduled_at: nextScheduledAt })
-  }, [patchTaskDetail])
-
-  const handleTimeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const nextTime = event.target.value
-    const nextDate = dateValue || todayDateInputValue()
-    updateScheduledAt(combineLocalDateTime(nextDate, nextTime || "09:00"))
-  }, [dateValue, updateScheduledAt])
 
   const handleDurationChange = useCallback((minutes: number | null) => {
     setEstimatedMinutes(minutes)
@@ -632,11 +582,11 @@ export function CodexNodePanel({
     void patchTaskDetail({ calendar_id: nextCalendarId.trim() || null })
   }, [patchTaskDetail])
 
-  const canRegisterSchedule = Boolean(scheduledAt && estimatedMinutes && estimatedMinutes > 0 && calendarId.trim())
+  const canRegisterSchedule = Boolean(estimatedMinutes && estimatedMinutes > 0 && calendarId.trim())
 
   const handleRegisterSchedule = useCallback(async () => {
-    if (!scheduledAt || !estimatedMinutes || estimatedMinutes <= 0 || !calendarId.trim()) {
-      setError("時刻・所要時間・カレンダーをすべて選択してください")
+    if (!estimatedMinutes || estimatedMinutes <= 0 || !calendarId.trim()) {
+      setError("所要時間とカレンダーを選択してください")
       return
     }
 
@@ -645,47 +595,27 @@ export function CodexNodePanel({
     setScheduleNotice(null)
     setIsRegisteringSchedule(true)
     try {
-      const wasLinked = Boolean(googleEventId)
-      if (onRegisterSchedule) {
-        const result = await onRegisterSchedule(node.taskId, {
-          scheduledAt,
-          estimatedMinutes,
-          calendarId: targetCalendarId,
-        })
-        if (result?.googleEventId) {
-          setGoogleEventId(result.googleEventId)
-        }
-      } else {
-        await patchTaskDetail({
-          scheduled_at: scheduledAt,
-          estimated_time: estimatedMinutes,
-          calendar_id: targetCalendarId,
-        })
-        const res = await fetch("/api/calendar/sync-task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            taskId: node.taskId,
-            scheduled_at: scheduledAt,
-            estimated_time: estimatedMinutes,
-            calendar_id: targetCalendarId,
-          }),
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "カレンダー登録に失敗しました")
-        if (typeof data.googleEventId === "string") {
-          setGoogleEventId(data.googleEventId)
-        }
-      }
-      setScheduleNotice(wasLinked ? "カレンダー予定を更新しました" : "カレンダーに登録しました")
+      const saved = await patchTaskDetail({
+        estimated_time: estimatedMinutes,
+        calendar_id: targetCalendarId,
+      })
+      if (!saved) return
+      window.dispatchEvent(new CustomEvent<OpenTodayCalendarEventDetail>(OPEN_TODAY_CALENDAR_EVENT, {
+        detail: {
+          source: "mindmap-node-panel",
+          taskId: node.taskId,
+        },
+      }))
+      setScheduleNotice("カレンダーで予定を入れられます")
       setSaveStatus("saved")
+      onClose()
     } catch (err) {
       setSaveStatus("error")
-      setError(err instanceof Error ? err.message : "カレンダー登録に失敗しました")
+      setError(err instanceof Error ? err.message : "予定の準備に失敗しました")
     } finally {
       setIsRegisteringSchedule(false)
     }
-  }, [calendarId, estimatedMinutes, googleEventId, node.taskId, onRegisterSchedule, patchTaskDetail, scheduledAt])
+  }, [calendarId, estimatedMinutes, node.taskId, onClose, patchTaskDetail])
 
   const uploadImages = useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
@@ -1392,18 +1322,6 @@ export function CodexNodePanel({
   const canCopyPreviewAttachment = Boolean(
     previewCopyAttachment?.file_type?.startsWith("image/") && previewCopyAttachment.file_url?.trim(),
   )
-  const nodeMetaTags = useMemo(() => {
-    const tags: string[] = []
-    if (node.isDone) tags.push("完了")
-    else tags.push("未完了")
-    if (scheduledAt) tags.push("予定あり")
-    if (estimatedMinutes && estimatedMinutes > 0) tags.push(formatDurationLabel(estimatedMinutes))
-    if (attachments.length > 0) tags.push(`画像 ${attachments.length}`)
-    if (node.hasMemo || detail.trim()) tags.push("メモあり")
-    if (node.priority != null) tags.push(`優先度 ${node.priority}`)
-    return Array.from(new Set(tags))
-  }, [attachments.length, detail, estimatedMinutes, node.hasMemo, node.isDone, node.priority, scheduledAt])
-
   return (
     <Sheet
       open={open}
@@ -1426,65 +1344,64 @@ export function CodexNodePanel({
         className={cn(
           "gap-0 overflow-hidden overflow-x-hidden border-neutral-800 bg-neutral-950/98 p-0 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
           isMobile
-            ? "max-h-[90dvh] rounded-t-2xl"
+            ? "max-h-[88dvh] rounded-t-2xl"
             : "h-full w-[min(92vw,460px)] max-w-none sm:max-w-none"
         )}
       >
-        <div className="shrink-0 px-4 pb-2 pt-4 pr-12 sm:px-6">
-          <SheetTitle className="text-left text-lg font-semibold text-neutral-50">メモを編集</SheetTitle>
-          <SheetDescription className="sr-only">
-            マインドマップノードの見出し、メモ、所要時間、画像、Codex実行を編集します。
-          </SheetDescription>
-        </div>
+        <SheetTitle className="sr-only">メモを編集</SheetTitle>
+        <SheetDescription className="sr-only">
+          マインドマップノードの見出し、メモ、所要時間、画像、Codex実行を編集します。
+        </SheetDescription>
 
-        <div className="shrink-0 border-b border-neutral-800 px-4 pb-4 sm:px-6">
-          <label className="block min-w-0 space-y-1" htmlFor="codex-memo-heading" data-testid="codex-node-heading-section">
-            <span className="text-sm text-neutral-400">見出し</span>
-            <textarea
-              id="codex-memo-heading"
-              value={heading}
-              rows={2}
-              onChange={(event) => handleHeadingChange(event.target.value)}
-              className="max-h-28 min-h-12 w-full max-w-full resize-none overflow-y-auto overflow-x-hidden rounded-lg border border-neutral-800 bg-neutral-900/70 px-3 py-3 text-base leading-relaxed text-neutral-50 outline-none placeholder:text-neutral-500 focus:border-emerald-500"
-              placeholder="見出し"
-            />
-          </label>
-        </div>
+        <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-x-none px-4 pb-3 pt-4 sm:px-6 [touch-action:pan-y]">
+          <div className="grid min-w-0 gap-3 xl:items-start">
+            <section className="order-1 min-w-0 space-y-1.5 pr-9" data-testid="codex-node-heading-section">
+              <label className="block text-xs font-medium text-neutral-400" htmlFor="codex-memo-heading">
+                見出し
+              </label>
+              <input
+                id="codex-memo-heading"
+                value={heading}
+                onChange={(event) => handleHeadingChange(event.target.value)}
+                className="h-11 w-full min-w-0 rounded-lg border border-neutral-800 bg-neutral-900/70 px-3 text-[15px] leading-none text-neutral-50 outline-none placeholder:text-neutral-500 focus:border-emerald-500"
+                placeholder="見出し"
+              />
+            </section>
 
-        <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-x-none px-4 py-5 sm:px-6 [touch-action:pan-y]">
-          <div className="grid min-w-0 gap-4 xl:items-start">
             <section
-              className="order-1 min-w-0 space-y-2"
+              className="order-2 min-w-0 space-y-1.5"
               data-testid="codex-node-detail-section"
             >
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-start">
-                  <span className="text-sm text-muted-foreground">メモ詳細</span>
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-xs font-medium text-neutral-400">メモ詳細</span>
                   <span className="shrink-0 text-xs font-medium text-muted-foreground" aria-live="polite">
                     {saveStatus === "saving" ? "保存中" : saveStatus === "error" ? "保存失敗" : "保存済み"}
                   </span>
                 </div>
-                <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
-                  <button
-                    type="button"
-                    onClick={generateHeading}
-                    disabled={!detail.trim() || isGeneratingHeading}
-                    className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-500/20 disabled:opacity-50 sm:flex-none dark:text-blue-100"
-                    aria-label="見出し生成"
-                    title="見出し生成"
-                  >
-                    {isGeneratingHeading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
-                    )}
-                    <span className="truncate">見出し生成</span>
-                  </button>
+                <div className="flex shrink-0 items-center justify-end gap-1.5">
+                  {(detail.trim() || isGeneratingHeading) ? (
+                    <button
+                      type="button"
+                      onClick={generateHeading}
+                      disabled={!detail.trim() || isGeneratingHeading}
+                      className="inline-flex h-9 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-100 transition-colors hover:bg-emerald-500/18 disabled:opacity-50"
+                      aria-label="見出し生成"
+                      title="見出し生成"
+                    >
+                      {isGeneratingHeading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      <span className="truncate">見出し生成</span>
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={toggleVoiceInput}
                     disabled={isTranscribing}
-                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900/70 text-neutral-200 transition-colors hover:bg-neutral-800 disabled:opacity-50"
                     aria-label={isRecording ? "録音を停止" : "音声入力"}
                     title={isRecording ? "録音を停止" : "音声入力"}
                   >
@@ -1502,15 +1419,15 @@ export function CodexNodePanel({
                 value={detail}
                 onChange={(event) => handleDetailChange(event.target.value)}
 	                className={cn(
-	                  "w-full max-w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary",
-	                  hasCodexRun ? "min-h-28 sm:min-h-[22dvh]" : "min-h-36 sm:min-h-[30dvh]",
+	                  "w-full max-w-full resize-y rounded-lg border border-neutral-800 bg-neutral-900/55 px-3 py-2.5 text-[15px] leading-6 text-neutral-50 outline-none placeholder:text-neutral-500 focus:border-emerald-500",
+	                  hasCodexRun ? "min-h-24 sm:min-h-[18dvh]" : "min-h-28 sm:min-h-[22dvh]",
 	                )}
                 placeholder="メモの詳細を書いてください"
               />
             </section>
 
             <section
-              className="order-2 min-w-0 space-y-2"
+              className="order-5 min-w-0 space-y-2"
               data-testid="codex-node-image-section"
             >
               <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
@@ -1660,43 +1577,19 @@ export function CodexNodePanel({
             </section>
 
 	            <section
-	              className="order-4 min-w-0 space-y-2"
+	              className="order-3 min-w-0 space-y-1.5"
 	              data-testid="codex-node-schedule-section"
 	            >
-	              <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
-	                <Clock className="h-4 w-4" />
-	                <span>時間・予定</span>
+	              <div className="flex items-center gap-2 text-sm font-semibold text-neutral-200">
+	                <CalendarIcon className="h-4 w-4 text-emerald-300" />
+	                <span>予定</span>
 	                {isLoadingTaskDetail && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-500" />}
 	              </div>
 	              <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-950 p-2.5">
-	                <div className="grid gap-2 sm:grid-cols-2">
-	                  <label className="space-y-1 text-xs text-neutral-400">
-	                    <span>時刻</span>
-	                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
-	                      <Clock className="h-4 w-4 shrink-0 text-neutral-500" />
-	                      <input
-	                        type="time"
-	                        value={timeValue}
-	                        onChange={handleTimeChange}
-	                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
-	                      />
-	                    </span>
-	                  </label>
 	                  <div className="space-y-1">
 	                    <div className="flex min-h-5 items-center justify-between gap-2 text-xs text-neutral-400">
 	                      <span>所要時間</span>
-	                      <div className="flex items-center gap-2">
-	                        <span>{formatDurationLabel(estimatedMinutes)}</span>
-	                        {estimatedMinutes ? (
-	                          <button
-	                            type="button"
-	                            onClick={() => handleDurationChange(null)}
-	                            className="min-h-7 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-[11px] font-medium text-neutral-400 transition-colors hover:text-neutral-100"
-	                          >
-	                            解除
-	                          </button>
-	                        ) : null}
-	                      </div>
+	                      <span>{formatDurationLabel(estimatedMinutes)}</span>
 	                    </div>
 	                    <div className="grid grid-cols-3 gap-1.5">
 	                      {QUICK_ESTIMATED_MINUTES.map(minutes => (
@@ -1704,7 +1597,7 @@ export function CodexNodePanel({
 	                          key={minutes}
 	                          type="button"
 	                          onClick={() => handleDurationChange(minutes)}
-	                          className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+	                          className={`min-h-9 rounded-md border px-2 text-xs font-semibold transition-colors ${
 	                            estimatedMinutes === minutes
 	                              ? "border-emerald-500 bg-emerald-500 text-emerald-950"
 	                              : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
@@ -1721,7 +1614,7 @@ export function CodexNodePanel({
 	                        trigger={(
 	                          <button
 	                            type="button"
-	                            className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+	                            className={`min-h-9 rounded-md border px-2 text-xs font-semibold transition-colors ${
 	                              estimatedMinutes && !(QUICK_ESTIMATED_MINUTES as readonly number[]).includes(estimatedMinutes)
 	                                ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
 	                                : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
@@ -1733,40 +1626,36 @@ export function CodexNodePanel({
 	                      />
 	                    </div>
 	                  </div>
-	                </div>
-	                <label className="space-y-1 text-xs text-neutral-400">
-	                  <span>カレンダー</span>
-	                  <span className="relative flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
-	                    <span
-	                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-	                      style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
-	                    />
-	                    <select
-	                      value={calendarId}
-	                      onChange={handleCalendarChange}
-	                      className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
-	                    >
-	                      {calendarOptions.map(calendar => (
-	                        <option key={calendar.id} value={calendar.id}>
-	                          {calendar.name}{calendar.primary ? "（主）" : ""}
-	                        </option>
-	                      ))}
-	                    </select>
-	                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-	                  </span>
-	                </label>
-	                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-	                  <p className="min-w-0 text-xs leading-5 text-neutral-500">
-	                    時刻・所要時間・カレンダーが揃うと登録できます。
-	                  </p>
+	                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+	                  <label className="min-w-0 space-y-1 text-xs text-neutral-400">
+	                    <span>カレンダー</span>
+	                    <span className="relative flex min-h-10 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
+	                      <span
+	                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+	                        style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+	                      />
+	                      <select
+	                        value={calendarId}
+	                        onChange={handleCalendarChange}
+	                        className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
+	                      >
+	                        {calendarOptions.map(calendar => (
+	                          <option key={calendar.id} value={calendar.id}>
+	                            {calendar.name}{calendar.primary ? "（主）" : ""}
+	                          </option>
+	                        ))}
+	                      </select>
+	                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+	                    </span>
+	                  </label>
 	                  <button
 	                    type="button"
 	                    onClick={() => void handleRegisterSchedule()}
 	                    disabled={!canRegisterSchedule || isRegisteringSchedule}
-	                    className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600 sm:w-auto"
+	                    className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-500/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600 sm:w-auto"
 	                  >
 	                    {isRegisteringSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarIcon className="h-3.5 w-3.5" />}
-	                    {googleEventId ? "予定を更新" : "予定を登録"}
+	                    予定を入れる
 	                  </button>
 	                </div>
 	                {scheduleNotice && (
@@ -1778,7 +1667,7 @@ export function CodexNodePanel({
 	            </section>
 
             <section
-              className="order-3 min-w-0 space-y-2"
+              className="order-4 min-w-0 space-y-2"
               data-testid="codex-node-codex-section"
             >
               <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
@@ -1954,25 +1843,6 @@ export function CodexNodePanel({
               )}
             </section>
 
-            <section
-              className="order-7 min-w-0 space-y-2"
-              data-testid="codex-node-tags-section"
-            >
-              <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
-                <Tags className="h-4 w-4" />
-                <span>タグ</span>
-              </div>
-              <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/45 px-3 py-2">
-                {nodeMetaTags.map(tag => (
-                  <span
-                    key={tag}
-                    className="rounded-full border border-neutral-700 bg-neutral-950 px-2.5 py-1 text-xs font-medium text-neutral-300"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </section>
           </div>
 
           <button
@@ -1981,7 +1851,7 @@ export function CodexNodePanel({
               void saveDraft(heading, detail)
               onClose()
             }}
-            className="sticky bottom-0 z-10 mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-lime-400 px-4 text-base font-semibold text-lime-950 shadow-[0_-18px_30px_rgba(10,10,10,0.85)] transition-colors hover:bg-lime-300 disabled:opacity-50"
+            className="sticky bottom-0 z-10 mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-4 text-base font-semibold text-neutral-950 shadow-[0_-18px_30px_rgba(10,10,10,0.85)] transition-colors hover:bg-white disabled:opacity-50"
           >
             {saveStatus === "saving" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
             保存

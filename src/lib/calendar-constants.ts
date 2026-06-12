@@ -41,6 +41,14 @@ export const MEMO_DRAG_MIME = "application/x-focusmap-memo" as const
 /** Custom event name for mindmap node → calendar D&D */
 export const MINDMAP_NODE_DRAG_EVENT = "focusmap:mindmap-node-calendar-drag" as const
 
+/** Custom event name for opening the Today calendar from another panel */
+export const OPEN_TODAY_CALENDAR_EVENT = "focusmap:open-today-calendar" as const
+
+export type OpenTodayCalendarEventDetail = {
+  source: "mindmap-node-panel"
+  taskId?: string
+}
+
 /** Payload shared while dragging a mindmap node over calendar panes */
 export type MindMapNodeCalendarDragPayload = {
   taskId: string

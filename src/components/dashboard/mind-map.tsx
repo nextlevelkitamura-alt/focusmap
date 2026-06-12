@@ -55,7 +55,6 @@ type MindMapCallbacks = {
     toggleTaskCollapse: (taskId: string) => void;
     createRootTaskAndFocus: (title: string) => Promise<void>;
     onUpdateProject?: (projectId: string, title: string) => Promise<void>;
-    registerSchedule: (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<{ googleEventId?: string | null }>;
 };
 
 // --- Error Boundary ---
@@ -1420,39 +1419,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         }
     }, [onUpdateTask]);
 
-    const registerSchedule = useCallback(async (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => {
-        if (!params.scheduledAt || !params.estimatedMinutes || !params.calendarId) {
-            throw new Error('スケジュール登録には所要時間・日時・カレンダーすべて必要です');
-        }
-        if (onUpdateTask) {
-            await onUpdateTask(taskId, {
-                scheduled_at: params.scheduledAt,
-                estimated_time: params.estimatedMinutes,
-                calendar_id: params.calendarId,
-            });
-        }
-        const res = await fetch('/api/calendar/sync-task', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                taskId,
-                scheduled_at: params.scheduledAt,
-                estimated_time: params.estimatedMinutes,
-                calendar_id: params.calendarId,
-            }),
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || 'スケジュール登録に失敗しました');
-        }
-        const data = await res.json().catch(() => ({}));
-        const googleEventId = typeof data.googleEventId === 'string' ? data.googleEventId : null;
-        if (googleEventId && onUpdateTask) {
-            await onUpdateTask(taskId, { google_event_id: googleEventId });
-        }
-        return { googleEventId };
-    }, [onUpdateTask]);
-
     const updateTaskPriority = useCallback(async (taskId: string, priority: number | null) => {
         if (onUpdateTask) {
             await onUpdateTask(taskId, { priority });
@@ -1470,7 +1436,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         handleNavigate, promoteTask, updateTaskScheduledAt,
         updateTaskPriority, updateTaskEstimatedTime,
         onUpdateTask, toggleTaskCollapse,
-        createRootTaskAndFocus, onUpdateProject, registerSchedule,
+        createRootTaskAndFocus, onUpdateProject,
     }), [
         saveTaskTitle,
         addChildTask,
@@ -1485,7 +1451,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         toggleTaskCollapse,
         createRootTaskAndFocus,
         onUpdateProject,
-        registerSchedule,
     ]);
 
     const handleDeleteTaskFromKanban = useCallback(async (taskId: string) => {
@@ -2051,7 +2016,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     onSaveHeading={(taskId, heading) => updateTaskForCodexScope(taskId, { title: heading })}
                     onSaveDraft={(taskId, draft) => updateTaskForCodexScope(taskId, { title: draft.title, memo: draft.memo })}
                     onSaveTaskDetails={(taskId, updates) => updateTaskForCodexScope(taskId, updates)}
-                    onRegisterSchedule={(taskId, params) => callbacks.registerSchedule(taskId, params)}
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? 'done' : 'todo'); }}
                     onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}

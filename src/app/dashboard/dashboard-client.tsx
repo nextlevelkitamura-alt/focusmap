@@ -27,6 +27,7 @@ import { preloadDashboardPanels, preloadDashboardView } from "@/lib/dashboard-pr
 import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
+import { OPEN_TODAY_CALENDAR_EVENT } from "@/lib/calendar-constants"
 import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-memos-dialog"
 import { ProjectContextDialog } from "@/components/projects/project-context-dialog"
 
@@ -257,6 +258,19 @@ export function DashboardClient({
         setTodayMemoScheduleFocus(null)
         updateTodaySubView('memo')
         setActiveView('today')
+    }, [setActiveView, updateTodaySubView])
+    useEffect(() => {
+        const handleOpenTodayCalendar = () => {
+            const today = new Date()
+            today.setHours(0, 0, 0, 0)
+            setTodaySelectedDate(today)
+            setTodayMemoScheduleFocus(null)
+            updateTodaySubView('memo')
+            setActiveView('today')
+        }
+
+        window.addEventListener(OPEN_TODAY_CALENDAR_EVENT, handleOpenTodayCalendar)
+        return () => window.removeEventListener(OPEN_TODAY_CALENDAR_EVENT, handleOpenTodayCalendar)
     }, [setActiveView, updateTodaySubView])
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)

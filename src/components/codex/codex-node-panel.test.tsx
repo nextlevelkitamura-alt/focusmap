@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, test, vi, beforeEach } from "vitest"
 
 import { CodexNodePanel } from "./codex-node-panel"
+import { OPEN_TODAY_CALENDAR_EVENT } from "@/lib/calendar-constants"
 
 const fetchWithSupabaseAuthMock = vi.hoisted(() => ({
   fetchWithSupabaseAuth: vi.fn(),
@@ -128,7 +129,11 @@ describe("CodexNodePanel", () => {
     }
   })
 
-	  test("desktop opens as a right-side edit sheet with the memo-style controls", async () => {
+	  test("desktop opens as a compact right-side edit sheet with memo and schedule controls", async () => {
+    const onClose = vi.fn()
+    const openCalendarListener = vi.fn()
+    window.addEventListener(OPEN_TODAY_CALENDAR_EVENT, openCalendarListener)
+
 	    render(
 	      <CodexNodePanel
         open
@@ -141,7 +146,7 @@ describe("CodexNodePanel", () => {
           estimatedLabel: "15分",
         }}
         candidates={["/repo/focusmap"]}
-        onClose={vi.fn()}
+        onClose={onClose}
         onPersistDir={vi.fn()}
       />,
     )
@@ -149,16 +154,83 @@ describe("CodexNodePanel", () => {
     const dialog = await screen.findByRole("dialog")
     expect(dialog).toHaveClass("right-0")
     expect(dialog).toHaveClass("w-[min(92vw,460px)]")
-    expect(screen.getByRole("heading", { name: "メモを編集" })).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "メモを編集" })).toHaveClass("sr-only")
+    expect(screen.getByLabelText("見出し").tagName).toBe("INPUT")
     expect(screen.getByDisplayValue("新規案件に向けた準備と確認作業")).toBeInTheDocument()
     expect(screen.getByDisplayValue("初めての内容になるのでしっかりするということ")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "音声入力" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "見出し生成" })).toBeInTheDocument()
+    expect(screen.queryByText("時刻")).not.toBeInTheDocument()
+    expect(screen.queryByText("タグ")).not.toBeInTheDocument()
     expect(screen.getByRole("link", { name: "コピーしてCodexに送る" })).toHaveTextContent("Codexに送る")
     expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument()
 
     await waitFor(() => {
 	      expect(global.fetch).toHaveBeenCalledWith("/api/tasks/task-1", { cache: "no-store" })
 	    })
+
+    const scheduleButton = screen.getByRole("button", { name: "予定を入れる" })
+    await waitFor(() => expect(scheduleButton).not.toBeDisabled())
+
+    fireEvent.click(scheduleButton)
+
+    await waitFor(() => {
+      expect(openCalendarListener).toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalled()
+    })
+
+    window.removeEventListener(OPEN_TODAY_CALENDAR_EVENT, openCalendarListener)
 	  })
+
+  test("shows heading generation only after memo detail has text", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/tasks/task-1") {
+        return jsonResponse({
+          task: {
+            id: "task-1",
+            title: "空のメモ",
+            memo: "",
+            scheduled_at: null,
+            estimated_time: null,
+            calendar_id: null,
+            google_event_id: null,
+          },
+        })
+      }
+      if (url === "/api/tasks/task-1/attachments") {
+        return jsonResponse({ attachments: [] })
+      }
+      return jsonResponse({})
+    }))
+
+    render(
+      <CodexNodePanel
+        open
+        node={{
+          taskId: "task-1",
+          title: "空のメモ",
+          memo: "",
+          cwd: "/repo/focusmap",
+          status: "todo",
+        }}
+        candidates={["/repo/focusmap"]}
+        onClose={vi.fn()}
+        onPersistDir={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByLabelText("見出し")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "見出し生成" })).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText("メモの詳細を書いてください"), {
+      target: { value: "本文を入れたら見出し生成を出す" },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "見出し生成" })).toBeInTheDocument()
+    })
+  })
 
 	  test("shows compact attachment copy controls and image preview without the date field", async () => {
 	    const attachment = {
