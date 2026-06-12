@@ -212,19 +212,22 @@ type RuntimeNotice = {
   tone: "info" | "error"
   message: string
 } | null
+type ChatMode = "general" | "project"
 
 export function UnifiedChat({
   spaceId = null,
-  projectId: selectedProjectId = null,
+  projectId: _projectId = null,
   projectTitle = null,
   projects = [],
   onSelectProject,
 }: UnifiedChatProps) {
+  void _projectId
   void projectTitle
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
+  const [activeProjectChatId, setActiveProjectChatId] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<FileUIPart[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice>(null)
@@ -232,11 +235,23 @@ export function UnifiedChat({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const swipeRef = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null)
+  const activeProjectChat = useMemo(() => {
+    if (!activeProjectChatId) return null
+    return projects.find(project =>
+      project.id === activeProjectChatId &&
+      project.status !== "archived" &&
+      project.status !== "completed" &&
+      (!spaceId || project.space_id === spaceId),
+    ) ?? null
+  }, [activeProjectChatId, projects, spaceId])
+  const activeProjectChatIdForRequest = activeProjectChat?.id ?? null
+  const chatMode: ChatMode = activeProjectChatIdForRequest ? "project" : "general"
+  const chatScopeKey = activeProjectChatIdForRequest ? `project:${activeProjectChatIdForRequest}` : "general"
 
   const transport = useMemo(
     () => new DefaultChatTransport({
       api: "/api/ai/agent",
-      body: { spaceId },
+      body: { spaceId, projectId: activeProjectChatIdForRequest, chatMode },
       prepareSendMessagesRequest: ({ messages, body, headers, credentials, api, messageId }) => ({
         api,
         headers,
@@ -247,7 +262,7 @@ export function UnifiedChat({
         },
       }),
     }),
-    [spaceId],
+    [activeProjectChatIdForRequest, chatMode, spaceId],
   )
 
   const { messages, sendMessage, setMessages, status, stop, addToolApprovalResponse, error, clearError } = useChat({
@@ -269,29 +284,44 @@ export function UnifiedChat({
     },
   })
 
-  const sessions = useAgentChatSessions()
-  const { hydrated, saveMessages } = sessions
-  const restoredRef = useRef(false)
+  const sessions = useAgentChatSessions(chatScopeKey)
+  const { hydrated, loadedScopeKey, saveMessages } = sessions
+  const restoredScopeRef = useRef<string | null>(null)
 
-  // One-time: restore the last active session's messages after hydration.
+  // Restore the active session whenever the user switches between general and project chats.
   useEffect(() => {
-    if (restoredRef.current || !hydrated) return
-    restoredRef.current = true
+    if (!hydrated || loadedScopeKey !== chatScopeKey || restoredScopeRef.current === chatScopeKey) return
+    restoredScopeRef.current = chatScopeKey
     const restore = sessions.activeSession
-    if (restore && restore.messages.length > 0) {
-      setMessages(restore.messages)
-    }
-    // sessions.activeSession is read once at restore time; deps intentionally minimal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, setMessages])
+    setMessages(restore?.messages ?? [])
+    setInput("")
+    setAttachments([])
+    setAttachmentError(null)
+    setRuntimeNotice(null)
+  }, [chatScopeKey, hydrated, loadedScopeKey, sessions.activeSession, setMessages])
 
   // Persist messages into the active session once a turn settles.
   useEffect(() => {
     if (!hydrated) return
+    if (loadedScopeKey !== chatScopeKey) return
     if (status !== "ready" && status !== "error") return
     if (messages.length === 0) return
     saveMessages(messages)
-  }, [messages, status, hydrated, saveMessages])
+  }, [messages, status, hydrated, loadedScopeKey, chatScopeKey, saveMessages])
+
+  useEffect(() => {
+    if (!activeProjectChatId || activeProjectChat) return
+    setActiveProjectChatId(null)
+  }, [activeProjectChat, activeProjectChatId])
+
+  const handleSelectGeneralChat = useCallback(() => {
+    setActiveProjectChatId(null)
+  }, [])
+
+  const handleSelectProjectChat = useCallback((projectId: string) => {
+    setActiveProjectChatId(projectId)
+    onSelectProject?.(projectId)
+  }, [onSelectProject])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -422,6 +452,9 @@ export function UnifiedChat({
 
   const sendLabel = connectionState === "online" ? "送信" : "予約して送信"
   const canSend = input.trim().length > 0 || attachments.length > 0
+  const inputPlaceholder = activeProjectChat
+    ? `${activeProjectChat.title} について質問`
+    : "質問してみましょう"
   const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     if (typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches) return
     const touch = event.touches[0]
@@ -478,16 +511,20 @@ export function UnifiedChat({
           onDelete={handleDeleteSession}
           projects={projects}
           selectedSpaceId={spaceId}
-          selectedProjectId={selectedProjectId}
-          onSelectProject={onSelectProject}
+          activeProjectChatId={activeProjectChatIdForRequest}
+          onSelectGeneralChat={handleSelectGeneralChat}
+          onSelectProjectChat={handleSelectProjectChat}
           className="hidden md:flex"
         />
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-6">
+          {activeProjectChat && (
+            <ProjectChatHeader project={activeProjectChat} hasMessages={messages.length > 0} />
+          )}
           {messages.length === 0 ? (
-            <EmptyChat onPrompt={submit} />
+            <EmptyChat />
           ) : (
             <div className="mx-auto flex w-full max-w-[760px] flex-col gap-7 pb-6">
               {messages.map(message => (
@@ -553,7 +590,7 @@ export function UnifiedChat({
                 </button>
               </div>
             )}
-            <div className="rounded-[1.35rem] border border-[#343434] bg-[#111111] p-3 shadow-[0_16px_48px_rgba(0,0,0,0.22)]">
+            <div className="rounded-[1.15rem] border border-[#343434] bg-[#111111] p-2 shadow-[0_16px_48px_rgba(0,0,0,0.22)]">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -568,28 +605,24 @@ export function UnifiedChat({
                 onChange={event => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder="質問してみましょう"
+                placeholder={inputPlaceholder}
                 rows={1}
-                className="max-h-36 min-h-12 w-full resize-none border-0 bg-transparent px-1 py-1 text-[15px] leading-6 text-zinc-100 outline-none placeholder:text-zinc-500"
+                className="max-h-28 min-h-8 w-full resize-none border-0 bg-transparent px-1 py-0 text-[15px] leading-5 text-zinc-100 outline-none placeholder:text-zinc-500"
               />
-              <div className="mt-1 flex min-h-10 items-center justify-between gap-2">
+              <div className="mt-0 flex min-h-8 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <AutomationPromptMenu
                     onSelect={insertAutomationPrompt}
                     onAttachImage={() => fileInputRef.current?.click()}
                     attachDisabled={isBusy}
                   />
-                  <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-zinc-800 px-3 text-xs font-medium text-zinc-100">
-                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-300" />
-                    実行
-                  </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     variant="ghost"
                     size="icon"
                     className={cn(
-                      "h-10 w-10 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white",
+                      "h-8 w-8 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white",
                       isRecording && "bg-red-500/15 text-red-300 hover:bg-red-500/20 hover:text-red-200",
                     )}
                     onClick={isRecording ? stopRecording : startRecording}
@@ -599,14 +632,14 @@ export function UnifiedChat({
                     {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
                   </Button>
                   {isBusy ? (
-                    <Button size="icon" variant="ghost" className="h-10 w-10 rounded-full bg-white text-zinc-950 hover:bg-zinc-200" onClick={() => void stop()} title="停止">
+                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full bg-white text-zinc-950 hover:bg-zinc-200" onClick={() => void stop()} title="停止">
                       <Square className="h-3.5 w-3.5" />
                     </Button>
                   ) : (
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-10 w-10 rounded-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:opacity-100"
+                      className="h-8 w-8 rounded-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:opacity-100"
                       disabled={!canSend}
                       onClick={() => submit(input)}
                       title={sendLabel}
@@ -650,8 +683,9 @@ export function UnifiedChat({
             onDelete={handleDeleteSession}
             projects={projects}
             selectedSpaceId={spaceId}
-            selectedProjectId={selectedProjectId}
-            onSelectProject={onSelectProject}
+            activeProjectChatId={activeProjectChatIdForRequest}
+            onSelectGeneralChat={handleSelectGeneralChat}
+            onSelectProjectChat={handleSelectProjectChat}
             className="flex h-full w-full border-r-0"
           />
         </SheetContent>
@@ -672,7 +706,7 @@ function AutomationPromptMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white" title="追加">
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white" title="追加">
           <Plus className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -717,8 +751,9 @@ function HistorySidebar({
   onDelete,
   projects,
   selectedSpaceId,
-  selectedProjectId,
-  onSelectProject,
+  activeProjectChatId,
+  onSelectGeneralChat,
+  onSelectProjectChat,
   className,
 }: {
   sessions: AgentChatSession[]
@@ -728,8 +763,9 @@ function HistorySidebar({
   onDelete: (id: string) => void
   projects: Project[]
   selectedSpaceId: string | null
-  selectedProjectId: string | null
-  onSelectProject?: (id: string) => void
+  activeProjectChatId: string | null
+  onSelectGeneralChat: () => void
+  onSelectProjectChat: (id: string) => void
   className?: string
 }) {
   const [query, setQuery] = useState("")
@@ -769,7 +805,14 @@ function HistorySidebar({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-20">
         <div className="space-y-1 border-b border-[#303030] pb-2">
-          <button type="button" className="flex min-h-11 w-full items-center gap-3 rounded-lg bg-white/10 px-3 text-left text-sm font-semibold text-zinc-100">
+          <button
+            type="button"
+            className={cn(
+              "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition",
+              activeProjectChatId === null ? "bg-white/10 text-zinc-100" : "text-zinc-300 hover:bg-white/10 hover:text-white",
+            )}
+            onClick={onSelectGeneralChat}
+          >
             <MessageSquarePlus className="h-4 w-4" />
             チャット
           </button>
@@ -782,27 +825,13 @@ function HistorySidebar({
           ) : (
             <div className="space-y-0.5">
               {visibleProjects.map(project => {
-                const active = project.id === selectedProjectId
+                const active = project.id === activeProjectChatId
                 const content = (
                   <>
                     <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
                     <span className="min-w-0 flex-1 truncate">{project.title}</span>
                   </>
                 )
-
-                if (!onSelectProject) {
-                  return (
-                    <div
-                      key={project.id}
-                      className={cn(
-                        "flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-sm",
-                        active ? "bg-white/10 text-white" : "text-zinc-300",
-                      )}
-                    >
-                      {content}
-                    </div>
-                  )
-                }
 
                 return (
                   <button
@@ -812,7 +841,7 @@ function HistorySidebar({
                       "flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition",
                       active ? "bg-white/10 text-white" : "text-zinc-300 hover:bg-white/10 hover:text-white",
                     )}
-                    onClick={() => onSelectProject(project.id)}
+                    onClick={() => onSelectProjectChat(project.id)}
                   >
                     {content}
                   </button>
@@ -875,8 +904,35 @@ function HistorySidebar({
   )
 }
 
-function EmptyChat({ onPrompt: _onPrompt }: { onPrompt: (text: string) => void }) {
-  void _onPrompt
+function ProjectChatHeader({ project, hasMessages }: { project: Project; hasMessages: boolean }) {
+  return (
+    <div className={cn("mx-auto w-full max-w-[760px]", hasMessages ? "mb-6" : "pt-8 md:pt-14")}>
+      <div className={cn(
+        "flex items-start gap-3",
+        hasMessages ? "rounded-xl border border-[#303030] bg-[#171717]/80 px-3 py-2.5" : "px-1",
+      )}>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10 text-zinc-100 ring-1 ring-white/10">
+          <Folder className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className={cn("min-w-0 max-w-full truncate font-semibold text-zinc-100", hasMessages ? "text-sm" : "text-xl md:text-2xl")}>
+              {project.title}
+            </h2>
+            <span className="inline-flex min-h-6 items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 text-[11px] font-medium text-emerald-300">
+              プロジェクトチャット
+            </span>
+          </div>
+          <p className={cn("mt-1 text-zinc-400", hasMessages ? "text-xs" : "text-sm")}>
+            このプロジェクトの情報を読み込んだ状態で会話します。
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EmptyChat() {
   return (
     <div className="mx-auto min-h-full w-full max-w-[760px]" />
   )

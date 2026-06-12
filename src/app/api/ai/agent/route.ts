@@ -12,6 +12,7 @@ import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 
 import { getAgentModel, getAgentVisionModel } from '@/lib/ai/providers'
 import { buildAgentTools } from '@/lib/ai/agent-tools'
 import { sanitizeUIMessagesForModel } from '@/lib/ai/ui-message-sanitize'
+import { summarizeProjectTasks } from '@/lib/ai/context/task-summarizer'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
 
 // マルチステップのツール実行で時間がかかるため上限を引き上げる (Cloud Run の上限内)
@@ -50,7 +51,23 @@ function formatRunnerHints(runner: OnlineRunner): string[] {
   return lines
 }
 
-function buildSystemPrompt(runner: OnlineRunner | null): string {
+type AgentChatMode = 'general' | 'project'
+
+interface ProjectChatContext {
+  projectId: string
+  text: string
+}
+
+function buildSystemPrompt(
+  runner: OnlineRunner | null,
+  {
+    chatMode,
+    projectContext,
+  }: {
+    chatMode: AgentChatMode
+    projectContext?: ProjectChatContext | null
+  },
+): string {
   const online = runner !== null
   const osLabel = online ? describeOs(runner.os) : null
   const runnerHints = online ? formatRunnerHints(runner) : []
@@ -63,6 +80,20 @@ function buildSystemPrompt(runner: OnlineRunner | null): string {
     '- マルチステップの作業は、1ステップずつツールを呼びながら進める。各ステップの結果を見て次を判断する。',
     '- ツールが失敗した場合は、理由をユーザーに分かりやすく伝え、代替案を提案する。',
     '- 画像が添付されている場合は、画像の内容を実際に確認してから答える。',
+    '',
+    '## チャットスコープ',
+    chatMode === 'project' && projectContext
+      ? [
+        '- これはプロジェクトチャットです。下のプロジェクト文脈を最初から読み込んだ前提で会話する。',
+        '- ユーザーが明示的に別対象を指定しない限り、このプロジェクトについて話していると解釈する。',
+        '- タスク・マップ・予定を作る場合は、原則としてこのプロジェクトIDを使う。',
+        projectContext.text,
+      ].join('\n')
+      : [
+        '- これは通常チャットです。全スペース/全プロジェクトの情報へアクセスできますが、最初から特定プロジェクトの文脈を読み込まない。',
+        '- プロジェクト固有の前提が必要な場合だけ、ユーザーに対象を確認するか、必要な情報をツールで取得する。',
+        '- AGENTS.md が無い素のチャットに近い状態として、現在の会話内容と明示された依頼を優先する。',
+      ].join('\n'),
     '',
     '## ツールの種類',
     '- サーバー直実行 (常に使える): addTask / addCalendarEvent / addMindmapGroup / addMindmapTask / deleteMindmapNode',
@@ -90,6 +121,61 @@ function buildSystemPrompt(runner: OnlineRunner | null): string {
       ].join('\n')
       : '## 接続状態\n現在このユーザーの常駐エージェントは**オフライン（または未接続）**です。Mac経由ツール (ターミナル/ブラウザ/ファイル) は実行できません。これらが必要な作業を頼まれたら、エージェントを起動して接続するよう案内するか、scheduleTask で予約実行を提案してください。サーバー直実行ツールと scheduleTask は通常どおり使えます。',
   ].join('\n')
+}
+
+async function loadProjectChatContext({
+  supabase,
+  userId,
+  projectId,
+  spaceId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>
+  userId: string
+  projectId: string
+  spaceId: string | null
+}): Promise<ProjectChatContext | null> {
+  let projectQuery = supabase
+    .from('projects')
+    .select('id, title, description, status, repo_path, space_id')
+    .eq('id', projectId)
+    .eq('user_id', userId)
+
+  if (spaceId) projectQuery = projectQuery.eq('space_id', spaceId)
+
+  const { data: project, error: projectError } = await projectQuery.maybeSingle()
+  if (projectError) throw projectError
+  if (!project) return null
+
+  const { data: context } = await supabase
+    .from('project_contexts')
+    .select('heading, details, progress')
+    .eq('user_id', userId)
+    .eq('project_id', projectId)
+    .maybeSingle()
+
+  const taskSummary = await summarizeProjectTasks(supabase, userId, projectId)
+  const contextLines = [
+    `## 現在のプロジェクト`,
+    `- project_id: ${project.id}`,
+    `- 名前: ${project.title ?? '無題'}`,
+    `- 状態: ${project.status ?? '不明'}`,
+    project.repo_path ? `- リポジトリ: ${project.repo_path}` : '',
+    project.description ? `\n### プロジェクト説明\n${project.description}` : '',
+    context?.heading || context?.details || context?.progress
+      ? [
+        '\n### 蓄積コンテキスト',
+        context.heading ? `見出し: ${context.heading}` : '',
+        context.details ? `詳細: ${context.details}` : '',
+        context.progress ? `進捗: ${context.progress}` : '',
+      ].filter(Boolean).join('\n')
+      : '',
+    taskSummary ? `\n${taskSummary}` : '',
+  ].filter(Boolean)
+
+  return {
+    projectId: project.id,
+    text: contextLines.join('\n'),
+  }
 }
 
 function hasImagePart(messages: UIMessage[]): boolean {
@@ -122,16 +208,37 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}))
-    const { messages, spaceId } = body as { messages?: UIMessage[]; spaceId?: string | null }
+    const { messages, spaceId, projectId, chatMode } = body as {
+      messages?: UIMessage[]
+      spaceId?: string | null
+      projectId?: string | null
+      chatMode?: AgentChatMode
+    }
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: 'messages is required' }, { status: 400 })
+    }
+    if (chatMode === 'project' && !projectId) {
+      return NextResponse.json({ error: 'projectId is required for project chat' }, { status: 400 })
     }
 
     const modelInputMessages = sanitizeUIMessagesForModel(messages)
     const usesVision = hasImagePart(modelInputMessages)
     const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
     const { tools, runner } = await buildAgentTools(user.id, spaceId ?? null)
+    const projectContext = chatMode === 'project' && projectId
+      ? await loadProjectChatContext({
+        supabase,
+        userId: user.id,
+        projectId,
+        spaceId: spaceId ?? null,
+      })
+      : null
+
+    if (chatMode === 'project' && projectId && !projectContext) {
+      return NextResponse.json({ error: 'project not found' }, { status: 404 })
+    }
+
     const modelMessages = await convertToModelMessages(modelInputMessages, {
       tools,
       ignoreIncompleteToolCalls: true,
@@ -139,7 +246,10 @@ export async function POST(request: Request) {
 
     const result = streamText({
       model,
-      system: buildSystemPrompt(runner),
+      system: buildSystemPrompt(runner, {
+        chatMode: projectContext ? 'project' : 'general',
+        projectContext,
+      }),
       messages: modelMessages,
       tools,
       stopWhen: stepCountIs(12),

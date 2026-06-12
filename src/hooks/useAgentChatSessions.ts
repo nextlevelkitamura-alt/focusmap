@@ -36,10 +36,14 @@ function deriveTitle(messages: UIMessage[]): string {
   return text.length > 28 ? `${text.slice(0, 28)}…` : text
 }
 
-function load(): SessionsState {
+function storageKeyForScope(scopeKey: string) {
+  return scopeKey === "general" ? STORAGE_KEY : `${STORAGE_KEY}:${scopeKey}`
+}
+
+function load(storageKey: string): SessionsState {
   if (typeof window === "undefined") return { sessions: [], activeSessionId: null }
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(storageKey)
     if (!raw) return { sessions: [], activeSessionId: null }
     const parsed = JSON.parse(raw) as SessionsState
     if (!Array.isArray(parsed.sessions)) return { sessions: [], activeSessionId: null }
@@ -49,25 +53,39 @@ function load(): SessionsState {
   }
 }
 
-export function useAgentChatSessions() {
+export function useAgentChatSessions(scopeKey = "general") {
   const [state, setState] = useState<SessionsState>({ sessions: [], activeSessionId: null })
   const [hydrated, setHydrated] = useState(false)
+  const [loadedScopeKey, setLoadedScopeKey] = useState(scopeKey)
+  const storageKey = storageKeyForScope(scopeKey)
   const stateRef = useRef(state)
-  stateRef.current = state
 
   useEffect(() => {
-    setState(load())
-    setHydrated(true)
-  }, [])
+    stateRef.current = state
+  }, [state])
 
   useEffect(() => {
-    if (!hydrated) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setHydrated(false)
+      setState(load(storageKey))
+      setLoadedScopeKey(scopeKey)
+      setHydrated(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [scopeKey, storageKey])
+
+  useEffect(() => {
+    if (!hydrated || loadedScopeKey !== scopeKey) return
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+      window.localStorage.setItem(storageKey, JSON.stringify(state))
     } catch {
       // storage full or unavailable — keep in-memory state
     }
-  }, [state, hydrated])
+  }, [state, hydrated, loadedScopeKey, scopeKey, storageKey])
 
   const createSession = useCallback((): string => {
     const id = newId()
@@ -123,6 +141,7 @@ export function useAgentChatSessions() {
 
   return {
     hydrated,
+    loadedScopeKey,
     sessions: state.sessions,
     activeSessionId: state.activeSessionId,
     activeSession,
