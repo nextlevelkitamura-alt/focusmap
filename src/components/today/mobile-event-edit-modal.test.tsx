@@ -68,13 +68,41 @@ describe('MobileEventEditModal', () => {
       />,
     )
 
-    expect(screen.queryByRole('button', { name: '削除' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '予定を削除' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '完了' }))
 
     expect(onSaveEvent).toHaveBeenCalledWith('event-cache-1', expect.objectContaining({
       reminders: [15],
     }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('削除ボタンは下部固定バーに表示し、確認後に予定削除を呼ぶ', () => {
+    const onClose = vi.fn()
+    const onDeleteEvent = vi.fn(() => Promise.resolve())
+
+    render(
+      <MobileEventEditModal
+        target={calendarEventBlock()}
+        isOpen
+        onClose={onClose}
+        onSaveTask={vi.fn()}
+        onSaveEvent={vi.fn()}
+        onDeleteEvent={onDeleteEvent}
+        availableCalendars={[{ id: 'calendar-1', name: 'Main' }]}
+      />,
+    )
+
+    const deleteButton = screen.getByRole('button', { name: '予定を削除' })
+    expect(deleteButton.closest('[data-testid="mobile-event-delete-bar"]')).toBeInTheDocument()
+
+    fireEvent.click(deleteButton)
+    expect(onDeleteEvent).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '削除する' }))
+
+    expect(onDeleteEvent).toHaveBeenCalledWith('event-cache-1', 'google-event-1', 'calendar-1')
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 

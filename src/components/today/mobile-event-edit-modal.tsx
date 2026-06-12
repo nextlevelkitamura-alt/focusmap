@@ -88,6 +88,8 @@ function CalendarWheelPicker({
 }) {
     const scrollRef = useRef<HTMLDivElement>(null)
     const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+    const hasMountedRef = useRef(false)
+    const lastUserCommitIndexRef = useRef<number | null>(null)
     const selectedIndex = Math.max(0, calendars.findIndex(calendar => calendar.id === value))
     const activeIndex = previewIndex ?? selectedIndex
 
@@ -109,17 +111,25 @@ function CalendarWheelPicker({
         scrollToIndex: (container, index, behavior) => scrollToIndex(container, index, behavior),
         onPreview: (_calendar, index) => setPreviewIndex(index),
         onChange: (calendar, index) => {
+            lastUserCommitIndexRef.current = index
             setPreviewIndex(index)
             onChange(calendar.id)
         },
-        scrollEndDelay: 80,
+        scrollEndDelay: 150,
     })
 
     useEffect(() => {
+        const isOwnCommit = lastUserCommitIndexRef.current === selectedIndex
+        const behavior = hasMountedRef.current ? "smooth" : "auto"
+        hasMountedRef.current = true
         const timer = window.setTimeout(() => {
             setPreviewIndex(null)
-            scrollToIndex(scrollRef.current, selectedIndex, "auto")
-        }, 0)
+            if (isOwnCommit) {
+                lastUserCommitIndexRef.current = null
+                return
+            }
+            scrollToIndex(scrollRef.current, selectedIndex, behavior)
+        }, isOwnCommit ? 180 : 0)
         return () => window.clearTimeout(timer)
     }, [selectedIndex, scrollToIndex, calendars.length])
 
@@ -229,6 +239,8 @@ export function MobileEventEditModal({
     onClose,
     onSaveTask,
     onSaveEvent,
+    onDeleteTask,
+    onDeleteEvent,
     availableCalendars,
     onScheduleReminder,
     onCreateSubTask,
@@ -250,6 +262,7 @@ export function MobileEventEditModal({
     const [isAddingSubTask, setIsAddingSubTask] = useState(false)
     const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null)
     const [localChildTasks, setLocalChildTasks] = useState<Task[]>(childTasks)
+    const [isDeleteConfirming, setIsDeleteConfirming] = useState(false)
 
     const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
@@ -292,6 +305,7 @@ export function MobileEventEditModal({
         setSubtaskInput('')
         setLinkedTaskId(target.taskId || null)
         setLocalChildTasks([])
+        setIsDeleteConfirming(false)
         setIsDurationExpanded(false)
         setIsCustomDurationPickerOpen(false)
         if (target.source === 'task') {
@@ -513,9 +527,31 @@ export function MobileEventEditModal({
         }
     }
 
+    const handleDelete = useCallback(() => {
+        if (!target) return
+
+        setIsDeleteConfirming(false)
+        onClose()
+
+        if (target.source === 'task') {
+            Promise.resolve(onDeleteTask?.(target.taskId!)).catch(err => {
+                console.error('[MobileEventEditModal] Delete task error:', err)
+            })
+            return
+        }
+
+        Promise.resolve(onDeleteEvent?.(target.id, target.googleEventId || '', target.calendarId || '')).catch(err => {
+            console.error('[MobileEventEditModal] Delete event error:', err)
+        })
+    }, [target, onClose, onDeleteTask, onDeleteEvent])
+
     if (!isOpen || !target) return null
 
     const isTask = target.source === 'task'
+    const hasDeleteAction = isTask
+        ? Boolean(onDeleteTask && target.taskId)
+        : Boolean(onDeleteEvent && target.googleEventId && target.calendarId)
+    const deleteLabel = isTask ? 'タスクを削除' : '予定を削除'
     const scheduledDateTimeLabel = scheduledDate
         ? format(scheduledDate, "M/d(E) HH:mm", { locale: ja })
         : "未設定"
@@ -564,7 +600,7 @@ export function MobileEventEditModal({
                     </button>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] no-scrollbar">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] no-scrollbar">
                     <div className="flex min-h-0 flex-col gap-2">
                     <div>
                         <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>
@@ -858,6 +894,42 @@ export function MobileEventEditModal({
                     </div>
                 </div>
 
+                {hasDeleteAction && (
+                    <div
+                        data-testid="mobile-event-delete-bar"
+                        className="flex-shrink-0 border-t border-white/10 bg-neutral-950/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3 shadow-[0_-14px_28px_rgba(0,0,0,0.36)]"
+                    >
+                        {isDeleteConfirming ? (
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsDeleteConfirming(false)}
+                                    className="min-h-11 flex-1 rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm font-semibold text-neutral-200 transition-colors active:bg-white/[0.1]"
+                                >
+                                    キャンセル
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDelete}
+                                    className="min-h-11 flex-1 rounded-xl bg-red-500 px-3 text-sm font-semibold text-white transition-colors active:bg-red-400"
+                                    aria-label="削除する"
+                                >
+                                    削除する
+                                </button>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setIsDeleteConfirming(true)}
+                                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/12 px-3 text-sm font-semibold text-red-200 transition-colors active:bg-red-500/20"
+                                aria-label={deleteLabel}
+                            >
+                                <Trash2 className="h-4 w-4" />
+                                {deleteLabel}
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
         </>
     )

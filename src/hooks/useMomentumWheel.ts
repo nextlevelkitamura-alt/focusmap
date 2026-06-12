@@ -102,7 +102,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
     scrollTimerRef.current = window.setTimeout(() => {
       scrollTimerRef.current = null
       commitNearest(container)
-    }, optionsRef.current.scrollEndDelay ?? 90)
+    }, optionsRef.current.scrollEndDelay ?? 140)
   }, [clearScrollTimer, commitNearest])
 
   const startMomentum = useCallback((container: HTMLDivElement, initialVelocity: number) => {
@@ -114,7 +114,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
     }
 
     isMomentumActiveRef.current = true
-    let velocity = Math.max(-1.15, Math.min(1.15, initialVelocity))
+    let velocity = Math.max(-0.95, Math.min(0.95, initialVelocity))
     let previousAt = performance.now()
 
     const step = (now: number) => {
@@ -128,10 +128,10 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
         velocity = 0
       } else {
         previewNearest(container)
-        velocity *= Math.exp(-dt / 165)
+        velocity *= Math.exp(-dt / 220)
       }
 
-      if (Math.abs(velocity) < 0.018) {
+      if (Math.abs(velocity) < 0.014) {
         frameRef.current = null
         isMomentumActiveRef.current = false
         commitNearest(container)
@@ -251,10 +251,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
     previewNearest(container)
 
     clearDragIdleTimer()
-    dragIdleTimerRef.current = window.setTimeout(() => {
-      finishTouchDrag(container)
-    }, 140)
-  }, [clearDragIdleTimer, finishTouchDrag, previewNearest])
+  }, [clearDragIdleTimer, previewNearest])
 
   const onTouchEnd = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
     event.stopPropagation()
@@ -313,10 +310,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
     previewNearest(container)
 
     clearDragIdleTimer()
-    dragIdleTimerRef.current = window.setTimeout(() => {
-      finishDrag(container, drag.pointerId)
-    }, 140)
-  }, [clearDragIdleTimer, finishDrag, previewNearest])
+  }, [clearDragIdleTimer, previewNearest])
 
   const onPointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
