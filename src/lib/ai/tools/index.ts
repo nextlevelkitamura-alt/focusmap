@@ -8,10 +8,34 @@ import { tool } from 'ai'
 import { z } from 'zod/v3'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
 const PROJECT_CONTEXT_STATUSES = ['not_started', 'in_progress', 'blocked', 'done', 'archived'] as const
+const TASK_STAGES = ['plan', 'scheduled', 'executing', 'done', 'archived'] as const
+const MEMO_LINK_ACTIONS = ['link', 'move', 'unlink'] as const
+const MEMO_SOURCE_TYPES = ['wishlist', 'note'] as const
+
+type MindmapTaskRow = {
+  id: string
+  project_id: string | null
+  parent_task_id: string | null
+  is_group: boolean
+  title: string
+  status: string
+  stage: string
+  priority: number | null
+  order_index: number
+  scheduled_at: string | null
+  estimated_time: number
+  calendar_id: string | null
+  google_event_id: string | null
+  memo: string | null
+  mindmap_collapsed?: boolean | null
+  created_at?: string
+  updated_at?: string
+}
 
 function compactText(value: unknown, limit: number): string {
   if (typeof value !== 'string') return ''
@@ -56,6 +80,255 @@ function recordTextMatches(record: Record<string, unknown>, keys: string[], quer
     const value = record[key]
     return typeof value === 'string' && value.toLowerCase().includes(needle)
   })
+}
+
+function compactPreview(value: string | null | undefined, limit = 120): string | null {
+  const text = (value ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return null
+  return text.length > limit ? `${text.slice(0, limit)}...` : text
+}
+
+function buildMindmapOrder(nodes: MindmapTaskRow[]) {
+  const byId = new Map(nodes.map(node => [node.id, node]))
+  const childrenByParent = new Map<string | null, MindmapTaskRow[]>()
+  for (const node of nodes) {
+    const key = node.parent_task_id ?? null
+    const children = childrenByParent.get(key) ?? []
+    children.push(node)
+    childrenByParent.set(key, children)
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0) || a.title.localeCompare(b.title))
+  }
+
+  const ordered: Array<MindmapTaskRow & {
+    depth: number
+    path: string
+    parent_title: string | null
+    children_count: number
+  }> = []
+  const visited = new Set<string>()
+
+  const visit = (node: MindmapTaskRow, depth: number, parentPath: string[]) => {
+    if (visited.has(node.id)) return
+    visited.add(node.id)
+    const children = childrenByParent.get(node.id) ?? []
+    const pathParts = [...parentPath, node.title]
+    ordered.push({
+      ...node,
+      depth,
+      path: pathParts.join(' / '),
+      parent_title: node.parent_task_id ? byId.get(node.parent_task_id)?.title ?? null : null,
+      children_count: children.length,
+    })
+    children.forEach(child => visit(child, depth + 1, pathParts))
+  }
+
+  ;(childrenByParent.get(null) ?? []).forEach(root => visit(root, 0, []))
+  nodes
+    .filter(node => !visited.has(node.id))
+    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .forEach(node => visit(node, 0, []))
+
+  return { ordered, byId, childrenByParent }
+}
+
+function getDescendantIds(nodes: MindmapTaskRow[], rootId: string): string[] {
+  const childrenByParent = new Map<string, string[]>()
+  for (const node of nodes) {
+    if (!node.parent_task_id) continue
+    const children = childrenByParent.get(node.parent_task_id) ?? []
+    children.push(node.id)
+    childrenByParent.set(node.parent_task_id, children)
+  }
+  const result: string[] = []
+  const visit = (id: string) => {
+    result.push(id)
+    for (const childId of childrenByParent.get(id) ?? []) visit(childId)
+  }
+  visit(rootId)
+  return Array.from(new Set(result))
+}
+
+async function loadMindmapTasks(
+  supabase: SupabaseServerClient,
+  userId: string,
+  projectId: string,
+): Promise<{ data: MindmapTaskRow[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id, project_id, parent_task_id, is_group, title, status, stage, priority, order_index, scheduled_at, estimated_time, calendar_id, google_event_id, memo, mindmap_collapsed, created_at, updated_at')
+    .eq('user_id', userId)
+    .eq('project_id', projectId)
+    .is('deleted_at', null)
+    .order('order_index', { ascending: true })
+  if (error) return { data: [], error: error.message }
+  return { data: (data || []) as MindmapTaskRow[], error: null }
+}
+
+async function loadTaskById(
+  supabase: SupabaseServerClient,
+  userId: string,
+  nodeId: string,
+): Promise<MindmapTaskRow | null> {
+  const { data } = await supabase
+    .from('tasks')
+    .select('id, project_id, parent_task_id, is_group, title, status, stage, priority, order_index, scheduled_at, estimated_time, calendar_id, google_event_id, memo, mindmap_collapsed, created_at, updated_at')
+    .eq('user_id', userId)
+    .eq('id', nodeId)
+    .is('deleted_at', null)
+    .maybeSingle()
+  return data as MindmapTaskRow | null
+}
+
+function mindmapStats(nodes: MindmapTaskRow[]) {
+  const taskNodes = nodes.filter(node => !node.is_group)
+  const done = taskNodes.filter(node => node.status === 'done' || node.stage === 'done').length
+  const scheduled = taskNodes.filter(node => !!node.scheduled_at).length
+  const progressPercent = taskNodes.length > 0 ? Math.round((done / taskNodes.length) * 100) : 0
+  return {
+    total_nodes: nodes.length,
+    groups: nodes.filter(node => node.is_group).length,
+    tasks: taskNodes.length,
+    done_tasks: done,
+    scheduled_tasks: scheduled,
+    progress_percent: progressPercent,
+  }
+}
+
+async function loadMindmapLinkSummaries(
+  supabase: SupabaseServerClient,
+  userId: string,
+  taskIds: string[],
+) {
+  const uniqueTaskIds = Array.from(new Set(taskIds.filter(Boolean)))
+  if (uniqueTaskIds.length === 0) return []
+
+  const { data: structuredLinks } = await supabase
+    .from('memo_node_links')
+    .select('id, memo_item_id, source_type, source_id, task_id, project_id, link_type, status, created_at, updated_at')
+    .eq('user_id', userId)
+    .in('task_id', uniqueTaskIds)
+    .eq('link_type', 'mindmap_node')
+    .eq('status', 'active')
+
+  const memoItemIds = Array.from(new Set(
+    (structuredLinks || [])
+      .map(link => link.memo_item_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  ))
+  const { data: memoItems } = memoItemIds.length > 0
+    ? await supabase
+      .from('memo_items')
+      .select('id, title, body, item_kind, status, source_type, source_id, project_id, updated_at')
+      .eq('user_id', userId)
+      .in('id', memoItemIds)
+    : { data: [] }
+  const memoById = new Map((memoItems || []).map(item => [item.id, item]))
+
+  const structuredSourceIds = Array.from(new Set(
+    (structuredLinks || [])
+      .filter(link => link.source_type === 'wishlist')
+      .map(link => link.source_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  ))
+
+  const { data: legacyCandidates } = await supabase
+    .from('ideal_goals')
+    .select('id, title, description, project_id, memo_status, status, ai_source_payload, updated_at')
+    .eq('user_id', userId)
+    .in('status', ['wishlist', 'memo'])
+    .not('ai_source_payload', 'is', null)
+    .limit(500)
+
+  const legacyRows = (legacyCandidates || [])
+  const legacySourceIds = legacyRows
+    .filter(row => readMindmapLinks(row.ai_source_payload).some(link =>
+      typeof link.task_id === 'string' && uniqueTaskIds.includes(link.task_id),
+    ))
+    .map(row => row.id)
+
+  const wishlistSourceIds = Array.from(new Set([...structuredSourceIds, ...legacySourceIds]))
+  const { data: wishlistRows } = wishlistSourceIds.length > 0
+    ? await supabase
+      .from('ideal_goals')
+      .select('id, title, description, project_id, memo_status, status, scheduled_at, updated_at')
+      .eq('user_id', userId)
+      .in('id', wishlistSourceIds)
+    : { data: [] }
+  const wishlistById = new Map((wishlistRows || []).map(item => [item.id, item]))
+
+  const summaries = (structuredLinks || []).map(link => {
+    const memo = memoById.get(link.memo_item_id)
+    const source = link.source_type === 'wishlist' ? wishlistById.get(link.source_id) : null
+    return {
+      kind: 'structured',
+      link_id: link.id,
+      task_id: link.task_id,
+      memo_item_id: link.memo_item_id,
+      source_type: link.source_type,
+      source_id: link.source_id,
+      source_title: source?.title ?? null,
+      memo_title: memo?.title ?? null,
+      memo_kind: memo?.item_kind ?? null,
+      memo_status: memo?.status ?? null,
+      source_status: source?.memo_status ?? null,
+      preview: compactPreview(memo?.body ?? source?.description ?? null, 100),
+      updated_at: link.updated_at,
+    }
+  })
+
+  for (const row of legacyRows) {
+    const source = wishlistById.get(row.id) ?? row
+    for (const link of readMindmapLinks(row.ai_source_payload)) {
+      if (typeof link.task_id !== 'string' || !uniqueTaskIds.includes(link.task_id)) continue
+      summaries.push({
+        kind: 'legacy_payload',
+        link_id: null,
+        task_id: link.task_id,
+        memo_item_id: null,
+        source_type: 'wishlist',
+        source_id: row.id,
+        source_title: source?.title ?? null,
+        memo_title: source?.title ?? null,
+        memo_kind: 'legacy',
+        memo_status: null,
+        source_status: source?.memo_status ?? null,
+        preview: compactPreview(source?.description ?? null, 100),
+        updated_at: typeof link.linked_at === 'string' ? link.linked_at : row.updated_at,
+      })
+    }
+  }
+
+  return summaries
+}
+
+function addLegacyMindmapLink(payload: unknown, taskId: string) {
+  const current = readPayloadRecord(payload)
+  const links = readMindmapLinks(current)
+  const nextLinks = links.some(link => link.task_id === taskId)
+    ? links
+    : [...links, { task_id: taskId, linked_at: new Date().toISOString(), source: 'chat_agent' }]
+  return {
+    ...current,
+    mindmap_links: nextLinks,
+    manual_column: 'mapped',
+    manual_column_assigned_at: new Date().toISOString(),
+  }
+}
+
+function removeLegacyMindmapLink(payload: unknown, taskId?: string | null) {
+  const current = readPayloadRecord(payload)
+  const links = readMindmapLinks(current)
+  const nextLinks = taskId
+    ? links.filter(link => link.task_id !== taskId)
+    : []
+  const next: Record<string, unknown> = { ...current, mindmap_links: nextLinks }
+  if (nextLinks.length === 0) {
+    delete next.manual_column
+    delete next.manual_column_assigned_at
+  }
+  return next
 }
 
 async function requireAuthedUser(supabase: SupabaseServerClient) {
@@ -405,6 +678,53 @@ export const saveProjectContext = tool({
   },
 })
 
+export const updateProject = tool({
+  description:
+    'Focusmapのプロジェクト本体を更新する。プロジェクト名、概要、目的、状態、リポジトリパス、優先度などを変更したい時に使う。',
+  inputSchema: z.object({
+    projectId: z.string().describe('プロジェクトID'),
+    title: z.string().optional().describe('新しいプロジェクト名'),
+    description: z.string().optional().describe('新しいプロジェクト概要'),
+    purpose: z.string().nullable().optional().describe('目的。nullで消去。'),
+    status: z.string().optional().describe('active / archived / completed などの状態'),
+    repoPath: z.string().nullable().optional().describe('紐づくリポジトリ絶対パス。nullで消去。'),
+    priority: z.number().optional().describe('優先度'),
+    categoryTag: z.string().nullable().optional().describe('カテゴリタグ。nullで消去。'),
+    colorTheme: z.string().optional().describe('色テーマ'),
+  }),
+  execute: async ({ projectId, title, description, purpose, status, repoPath, priority, categoryTag, colorTheme }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const updates: Record<string, unknown> = {}
+    if (typeof title === 'string') updates.title = compactText(title, 160)
+    if (typeof description === 'string') updates.description = compactText(description, 3000)
+    if (purpose !== undefined) updates.purpose = purpose === null ? null : compactText(purpose, 1000)
+    if (typeof status === 'string') updates.status = compactText(status, 50)
+    if (repoPath !== undefined) updates.repo_path = repoPath === null ? null : compactText(repoPath, 1000)
+    if (typeof priority === 'number' && Number.isFinite(priority)) updates.priority = Math.round(priority)
+    if (categoryTag !== undefined) updates.category_tag = categoryTag === null ? null : compactText(categoryTag, 80)
+    if (typeof colorTheme === 'string') updates.color_theme = compactText(colorTheme, 80)
+
+    if (Object.keys(updates).length === 0) {
+      return { success: false, error: '更新内容が指定されていません' }
+    }
+
+    const { data, error } = await supabase
+      .from('projects')
+      .update(updates)
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .select('id, title, description, purpose, status, priority, category_tag, color_theme, repo_path')
+      .maybeSingle()
+
+    if (error) return { success: false, error: error.message }
+    if (!data) return { success: false, error: 'プロジェクトが見つかりません' }
+    return { success: true, project: data, message: `プロジェクト「${data.title}」を更新しました` }
+  },
+})
+
 export const listProjectTasks = tool({
   description:
     'Focusmap DBのタスク/マップノードを確認する。プロジェクト内の記録・既存タスク・予定化済みタスクを確認したい時に使う。',
@@ -442,6 +762,473 @@ export const listProjectTasks = tool({
       success: true,
       tasks,
       message: `${tasks.length}件のタスク/ノードを取得しました`,
+    }
+  },
+})
+
+export const getMindmapOverview = tool({
+  description:
+    '指定プロジェクトのマインドマップDB全体を確認する。ノード一覧、親子関係、進捗、予定化、メモ紐づきをまとめて見る時に使う。',
+  inputSchema: z.object({
+    projectId: z.string().describe('確認するプロジェクトID'),
+    includeLinkedMemos: z.boolean().optional().describe('メモ/ノートとの紐づきも含めるか。通常はtrue。'),
+    includeMemoPreview: z.boolean().optional().describe('ノードのmemo冒頭を含めるか。通常はtrue。'),
+    limit: z.number().optional().describe('返すノード件数。最大200件。'),
+  }),
+  execute: async ({ projectId, includeLinkedMemos, includeMemoPreview, limit }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const [{ data: project, error: projectError }, { data: context }] = await Promise.all([
+      supabase
+        .from('projects')
+        .select('id, title, description, purpose, status, repo_path, priority')
+        .eq('id', projectId)
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('project_contexts')
+        .select('heading, details, progress, progress_status, progress_updated_at, updated_at')
+        .eq('project_id', projectId)
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ])
+    if (projectError) return { success: false, error: projectError.message }
+    if (!project) return { success: false, error: 'プロジェクトが見つかりません' }
+
+    const loaded = await loadMindmapTasks(supabase, user.id, projectId)
+    if (loaded.error) return { success: false, error: loaded.error }
+    const { ordered } = buildMindmapOrder(loaded.data)
+    const maxRows = normalizeLimit(limit, 120, 200)
+    const links = includeLinkedMemos === false
+      ? []
+      : await loadMindmapLinkSummaries(supabase, user.id, loaded.data.map(node => node.id))
+    const linkedCountByTask = new Map<string, number>()
+    for (const link of links) {
+      if (!link.task_id) continue
+      linkedCountByTask.set(link.task_id, (linkedCountByTask.get(link.task_id) ?? 0) + 1)
+    }
+
+    return {
+      success: true,
+      project,
+      project_context: context ?? null,
+      stats: mindmapStats(loaded.data),
+      nodes: ordered.slice(0, maxRows).map(node => ({
+        id: node.id,
+        title: node.title,
+        path: node.path,
+        depth: node.depth,
+        parent_task_id: node.parent_task_id,
+        parent_title: node.parent_title,
+        project_id: node.project_id,
+        is_group: node.is_group,
+        status: node.status,
+        stage: node.stage,
+        priority: node.priority,
+        order_index: node.order_index,
+        scheduled_at: node.scheduled_at,
+        estimated_time: node.estimated_time,
+        calendar_id: node.calendar_id,
+        google_event_id: node.google_event_id,
+        children_count: node.children_count,
+        linked_memo_count: linkedCountByTask.get(node.id) ?? 0,
+        mindmap_collapsed: node.mindmap_collapsed ?? false,
+        memo_preview: includeMemoPreview === false ? null : compactPreview(node.memo, 140),
+        updated_at: node.updated_at,
+      })),
+      linked_memos: includeLinkedMemos === false ? undefined : links,
+      truncated: ordered.length > maxRows,
+      message: `「${project.title}」のマインドマップ ${loaded.data.length} ノードを取得しました`,
+    }
+  },
+})
+
+export const getMindmapNodeDetail = tool({
+  description:
+    'マインドマップの1ノードについて、親、子孫、メモ紐づき、予定情報、進捗状態を詳しく確認する。',
+  inputSchema: z.object({
+    nodeId: z.string().describe('確認するノードID'),
+    includeDescendants: z.boolean().optional().describe('子孫ノードも含めるか。通常はtrue。'),
+    includeLinkedMemos: z.boolean().optional().describe('メモ紐づきも含めるか。通常はtrue。'),
+  }),
+  execute: async ({ nodeId, includeDescendants, includeLinkedMemos }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const node = await loadTaskById(supabase, user.id, nodeId)
+    if (!node) return { success: false, error: 'ノードが見つかりません' }
+    const projectId = node.project_id
+    if (!projectId) return { success: false, error: 'このノードはプロジェクトに紐づいていません' }
+
+    const loaded = await loadMindmapTasks(supabase, user.id, projectId)
+    if (loaded.error) return { success: false, error: loaded.error }
+    const { ordered, byId } = buildMindmapOrder(loaded.data)
+    const descendantIds = getDescendantIds(loaded.data, nodeId)
+    const selectedIds = includeDescendants === false ? [nodeId] : descendantIds
+    const selectedNodes = ordered.filter(item => selectedIds.includes(item.id))
+    const links = includeLinkedMemos === false
+      ? []
+      : await loadMindmapLinkSummaries(supabase, user.id, selectedIds)
+
+    return {
+      success: true,
+      node: {
+        ...node,
+        parent: node.parent_task_id ? byId.get(node.parent_task_id) ?? null : null,
+      },
+      descendants: includeDescendants === false ? undefined : selectedNodes.filter(item => item.id !== nodeId),
+      descendant_stats: mindmapStats(selectedNodes),
+      linked_memos: includeLinkedMemos === false ? undefined : links,
+      message: `ノード「${node.title}」の詳細を取得しました`,
+    }
+  },
+})
+
+export const updateMindmapNode = tool({
+  description:
+    'マインドマップノードの内容を更新する。タイトル、メモ、状態、進捗段階、優先度、予定日時、所要時間、折りたたみ状態を変更できる。',
+  inputSchema: z.object({
+    nodeId: z.string().describe('更新するノードID'),
+    title: z.string().optional().describe('新しいタイトル'),
+    memo: z.string().nullable().optional().describe('ノードメモ。nullで消去。'),
+    status: z.string().optional().describe('todo / pending / done などの状態'),
+    stage: z.enum(TASK_STAGES).optional().describe('plan / scheduled / executing / done / archived'),
+    priority: z.number().nullable().optional().describe('優先度。nullで消去。'),
+    scheduledAt: z.string().nullable().optional().describe('予定日時。nullで消去。'),
+    estimatedTime: z.number().optional().describe('所要時間（分）'),
+    calendarId: z.string().nullable().optional().describe('GoogleカレンダーID。nullで消去。'),
+    mindmapCollapsed: z.boolean().optional().describe('子ノードを折りたたむか'),
+  }),
+  execute: async ({ nodeId, title, memo, status, stage, priority, scheduledAt, estimatedTime, calendarId, mindmapCollapsed }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const node = await loadTaskById(supabase, user.id, nodeId)
+    if (!node) return { success: false, error: 'ノードが見つかりません' }
+
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (typeof title === 'string') updates.title = compactText(title, 300)
+    if (memo !== undefined) updates.memo = memo === null ? null : compactText(memo, 12000)
+    if (typeof status === 'string') updates.status = compactText(status, 40)
+    if (stage) updates.stage = stage
+    if (priority !== undefined) updates.priority = priority === null ? null : Math.round(priority)
+    if (scheduledAt !== undefined) {
+      if (scheduledAt !== null && isNaN(Date.parse(scheduledAt))) {
+        return { success: false, error: 'scheduledAt が有効な日時ではありません' }
+      }
+      updates.scheduled_at = scheduledAt
+      if (scheduledAt && !stage) updates.stage = 'scheduled'
+    }
+    if (typeof estimatedTime === 'number' && Number.isFinite(estimatedTime)) {
+      updates.estimated_time = Math.max(0, Math.round(estimatedTime))
+    }
+    if (calendarId !== undefined) updates.calendar_id = calendarId
+    if (typeof mindmapCollapsed === 'boolean') updates.mindmap_collapsed = mindmapCollapsed
+
+    if (Object.keys(updates).length === 1) {
+      return { success: false, error: '更新内容が指定されていません' }
+    }
+
+    const { data: updated, error } = await supabase
+      .from('tasks')
+      .update(updates)
+      .eq('id', nodeId)
+      .eq('user_id', user.id)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle()
+    if (error) return { success: false, error: error.message }
+    if (!updated) return { success: false, error: 'ノード更新に失敗しました' }
+
+    const shouldSyncCalendar = Boolean(
+      updated.scheduled_at &&
+      updated.calendar_id &&
+      ((scheduledAt !== undefined) || (estimatedTime !== undefined) || (calendarId !== undefined) || (title !== undefined) || (memo !== undefined))
+    )
+    if (shouldSyncCalendar) {
+      try {
+        const { syncTaskToCalendar } = await import('@/lib/google-calendar')
+        await syncTaskToCalendar(user.id, nodeId, {
+          title: updated.title,
+          scheduled_at: updated.scheduled_at,
+          estimated_time: updated.estimated_time || 60,
+          google_event_id: updated.google_event_id || undefined,
+          calendar_id: updated.calendar_id,
+          memo: updated.memo,
+        })
+      } catch (calendarError) {
+        return {
+          success: true,
+          task: updated,
+          calendarSynced: false,
+          warning: calendarError instanceof Error ? calendarError.message : 'Googleカレンダー同期に失敗しました',
+          message: `ノード「${updated.title}」を更新しましたが、カレンダー同期は失敗しました`,
+        }
+      }
+    }
+
+    return {
+      success: true,
+      task: updated,
+      calendarSynced: shouldSyncCalendar,
+      message: `ノード「${updated.title}」を更新しました`,
+    }
+  },
+})
+
+export const moveMindmapNode = tool({
+  description:
+    'マインドマップノードを別の親ノード配下、ルート、または別プロジェクトへ移動する。子孫ノードとメモ紐づきのproject_idも追従する。',
+  inputSchema: z.object({
+    nodeId: z.string().describe('移動するノードID'),
+    parentTaskId: z.string().nullable().optional().describe('新しい親ノードID。nullでプロジェクト直下。'),
+    projectId: z.string().nullable().optional().describe('移動先プロジェクトID。未指定なら親または現在のプロジェクト。nullで未所属。'),
+    orderIndex: z.number().optional().describe('移動先での表示順。未指定なら末尾。'),
+  }),
+  execute: async ({ nodeId, parentTaskId, projectId, orderIndex }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const node = await loadTaskById(supabase, user.id, nodeId)
+    if (!node) return { success: false, error: 'ノードが見つかりません' }
+    const currentProjectId = node.project_id
+    if (!currentProjectId) return { success: false, error: 'このノードはプロジェクトに紐づいていません' }
+
+    let targetParent: MindmapTaskRow | null = null
+    if (parentTaskId) {
+      targetParent = await loadTaskById(supabase, user.id, parentTaskId)
+      if (!targetParent) return { success: false, error: '移動先の親ノードが見つかりません' }
+    }
+    const targetProjectId = projectId !== undefined
+      ? projectId
+      : targetParent?.project_id ?? currentProjectId
+
+    if (targetProjectId) {
+      const { data: project } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('id', targetProjectId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (!project) return { success: false, error: '移動先プロジェクトが見つかりません' }
+    }
+    if (targetParent && targetParent.project_id !== targetProjectId) {
+      return { success: false, error: '親ノードと移動先プロジェクトが一致していません' }
+    }
+
+    const currentLoaded = await loadMindmapTasks(supabase, user.id, currentProjectId)
+    if (currentLoaded.error) return { success: false, error: currentLoaded.error }
+    const movedIds = getDescendantIds(currentLoaded.data, nodeId)
+    if (parentTaskId && movedIds.includes(parentTaskId)) {
+      return { success: false, error: '自分自身または子孫ノード配下には移動できません' }
+    }
+
+    let resolvedOrderIndex = orderIndex
+    if (resolvedOrderIndex === undefined) {
+      let orderQuery = supabase
+        .from('tasks')
+        .select('order_index')
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+        .order('order_index', { ascending: false })
+        .limit(1)
+      orderQuery = targetProjectId
+        ? orderQuery.eq('project_id', targetProjectId)
+        : orderQuery.is('project_id', null)
+      orderQuery = parentTaskId
+        ? orderQuery.eq('parent_task_id', parentTaskId)
+        : orderQuery.is('parent_task_id', null)
+      const { data: maxOrder } = await orderQuery.maybeSingle()
+      resolvedOrderIndex = (maxOrder?.order_index ?? -1) + 1
+    }
+
+    const now = new Date().toISOString()
+    const { data: movedRoot, error: rootError } = await supabase
+      .from('tasks')
+      .update({
+        project_id: targetProjectId,
+        parent_task_id: parentTaskId ?? null,
+        order_index: Math.round(resolvedOrderIndex ?? 0),
+        updated_at: now,
+      })
+      .eq('id', nodeId)
+      .eq('user_id', user.id)
+      .select('*')
+      .maybeSingle()
+    if (rootError) return { success: false, error: rootError.message }
+    if (!movedRoot) return { success: false, error: 'ノード移動に失敗しました' }
+
+    const descendantOnlyIds = movedIds.filter(id => id !== nodeId)
+    if (descendantOnlyIds.length > 0) {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ project_id: targetProjectId, updated_at: now })
+        .eq('user_id', user.id)
+        .in('id', descendantOnlyIds)
+      if (error) return { success: false, error: error.message }
+    }
+
+    await supabase
+      .from('memo_node_links')
+      .update({ project_id: targetProjectId, updated_at: now })
+      .eq('user_id', user.id)
+      .in('task_id', movedIds)
+      .eq('link_type', 'mindmap_node')
+      .eq('status', 'active')
+
+    return {
+      success: true,
+      task: movedRoot,
+      movedNodeIds: movedIds,
+      message: `ノード「${movedRoot.title}」を移動しました`,
+    }
+  },
+})
+
+export const updateMindmapMemoLink = tool({
+  description:
+    'メモ/ノートとマインドマップノードの紐づきを追加・移動・解除する。どのメモがどのノードに紐づくかを変更したい時に使う。',
+  inputSchema: z.object({
+    action: z.enum(MEMO_LINK_ACTIONS).describe('link=追加、move=付け替え、unlink=解除'),
+    taskId: z.string().optional().describe('追加/移動先のマインドマップノードID'),
+    fromTaskId: z.string().optional().describe('解除または付け替え元のノードID。未指定なら対象メモの既存activeリンク全体。'),
+    linkId: z.string().optional().describe('既存のmemo_node_links.id。指定時はこのリンクを対象にする。'),
+    memoItemId: z.string().optional().describe('memo_items.id。構造化メモリンクを操作する時に使う。'),
+    sourceType: z.enum(MEMO_SOURCE_TYPES).optional().describe('sourceId指定時の種類。通常 wishlist。'),
+    sourceId: z.string().optional().describe('wishlist/notes側の元メモID。legacy payloadリンクも操作できる。'),
+  }),
+  execute: async ({ action, taskId, fromTaskId, linkId, memoItemId, sourceType, sourceId }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const needsTarget = action === 'link' || action === 'move'
+    const targetTask = needsTarget && taskId ? await loadTaskById(supabase, user.id, taskId) : null
+    if (needsTarget && !targetTask) return { success: false, error: '紐づけ先ノードが見つかりません' }
+
+    const now = new Date().toISOString()
+    const archivedLinkIds: string[] = []
+    if (action === 'move' || action === 'unlink') {
+      let query = supabase
+        .from('memo_node_links')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('link_type', 'mindmap_node')
+        .eq('status', 'active')
+
+      if (linkId) query = query.eq('id', linkId)
+      else if (memoItemId) query = query.eq('memo_item_id', memoItemId)
+      else if (sourceId) {
+        query = query.eq('source_id', sourceId)
+        if (sourceType) query = query.eq('source_type', sourceType)
+      } else {
+        return { success: false, error: '解除/付け替え対象の linkId / memoItemId / sourceId のいずれかが必要です' }
+      }
+      if (fromTaskId) query = query.eq('task_id', fromTaskId)
+
+      const { data: links, error: linkLoadError } = await query
+      if (linkLoadError) return { success: false, error: linkLoadError.message }
+      const ids = (links || []).map(link => link.id).filter((id): id is string => typeof id === 'string')
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from('memo_node_links')
+          .update({ status: 'archived', updated_at: now })
+          .eq('user_id', user.id)
+          .in('id', ids)
+        if (error) return { success: false, error: error.message }
+        archivedLinkIds.push(...ids)
+      }
+    }
+
+    let createdStructuredLink: unknown = null
+    if ((action === 'link' || action === 'move') && memoItemId && targetTask) {
+      const { data: memoItem, error: memoError } = await supabase
+        .from('memo_items')
+        .select('id, source_type, source_id, project_id, title')
+        .eq('id', memoItemId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (memoError) return { success: false, error: memoError.message }
+      if (!memoItem) return { success: false, error: 'memoItem が見つかりません' }
+
+      const { data: existing } = await supabase
+        .from('memo_node_links')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('memo_item_id', memoItemId)
+        .eq('task_id', targetTask.id)
+        .eq('link_type', 'mindmap_node')
+        .eq('status', 'active')
+        .maybeSingle()
+
+      if (!existing) {
+        const { data, error } = await supabase
+          .from('memo_node_links')
+          .insert({
+            user_id: user.id,
+            memo_item_id: memoItem.id,
+            source_type: memoItem.source_type,
+            source_id: memoItem.source_id,
+            task_id: targetTask.id,
+            project_id: targetTask.project_id,
+            link_type: 'mindmap_node',
+            status: 'active',
+            metadata: { source: 'chat_agent' },
+          })
+          .select('id, memo_item_id, source_type, source_id, task_id, project_id, status')
+          .single()
+        if (error) return { success: false, error: error.message }
+        createdStructuredLink = data
+      } else {
+        createdStructuredLink = existing
+      }
+    }
+
+    let legacyUpdated = false
+    if (sourceId && (sourceType ?? 'wishlist') === 'wishlist') {
+      const { data: source, error: sourceError } = await supabase
+        .from('ideal_goals')
+        .select('id, title, ai_source_payload')
+        .eq('id', sourceId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (sourceError) return { success: false, error: sourceError.message }
+      if (!source) return { success: false, error: '元メモが見つかりません' }
+
+      let payload = source.ai_source_payload
+      if (action === 'move' || action === 'unlink') {
+        payload = removeLegacyMindmapLink(payload, fromTaskId || null)
+      }
+      if ((action === 'link' || action === 'move') && targetTask) {
+        payload = addLegacyMindmapLink(payload, targetTask.id)
+      }
+
+      const { error } = await supabase
+        .from('ideal_goals')
+        .update({ ai_source_payload: payload, updated_at: now })
+        .eq('id', source.id)
+        .eq('user_id', user.id)
+      if (error) return { success: false, error: error.message }
+      legacyUpdated = true
+    }
+
+    return {
+      success: true,
+      action,
+      archivedLinkIds,
+      createdStructuredLink,
+      legacyUpdated,
+      targetTaskId: targetTask?.id ?? null,
+      message: action === 'unlink'
+        ? 'メモ紐づきを解除しました'
+        : action === 'move'
+          ? 'メモ紐づきを付け替えました'
+          : 'メモ紐づきを追加しました',
     }
   },
 })
