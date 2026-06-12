@@ -1857,8 +1857,7 @@ function EventBlock({
             onClick={(e) => { e.stopPropagation(); onToggle?.() }}
             aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
             className={cn(
-                "no-tap-highlight inline-flex flex-shrink-0 items-center justify-center rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/80",
-                checkboxSizeClass
+                "no-tap-highlight relative z-10 -m-3.5 inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md outline-none hover:bg-background/30 active:bg-background/40 focus-visible:ring-2 focus-visible:ring-primary/80"
             )}
         >
             {isDone ? (
@@ -2106,8 +2105,7 @@ function TaskBlock({
             onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
             aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
             className={cn(
-                "no-tap-highlight inline-flex flex-shrink-0 items-center justify-center rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/80",
-                checkboxSizeClass
+                "no-tap-highlight relative z-10 -m-3.5 inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md outline-none hover:bg-background/30 active:bg-background/40 focus-visible:ring-2 focus-visible:ring-primary/80"
             )}
         >
             {isDone ? (

@@ -194,7 +194,7 @@ function TimelineCard({
                 {onToggleEvent && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggleEvent(item.id) }}
-                        className="no-tap-highlight flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                        className="no-tap-highlight -m-3 inline-flex h-11 w-11 flex-shrink-0 items-center justify-center self-center rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
                         aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
                     >
                         {isDone ? (
@@ -254,7 +254,7 @@ function TimelineCard({
             )}
             <button
                 onClick={(e) => { e.stopPropagation(); onToggleTask(item.id) }}
-                className="no-tap-highlight flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                className="no-tap-highlight -m-3 inline-flex h-11 w-11 flex-shrink-0 items-center justify-center self-center rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
             >
                 {isDone ? (
                     <CheckSquare className="w-5 h-5 text-primary" />

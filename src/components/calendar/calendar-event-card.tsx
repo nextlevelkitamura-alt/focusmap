@@ -143,7 +143,7 @@ export function CalendarEventCard({
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
-              className="relative flex-shrink-0 opacity-90 hover:opacity-100 transition-opacity before:absolute before:-inset-2 before:content-['']"
+              className="relative -m-3.5 inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md opacity-90 transition-opacity hover:bg-black/5 hover:opacity-100 active:bg-black/10"
             >
               {isDone ? (
                 <CheckSquare className="w-3.5 h-3.5" style={{ color: textColor }} />
