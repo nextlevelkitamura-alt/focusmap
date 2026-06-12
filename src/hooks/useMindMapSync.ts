@@ -1361,10 +1361,27 @@ export function useMindMapSync({
         const beforeValues = Object.fromEntries(
             (Object.keys(updatesWithStage) as (keyof Task)[]).map(key => [key, beforeTask[key]])
         ) as Partial<Task>
+        const preservesLocalDraftOnFailure = Object.prototype.hasOwnProperty.call(updatesWithStage, 'title') ||
+            Object.prototype.hasOwnProperty.call(updatesWithStage, 'memo')
+        const applyTaskValues = (values: Partial<Task>) => {
+            allTasksRef.current = allTasksRef.current.map(t => t.id === taskId ? { ...t, ...values } : t)
+            setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...values } : t))
+        }
+        const rollbackTaskValues = () => {
+            applyTaskValues(beforeValues)
+            if (typeof beforeValues.status === 'string') {
+                dispatchLinkedTaskStatus(taskId, beforeValues.status)
+            }
+        }
+        const notifyTaskSaveFailure = (message: string) => {
+            onSyncError?.(preservesLocalDraftOnFailure
+                ? '保存に失敗しました。端末の編集内容を保持しています。再度編集すると再同期します。'
+                : message)
+        }
 
         let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
 
-        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
+        applyTaskValues(updatesWithStage)
         if (typeof updatesWithStage.status === 'string') {
             dispatchLinkedTaskStatus(taskId, updatesWithStage.status)
         }
@@ -1396,11 +1413,8 @@ export function useMindMapSync({
                         return
                     }
                     if (isLatestUpdate()) {
-                        onSyncError?.(`保存に失敗しました: ${errorData.message || response.statusText}`)
-                        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
-                        if (typeof beforeValues.status === 'string') {
-                            dispatchLinkedTaskStatus(taskId, beforeValues.status)
-                        }
+                        notifyTaskSaveFailure(`保存に失敗しました: ${errorData.message || response.statusText}`)
+                        if (!preservesLocalDraftOnFailure) rollbackTaskValues()
                     }
                     return
                 }
@@ -1499,11 +1513,8 @@ export function useMindMapSync({
                     return
                 }
                 if (isLatestUpdate()) {
-                    onSyncError?.('タスクの更新に失敗しました: ネットワークエラー')
-                    setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
-                    if (typeof beforeValues.status === 'string') {
-                        dispatchLinkedTaskStatus(taskId, beforeValues.status)
-                    }
+                    notifyTaskSaveFailure('タスクの更新に失敗しました: ネットワークエラー')
+                    if (!preservesLocalDraftOnFailure) rollbackTaskValues()
                 }
             }
         })

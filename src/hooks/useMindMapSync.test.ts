@@ -662,6 +662,37 @@ describe('useMindMapSync', () => {
       expect(result.current.tasks.find(t => t.id === 't1')?.title).toBe('New Title')
     })
 
+    test('title保存失敗時は古いDB値へ戻さず端末側の編集内容を保持する', async () => {
+      const onSyncError = vi.fn()
+      const group = createMockRootTask({ id: 'g1' })
+      const task = createMockTask({ id: 't1', parent_task_id: 'g1', title: 'Old Title' })
+      const initialRootTasks = [group]
+      const initialTasks = [task]
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ message: 'db down' }),
+        text: () => Promise.resolve('db down'),
+      })
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks,
+          initialTasks,
+          onSyncError,
+        })
+      )
+
+      await act(async () => {
+        await result.current.updateTask('t1', { title: 'Local Title' })
+      })
+
+      expect(result.current.tasks.find(t => t.id === 't1')?.title).toBe('Local Title')
+      expect(onSyncError).toHaveBeenCalledWith('保存に失敗しました。端末の編集内容を保持しています。再度編集すると再同期します。')
+    })
+
     test('mindmap_collapsedの保存失敗はUIを戻さず保留して再試行する', async () => {
       const onSyncError = vi.fn()
       const group = createMockRootTask({ id: 'g1', mindmap_collapsed: false })

@@ -133,6 +133,7 @@ describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    window.localStorage.clear()
     codexRunnerStatusMock.status = {
       checked: true,
       loading: false,
@@ -333,6 +334,82 @@ describe('WishlistCardDetail', () => {
     expect(screen.queryByText('時間・予定')).not.toBeInTheDocument()
     expect(screen.queryByText('ライブラリ / 撮影')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /クリップボード画像を貼り付け/ })).not.toBeInTheDocument()
+  })
+
+  test('スマホ保存に失敗したら編集画面を閉じず未同期下書きを残す', async () => {
+    vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
+    const onOpenChange = vi.fn()
+    const onUpdate = vi.fn(async () => {
+      throw new Error('DB保存失敗')
+    })
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem()}
+        open
+        onOpenChange={onOpenChange}
+        onUpdate={onUpdate}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+      />,
+    )
+
+    fireEvent.change(await screen.findByDisplayValue('Original title'), { target: { value: 'Local title' } })
+    fireEvent.change(screen.getByPlaceholderText('本文を入力'), { target: { value: 'Local body' } })
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem('focusmap:memo-draft:memo-1')).toContain('Local title')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith('memo-1', expect.objectContaining({
+        title: 'Local title',
+        description: 'Local body',
+      }))
+    })
+    expect(await screen.findByText('未同期・再試行')).toBeInTheDocument()
+    expect(screen.getByText('DB保存失敗')).toBeInTheDocument()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(JSON.parse(window.localStorage.getItem('focusmap:memo-draft:memo-1') ?? '{}')).toMatchObject({
+      title: 'Local title',
+      description: 'Local body',
+      status: 'failed',
+    })
+  })
+
+  test('スマホの未保存下書きを閉じたあと同じメモを開くと端末下書きを復元する', async () => {
+    vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
+    const onUpdate = vi.fn(async () => undefined)
+    const props = {
+      item: createMemoItem(),
+      onOpenChange: vi.fn(),
+      onUpdate,
+      onCalendarAdd: vi.fn(),
+      tagOptions: [] as string[],
+    }
+
+    const { rerender } = render(<WishlistCardDetail {...props} open />)
+
+    fireEvent.change(await screen.findByDisplayValue('Original title'), { target: { value: 'Restored title' } })
+    fireEvent.change(screen.getByPlaceholderText('本文を入力'), { target: { value: 'Restored body' } })
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem('focusmap:memo-draft:memo-1')).toContain('Restored title')
+    })
+
+    rerender(<WishlistCardDetail {...props} open={false} />)
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('Restored title')).not.toBeInTheDocument()
+    })
+
+    rerender(<WishlistCardDetail {...props} open />)
+
+    expect(await screen.findByDisplayValue('Restored title')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Restored body')).toBeInTheDocument()
+    expect(screen.getByText('端末に保存済み')).toBeInTheDocument()
+    expect(onUpdate).not.toHaveBeenCalled()
   })
 
   test('未保存のスマホ下書きでは画像と構造化項目を取得しない', async () => {

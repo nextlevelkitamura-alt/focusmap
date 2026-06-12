@@ -104,6 +104,66 @@ type PendingMemoImage = MemoImage & {
 }
 
 type MemoDestination = "memo" | "today"
+type MemoDraftSyncStatus = "idle" | "local" | "syncing" | "saved" | "failed"
+
+type PersistedMemoDraft = {
+  itemId: string
+  title: string
+  description: string
+  baseUpdatedAt: string | null
+  draftedAt: string
+  status: "local" | "failed"
+}
+
+const MEMO_DRAFT_STORAGE_PREFIX = "focusmap:memo-draft:"
+
+function getMemoDraftStorageKey(itemId: string) {
+  return `${MEMO_DRAFT_STORAGE_PREFIX}${itemId}`
+}
+
+function readPersistedMemoDraft(itemId: string): PersistedMemoDraft | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = window.localStorage.getItem(getMemoDraftStorageKey(itemId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<PersistedMemoDraft>
+    if (
+      parsed.itemId !== itemId ||
+      typeof parsed.title !== "string" ||
+      typeof parsed.description !== "string"
+    ) {
+      return null
+    }
+    return {
+      itemId,
+      title: parsed.title,
+      description: parsed.description,
+      baseUpdatedAt: typeof parsed.baseUpdatedAt === "string" ? parsed.baseUpdatedAt : null,
+      draftedAt: typeof parsed.draftedAt === "string" ? parsed.draftedAt : new Date().toISOString(),
+      status: parsed.status === "failed" ? "failed" : "local",
+    }
+  } catch {
+    return null
+  }
+}
+
+function writePersistedMemoDraft(draft: PersistedMemoDraft) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(getMemoDraftStorageKey(draft.itemId), JSON.stringify(draft))
+  } catch {
+    // localStorage can be unavailable in private mode; the in-memory draft still remains.
+  }
+}
+
+function clearPersistedMemoDraft(itemId: string) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.removeItem(getMemoDraftStorageKey(itemId))
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+}
 
 function getMemoDestination(item: IdealGoalWithItems): MemoDestination {
   return item.is_today && !item.is_completed && item.memo_status !== "completed" ? "today" : "memo"
@@ -1004,6 +1064,7 @@ export function WishlistCardDetail({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
   const [draftDescription, setDraftDescription] = useState("")
+  const [memoDraftSyncStatus, setMemoDraftSyncStatus] = useState<MemoDraftSyncStatus>("idle")
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
   const [pendingImages, setPendingImages] = useState<PendingMemoImage[]>([])
@@ -1211,6 +1272,23 @@ export function WishlistCardDetail({
   const itemTitle = item?.title ?? ""
   const itemDescription = item?.description ?? ""
   const itemScheduledAt = item?.scheduled_at ?? null
+  const itemUpdatedAt = item?.updated_at ?? null
+  const normalizedDraftTitle = draftTitle.trim()
+  const normalizedDraftDescription = draftDescription.trim()
+  const hasMemoDraftChanges = normalizedDraftTitle !== lastSubmittedDraftRef.current.title ||
+    normalizedDraftDescription !== lastSubmittedDraftRef.current.description
+  const memoDraftStatusLabel = useMemo(() => {
+    if (isSavingMemo || memoDraftSyncStatus === "syncing") return "同期中"
+    if (memoDraftSyncStatus === "failed") return "未同期・再試行"
+    if (hasMemoDraftChanges || memoDraftSyncStatus === "local") return "端末に保存済み"
+    if (memoDraftSyncStatus === "saved") return "保存済み"
+    return null
+  }, [hasMemoDraftChanges, isSavingMemo, memoDraftSyncStatus])
+  const memoDraftStatusTone = memoDraftSyncStatus === "failed"
+    ? "text-red-300"
+    : memoDraftSyncStatus === "saved"
+      ? "text-emerald-300"
+      : "text-neutral-400"
   const itemCalendarId = getMemoCalendarId(item)
   const codexCopyableImages = useMemo(
     () => images.filter(image => image.file_type?.startsWith("image/") && image.file_url.trim()),
@@ -1308,8 +1386,14 @@ export function WishlistCardDetail({
     if (draftSourceIdRef.current === itemId) return
 
     draftSourceIdRef.current = itemId
-    setDraftTitle(itemTitle)
-    setDraftDescription(itemDescription)
+    const persistedDraft = readPersistedMemoDraft(itemId)
+    const shouldRestorePersistedDraft = Boolean(
+      persistedDraft &&
+      (persistedDraft.title.trim() !== itemTitle.trim() ||
+        persistedDraft.description.trim() !== itemDescription.trim()),
+    )
+    setDraftTitle(shouldRestorePersistedDraft && persistedDraft ? persistedDraft.title : itemTitle)
+    setDraftDescription(shouldRestorePersistedDraft && persistedDraft ? persistedDraft.description : itemDescription)
     lastSubmittedDraftRef.current = item?.user_id === "local"
       ? { title: "", description: "" }
       : { title: itemTitle.trim(), description: itemDescription.trim() }
@@ -1320,7 +1404,12 @@ export function WishlistCardDetail({
     setIsDatePopoverOpen(false)
     setIsTimePopoverOpen(false)
     setIsCalendarPopoverOpen(false)
-    setSaveError(null)
+    setMemoDraftSyncStatus(shouldRestorePersistedDraft && persistedDraft
+      ? persistedDraft.status
+      : "idle")
+    setSaveError(shouldRestorePersistedDraft && persistedDraft?.status === "failed"
+      ? "前回保存できなかった下書きを端末から復元しました。"
+      : null)
     setCopyingCodexImageId(null)
     setCodexImageCopyNotice(null)
     setPendingImages(prev => {
@@ -1328,6 +1417,35 @@ export function WishlistCardDetail({
       return []
     })
   }, [item?.user_id, itemId, itemTitle, itemDescription, itemScheduledAt, open, releasePendingImage])
+
+  useEffect(() => {
+    if (!open || !itemId || draftSourceIdRef.current !== itemId) return
+    if (!hasMemoDraftChanges) {
+      if (memoDraftSyncStatus !== "failed") clearPersistedMemoDraft(itemId)
+      return
+    }
+
+    writePersistedMemoDraft({
+      itemId,
+      title: draftTitle,
+      description: draftDescription,
+      baseUpdatedAt: itemUpdatedAt,
+      draftedAt: new Date().toISOString(),
+      status: memoDraftSyncStatus === "failed" ? "failed" : "local",
+    })
+    if (memoDraftSyncStatus !== "syncing" && memoDraftSyncStatus !== "failed") {
+      setMemoDraftSyncStatus("local")
+      setSaveError(null)
+    }
+  }, [
+    draftDescription,
+    draftTitle,
+    hasMemoDraftChanges,
+    itemId,
+    itemUpdatedAt,
+    memoDraftSyncStatus,
+    open,
+  ])
 
   const handleCopyCodexImage = useCallback(async (image: MemoImage) => {
     if (!image.file_url.trim() || copyingCodexImageId) return
@@ -1348,14 +1466,15 @@ export function WishlistCardDetail({
   }, [copyingCodexImageId])
 
   const flushMemoDraft = useCallback(async () => {
-    if (!open || !itemId) return
+    if (!open || !itemId) return true
     const title = draftTitle.trim()
     const description = draftDescription.trim()
     const lastSubmitted = lastSubmittedDraftRef.current
-    if (title === lastSubmitted.title && description === lastSubmitted.description) return
-    if (!title && !description && !lastSubmitted.title && !lastSubmitted.description) return
+    if (title === lastSubmitted.title && description === lastSubmitted.description) return true
+    if (!title && !description && !lastSubmitted.title && !lastSubmitted.description) return true
 
     setIsSavingMemo(true)
+    setMemoDraftSyncStatus("syncing")
     setSaveError(null)
     try {
       await onUpdate(itemId, {
@@ -1364,12 +1483,26 @@ export function WishlistCardDetail({
         memo_status: item?.memo_status ?? "unsorted",
       })
       lastSubmittedDraftRef.current = { title, description }
+      clearPersistedMemoDraft(itemId)
+      setMemoDraftSyncStatus("saved")
+      return true
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "メモの自動保存に失敗しました")
+      const message = err instanceof Error ? err.message : "メモの自動保存に失敗しました"
+      writePersistedMemoDraft({
+        itemId,
+        title: draftTitle,
+        description: draftDescription,
+        baseUpdatedAt: itemUpdatedAt,
+        draftedAt: new Date().toISOString(),
+        status: "failed",
+      })
+      setMemoDraftSyncStatus("failed")
+      setSaveError(message)
+      return false
     } finally {
       setIsSavingMemo(false)
     }
-  }, [draftDescription, draftTitle, item?.memo_status, itemId, onUpdate, open])
+  }, [draftDescription, draftTitle, item?.memo_status, itemId, itemUpdatedAt, onUpdate, open])
 
   useEffect(() => {
     if (isMobile) return
@@ -1385,7 +1518,8 @@ export function WishlistCardDetail({
       onOpenChange(false)
       return
     }
-    await flushMemoDraft()
+    const saved = await flushMemoDraft()
+    if (!saved) return
     onOpenChange(false)
   }, [flushMemoDraft, isMobile, onOpenChange])
 
@@ -2108,7 +2242,8 @@ export function WishlistCardDetail({
 
   if (isMobile) {
     const handleMobileSave = async () => {
-      await flushMemoDraft()
+      const saved = await flushMemoDraft()
+      if (!saved) return
       onSaved?.()
       onOpenChange(false)
     }
@@ -2352,6 +2487,16 @@ export function WishlistCardDetail({
               {saveError && (
                 <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm leading-5 text-red-200">
                   {saveError}
+                </div>
+              )}
+
+              {memoDraftStatusLabel && (
+                <div className={cn(
+                  "flex min-h-8 items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs",
+                  memoDraftStatusTone,
+                )}>
+                  <span>{memoDraftStatusLabel}</span>
+                  {(isSavingMemo || memoDraftSyncStatus === "syncing") && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 </div>
               )}
 
@@ -2734,8 +2879,9 @@ export function WishlistCardDetail({
                   className="h-28 w-full resize-none overflow-y-auto border-0 bg-transparent px-3 py-2 text-sm outline-none md:h-36"
                 />
                 <div className="flex min-h-9 items-center justify-between gap-2 border-t bg-muted/20 px-2 py-1.5">
-                  <div className="flex min-w-0 items-center text-xs text-muted-foreground">
+                  <div className={cn("flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground", memoDraftStatusTone)}>
                     {isSavingMemo && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {memoDraftStatusLabel && <span>{memoDraftStatusLabel}</span>}
                   </div>
                   {isMobile && (
                     <div className="flex shrink-0 items-center gap-1.5">

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, describe, expect, test, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 
 const memoAiTasksMock = vi.hoisted(() => {
   const state = {
@@ -233,9 +233,14 @@ const mockViewportRect = (rect: Partial<DOMRect> = {}) => {
   })
 }
 
+beforeEach(() => {
+  window.localStorage.clear()
+})
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  window.localStorage.clear()
   memoAiTasksMock.bySourceId.clear()
   memoAiTasksMock.getBySourceId.mockClear()
   memoAiTasksMock.refreshStatus.mockClear()

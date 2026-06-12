@@ -280,6 +280,55 @@ const isInteractiveMapTarget = (target: EventTarget | null) =>
 const isMindMapNodeTarget = (target: EventTarget | null) =>
     target instanceof HTMLElement && Boolean(target.closest("[data-id]"));
 
+type PersistedMindmapTitleDraft = {
+    taskId: string;
+    title: string;
+    draftedAt: string;
+};
+
+const MINDMAP_TITLE_DRAFT_STORAGE_PREFIX = "focusmap:mindmap-title-draft:";
+
+const getMindmapTitleDraftStorageKey = (taskId: string) => `${MINDMAP_TITLE_DRAFT_STORAGE_PREFIX}${taskId}`;
+
+function readPersistedMindmapTitleDraft(taskId: string): PersistedMindmapTitleDraft | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const raw = window.localStorage.getItem(getMindmapTitleDraftStorageKey(taskId));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as Partial<PersistedMindmapTitleDraft>;
+        if (parsed.taskId !== taskId || typeof parsed.title !== "string") return null;
+        return {
+            taskId,
+            title: parsed.title,
+            draftedAt: typeof parsed.draftedAt === "string" ? parsed.draftedAt : new Date().toISOString(),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function writePersistedMindmapTitleDraft(taskId: string, title: string) {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(getMindmapTitleDraftStorageKey(taskId), JSON.stringify({
+            taskId,
+            title,
+            draftedAt: new Date().toISOString(),
+        } satisfies PersistedMindmapTitleDraft));
+    } catch {
+        // The in-memory preview still protects the current edit if storage is unavailable.
+    }
+}
+
+function clearPersistedMindmapTitleDraft(taskId: string) {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.removeItem(getMindmapTitleDraftStorageKey(taskId));
+    } catch {
+        // Ignore storage cleanup failures.
+    }
+}
+
 const trackDetachedSave = (saveAction: void | Promise<void> | undefined, label: string) => {
     if (!saveAction) return;
     void Promise.resolve(saveAction).catch(error => {
@@ -1556,11 +1605,13 @@ export function CustomMindMapView({
     const handlePreviewTitleChange = useCallback((taskId: string, title: string | null) => {
         setTitlePreviewByTaskId(prev => {
             if (title == null) {
+                clearPersistedMindmapTitleDraft(taskId);
                 if (!(taskId in prev)) return prev;
                 const next = { ...prev };
                 delete next[taskId];
                 return next;
             }
+            writePersistedMindmapTitleDraft(taskId, title);
             return prev[taskId] === title ? prev : { ...prev, [taskId]: title };
         });
     }, []);
@@ -1569,8 +1620,27 @@ export function CustomMindMapView({
         setTitlePreviewByTaskId(prev => {
             let changed = false;
             const next = { ...prev };
+            for (const [taskId, savedTitle] of allTaskTitleById.entries()) {
+                if (taskId in next) continue;
+                const draft = readPersistedMindmapTitleDraft(taskId);
+                if (!draft || draft.title.trim() === savedTitle.trim()) {
+                    if (draft) clearPersistedMindmapTitleDraft(taskId);
+                    continue;
+                }
+                next[taskId] = draft.title;
+                changed = true;
+            }
+            return changed ? next : prev;
+        });
+    }, [allTaskTitleById]);
+
+    useEffect(() => {
+        setTitlePreviewByTaskId(prev => {
+            let changed = false;
+            const next = { ...prev };
             for (const [taskId, previewTitle] of Object.entries(prev)) {
                 if (!allTaskTitleById.has(taskId) || allTaskTitleById.get(taskId) === previewTitle) {
+                    clearPersistedMindmapTitleDraft(taskId);
                     delete next[taskId];
                     changed = true;
                 }
