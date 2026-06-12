@@ -33,7 +33,7 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Tags, Trash2, TriangleAlert } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Tags, Trash2, TriangleAlert, X } from "lucide-react"
 import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
 import { useCalendars } from "@/hooks/useCalendars"
 import type { Task, TaskAttachment } from "@/types/database"
@@ -86,6 +86,12 @@ const QUICK_ESTIMATED_MINUTES = [5, 15, 30, 60, 120] as const
 type TaskAttachmentPreview = Pick<TaskAttachment, "id" | "file_name" | "file_url" | "file_type" | "file_size">
 type PendingTaskAttachmentPreview = TaskAttachmentPreview & {
   is_pending: true
+}
+
+function isPendingTaskAttachmentPreview(
+  attachment: TaskAttachmentPreview | PendingTaskAttachmentPreview,
+): attachment is PendingTaskAttachmentPreview {
+  return "is_pending" in attachment
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -343,6 +349,7 @@ export function CodexNodePanel({
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null)
   const [imageNotice, setImageNotice] = useState<string | null>(null)
+  const [previewAttachment, setPreviewAttachment] = useState<TaskAttachmentPreview | PendingTaskAttachmentPreview | null>(null)
   const [isImageDragActive, setIsImageDragActive] = useState(false)
   const saveVersionRef = useRef(0)
   const codexWatchIdRef = useRef<string | null>(null)
@@ -403,6 +410,7 @@ export function CodexNodePanel({
     setIsRegisteringSchedule(false)
     setScheduleNotice(null)
     setImageNotice(null)
+    setPreviewAttachment(null)
     setIsImageDragActive(false)
     setPendingAttachments(prev => {
       prev.forEach(attachment => releasePendingAttachmentUrl(attachment.file_url))
@@ -465,6 +473,15 @@ export function CodexNodePanel({
       cancelled = true
     }
   }, [open, node.taskId])
+
+  useEffect(() => {
+    if (!previewAttachment) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewAttachment(null)
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [previewAttachment])
 
   const moveFocusToPanel = useCallback(() => {
     const active = document.activeElement
@@ -598,15 +615,6 @@ export function CodexNodePanel({
     void patchTaskDetail({ scheduled_at: nextScheduledAt })
   }, [patchTaskDetail])
 
-  const handleDateChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const nextDate = event.target.value
-    if (!nextDate) {
-      updateScheduledAt(null)
-      return
-    }
-    updateScheduledAt(combineLocalDateTime(nextDate, timeValue || "09:00"))
-  }, [timeValue, updateScheduledAt])
-
   const handleTimeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextTime = event.target.value
     const nextDate = dateValue || todayDateInputValue()
@@ -628,7 +636,7 @@ export function CodexNodePanel({
 
   const handleRegisterSchedule = useCallback(async () => {
     if (!scheduledAt || !estimatedMinutes || estimatedMinutes <= 0 || !calendarId.trim()) {
-      setError("日時・所要時間・カレンダーをすべて選択してください")
+      setError("時刻・所要時間・カレンダーをすべて選択してください")
       return
     }
 
@@ -779,6 +787,7 @@ export function CodexNodePanel({
   const handleDeleteAttachment = useCallback(async (attachment: TaskAttachmentPreview) => {
     setDeletingAttachmentId(attachment.id)
     setError(null)
+    setPreviewAttachment(prev => prev?.id === attachment.id ? null : prev)
     const previous = attachments
     setAttachments(prev => prev.filter(item => item.id !== attachment.id))
     try {
@@ -1048,7 +1057,7 @@ export function CodexNodePanel({
       if (openedViaNativeApp) {
         setCodexPromptCopied(true)
         setCodexFeedback(codexCopyableImages.length > 0
-          ? "プロンプトをコピーしました。画像は下のコピーから同じCodex入力欄へ貼り付けてください。"
+          ? "プロンプトをコピーしました。画像は画像欄のコピーアイコンから同じCodex入力欄へ貼り付けてください。"
           : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
         setIsOpeningCodex(false)
         return
@@ -1275,7 +1284,7 @@ export function CodexNodePanel({
           setJustSentPrompt(prompt)
           setCodexPromptCopied(true)
           setCodexFeedback(codexCopyableImages.length > 0
-            ? "プロンプトをコピーしました。画像は下のコピーから同じCodex入力欄へ貼り付けてください。"
+            ? "プロンプトをコピーしました。画像は画像欄のコピーアイコンから同じCodex入力欄へ貼り付けてください。"
             : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
           setCodexSendStatus("sent")
           window.setTimeout(() => void syncCodexState(), 1200)
@@ -1351,7 +1360,7 @@ export function CodexNodePanel({
       }
       setCodexSendStatus("sent")
       if (codexCopyableImages.length > 0) {
-        setCodexImageCopyNotice("プロンプトを貼った後、画像コピーを押して同じCodex入力欄へ貼り付けてください。")
+        setCodexImageCopyNotice("プロンプトを貼った後、画像欄のコピーアイコンから同じCodex入力欄へ貼り付けてください。")
       }
       await refreshAiTasks()
       window.setTimeout(() => void syncCodexState(), 1200)
@@ -1375,6 +1384,14 @@ export function CodexNodePanel({
   const initialCodexSendDisabled = codexSendStatus === "sending" || isWaitingForImageSave || isCodexRunnerUnavailable
   const codexOpenDisabled = isOpeningCodex || isWaitingForImageSave || isCodexRunnerUnavailable
   const selectedCalendar = calendarOptions.find(calendar => calendar.id === calendarId) ?? calendarOptions[0]
+  const previewAttachmentLabel = previewAttachment?.file_name?.trim() || "画像"
+  const previewAttachmentSizeLabel = previewAttachment ? formatFileSize(previewAttachment.file_size) : null
+  const previewCopyAttachment = previewAttachment && !isPendingTaskAttachmentPreview(previewAttachment)
+    ? previewAttachment
+    : null
+  const canCopyPreviewAttachment = Boolean(
+    previewCopyAttachment?.file_type?.startsWith("image/") && previewCopyAttachment.file_url?.trim(),
+  )
   const nodeMetaTags = useMemo(() => {
     const tags: string[] = []
     if (node.isDone) tags.push("完了")
@@ -1484,10 +1501,10 @@ export function CodexNodePanel({
               <textarea
                 value={detail}
                 onChange={(event) => handleDetailChange(event.target.value)}
-                className={cn(
-                  "w-full max-w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary",
-                  hasCodexRun ? "min-h-32 sm:min-h-[28dvh]" : "min-h-44 sm:min-h-[44dvh]",
-                )}
+	                className={cn(
+	                  "w-full max-w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary",
+	                  hasCodexRun ? "min-h-28 sm:min-h-[22dvh]" : "min-h-36 sm:min-h-[30dvh]",
+	                )}
                 placeholder="メモの詳細を書いてください"
               />
             </section>
@@ -1501,57 +1518,82 @@ export function CodexNodePanel({
                 <span>画像</span>
                 <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-400">{displayedAttachments.length}</span>
               </div>
-              <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                {displayedAttachments.length > 0 && (
-                  <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
-                    {displayedAttachments.map(attachment => {
-                      const isPending = "is_pending" in attachment
-                      const isImage = attachment.file_type?.startsWith("image/")
-                      const sizeLabel = formatFileSize(attachment.file_size)
-                      return (
-                        <div
-                          key={attachment.id}
-                          data-testid={isPending ? "pending-task-attachment" : undefined}
-                          className={cn(
-                            "group relative min-w-0 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 transition-opacity",
-                            isPending && "opacity-45",
-                          )}
-                        >
-                          {isImage ? (
-                            // eslint-disable-next-line @next/next/no-img-element -- Supabase signed attachment URLs are user-generated.
-                            <img src={attachment.file_url} alt={attachment.file_name} className="h-28 w-full object-cover" />
-                          ) : (
-                            <div className="flex h-28 items-center justify-center px-2 text-center text-xs text-neutral-400">
-                              {attachment.file_name}
-                            </div>
-                          )}
-                          <div className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-[11px] text-neutral-400">
-                            <span className="min-w-0 flex-1 truncate">{attachment.file_name}</span>
-                            {sizeLabel && <span className="shrink-0">{sizeLabel}</span>}
-                          </div>
-                          {isPending ? (
-                            <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-neutral-950/85 px-2 py-1.5 text-[11px] font-medium text-neutral-300 backdrop-blur">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              保存中
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteAttachment(attachment)}
-                              disabled={deletingAttachmentId === attachment.id}
-                              className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950/90 text-neutral-300 opacity-100 transition-colors hover:bg-red-500/15 hover:text-red-200 disabled:opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
-                              aria-label="画像を削除"
-                              title="画像を削除"
-                            >
+	              <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-950 p-2.5">
+	                {displayedAttachments.length > 0 && (
+	                  <div className="grid min-w-0 gap-2">
+	                    {displayedAttachments.map(attachment => {
+	                      const isPending = isPendingTaskAttachmentPreview(attachment)
+	                      const isImage = attachment.file_type?.startsWith("image/")
+	                      const sizeLabel = formatFileSize(attachment.file_size)
+	                      const label = attachment.file_name?.trim() || "画像"
+	                      const canPreview = isImage && !!attachment.file_url?.trim()
+	                      const savedAttachment = isPending ? null : attachment
+	                      const canCopyImage = !!savedAttachment && canPreview
+	                      const isCopyingImage = copyingCodexImageId === attachment.id
+	                      return (
+	                        <div
+	                          key={attachment.id}
+	                          data-testid={isPending ? "pending-task-attachment" : undefined}
+	                          className={cn(
+	                            "grid min-h-[68px] min-w-0 grid-cols-[72px_minmax(0,1fr)_40px_34px] items-center gap-2 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900/85 p-1.5 transition-opacity",
+	                            isPending && "opacity-45",
+	                          )}
+	                        >
+	                          <button
+	                            type="button"
+	                            disabled={!canPreview}
+	                            onClick={() => canPreview && setPreviewAttachment(attachment)}
+	                            className="col-span-2 grid min-w-0 grid-cols-[72px_minmax(0,1fr)] items-center gap-2 rounded-md text-left transition-colors hover:bg-neutral-800/55 disabled:cursor-default disabled:hover:bg-transparent"
+	                            aria-label={`${label}をプレビュー`}
+	                            title={canPreview ? `${label}をプレビュー` : label}
+	                          >
+	                            <span className="flex h-14 w-[72px] items-center justify-center overflow-hidden rounded-md bg-neutral-950">
+	                              {isImage && attachment.file_url ? (
+	                                // eslint-disable-next-line @next/next/no-img-element -- Supabase signed attachment URLs are user-generated.
+	                                <img src={attachment.file_url} alt={label} className="h-full w-full object-cover transition-transform hover:scale-[1.03]" />
+	                              ) : (
+	                                <ImagePlus className="h-4 w-4 text-neutral-500" />
+	                              )}
+	                            </span>
+	                            <span className="min-w-0 text-left">
+	                              <span className="block truncate text-sm font-medium text-neutral-100">{label}</span>
+	                              <span className="block truncate text-[11px] leading-4 text-neutral-500">
+	                                {isPending ? "保存中" : sizeLabel ?? "サイズ未取得"}
+	                              </span>
+	                            </span>
+	                          </button>
+	                          <button
+	                            type="button"
+	                            onClick={() => savedAttachment && void handleCopyCodexImage(savedAttachment)}
+	                            disabled={!canCopyImage || !!copyingCodexImageId}
+	                            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 text-neutral-200 transition-colors hover:border-emerald-500/50 hover:bg-emerald-500/10 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-45"
+	                            aria-label={`${label}をCodex貼り付け用にコピー`}
+	                            title={`${label}をコピー`}
+	                          >
+	                            {isCopyingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+	                          </button>
+	                          {isPending ? (
+	                            <span className="inline-flex h-9 w-9 items-center justify-center text-neutral-500">
+	                              <Loader2 className="h-4 w-4 animate-spin" />
+	                            </span>
+	                          ) : (
+	                            <button
+	                              type="button"
+	                              onClick={() => void handleDeleteAttachment(attachment)}
+	                              disabled={deletingAttachmentId === attachment.id}
+	                              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50"
+	                              aria-label="画像を削除"
+	                              title="画像を削除"
+	                            >
                               {deletingAttachmentId === attachment.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                             </button>
                           )}
                         </div>
                       )
                     })}
-                  </div>
-                )}
-                <div className={cn("grid min-w-0 gap-2", !isMobile && "sm:grid-cols-2")}>
+	                  </div>
+	                )}
+	                <div className={cn("grid min-w-0 gap-2", !isMobile && "sm:grid-cols-2")}>
                   <button
                     type="button"
                     disabled={isUploadingImage}
@@ -1565,38 +1607,39 @@ export function CodexNodePanel({
                       setIsImageDragActive(true)
                     }}
                     onDragLeave={() => setIsImageDragActive(false)}
-                    onDrop={handleImageDrop}
-                    className={cn(
-                      "flex min-h-[72px] min-w-0 items-center justify-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left transition-colors",
-                      isImageDragActive
-                        ? "border-emerald-500 bg-emerald-500/10 text-neutral-50"
-                        : "border-neutral-800 bg-neutral-900/35 text-neutral-400 hover:border-emerald-500/60 hover:text-neutral-100",
+	                    onDrop={handleImageDrop}
+	                    className={cn(
+	                      "flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2 text-left transition-colors",
+	                      isImageDragActive
+	                        ? "border-emerald-500 bg-emerald-500/10 text-neutral-50"
+	                        : "border-neutral-800 bg-neutral-900/35 text-neutral-400 hover:border-emerald-500/60 hover:text-neutral-100",
                       isUploadingImage && "cursor-wait opacity-70",
-                    )}
-                  >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-950">
-                      {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-neutral-100">画像を追加</span>
-                      <span className="block text-xs leading-4">{isMobile ? "写真を選択 / 撮影" : "フォルダー選択 / ドラッグ&ドロップ"}</span>
-                    </span>
-                  </button>
+	                    )}
+	                  >
+	                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-950">
+	                      {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+	                    </span>
+	                    <span className="min-w-0">
+	                      <span className="block text-sm font-semibold text-neutral-100">画像を追加</span>
+	                      <span className="block text-[11px] leading-4">{isMobile ? "写真 / 撮影" : "選択 / D&D"}</span>
+	                    </span>
+	                  </button>
                   {!isMobile && (
                     <button
-                      type="button"
-                      disabled={isUploadingImage}
-                      onClick={() => void handlePasteClipboardImage()}
-                      className="flex min-h-[72px] min-w-0 items-center justify-center gap-3 rounded-lg border border-emerald-500/35 bg-emerald-500/5 px-3 py-3 text-left text-emerald-200 transition-colors hover:bg-emerald-500/10 disabled:opacity-70"
-                    >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-emerald-500/35 bg-neutral-950">
-                        <Copy className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-sm font-semibold">クリップボード画像を貼り付け</span>
-                        <span className="block text-xs leading-4 text-emerald-200/75">クリック / Cmd+V</span>
-                      </span>
-                    </button>
+	                      type="button"
+	                      disabled={isUploadingImage}
+	                      onClick={() => void handlePasteClipboardImage()}
+	                      className="flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/5 px-3 py-2 text-left text-emerald-200 transition-colors hover:bg-emerald-500/10 disabled:opacity-70"
+	                      aria-label="クリップボード画像を貼り付け"
+	                    >
+	                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-500/35 bg-neutral-950">
+	                        <Copy className="h-4 w-4" />
+	                      </span>
+	                      <span className="min-w-0">
+	                        <span className="block text-sm font-semibold">クリップボード</span>
+	                        <span className="block text-[11px] leading-4 text-emerald-200/75">クリック / Cmd+V</span>
+	                      </span>
+	                    </button>
                   )}
                 </div>
                 <input
@@ -1607,141 +1650,132 @@ export function CodexNodePanel({
                   className="hidden"
                   onChange={handleFileInputChange}
                 />
-                {imageNotice && (
-                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">{imageNotice}</p>
-                )}
-              </div>
+	                {imageNotice && (
+	                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">{imageNotice}</p>
+	                )}
+	                {codexImageCopyNotice && (
+	                  <p className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">{codexImageCopyNotice}</p>
+	                )}
+	              </div>
             </section>
 
-            <section
-              className="order-4 min-w-0 space-y-2"
-              data-testid="codex-node-schedule-section"
-            >
-              <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
-                <Clock className="h-4 w-4" />
-                <span>時間・予定</span>
-                {isLoadingTaskDetail && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-500" />}
-              </div>
-              <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="space-y-1 text-xs text-neutral-400">
-                    <span>日付</span>
-                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
-                      <CalendarIcon className="h-4 w-4 shrink-0 text-neutral-500" />
-                      <input
-                        type="date"
-                        value={dateValue}
-                        onChange={handleDateChange}
-                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
-                      />
-                    </span>
-                  </label>
-                  <label className="space-y-1 text-xs text-neutral-400">
-                    <span>時刻</span>
-                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
-                      <Clock className="h-4 w-4 shrink-0 text-neutral-500" />
-                      <input
-                        type="time"
-                        value={timeValue}
-                        onChange={handleTimeChange}
-                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
-                      />
-                    </span>
-                  </label>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2 text-xs text-neutral-400">
-                    <span>所要時間</span>
-                    <div className="flex items-center gap-2">
-                      <span>{formatDurationLabel(estimatedMinutes)}</span>
-                      {estimatedMinutes ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDurationChange(null)}
-                          className="min-h-7 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-[11px] font-medium text-neutral-400 transition-colors hover:text-neutral-100"
-                        >
-                          解除
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                    {QUICK_ESTIMATED_MINUTES.map(minutes => (
-                      <button
-                        key={minutes}
-                        type="button"
-                        onClick={() => handleDurationChange(minutes)}
-                        className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
-                          estimatedMinutes === minutes
-                            ? "border-emerald-500 bg-emerald-500 text-emerald-950"
-                            : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
-                        }`}
-                      >
-                        {formatDurationLabel(minutes)}
-                      </button>
-                    ))}
-                    <DurationWheelPopover
-                      valueMinutes={estimatedMinutes}
-                      onChange={minutes => handleDurationChange(minutes)}
-                      side="top"
-                      align="end"
-                      trigger={(
-                        <button
-                          type="button"
-                          className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
-                            estimatedMinutes && !(QUICK_ESTIMATED_MINUTES as readonly number[]).includes(estimatedMinutes)
-                              ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
-                              : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
-                          }`}
-                        >
-                          カスタム
-                        </button>
-                      )}
-                    />
-                  </div>
-                </div>
-                <label className="space-y-1 text-xs text-neutral-400">
-                  <span>カレンダー</span>
-                  <span className="relative flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
-                    />
-                    <select
-                      value={calendarId}
-                      onChange={handleCalendarChange}
-                      className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
-                    >
-                      {calendarOptions.map(calendar => (
-                        <option key={calendar.id} value={calendar.id}>
-                          {calendar.name}{calendar.primary ? "（主）" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                  </span>
-                </label>
-                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                  <p className="min-w-0 text-xs leading-5 text-neutral-500">
-                    日時・所要時間・カレンダーが揃うと登録できます。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void handleRegisterSchedule()}
-                    disabled={!canRegisterSchedule || isRegisteringSchedule}
-                    className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600 sm:w-auto"
-                  >
-                    {isRegisteringSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarIcon className="h-3.5 w-3.5" />}
-                    {googleEventId ? "予定を更新" : "予定を登録"}
-                  </button>
-                </div>
-                {scheduleNotice && (
-                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-                    {scheduleNotice}
-                  </p>
-                )}
-              </div>
-            </section>
+	            <section
+	              className="order-4 min-w-0 space-y-2"
+	              data-testid="codex-node-schedule-section"
+	            >
+	              <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
+	                <Clock className="h-4 w-4" />
+	                <span>時間・予定</span>
+	                {isLoadingTaskDetail && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-500" />}
+	              </div>
+	              <div className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-950 p-2.5">
+	                <div className="grid gap-2 sm:grid-cols-2">
+	                  <label className="space-y-1 text-xs text-neutral-400">
+	                    <span>時刻</span>
+	                    <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
+	                      <Clock className="h-4 w-4 shrink-0 text-neutral-500" />
+	                      <input
+	                        type="time"
+	                        value={timeValue}
+	                        onChange={handleTimeChange}
+	                        className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
+	                      />
+	                    </span>
+	                  </label>
+	                  <div className="space-y-1">
+	                    <div className="flex min-h-5 items-center justify-between gap-2 text-xs text-neutral-400">
+	                      <span>所要時間</span>
+	                      <div className="flex items-center gap-2">
+	                        <span>{formatDurationLabel(estimatedMinutes)}</span>
+	                        {estimatedMinutes ? (
+	                          <button
+	                            type="button"
+	                            onClick={() => handleDurationChange(null)}
+	                            className="min-h-7 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-[11px] font-medium text-neutral-400 transition-colors hover:text-neutral-100"
+	                          >
+	                            解除
+	                          </button>
+	                        ) : null}
+	                      </div>
+	                    </div>
+	                    <div className="grid grid-cols-3 gap-1.5">
+	                      {QUICK_ESTIMATED_MINUTES.map(minutes => (
+	                        <button
+	                          key={minutes}
+	                          type="button"
+	                          onClick={() => handleDurationChange(minutes)}
+	                          className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+	                            estimatedMinutes === minutes
+	                              ? "border-emerald-500 bg-emerald-500 text-emerald-950"
+	                              : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
+	                          }`}
+	                        >
+	                          {formatDurationLabel(minutes)}
+	                        </button>
+	                      ))}
+	                      <DurationWheelPopover
+	                        valueMinutes={estimatedMinutes}
+	                        onChange={minutes => handleDurationChange(minutes)}
+	                        side="top"
+	                        align="end"
+	                        trigger={(
+	                          <button
+	                            type="button"
+	                            className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+	                              estimatedMinutes && !(QUICK_ESTIMATED_MINUTES as readonly number[]).includes(estimatedMinutes)
+	                                ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
+	                                : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
+	                            }`}
+	                          >
+	                            カスタム
+	                          </button>
+	                        )}
+	                      />
+	                    </div>
+	                  </div>
+	                </div>
+	                <label className="space-y-1 text-xs text-neutral-400">
+	                  <span>カレンダー</span>
+	                  <span className="relative flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3 focus-within:border-emerald-500">
+	                    <span
+	                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+	                      style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+	                    />
+	                    <select
+	                      value={calendarId}
+	                      onChange={handleCalendarChange}
+	                      className="min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm text-neutral-100 outline-none [color-scheme:dark]"
+	                    >
+	                      {calendarOptions.map(calendar => (
+	                        <option key={calendar.id} value={calendar.id}>
+	                          {calendar.name}{calendar.primary ? "（主）" : ""}
+	                        </option>
+	                      ))}
+	                    </select>
+	                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+	                  </span>
+	                </label>
+	                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+	                  <p className="min-w-0 text-xs leading-5 text-neutral-500">
+	                    時刻・所要時間・カレンダーが揃うと登録できます。
+	                  </p>
+	                  <button
+	                    type="button"
+	                    onClick={() => void handleRegisterSchedule()}
+	                    disabled={!canRegisterSchedule || isRegisteringSchedule}
+	                    className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-900/40 disabled:text-neutral-600 sm:w-auto"
+	                  >
+	                    {isRegisteringSchedule ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarIcon className="h-3.5 w-3.5" />}
+	                    {googleEventId ? "予定を更新" : "予定を登録"}
+	                  </button>
+	                </div>
+	                {scheduleNotice && (
+	                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+	                    {scheduleNotice}
+	                  </p>
+	                )}
+	              </div>
+	            </section>
 
             <section
               className="order-3 min-w-0 space-y-2"
@@ -1770,50 +1804,7 @@ export function CodexNodePanel({
                   Codexに送る
                 </a>
               )}
-              {codexCopyableImages.length > 0 && (
-                <section className="min-w-0 space-y-2 rounded-lg border border-border/70 bg-card p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                      <Copy className="h-4 w-4" />
-                      <span>画像コピー</span>
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">{codexCopyableImages.length}件</span>
-                  </div>
-                  <div className="grid min-w-0 gap-2 sm:grid-cols-2">
-                    {codexCopyableImages.map((image, index) => {
-                      const label = image.file_name?.trim() || `画像 ${index + 1}`
-                      const isCopyingImage = copyingCodexImageId === image.id
-                      return (
-                        <div
-                          key={image.id}
-                          className="grid min-h-[52px] min-w-0 grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1.5"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={image.file_url} alt={label} className="h-11 w-11 rounded-md object-cover" />
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-medium text-foreground" title={label}>{label}</p>
-                            <p className="text-[11px] text-muted-foreground">Codex貼り付け用</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void handleCopyCodexImage(image)}
-                            disabled={!!copyingCodexImageId}
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border/70 bg-background transition-colors hover:bg-muted disabled:opacity-50"
-                            aria-label={`${label}をCodex貼り付け用にコピー`}
-                            title={`${label}をコピー`}
-                          >
-                            {isCopyingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {codexImageCopyNotice && (
-                    <p className="text-xs leading-5 text-muted-foreground">{codexImageCopyNotice}</p>
-                  )}
-                </section>
-              )}
-              {hasCodexRun && (
+	              {hasCodexRun && (
                 <section className="min-w-0 overflow-hidden overflow-x-hidden rounded-lg border border-border/70 bg-card">
                   <div className="flex min-w-0 flex-col gap-2 border-b border-border/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -2000,11 +1991,66 @@ export function CodexNodePanel({
             <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-300">{codexFeedback}</p>
           )}
 
-          {(error || voiceError) && (
-            <p className="mt-3 text-sm text-rose-500">{error || voiceError}</p>
-          )}
-        </div>
-      </SheetContent>
+	          {(error || voiceError) && (
+	            <p className="mt-3 text-sm text-rose-500">{error || voiceError}</p>
+	          )}
+	        </div>
+	        {previewAttachment && (
+	          <div
+	            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 px-3 py-6 backdrop-blur-sm"
+	            role="dialog"
+	            aria-modal="true"
+	            aria-label={`${previewAttachmentLabel}のプレビュー`}
+	            onClick={() => setPreviewAttachment(null)}
+	          >
+	            <div
+	              className="flex max-h-[88dvh] w-[min(92vw,920px)] max-w-none flex-col overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950 shadow-2xl"
+	              onClick={event => event.stopPropagation()}
+	            >
+	              <div className="flex min-w-0 items-center justify-between gap-3 border-b border-neutral-800 px-3 py-2">
+	                <div className="min-w-0">
+	                  <p className="truncate text-sm font-semibold text-neutral-100" title={previewAttachmentLabel}>
+	                    {previewAttachmentLabel}
+	                  </p>
+	                  {previewAttachmentSizeLabel && (
+	                    <p className="text-[11px] text-neutral-500">{previewAttachmentSizeLabel}</p>
+	                  )}
+	                </div>
+	                <div className="flex shrink-0 items-center gap-2">
+	                  <button
+	                    type="button"
+	                    onClick={() => previewCopyAttachment && void handleCopyCodexImage(previewCopyAttachment)}
+	                    disabled={!canCopyPreviewAttachment || !!copyingCodexImageId}
+	                    className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 transition-colors hover:border-emerald-500/50 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-45"
+	                    aria-label={`${previewAttachmentLabel}をCodex貼り付け用にコピー`}
+	                    title={`${previewAttachmentLabel}をコピー`}
+	                  >
+	                    {copyingCodexImageId === previewAttachment.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+	                  </button>
+	                  <button
+	                    type="button"
+	                    onClick={() => setPreviewAttachment(null)}
+	                    className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 text-neutral-200 transition-colors hover:bg-neutral-800"
+	                    aria-label="プレビューを閉じる"
+	                    title="閉じる"
+	                  >
+	                    <X className="h-4 w-4" />
+	                  </button>
+	                </div>
+	              </div>
+	              <div className="min-h-0 bg-black/55 p-3">
+	                {/* eslint-disable-next-line @next/next/no-img-element -- Supabase signed attachment URLs are user-generated. */}
+	                <img
+	                  src={previewAttachment.file_url}
+	                  alt={previewAttachmentLabel}
+	                  className="max-h-[72dvh] w-full rounded-lg object-contain"
+	                  draggable={false}
+	                />
+	              </div>
+	            </div>
+	          </div>
+	        )}
+	      </SheetContent>
     </Sheet>
   )
 }
