@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MobileEventEditModal } from './mobile-event-edit-modal'
 import type { TimeBlock } from '@/lib/time-block'
@@ -52,14 +52,9 @@ function calendarEventBlock(): TimeBlock {
 }
 
 describe('MobileEventEditModal', () => {
-  test('削除ボタンは確認ダイアログなしで削除し、削除APIの完了を待たず編集画面を閉じる', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  test('右上の完了で保存し、未設定のGoogle予定通知は15分前を既定にする', async () => {
     const onClose = vi.fn()
-    let resolveDelete: (() => void) | undefined
-    const deletePromise = new Promise<void>(resolve => {
-      resolveDelete = resolve
-    })
-    const onDeleteEvent = vi.fn(() => deletePromise)
+    const onSaveEvent = vi.fn(() => Promise.resolve())
 
     render(
       <MobileEventEditModal
@@ -67,21 +62,19 @@ describe('MobileEventEditModal', () => {
         isOpen
         onClose={onClose}
         onSaveTask={vi.fn()}
-        onSaveEvent={vi.fn()}
-        onDeleteEvent={onDeleteEvent}
+        onSaveEvent={onSaveEvent}
+        onDeleteEvent={vi.fn()}
         availableCalendars={[{ id: 'calendar-1', name: 'Main' }]}
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '削除' }))
+    expect(screen.queryByRole('button', { name: '削除' })).not.toBeInTheDocument()
 
-    expect(confirmSpy).not.toHaveBeenCalled()
-    expect(onDeleteEvent).toHaveBeenCalledWith('event-cache-1', 'google-event-1', 'calendar-1')
+    fireEvent.click(screen.getByRole('button', { name: '完了' }))
+
+    expect(onSaveEvent).toHaveBeenCalledWith('event-cache-1', expect.objectContaining({
+      reminders: [15],
+    }))
     expect(onClose).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      resolveDelete?.()
-      await deletePromise
-    })
   })
 })

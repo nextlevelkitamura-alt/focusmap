@@ -1,10 +1,11 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { X, Calendar as CalendarIcon, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
+import { useMomentumWheel } from "@/hooks/useMomentumWheel"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import type { TimeBlock } from "@/lib/time-block"
@@ -32,12 +33,6 @@ interface MobileEventEditModalProps {
     onConvertEventToTask?: (event: CalendarEvent) => Promise<Task | null>
 }
 
-// --- Time helpers ---
-
-function toTimeString(date: Date): string {
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-}
-
 const BASE_REMINDER_OPTIONS = [
     { label: 'なし', value: -1 },
     { label: '予定の時刻', value: 0 },
@@ -60,6 +55,9 @@ const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
 ]
 
 const LOCAL_SUBTASK_ID_PREFIX = "local-subtask-"
+const CALENDAR_WHEEL_ITEM_HEIGHT = 34
+const CALENDAR_WHEEL_VISIBLE_HEIGHT = 92
+const CALENDAR_WHEEL_PADDING_Y = Math.floor(CALENDAR_WHEEL_VISIBLE_HEIGHT / 2 - CALENDAR_WHEEL_ITEM_HEIGHT / 2)
 
 function toDateTimeLocalValue(date: Date | undefined) {
     if (!date) return ""
@@ -79,6 +77,122 @@ function fromDateTimeLocalValue(value: string) {
     return Number.isNaN(date.getTime()) ? undefined : date
 }
 
+function CalendarWheelPicker({
+    calendars,
+    value,
+    onChange,
+}: {
+    calendars: Array<{ id: string; name: string; background_color?: string }>
+    value: string
+    onChange: (calendarId: string) => void
+}) {
+    const scrollRef = useRef<HTMLDivElement>(null)
+    const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+    const selectedIndex = Math.max(0, calendars.findIndex(calendar => calendar.id === value))
+    const activeIndex = previewIndex ?? selectedIndex
+
+    const scrollToIndex = useCallback((container: HTMLDivElement | null, index: number, behavior: "auto" | "smooth") => {
+        if (!container) return
+        container.scrollTo({
+            top: index * CALENDAR_WHEEL_ITEM_HEIGHT,
+            behavior,
+        })
+    }, [])
+
+    const getWheelIndex = useCallback((container: HTMLDivElement) => {
+        return Math.round(container.scrollTop / CALENDAR_WHEEL_ITEM_HEIGHT)
+    }, [])
+
+    const wheel = useMomentumWheel({
+        values: calendars,
+        getIndex: getWheelIndex,
+        scrollToIndex: (container, index, behavior) => scrollToIndex(container, index, behavior),
+        onPreview: (_calendar, index) => setPreviewIndex(index),
+        onChange: (calendar, index) => {
+            setPreviewIndex(index)
+            onChange(calendar.id)
+        },
+        scrollEndDelay: 80,
+    })
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setPreviewIndex(null)
+            scrollToIndex(scrollRef.current, selectedIndex, "auto")
+        }, 0)
+        return () => window.clearTimeout(timer)
+    }, [selectedIndex, scrollToIndex, calendars.length])
+
+    if (calendars.length === 0) return null
+
+    return (
+        <div
+            className="relative overflow-hidden rounded-xl border border-white/10 bg-black/35"
+            style={{ height: CALENDAR_WHEEL_VISIBLE_HEIGHT }}
+        >
+            <div
+                className="pointer-events-none absolute inset-x-3 rounded-lg border border-sky-300/50 bg-sky-400/10 shadow-[0_0_18px_rgba(56,189,248,0.18)]"
+                style={{
+                    top: CALENDAR_WHEEL_PADDING_Y,
+                    height: CALENDAR_WHEEL_ITEM_HEIGHT,
+                }}
+            />
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-8 bg-gradient-to-b from-neutral-950 via-neutral-950/85 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-8 bg-gradient-to-t from-neutral-950 via-neutral-950/85 to-transparent" />
+
+            <div
+                ref={scrollRef}
+                role="listbox"
+                aria-label="追加先カレンダー"
+                className="relative z-[1] h-full touch-none select-none overflow-y-scroll overscroll-contain no-scrollbar"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+                onPointerDown={wheel.onPointerDown}
+                onPointerMove={wheel.onPointerMove}
+                onPointerUp={wheel.onPointerUp}
+                onPointerCancel={wheel.onPointerCancel}
+                onLostPointerCapture={wheel.onLostPointerCapture}
+                onTouchStart={wheel.onTouchStart}
+                onTouchMove={wheel.onTouchMove}
+                onTouchEnd={wheel.onTouchEnd}
+                onTouchCancel={wheel.onTouchCancel}
+                onWheel={wheel.onWheel}
+                onScroll={wheel.onScroll}
+            >
+                <div className="flex flex-col" style={{ paddingTop: CALENDAR_WHEEL_PADDING_Y, paddingBottom: CALENDAR_WHEEL_PADDING_Y }}>
+                    {calendars.map((calendar, index) => {
+                        const isActive = index === activeIndex
+
+                        return (
+                            <button
+                                key={calendar.id}
+                                type="button"
+                                role="option"
+                                aria-selected={value === calendar.id}
+                                onClick={() => wheel.selectIndex(scrollRef.current, index)}
+                                className={cn(
+                                    "flex w-full shrink-0 items-center gap-2 rounded-lg px-4 text-left transition-[color,opacity,transform] duration-150",
+                                    isActive
+                                        ? "scale-[1.01] text-neutral-50 opacity-100"
+                                        : "text-neutral-500 opacity-60"
+                                )}
+                                style={{ height: CALENDAR_WHEEL_ITEM_HEIGHT }}
+                            >
+                                <span
+                                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                    style={{ backgroundColor: calendar.background_color || '#4285F4' }}
+                                />
+                                <span className="min-w-0 truncate text-sm font-semibold">
+                                    {calendar.name}
+                                </span>
+                            </button>
+                        )
+                    })}
+                </div>
+            </div>
+        </div>
+    )
+}
+
 // --- Main Component ---
 
 export function MobileEventEditModal({
@@ -87,8 +201,6 @@ export function MobileEventEditModal({
     onClose,
     onSaveTask,
     onSaveEvent,
-    onDeleteTask,
-    onDeleteEvent,
     availableCalendars,
     onScheduleReminder,
     onCreateSubTask,
@@ -99,7 +211,7 @@ export function MobileEventEditModal({
 }: MobileEventEditModalProps) {
     const [title, setTitle] = useState('')
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
-    const [duration, setDuration] = useState(60)
+    const [duration, setDuration] = useState(15)
     const [calendarId, setCalendarId] = useState('')
     const [memo, setMemo] = useState('')
     const [eventDescription, setEventDescription] = useState('')
@@ -108,7 +220,6 @@ export function MobileEventEditModal({
     const [isCustomDurationPickerOpen, setIsCustomDurationPickerOpen] = useState(false)
     const [subtaskInput, setSubtaskInput] = useState('')
     const [isAddingSubTask, setIsAddingSubTask] = useState(false)
-    const [isDeleting, setIsDeleting] = useState(false)
     const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null)
     const [localChildTasks, setLocalChildTasks] = useState<Task[]>(childTasks)
 
@@ -156,7 +267,7 @@ export function MobileEventEditModal({
         setIsDurationExpanded(false)
         setIsCustomDurationPickerOpen(false)
         if (target.source === 'task') {
-            setDuration(target.estimatedTime || 60)
+            setDuration(target.estimatedTime || 15)
         } else {
             const dur = Math.round((target.endTime.getTime() - target.startTime.getTime()) / 60000)
             setDuration(dur)
@@ -168,7 +279,7 @@ export function MobileEventEditModal({
             if (eventReminders && eventReminders.length > 0) {
                 setReminder(eventReminders[0])
             } else {
-                setReminder(-1)
+                setReminder(15)
             }
         } else {
             setReminder(15)
@@ -304,6 +415,9 @@ export function MobileEventEditModal({
         const touch = e.touches[0]
         dragStartY.current = touch.clientY
         currentTranslateY.current = 0
+        if (sheetRef.current) {
+            sheetRef.current.style.transition = 'none'
+        }
     }, [])
 
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
@@ -317,14 +431,16 @@ export function MobileEventEditModal({
 
     const handleTouchEnd = useCallback(() => {
         if (sheetRef.current) {
-            if (currentTranslateY.current > 100) {
-                safeClose()
+            sheetRef.current.style.transition = 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)'
+            if (currentTranslateY.current > 96) {
+                sheetRef.current.style.transform = 'translateY(100%)'
+                window.setTimeout(onClose, 160)
             } else {
                 sheetRef.current.style.transform = 'translateY(0)'
             }
             currentTranslateY.current = 0
         }
-    }, [safeClose])
+    }, [onClose])
 
     // Save handler — 即座に閉じ、保存はバックグラウンドで実行
     const handleSave = () => {
@@ -369,45 +485,12 @@ export function MobileEventEditModal({
         }
     }
 
-    // Delete handler
-    const handleDelete = useCallback(async () => {
-        if (!target) return
-
-        setIsDeleting(true)
-        onClose()
-        try {
-            if (target.source === 'task') {
-                await onDeleteTask?.(target.taskId!)
-            } else {
-                if (!target.googleEventId || !target.calendarId) {
-                    throw new Error('削除対象のカレンダー予定を特定できませんでした')
-                }
-                await onDeleteEvent?.(target.id, target.googleEventId, target.calendarId)
-            }
-        } catch (err) {
-            console.error('[MobileEventEditModal] Delete error:', err)
-            const message = err instanceof Error ? err.message : '予定の削除に失敗しました'
-            window.alert(message)
-        } finally {
-            setIsDeleting(false)
-        }
-    }, [target, onDeleteTask, onDeleteEvent, onClose])
-
-    // 終了時刻の計算
-    const endTimeStr = scheduledDate
-        ? toTimeString(new Date(scheduledDate.getTime() + duration * 60000))
-        : '--:--'
-
     if (!isOpen || !target) return null
 
     const isTask = target.source === 'task'
-    const selectedCalendar = availableCalendars.find(c => c.id === calendarId)
     const scheduledDateTimeLabel = scheduledDate
         ? format(scheduledDate, "M/d(E) HH:mm", { locale: ja })
         : "未設定"
-    const schedulePreview = scheduledDate
-        ? `${format(scheduledDate, "M/d(E) HH:mm", { locale: ja })}〜${endTimeStr} · ${formatDuration(duration)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
-        : `日時未設定 · ${formatDuration(duration)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
     const fieldClass = cn(
         "min-h-[52px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-1.5 text-left",
         "transition-colors active:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
@@ -428,30 +511,32 @@ export function MobileEventEditModal({
 
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-[60] flex h-[88dvh] max-h-[88dvh] flex-col overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300"
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
+                className="fixed inset-x-0 bottom-0 z-[60] flex h-[88dvh] max-h-[88dvh] flex-col overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] will-change-transform animate-in slide-in-from-bottom duration-300"
             >
-                <div className="flex flex-shrink-0 justify-center pb-0.5 pt-1.5">
-                    <div className="w-10 h-1 rounded-full bg-white/20" />
-                </div>
-
-                <div className="relative flex flex-shrink-0 items-center px-4 pb-2 pt-0">
-                    <h3 className="pr-12 text-base font-semibold text-neutral-50">
-                        {isTask ? "タスクを編集" : "予定を編集"}
-                    </h3>
+                <div
+                    className="relative flex h-12 flex-shrink-0 items-start justify-center px-4 pt-2"
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                >
+                    <div className="pointer-events-none absolute left-1/2 top-7 h-5 w-16 -translate-x-1/2 rounded-full bg-white/10 blur-lg" />
+                    <div className="mt-1 h-1.5 w-12 rounded-full bg-white/30" />
                     <button
                         type="button"
-                        onClick={onClose}
-                        className="absolute right-3 top-0 flex h-11 w-11 items-center justify-center rounded-full text-neutral-400 transition-colors active:bg-white/10 active:text-neutral-100"
-                        aria-label="閉じる"
+                        onClick={handleSave}
+                        disabled={!title.trim()}
+                        className={cn(
+                            "absolute right-4 top-1.5 flex h-10 items-center rounded-full px-2 text-sm font-semibold transition-colors",
+                            title.trim()
+                                ? "text-sky-300 active:bg-white/10 active:text-sky-200"
+                                : "text-neutral-600"
+                        )}
                     >
-                        <X className="h-5 w-5" />
+                        完了
                     </button>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-hidden px-4 pb-2">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] no-scrollbar">
                     <div className="flex min-h-0 flex-col gap-2">
                     <div>
                         <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>
@@ -463,7 +548,7 @@ export function MobileEventEditModal({
                                 const nativeEvent = e.nativeEvent
                                 if (e.key !== 'Enter' || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
                                 e.preventDefault()
-                                if (title.trim() && !isDeleting) handleSave()
+                                if (title.trim()) handleSave()
                             }}
                             className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
                             placeholder="例: SNS投稿を作る"
@@ -483,6 +568,7 @@ export function MobileEventEditModal({
                         </span>
                         <input
                             type="datetime-local"
+                            step={15 * 60}
                             value={toDateTimeLocalValue(scheduledDate)}
                             onChange={(e) => setScheduledDate(fromDateTimeLocalValue(e.target.value))}
                             className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
@@ -580,32 +666,16 @@ export function MobileEventEditModal({
                     />
 
                     {availableCalendars.length > 0 && (
-                        <div className={fieldClass}>
+                        <div className={cn(fieldClass, "py-2")}>
                             <label className={fieldLabelClass}>
                                 <CalendarIcon className="h-3 w-3" />
                                 追加先カレンダー
                             </label>
-                            <div className="relative flex items-center gap-2">
-                                {selectedCalendar && (
-                                    <span
-                                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                        style={{ backgroundColor: selectedCalendar.background_color || '#4285F4' }}
-                                    />
-                                )}
-                                <select
-                                    value={calendarId}
-                                    onChange={(e) => setCalendarId(e.target.value)}
-                                    className={selectClass}
-                                >
-                                    {isTask && <option className="bg-neutral-950" value="">なし</option>}
-                                    {availableCalendars.map(cal => (
-                                        <option className="bg-neutral-950" key={cal.id} value={cal.id}>
-                                            {cal.name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
-                            </div>
+                            <CalendarWheelPicker
+                                calendars={availableCalendars}
+                                value={calendarId}
+                                onChange={setCalendarId}
+                            />
                         </div>
                     )}
 
@@ -658,6 +728,26 @@ export function MobileEventEditModal({
                             </div>
                         )
                     })()}
+
+                    <div>
+                        <label className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-neutral-400">
+                            <StickyNote className="h-3 w-3" />
+                            メモ
+                        </label>
+                        <textarea
+                            value={isTask ? memo : eventDescription}
+                            onChange={(e) => {
+                                if (isTask) {
+                                    setMemo(e.target.value)
+                                } else {
+                                    setEventDescription(e.target.value)
+                                }
+                            }}
+                            rows={2}
+                            className="min-h-[82px] w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-sm leading-relaxed text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
+                            placeholder="メモを入力..."
+                        />
+                    </div>
 
                     {onCreateSubTask && (
                         <div className={cn(fieldClass, "min-h-0")}>
@@ -737,60 +827,9 @@ export function MobileEventEditModal({
                         </div>
                     )}
 
-                    <div>
-                        <label className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-neutral-400">
-                            <StickyNote className="h-3 w-3" />
-                            メモ（任意）
-                        </label>
-                        <textarea
-                            value={isTask ? memo : eventDescription}
-                            onChange={(e) => {
-                                if (isTask) {
-                                    setMemo(e.target.value)
-                                } else {
-                                    setEventDescription(e.target.value)
-                                }
-                            }}
-                            rows={1}
-                            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-sm leading-relaxed text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
-                            placeholder="メモを入力..."
-                        />
-                    </div>
-
                     </div>
                 </div>
 
-                <div className="flex-shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-1.5">
-                    <div className="mb-1.5 truncate text-center text-[11px] text-neutral-400">
-                        {schedulePreview}
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {(onDeleteTask || onDeleteEvent) && (
-                            <button
-                                type="button"
-                                onClick={handleDelete}
-                                disabled={isDeleting}
-                                aria-label="削除"
-                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10 text-red-300 transition-colors active:bg-red-500/20 disabled:opacity-60"
-                            >
-                                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            onClick={handleSave}
-                            disabled={!title.trim() || isDeleting}
-                            className={cn(
-                                "h-11 flex-1 rounded-xl text-base font-semibold transition-colors",
-                                !title.trim() || isDeleting
-                                    ? "bg-white/10 text-neutral-500"
-                                    : "bg-white text-neutral-950 active:bg-neutral-300"
-                            )}
-                        >
-                            保存
-                        </button>
-                    </div>
-                </div>
             </div>
         </>
     )
