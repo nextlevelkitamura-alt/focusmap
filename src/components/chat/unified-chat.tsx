@@ -161,21 +161,16 @@ const TOOL_LABELS: Record<string, string> = {
   deleteMindmapNode: "ノード削除",
 }
 
+function isDesktopViewport() {
+  return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches
+}
+
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
 
 function formatDate(value: number) {
   return new Date(value).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
-}
-
-type AgentConnectionStatus = ReturnType<typeof useAgentConnection>["state"]
-
-function connectionStatusLabel(state: AgentConnectionStatus) {
-  if (state === "online") return "Mac online"
-  if (state === "offline") return "Mac offline"
-  if (state === "absent") return "Mac未接続"
-  return "確認中"
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -309,11 +304,13 @@ export function UnifiedChat({
 
   const handleSelectGeneralChat = useCallback(() => {
     setActiveProjectChatId(null)
+    setMobileHistoryOpen(false)
   }, [])
 
   const handleSelectProjectChat = useCallback((projectId: string) => {
     setActiveProjectChatId(projectId)
     onSelectProject?.(projectId)
+    setMobileHistoryOpen(false)
   }, [onSelectProject])
 
   useEffect(() => {
@@ -401,7 +398,9 @@ export function UnifiedChat({
     setAttachmentError(null)
     setRuntimeNotice(null)
     setMobileHistoryOpen(false)
-    setTimeout(() => inputRef.current?.focus(), 0)
+    if (isDesktopViewport()) {
+      setTimeout(() => inputRef.current?.focus(), 0)
+    }
   }, [sessions])
 
   const handleSelectSession = (session: AgentChatSession) => {
@@ -429,7 +428,6 @@ export function UnifiedChat({
   }
 
   const sendLabel = connectionState === "online" ? "送信" : "予約して送信"
-  const connectionLabel = connectionStatusLabel(connectionState)
   const canSend = input.trim().length > 0 || attachments.length > 0
   const inputPlaceholder = activeProjectChat
     ? `${activeProjectChat.title} について質問`
@@ -441,7 +439,7 @@ export function UnifiedChat({
     swipeRef.current = {
       startX: touch.clientX,
       startY: touch.clientY,
-      tracking: touch.clientX <= 44,
+      tracking: touch.clientX <= 56,
     }
   }, [])
 
@@ -452,7 +450,7 @@ export function UnifiedChat({
     if (!touch) return
     const dx = touch.clientX - current.startX
     const dy = touch.clientY - current.startY
-    if (dx > 72 && Math.abs(dy) < 64) {
+    if (dx > 64 && Math.abs(dy) < 72) {
       setMobileHistoryOpen(true)
       swipeRef.current = { ...current, tracking: false }
     }
@@ -498,39 +496,26 @@ export function UnifiedChat({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-[#1f1f1f]/95 px-3 pb-2 pt-[calc(0.6rem+env(safe-area-inset-top,0px))] backdrop-blur md:hidden">
+        <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-[#1f1f1f]/95 pb-1 pl-0 pr-2 pt-[calc(0.3rem+env(safe-area-inset-top,0px))] backdrop-blur md:hidden">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="h-11 w-11 rounded-lg text-zinc-200 hover:bg-white/10 hover:text-white"
+            className="h-11 w-11 shrink-0 rounded-lg text-zinc-200 hover:bg-white/10 hover:text-white"
             onClick={() => setMobileHistoryOpen(true)}
             aria-label="チャット履歴を開く"
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="truncate text-[21px] font-semibold tracking-normal text-white">Focusmap</div>
-              <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-zinc-300">
-                {activeProjectChat ? "プロジェクト" : "全体チャット"}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-400">
-              <span
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  connectionState === "online" ? "bg-lime-400" : "bg-zinc-500",
-                )}
-              />
-              <span>{connectionLabel}</span>
-            </div>
-          </div>
+          <span className="inline-flex min-h-8 items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 text-[11px] font-medium text-emerald-300">
+            {activeProjectChat ? "プロジェクトチャット" : "新しいチャット"}
+          </span>
+          <div className="min-w-0 flex-1" />
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="h-11 w-11 rounded-lg text-zinc-200 hover:bg-white/10 hover:text-white"
+            className="h-11 w-11 shrink-0 rounded-lg text-zinc-200 hover:bg-white/10 hover:text-white"
             onClick={handleNewSession}
             aria-label="新規チャット"
           >
@@ -678,21 +663,12 @@ export function UnifiedChat({
         </div>
       </div>
 
-      <button
-        type="button"
-        className="absolute left-0 top-1/2 z-20 flex h-20 w-6 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 border-white/10 bg-[#171717]/85 text-zinc-400 shadow-sm backdrop-blur transition active:bg-[#242424] md:hidden"
-        onClick={() => setMobileHistoryOpen(true)}
-        aria-label="チャット履歴を開く"
-      >
-        <span className="flex flex-col gap-1" aria-hidden="true">
-          <span className="h-1 w-1 rounded-full bg-zinc-500" />
-          <span className="h-1 w-1 rounded-full bg-zinc-500" />
-          <span className="h-1 w-1 rounded-full bg-zinc-500" />
-        </span>
-      </button>
-
       <Sheet open={mobileHistoryOpen} onOpenChange={setMobileHistoryOpen}>
-        <SheetContent side="left" className="w-[88vw] max-w-[390px] border-[#303030] bg-[#171717] p-0 text-zinc-100">
+        <SheetContent
+          side="left"
+          className="w-[88vw] max-w-[390px] border-[#303030] bg-[#171717] p-0 text-zinc-100"
+          onOpenAutoFocus={event => event.preventDefault()}
+        >
           <SheetTitle className="sr-only">チャット履歴</SheetTitle>
           <SheetDescription className="sr-only">チャット、プロジェクト、最近の履歴を選択します。</SheetDescription>
           <HistorySidebar
@@ -928,7 +904,7 @@ function HistorySidebar({
 
 function ProjectChatHeader({ project, hasMessages }: { project: Project; hasMessages: boolean }) {
   return (
-    <div className={cn("mx-auto w-full max-w-[760px]", hasMessages ? "mb-6" : "pt-8 md:pt-14")}>
+    <div className={cn("mx-auto hidden w-full max-w-[760px] md:block", hasMessages ? "mb-6" : "pt-14")}>
       <div className={cn(
         "flex items-start gap-3",
         hasMessages ? "rounded-xl border border-[#303030] bg-[#171717]/80 px-3 py-2.5" : "px-1",
