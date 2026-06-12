@@ -24,7 +24,7 @@ import {
   Mic,
   Plus,
   Search,
-  Send,
+  ArrowUp,
   Square,
   SquarePen,
   Terminal,
@@ -653,7 +653,7 @@ export function UnifiedChat({
                       onClick={() => submit(input)}
                       title={sendLabel}
                     >
-                      <Send className="h-4 w-4" />
+                      <ArrowUp className="h-5 w-5 stroke-[2.75]" />
                     </Button>
                   )}
                 </div>
