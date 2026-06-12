@@ -2,20 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MobileEventEditModal } from './mobile-event-edit-modal'
 import type { TimeBlock } from '@/lib/time-block'
-
-vi.mock('@/contexts/TimerContext', () => ({
-  useTimer: () => ({
-    runningTaskId: null,
-    runningTask: null,
-    currentElapsedSeconds: 0,
-    startTimer: vi.fn(),
-    pauseTimer: vi.fn(),
-    completeTimer: vi.fn(),
-    interruptTimer: vi.fn(),
-    isLoading: false,
-  }),
-  formatTime: (seconds: number) => `${seconds}s`,
-}))
+import type { Task } from '@/types/database'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -52,6 +39,61 @@ function calendarEventBlock(): TimeBlock {
   }
 }
 
+function taskBlock(): TimeBlock {
+  const task: Task = {
+    id: 'task-1',
+    user_id: 'user-1',
+    project_id: 'project-1',
+    parent_task_id: null,
+    is_group: false,
+    title: '資料を確認する',
+    status: 'todo',
+    stage: 'scheduled',
+    priority: null,
+    order_index: 0,
+    scheduled_at: '2026-06-10T15:00:00+09:00',
+    estimated_time: 30,
+    actual_time_minutes: 12,
+    google_event_id: null,
+    calendar_event_id: null,
+    calendar_id: 'calendar-1',
+    total_elapsed_seconds: 720,
+    last_started_at: null,
+    is_timer_running: false,
+    created_at: '2026-06-10T00:00:00.000Z',
+    updated_at: '2026-06-10T00:00:00.000Z',
+    source: 'manual',
+    deleted_at: null,
+    google_event_fingerprint: null,
+    is_habit: false,
+    habit_frequency: null,
+    habit_icon: null,
+    habit_start_date: null,
+    habit_end_date: null,
+    memo: '確認メモ',
+    memo_images: null,
+    node_width: null,
+    mindmap_collapsed: false,
+  }
+
+  return {
+    id: 'task-1',
+    source: 'task',
+    title: task.title,
+    startTime: new Date('2026-06-10T15:00:00+09:00'),
+    endTime: new Date('2026-06-10T15:30:00+09:00'),
+    color: '#3B82F6',
+    isCompleted: false,
+    isTimerRunning: false,
+    taskId: task.id,
+    calendarId: 'calendar-1',
+    projectId: 'project-1',
+    estimatedTime: 30,
+    totalElapsedSeconds: 720,
+    originalTask: task,
+  }
+}
+
 describe('MobileEventEditModal', () => {
   test('右上の完了で保存し、未設定のGoogle予定通知は15分前を既定にする', async () => {
     const onClose = vi.fn()
@@ -69,7 +111,10 @@ describe('MobileEventEditModal', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: '予定を削除' })).toBeInTheDocument()
+    const deleteButton = screen.getByRole('button', { name: '予定を削除' })
+    expect(deleteButton).toBeInTheDocument()
+    expect(deleteButton).toHaveTextContent('削除')
+    expect(screen.queryByText('タイトル')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '完了' }))
 
@@ -97,6 +142,8 @@ describe('MobileEventEditModal', () => {
 
     const deleteButton = screen.getByRole('button', { name: '予定を削除' })
     expect(deleteButton.closest('[data-testid="mobile-event-delete-bar"]')).toBeInTheDocument()
+    expect(deleteButton).toHaveClass('h-11')
+    expect(deleteButton).toHaveTextContent('削除')
 
     fireEvent.click(deleteButton)
     expect(onDeleteEvent).not.toHaveBeenCalled()
@@ -105,6 +152,26 @@ describe('MobileEventEditModal', () => {
 
     expect(onDeleteEvent).toHaveBeenCalledWith('event-cache-1', 'google-event-1', 'calendar-1')
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('タスク編集でも記録時間とタイマー操作を表示しない', () => {
+    render(
+      <MobileEventEditModal
+        target={taskBlock()}
+        isOpen
+        onClose={vi.fn()}
+        onSaveTask={vi.fn()}
+        onSaveEvent={vi.fn()}
+        onDeleteTask={vi.fn()}
+        availableCalendars={[{ id: 'calendar-1', name: 'Main' }]}
+      />,
+    )
+
+    const deleteButton = screen.getByRole('button', { name: 'タスクを削除' })
+
+    expect(screen.queryByText('記録時間')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /開始|再生|一時停止/ })).not.toBeInTheDocument()
+    expect(deleteButton).toHaveTextContent('削除')
   })
 
   test('本文エリアの中央から下へ引くと編集シートを閉じる', () => {

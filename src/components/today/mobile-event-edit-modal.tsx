@@ -1,9 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Calendar as CalendarIcon, ChevronDown, ChevronUp, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronDown, ChevronUp, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import { useMomentumWheel } from "@/hooks/useMomentumWheel"
 import { format } from "date-fns"
@@ -76,11 +75,11 @@ function fromDateTimeLocalValue(value: string) {
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? undefined : date
 }
+
 function shouldIgnoreSheetContentDrag(target: EventTarget | null) {
     if (!(target instanceof Element)) return false
     return Boolean(target.closest('button, input, textarea, select, [contenteditable="true"], [data-sheet-drag-ignore="true"]'))
 }
-
 
 function CalendarWheelPicker({
     calendars,
@@ -141,8 +140,8 @@ function CalendarWheelPicker({
     if (calendars.length === 0) return null
 
     return (
-            data-sheet-drag-ignore="true"
         <div
+            data-sheet-drag-ignore="true"
             className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.12),rgba(0,0,0,0.45)_54%,rgba(0,0,0,0.72))] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_-18px_38px_rgba(0,0,0,0.38)]"
             style={{ height: CALENDAR_WHEEL_VISIBLE_HEIGHT, perspective: 420 }}
         >
@@ -270,14 +269,13 @@ export function MobileEventEditModal({
     const [localChildTasks, setLocalChildTasks] = useState<Task[]>(childTasks)
     const [isDeleteConfirming, setIsDeleteConfirming] = useState(false)
 
-    const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
+    const dragStartY = useRef(0)
+    const currentTranslateY = useRef(0)
     const contentDragStartY = useRef<number | null>(null)
     const contentDragStartX = useRef(0)
     const contentDragStartScrollTop = useRef(0)
     const isContentDragActive = useRef(false)
-    const dragStartY = useRef(0)
-    const currentTranslateY = useRef(0)
     const openedAtRef = useRef(0)
     const defaultCalendarId = availableCalendars[0]?.id ?? ''
     const reminderOptions = useMemo(() => {
@@ -492,6 +490,8 @@ export function MobileEventEditModal({
             }
             currentTranslateY.current = 0
         }
+    }, [onClose])
+
     const handleTouchEnd = useCallback(() => {
         finishSheetDrag()
     }, [finishSheetDrag])
@@ -566,8 +566,6 @@ export function MobileEventEditModal({
         resetContentDrag()
     }, [resetContentDrag])
 
-    }, [onClose])
-
     // Save handler — 即座に閉じ、保存はバックグラウンドで実行
     const handleSave = () => {
         if (!target || !scheduledDate) return
@@ -635,7 +633,7 @@ export function MobileEventEditModal({
     const hasDeleteAction = isTask
         ? Boolean(onDeleteTask && target.taskId)
         : Boolean(onDeleteEvent && target.googleEventId && target.calendarId)
-    const deleteLabel = isTask ? 'タスクを削除' : '予定を削除'
+    const deleteAriaLabel = isTask ? 'タスクを削除' : '予定を削除'
     const scheduledDateTimeLabel = scheduledDate
         ? format(scheduledDate, "M/d(E) HH:mm", { locale: ja })
         : "未設定"
@@ -659,7 +657,7 @@ export function MobileEventEditModal({
 
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-[60] flex h-[88dvh] max-h-[88dvh] flex-col overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] will-change-transform animate-in slide-in-from-bottom duration-300"
+                className="fixed inset-x-0 bottom-0 z-[70] flex h-[88dvh] max-h-[88dvh] flex-col overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] will-change-transform animate-in slide-in-from-bottom duration-300"
             >
                 <div
                     className="relative flex h-12 flex-shrink-0 items-start justify-center px-4 pt-2"
@@ -693,23 +691,6 @@ export function MobileEventEditModal({
                     onTouchCancel={handleContentTouchCancel}
                 >
                     <div className="flex min-h-0 flex-col gap-2">
-                    <div>
-                        <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>
-                        <input
-                            type="text"
-                            value={title}
-                            onChange={(e) => setTitle(e.target.value)}
-                            onKeyDown={(e) => {
-                                const nativeEvent = e.nativeEvent
-                                if (e.key !== 'Enter' || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
-                                e.preventDefault()
-                                if (title.trim()) handleSave()
-                            }}
-                            className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
-                            placeholder="例: SNS投稿を作る"
-                        />
-                    </div>
-
                     <label className={cn(fieldClass, "relative block pr-9")}>
                         <span className="pointer-events-none block">
                             <span className={fieldLabelClass}>
@@ -834,56 +815,6 @@ export function MobileEventEditModal({
                         </div>
                     )}
 
-                    {isTask && target.originalTask && (() => {
-                        const task = target.originalTask!
-                        const isRunning = timer.runningTaskId === task.id
-                        const elapsedSeconds = isRunning
-                            ? timer.currentElapsedSeconds
-                            : (target.totalElapsedSeconds ?? 0)
-                        const hasElapsed = elapsedSeconds > 0
-
-                        return (
-                            <div className={fieldClass}>
-                                <label className={fieldLabelClass}>
-                                    <Timer className="h-3 w-3" />
-                                    記録時間
-                                </label>
-                                <div className="flex items-center gap-3">
-                                    <span className={cn(
-                                        "flex-1 font-mono text-lg",
-                                        isRunning ? "text-emerald-300" : hasElapsed ? "text-neutral-50" : "text-neutral-500"
-                                    )}>
-                                        {formatTime(elapsedSeconds)}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={async (e) => {
-                                            e.stopPropagation()
-                                            if (isRunning) {
-                                                await timer.pauseTimer()
-                                            } else {
-                                                await timer.startTimer(task)
-                                            }
-                                        }}
-                                        className={cn(
-                                            "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
-                                            isRunning
-                                                ? "bg-emerald-400/15 text-emerald-200 active:bg-emerald-400/25"
-                                                : "bg-white/[0.06] text-neutral-300 active:bg-white/[0.1]"
-                                        )}
-                                    >
-                                        {isRunning ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-                                    </button>
-                                </div>
-                                {(task.actual_time_minutes ?? 0) > 0 && !isRunning && (
-                                    <p className="mt-0.5 text-[10px] text-neutral-500">
-                                        実績: {task.actual_time_minutes}分
-                                    </p>
-                                )}
-                            </div>
-                        )
-                    })()}
-
                     <div>
                         <label className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-neutral-400">
                             <StickyNote className="h-3 w-3" />
@@ -988,21 +919,21 @@ export function MobileEventEditModal({
                 {hasDeleteAction && (
                     <div
                         data-testid="mobile-event-delete-bar"
-                        className="flex-shrink-0 border-t border-white/10 bg-neutral-950/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3 shadow-[0_-14px_28px_rgba(0,0,0,0.36)]"
+                        className="relative z-[1] flex-shrink-0 bg-neutral-950 px-4 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 shadow-[0_-10px_24px_rgba(0,0,0,0.32)]"
                     >
                         {isDeleteConfirming ? (
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
                                     onClick={() => setIsDeleteConfirming(false)}
-                                    className="min-h-11 flex-1 rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm font-semibold text-neutral-200 transition-colors active:bg-white/[0.1]"
+                                    className="h-11 flex-1 rounded-xl border border-white/10 bg-neutral-900 px-3 text-sm font-semibold text-neutral-200 transition-colors active:bg-neutral-800"
                                 >
                                     キャンセル
                                 </button>
                                 <button
                                     type="button"
                                     onClick={handleDelete}
-                                    className="min-h-11 flex-1 rounded-xl bg-red-500 px-3 text-sm font-semibold text-white transition-colors active:bg-red-400"
+                                    className="h-11 flex-1 rounded-xl border border-red-400/35 bg-neutral-950 px-3 text-sm font-semibold text-red-200 transition-colors active:bg-red-500/10"
                                     aria-label="削除する"
                                 >
                                     削除する
@@ -1012,11 +943,11 @@ export function MobileEventEditModal({
                             <button
                                 type="button"
                                 onClick={() => setIsDeleteConfirming(true)}
-                                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/12 px-3 text-sm font-semibold text-red-200 transition-colors active:bg-red-500/20"
-                                aria-label={deleteLabel}
+                                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-red-400/30 bg-neutral-950 px-3 text-sm font-semibold text-red-300 transition-colors active:border-red-300/45 active:bg-red-500/10 active:text-red-200"
+                                aria-label={deleteAriaLabel}
                             >
                                 <Trash2 className="h-4 w-4" />
-                                {deleteLabel}
+                                削除
                             </button>
                         )}
                     </div>
