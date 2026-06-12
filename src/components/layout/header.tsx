@@ -262,8 +262,9 @@ export function Header({
                             onProjectDeleted={onProjectDeleted}
                             onSpaceSaved={onSpaceSaved}
                             showAllProjectsOption={activeView === 'today' || activeView === 'long-term'}
+                            showProjectSwitcher={!isChatView}
                             className={cn(
-                                "max-w-[280px] border-b-0 bg-transparent px-0 py-0",
+                                isChatView ? "max-w-[180px] border-b-0 bg-transparent px-0 py-0" : "max-w-[280px] border-b-0 bg-transparent px-0 py-0",
                                 isDesktopShell && "max-w-[360px]",
                             )}
                         />

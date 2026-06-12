@@ -91,8 +91,8 @@ export function GlobalWorkspaceSwitcher() {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(STORAGE_KEY, id);
     }
-    // workspace pages に居る場合は ?space= を更新
-    if (pathname.startsWith('/dashboard/workspace')) {
+    // workspace pages and standalone chat page read the active space from ?space=.
+    if (pathname.startsWith('/dashboard/workspace') || pathname === '/dashboard/chat') {
       const params = new URLSearchParams(searchParams.toString());
       params.set('space', id);
       router.push(`${pathname}?${params.toString()}`);

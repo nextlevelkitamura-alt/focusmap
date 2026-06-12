@@ -110,6 +110,7 @@ const MAX_IMAGE_SIDE = 1600
 const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024
 const CHAT_SLOW_NOTICE_MS = 45_000
 const CHAT_WATCHDOG_MS = 180_000
+const DEFAULT_VISIBLE_HISTORY_COUNT = 3
 
 const TOOL_LABELS: Record<string, string> = {
   runTerminal: "ターミナル実行",
@@ -210,9 +211,10 @@ type RuntimeNotice = {
 
 export function UnifiedChat({ spaceId = null, projectId: _projectId = null, projectTitle = null }: UnifiedChatProps) {
   void _projectId
+  void projectTitle
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<FileUIPart[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -465,7 +467,6 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null, proj
           onNew={handleNewSession}
           onSelect={handleSelectSession}
           onDelete={handleDeleteSession}
-          projectTitle={projectTitle}
           className="hidden md:flex"
         />
       )}
@@ -634,7 +635,6 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null, proj
             onNew={handleNewSession}
             onSelect={handleSelectSession}
             onDelete={handleDeleteSession}
-            projectTitle={projectTitle}
             className="flex h-full w-full border-r-0"
           />
         </SheetContent>
@@ -698,7 +698,6 @@ function HistorySidebar({
   onNew,
   onSelect,
   onDelete,
-  projectTitle,
   className,
 }: {
   sessions: AgentChatSession[]
@@ -706,16 +705,20 @@ function HistorySidebar({
   onNew: () => void
   onSelect: (session: AgentChatSession) => void
   onDelete: (id: string) => void
-  projectTitle?: string | null
   className?: string
 }) {
   const [query, setQuery] = useState("")
+  const [showAllRecent, setShowAllRecent] = useState(false)
   const normalizedQuery = query.trim().toLowerCase()
   const visibleSessions = useMemo(() => {
-    if (!normalizedQuery) return sessions
-    return sessions.filter(session => session.title.toLowerCase().includes(normalizedQuery))
+    const sortedSessions = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)
+    if (!normalizedQuery) return sortedSessions
+    return sortedSessions.filter(session => session.title.toLowerCase().includes(normalizedQuery))
   }, [normalizedQuery, sessions])
-  const projectLabel = projectTitle?.trim() || "現在のプロジェクト"
+  const isHistoryCollapsed = !normalizedQuery && !showAllRecent && visibleSessions.length > DEFAULT_VISIBLE_HISTORY_COUNT
+  const displayedSessions = isHistoryCollapsed
+    ? visibleSessions.slice(0, DEFAULT_VISIBLE_HISTORY_COUNT)
+    : visibleSessions
 
   return (
     <aside className={cn("relative h-full w-[260px] shrink-0 flex-col border-r border-[#303030] bg-[#171717] text-zinc-100", className)}>
@@ -735,43 +738,30 @@ function HistorySidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-20">
-        <div className="space-y-1 border-b border-[#303030] pb-3">
-          <button type="button" className="flex min-h-12 w-full items-center gap-3 rounded-lg bg-white/10 px-3 text-left text-sm font-semibold text-zinc-100">
+        <div className="space-y-1 border-b border-[#303030] pb-2">
+          <button type="button" className="flex min-h-11 w-full items-center gap-3 rounded-lg bg-white/10 px-3 text-left text-sm font-semibold text-zinc-100">
             <MessageSquarePlus className="h-4 w-4" />
             チャット
           </button>
-          <button type="button" className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold text-zinc-300 hover:bg-white/10 hover:text-white">
+          <button type="button" className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold text-zinc-300 hover:bg-white/10 hover:text-white">
             <FileText className="h-4 w-4" />
             ライブラリ
           </button>
         </div>
 
-        <div className="border-b border-[#303030] py-4">
-          <div className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-zinc-400">
-            <span>プロジェクト</span>
-            <button type="button" className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 hover:bg-white/10 hover:text-white" aria-label="プロジェクトを追加">
-              <Plus className="h-4 w-4" />
-            </button>
-          </div>
-          <button type="button" className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-zinc-200 hover:bg-white/10">
-            <BriefcaseBusiness className="h-4 w-4 text-zinc-400" />
-            <span className="truncate">{projectLabel}</span>
-          </button>
-        </div>
-
-        <div className="py-4">
+        <div className="py-3">
           <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">最近</div>
           {visibleSessions.length === 0 ? (
             <p className="px-3 py-3 text-xs text-zinc-500">{query ? "一致する履歴はありません" : "履歴はまだありません"}</p>
           ) : (
             <div className="space-y-1">
-              {visibleSessions.map(session => (
+              {displayedSessions.map(session => (
               <div key={session.id} className="group relative">
                 <button
                   type="button"
                   onClick={() => onSelect(session)}
                   className={cn(
-                    "flex min-h-11 w-full flex-col rounded-lg px-3 py-2 text-left transition",
+                    "flex min-h-11 w-full flex-col rounded-lg px-3 py-1.5 text-left transition",
                     activeSessionId === session.id ? "bg-white/10 text-white" : "text-zinc-300 hover:bg-white/10 hover:text-white",
                   )}
                 >
@@ -788,6 +778,15 @@ function HistorySidebar({
                   </button>
                 </div>
               ))}
+              {!normalizedQuery && visibleSessions.length > DEFAULT_VISIBLE_HISTORY_COUNT && (
+                <button
+                  type="button"
+                  className="mt-1 flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-zinc-500 transition hover:bg-white/10 hover:text-zinc-200"
+                  onClick={() => setShowAllRecent(value => !value)}
+                >
+                  {showAllRecent ? "表示を減らす" : "もっと表示する"}
+                </button>
+              )}
             </div>
           )}
         </div>

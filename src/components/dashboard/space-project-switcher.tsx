@@ -30,6 +30,7 @@ interface SpaceProjectSwitcherProps {
   onSpaceSaved?: (space: Space) => void
   showAllSpacesOption?: boolean
   showAllProjectsOption?: boolean
+  showProjectSwitcher?: boolean
   allowMutations?: boolean
   variant?: "default" | "memoHeaderCompact"
   className?: string
@@ -58,6 +59,7 @@ export function SpaceProjectSwitcher({
   onSpaceSaved,
   showAllSpacesOption = true,
   showAllProjectsOption = false,
+  showProjectSwitcher = true,
   allowMutations = true,
   variant = "default",
   className,
@@ -85,7 +87,10 @@ export function SpaceProjectSwitcher({
 
   const handlePickSpace = (id: string | null) => {
     onSelectSpace(id)
-    if (showAllProjectsOption) {
+    if (!showProjectSwitcher) {
+      setSpaceOpen(false)
+      return
+    } else if (showAllProjectsOption) {
       onSelectProject(null)
     } else {
       const currentProjectInSpace = id
@@ -281,9 +286,10 @@ export function SpaceProjectSwitcher({
         </PopoverContent>
       </Popover>
 
-      {!compactMemoHeader && <span className="text-muted-foreground/40 text-xs select-none">/</span>}
+      {showProjectSwitcher && !compactMemoHeader && <span className="text-muted-foreground/40 text-xs select-none">/</span>}
 
       {/* Project switcher */}
+      {showProjectSwitcher && (
       <Popover open={projectOpen} onOpenChange={setProjectOpen}>
         <PopoverTrigger asChild>
           <button
@@ -410,6 +416,7 @@ export function SpaceProjectSwitcher({
           )}
         </PopoverContent>
       </Popover>
+      )}
 
       {allowMutations && (
         <>
