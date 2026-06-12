@@ -14,33 +14,27 @@ import {
   type DynamicToolUIPart,
 } from "ai"
 import {
-  Activity,
   BriefcaseBusiness,
   CalendarDays,
   ChevronRight,
   CheckCircle2,
-  Download,
   FileText,
-  History,
   Image as ImageIcon,
   ListTodo,
   Loader2,
-  Menu,
   MessageSquarePlus,
   Mic,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   Search,
   Send,
   Square,
+  SquarePen,
   Terminal,
   Trash2,
   Workflow,
   Wrench,
   X,
   XCircle,
-  WifiOff,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -56,22 +50,15 @@ import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useAgentChatSessions, type AgentChatSession } from "@/hooks/useAgentChatSessions"
 import { cn } from "@/lib/utils"
-import { AgentStatusChip, useAgentConnection, type AgentConnectionState } from "@/components/chat/agent-status-chip"
+import { useAgentConnection } from "@/components/chat/agent-status-chip"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS, sanitizeUIMessagesForModel } from "@/lib/ai/ui-message-sanitize"
 
 interface UnifiedChatProps {
   spaceId?: string | null
   projectId?: string | null
+  projectTitle?: string | null
 }
-
-const PROMPTS = [
-  "今日やることを整理して",
-  "このプロジェクトの次の一手を考えて",
-  "求人更新して",
-  "この内容で求人立案して",
-  "求人サイトを巡回して結果を記録して",
-]
 
 const AUTOMATION_SHORTCUTS = [
   {
@@ -221,11 +208,11 @@ type RuntimeNotice = {
   message: string
 } | null
 
-export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: UnifiedChatProps) {
+export function UnifiedChat({ spaceId = null, projectId: _projectId = null, projectTitle = null }: UnifiedChatProps) {
   void _projectId
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<FileUIPart[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -384,7 +371,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     setTimeout(() => inputRef.current?.focus(), 0)
   }, [])
 
-  const handleNewSession = () => {
+  const handleNewSession = useCallback(() => {
     sessions.createSession()
     setMessages([])
     setInput("")
@@ -393,7 +380,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     setRuntimeNotice(null)
     setMobileHistoryOpen(false)
     setTimeout(() => inputRef.current?.focus(), 0)
-  }
+  }, [sessions, setMessages])
 
   const handleSelectSession = (session: AgentChatSession) => {
     sessions.selectSession(session.id)
@@ -424,8 +411,6 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
 
   const sendLabel = connectionState === "online" ? "送信" : "予約して送信"
   const canSend = input.trim().length > 0 || attachments.length > 0
-  const activeSessionTitle = sessions.activeSession?.title ?? "新しいチャット"
-
   const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     if (typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches) return
     const touch = event.touches[0]
@@ -454,9 +439,20 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     swipeRef.current = null
   }, [])
 
+  useEffect(() => {
+    const handleToggleSidebar = () => setSidebarOpen(value => !value)
+    const handleNewChat = () => handleNewSession()
+    window.addEventListener("focusmap:chat:toggle-sidebar", handleToggleSidebar)
+    window.addEventListener("focusmap:chat:new", handleNewChat)
+    return () => {
+      window.removeEventListener("focusmap:chat:toggle-sidebar", handleToggleSidebar)
+      window.removeEventListener("focusmap:chat:new", handleNewChat)
+    }
+  }, [handleNewSession])
+
   return (
     <div
-      className="relative flex h-full min-h-0 bg-background text-foreground"
+      className="relative flex h-full min-h-0 bg-[#1f1f1f] text-zinc-100"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -469,52 +465,17 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
           onNew={handleNewSession}
           onSelect={handleSelectSession}
           onDelete={handleDeleteSession}
+          projectTitle={projectTitle}
           className="hidden md:flex"
         />
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-3 backdrop-blur md:px-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="hidden h-9 w-9 md:inline-flex"
-              onClick={() => setSidebarOpen(v => !v)}
-              aria-label={sidebarOpen ? "履歴を閉じる" : "履歴を開く"}
-            >
-              {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 rounded-full md:hidden"
-              onClick={() => setMobileHistoryOpen(true)}
-              aria-label="チャット履歴を開く"
-            >
-              <Menu className="h-4 w-4" />
-            </Button>
-            <div className="min-w-0">
-              <h1 className="truncate text-lg font-semibold leading-tight md:text-base">チャット</h1>
-              <p className="hidden max-w-[46vw] truncate text-[11px] text-muted-foreground sm:block md:max-w-[360px]">
-                {activeSessionTitle}
-              </p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <MacStatusPill state={connectionState} />
-            <Button variant="outline" size="sm" className="hidden h-9 gap-1.5 rounded-full text-xs sm:inline-flex" onClick={handleNewSession}>
-              <MessageSquarePlus className="h-3.5 w-3.5" />
-              新規
-            </Button>
-          </div>
-        </header>
-
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-6">
           {messages.length === 0 ? (
             <EmptyChat onPrompt={submit} />
           ) : (
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+            <div className="mx-auto flex w-full max-w-[760px] flex-col gap-7 pb-6">
               {messages.map(message => (
                 <MessageBubble
                   key={message.id}
@@ -530,11 +491,10 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
           )}
         </div>
 
-        <div className="shrink-0 border-t bg-background/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] backdrop-blur md:px-6">
-          <div className="mx-auto w-full max-w-3xl space-y-2">
-            <AgentStatusChip state={connectionState} />
+        <div className="shrink-0 bg-[#1f1f1f]/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2 backdrop-blur md:px-6">
+          <div className="mx-auto w-full max-w-[760px] space-y-2">
             {isRecording && (
-              <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">
+              <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
                 <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
                 <VoiceWaveform analyserRef={analyserRef} barCount={28} barWidth={2} barGap={1} height={24} />
                 <button type="button" onClick={stopRecording} className="ml-auto min-h-8 rounded px-2 font-medium">
@@ -543,13 +503,13 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
               </div>
             )}
             {attachments.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto rounded-md border bg-muted/20 p-2">
+              <div className="flex gap-2 overflow-x-auto rounded-xl border border-[#303030] bg-[#171717] p-2">
                 {attachments.map((attachment, index) => (
-                  <div key={`${attachment.filename ?? "image"}-${index}`} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border bg-background">
+                  <div key={`${attachment.filename ?? "image"}-${index}`} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-[#303030] bg-[#111111]">
                     <img src={attachment.url} alt={attachment.filename ?? "添付画像"} className="h-full w-full object-cover" />
                     <button
                       type="button"
-                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm"
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/80 text-white shadow-sm"
                       onClick={() => removeAttachment(index)}
                       aria-label="添付画像を削除"
                     >
@@ -560,17 +520,17 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
               </div>
             )}
             {attachmentError && (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
                 {attachmentError}
               </p>
             )}
             {runtimeNotice && (
               <div
                 className={cn(
-                  "flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs",
+                  "flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs",
                   runtimeNotice.tone === "error"
-                    ? "border-destructive/30 bg-destructive/10 text-destructive"
-                    : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                    ? "border-red-500/30 bg-red-500/10 text-red-300"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-300",
                 )}
               >
                 <span>{runtimeNotice.message}</span>
@@ -579,12 +539,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 </button>
               </div>
             )}
-            <div className="flex items-end gap-2">
-              <AutomationPromptMenu
-                onSelect={insertAutomationPrompt}
-                onAttachImage={() => fileInputRef.current?.click()}
-                attachDisabled={isBusy}
-              />
+            <div className="rounded-[1.35rem] border border-[#343434] bg-[#111111] p-3 shadow-[0_16px_48px_rgba(0,0,0,0.22)]">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -599,36 +554,54 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 onChange={event => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder="例: 今日やることを整理して"
+                placeholder="質問してみましょう"
                 rows={1}
-                className="max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-primary"
+                className="max-h-36 min-h-12 w-full resize-none border-0 bg-transparent px-1 py-1 text-[15px] leading-6 text-zinc-100 outline-none placeholder:text-zinc-500"
               />
-              <Button
-                variant={isRecording ? "destructive" : "outline"}
-                size="icon"
-                className="h-12 w-11 shrink-0 rounded-2xl"
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={isTranscribing}
-                title={isRecording ? "録音停止" : "音声入力"}
-              >
-                {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
-              </Button>
-              {isBusy ? (
-                <Button size="icon" variant="ghost" className="h-12 w-11 shrink-0 rounded-2xl text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void stop()} title="停止">
-                  <Square className="h-3.5 w-3.5" />
-                </Button>
-              ) : (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-12 w-11 shrink-0 rounded-2xl text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                  disabled={!canSend}
-                  onClick={() => submit(input)}
-                  title={sendLabel}
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
-              )}
+              <div className="mt-1 flex min-h-10 items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AutomationPromptMenu
+                    onSelect={insertAutomationPrompt}
+                    onAttachImage={() => fileInputRef.current?.click()}
+                    attachDisabled={isBusy}
+                  />
+                  <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-zinc-800 px-3 text-xs font-medium text-zinc-100">
+                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-300" />
+                    実行
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      "h-10 w-10 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white",
+                      isRecording && "bg-red-500/15 text-red-300 hover:bg-red-500/20 hover:text-red-200",
+                    )}
+                    onClick={isRecording ? stopRecording : startRecording}
+                    disabled={isTranscribing}
+                    title={isRecording ? "録音停止" : "音声入力"}
+                  >
+                    {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
+                  </Button>
+                  {isBusy ? (
+                    <Button size="icon" variant="ghost" className="h-10 w-10 rounded-full bg-white text-zinc-950 hover:bg-zinc-200" onClick={() => void stop()} title="停止">
+                      <Square className="h-3.5 w-3.5" />
+                    </Button>
+                  ) : (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-10 w-10 rounded-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:opacity-100"
+                      disabled={!canSend}
+                      onClick={() => submit(input)}
+                      title={sendLabel}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -636,80 +609,37 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
 
       <button
         type="button"
-        className="absolute left-0 top-1/2 z-20 flex h-24 w-8 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 bg-muted/80 text-muted-foreground shadow-sm backdrop-blur transition active:bg-muted md:hidden"
+        className="absolute left-0 top-1/2 z-20 flex h-20 w-7 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 border-white/10 bg-[#171717]/85 text-zinc-400 shadow-sm backdrop-blur transition active:bg-[#242424] md:hidden"
         onClick={() => setMobileHistoryOpen(true)}
         aria-label="チャット履歴を開く"
       >
-        <ChevronRight className="h-5 w-5" />
+        <ChevronRight className="h-4 w-4" />
       </button>
 
       <Button
         type="button"
         size="icon"
-        className="absolute bottom-[calc(6.75rem+env(safe-area-inset-bottom,0px))] right-4 z-20 h-14 w-14 rounded-full shadow-lg md:hidden"
+        className="absolute bottom-[calc(7.25rem+env(safe-area-inset-bottom,0px))] right-4 z-20 h-12 w-12 rounded-full bg-white text-zinc-950 shadow-lg hover:bg-zinc-200 md:hidden"
         onClick={handleNewSession}
         aria-label="新規チャット"
       >
-        <MessageSquarePlus className="h-5 w-5" />
+        <SquarePen className="h-4 w-4" />
       </Button>
 
       <Sheet open={mobileHistoryOpen} onOpenChange={setMobileHistoryOpen}>
-        <SheetContent side="left" className="w-[88vw] max-w-[390px] p-0">
+        <SheetContent side="left" className="w-[88vw] max-w-[390px] border-[#303030] bg-[#171717] p-0 text-zinc-100">
           <HistorySidebar
             sessions={sessions.sessions}
             activeSessionId={sessions.activeSessionId}
             onNew={handleNewSession}
             onSelect={handleSelectSession}
             onDelete={handleDeleteSession}
+            projectTitle={projectTitle}
             className="flex h-full w-full border-r-0"
           />
         </SheetContent>
       </Sheet>
     </div>
-  )
-}
-
-function MacStatusPill({ state }: { state: AgentConnectionState }) {
-  const meta = (() => {
-    if (state === "online") {
-      return {
-        label: "Mac online",
-        Icon: Activity,
-        className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-        iconClassName: "animate-pulse",
-      }
-    }
-    if (state === "offline") {
-      return {
-        label: "Mac offline",
-        Icon: WifiOff,
-        className: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-        iconClassName: "",
-      }
-    }
-    if (state === "absent") {
-      return {
-        label: "Mac未接続",
-        Icon: Download,
-        className: "border-border bg-muted/40 text-muted-foreground",
-        iconClassName: "",
-      }
-    }
-    return {
-      label: "確認中",
-      Icon: Loader2,
-      className: "border-border bg-muted/40 text-muted-foreground",
-      iconClassName: "animate-spin",
-    }
-  })()
-  const Icon = meta.Icon
-
-  return (
-    <span className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium", meta.className)}>
-      <Icon className={cn("h-3.5 w-3.5", meta.iconClassName)} />
-      <span className="hidden sm:inline">{meta.label}</span>
-      <span className="sm:hidden">{state === "online" ? "online" : state === "offline" ? "offline" : state === "absent" ? "未接続" : "確認中"}</span>
-    </span>
   )
 }
 
@@ -725,7 +655,7 @@ function AutomationPromptMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="h-12 w-11 shrink-0 rounded-lg" title="追加">
+        <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white" title="追加">
           <Plus className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -768,6 +698,7 @@ function HistorySidebar({
   onNew,
   onSelect,
   onDelete,
+  projectTitle,
   className,
 }: {
   sessions: AgentChatSession[]
@@ -775,90 +706,107 @@ function HistorySidebar({
   onNew: () => void
   onSelect: (session: AgentChatSession) => void
   onDelete: (id: string) => void
+  projectTitle?: string | null
   className?: string
 }) {
+  const [query, setQuery] = useState("")
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleSessions = useMemo(() => {
+    if (!normalizedQuery) return sessions
+    return sessions.filter(session => session.title.toLowerCase().includes(normalizedQuery))
+  }, [normalizedQuery, sessions])
+  const projectLabel = projectTitle?.trim() || "現在のプロジェクト"
+
   return (
-    <aside className={cn("relative h-full w-[280px] shrink-0 flex-col border-r bg-background", className)}>
-      <div className="flex shrink-0 items-center justify-between px-4 py-4">
-        <div className="min-w-0">
-          <div className="text-xl font-semibold leading-tight md:text-sm">Focusmap</div>
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <History className="h-3.5 w-3.5" />
-            最近
-          </div>
+    <aside className={cn("relative h-full w-[260px] shrink-0 flex-col border-r border-[#303030] bg-[#171717] text-zinc-100", className)}>
+      <div className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-4">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+          <input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="検索"
+            className="h-11 w-full rounded-lg border border-[#2d2d2d] bg-[#111111] pl-9 pr-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+          />
         </div>
-        <Button variant="outline" size="icon" className="hidden h-8 w-8 md:inline-flex" onClick={onNew} title="新規チャット">
+        <Button variant="ghost" size="icon" className="h-11 w-11 rounded-lg text-zinc-300 hover:bg-white/10 hover:text-white md:hidden" onClick={onNew} title="新規チャット">
           <MessageSquarePlus className="h-4 w-4" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-24">
-        {sessions.length === 0 ? (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">履歴はまだありません</p>
-        ) : (
-          <div className="space-y-1">
-            {sessions.map(session => (
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-20">
+        <div className="space-y-1 border-b border-[#303030] pb-3">
+          <button type="button" className="flex min-h-12 w-full items-center gap-3 rounded-lg bg-white/10 px-3 text-left text-sm font-semibold text-zinc-100">
+            <MessageSquarePlus className="h-4 w-4" />
+            チャット
+          </button>
+          <button type="button" className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold text-zinc-300 hover:bg-white/10 hover:text-white">
+            <FileText className="h-4 w-4" />
+            ライブラリ
+          </button>
+        </div>
+
+        <div className="border-b border-[#303030] py-4">
+          <div className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-zinc-400">
+            <span>プロジェクト</span>
+            <button type="button" className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 hover:bg-white/10 hover:text-white" aria-label="プロジェクトを追加">
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+          <button type="button" className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-zinc-200 hover:bg-white/10">
+            <BriefcaseBusiness className="h-4 w-4 text-zinc-400" />
+            <span className="truncate">{projectLabel}</span>
+          </button>
+        </div>
+
+        <div className="py-4">
+          <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">最近</div>
+          {visibleSessions.length === 0 ? (
+            <p className="px-3 py-3 text-xs text-zinc-500">{query ? "一致する履歴はありません" : "履歴はまだありません"}</p>
+          ) : (
+            <div className="space-y-1">
+              {visibleSessions.map(session => (
               <div key={session.id} className="group relative">
                 <button
                   type="button"
                   onClick={() => onSelect(session)}
                   className={cn(
-                    "flex min-h-13 w-full flex-col rounded-lg px-3 py-2.5 text-left transition",
-                    activeSessionId === session.id ? "bg-muted text-foreground" : "hover:bg-muted/70",
+                    "flex min-h-11 w-full flex-col rounded-lg px-3 py-2 text-left transition",
+                    activeSessionId === session.id ? "bg-white/10 text-white" : "text-zinc-300 hover:bg-white/10 hover:text-white",
                   )}
                 >
-                  <span className="w-[200px] truncate text-sm font-medium">{session.title}</span>
-                  <span className="mt-0.5 text-[10px] text-muted-foreground">{formatDate(session.updatedAt)}</span>
+                  <span className="w-[184px] truncate text-sm font-medium">{session.title}</span>
+                  <span className="mt-0.5 text-[10px] text-zinc-500">{formatDate(session.updatedAt)}</span>
                 </button>
                 <button
                   type="button"
-                  className="absolute right-1 top-2 hidden h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive group-hover:flex"
+                  className="absolute right-1 top-1.5 hidden h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-red-500/10 hover:text-red-300 group-hover:flex"
                   onClick={() => onDelete(session.id)}
                   aria-label="履歴を削除"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-background via-background/95 to-transparent p-4 md:hidden">
-        <button
-          type="button"
-          className="pointer-events-auto inline-flex min-h-14 items-center gap-2 rounded-full bg-foreground px-6 text-sm font-semibold text-background shadow-xl"
-          onClick={onNew}
-        >
-          <MessageSquarePlus className="h-5 w-5" />
-          チャット
-        </button>
+      <div className="absolute inset-x-0 bottom-0 border-t border-[#303030] bg-[#171717] p-3">
+        <div className="flex min-h-11 items-center gap-3 rounded-lg px-2 text-sm text-zinc-200">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-600 text-xs font-semibold text-white">N</span>
+          <span className="min-w-0 flex-1 truncate">nao</span>
+          <ChevronRight className="h-4 w-4 rotate-90 text-zinc-500" />
+        </div>
       </div>
     </aside>
   )
 }
 
-function EmptyChat({ onPrompt }: { onPrompt: (text: string) => void }) {
+function EmptyChat({ onPrompt: _onPrompt }: { onPrompt: (text: string) => void }) {
+  void _onPrompt
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center py-8">
-      <div className="mb-6 text-center">
-        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-muted text-foreground ring-1 ring-border/60">
-          <FocusmapLogo variant="mark" accentDot className="h-7 w-7" />
-        </div>
-        <h2 className="text-lg font-semibold">何をしますか？</h2>
-        <p className="mt-1 text-sm text-muted-foreground">相談や整理はそのまま答え、実行が必要なら自動で動きます。</p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        {PROMPTS.map(prompt => (
-          <button
-            key={prompt}
-            type="button"
-            onClick={() => onPrompt(prompt)}
-            className="min-h-16 rounded-md border bg-background px-3 py-2 text-left text-sm transition hover:bg-muted/60"
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-    </div>
+    <div className="mx-auto min-h-full w-full max-w-[760px]" />
   )
 }
 
@@ -866,8 +814,8 @@ function FocusmapAssistantIcon({ active = false }: { active?: boolean }) {
   return (
     <div
       className={cn(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-foreground ring-1 ring-border/60",
-        active && "animate-pulse ring-primary/50",
+        "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#2a2a2a] text-zinc-100 ring-1 ring-white/10",
+        active && "animate-pulse ring-emerald-400/50",
       )}
     >
       <FocusmapLogo variant="mark" accentDot={active} className="h-5 w-5" />
@@ -877,9 +825,9 @@ function FocusmapAssistantIcon({ active = false }: { active?: boolean }) {
 
 function AssistantThinking() {
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-3 text-zinc-300">
       <FocusmapAssistantIcon active />
-      <div className="rounded-lg bg-muted/70 px-3 py-2 text-sm text-muted-foreground">
+      <div className="px-0 py-2 text-sm">
         考え中…
       </div>
     </div>
@@ -892,11 +840,11 @@ function MessageBubble({ message, isActive = false, onApproval }: { message: UIM
   const isUser = message.role === "user"
 
   return (
-    <div className={cn("flex gap-3", isUser && "flex-row-reverse")}>
+    <div className={cn("flex gap-3", isUser && "justify-end")}>
       {!isUser && (
         <FocusmapAssistantIcon active={isActive} />
       )}
-      <div className={cn("flex min-w-0 max-w-[88%] flex-col gap-2 sm:max-w-[84%]", isUser && "items-end")}>
+      <div className={cn("flex min-w-0 flex-col gap-2", isUser ? "max-w-[78%] items-end sm:max-w-[68%]" : "max-w-[calc(100%-44px)] flex-1")}>
         {message.parts.map((part, index) => {
           if (part.type === "text") {
             if (!part.text) return null
@@ -904,10 +852,10 @@ function MessageBubble({ message, isActive = false, onApproval }: { message: UIM
               <div
                 key={index}
                 className={cn(
-                  "text-sm leading-6 whitespace-pre-wrap",
+                  "whitespace-pre-wrap text-[15px] leading-7",
                   isUser
-                    ? "rounded-3xl bg-muted px-4 py-2.5 text-foreground"
-                    : "px-0 py-1 text-foreground",
+                    ? "rounded-2xl bg-white px-4 py-2.5 font-medium text-zinc-950 shadow-sm"
+                    : "px-0 py-0 text-zinc-100",
                 )}
               >
                 {part.text}

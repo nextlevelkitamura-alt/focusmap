@@ -1368,6 +1368,7 @@ export function DashboardClient({
                         <MobileAiExecutionView
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
+                            selectedProjectTitle={selectedProject?.title ?? null}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
@@ -1379,6 +1380,7 @@ export function DashboardClient({
                         <MobileAiExecutionView
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
+                            selectedProjectTitle={selectedProject?.title ?? null}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
@@ -1473,6 +1475,7 @@ export function DashboardClient({
                         <AiView
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
+                            selectedProjectTitle={selectedProject?.title ?? null}
                         />
                     </div>
                 )}
@@ -1482,6 +1485,7 @@ export function DashboardClient({
                         <AiView
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
+                            selectedProjectTitle={selectedProject?.title ?? null}
                         />
                     </div>
                 )}

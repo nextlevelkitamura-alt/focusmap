@@ -14,7 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut, MessageCircle, Network, Settings, User as UserIcon, CalendarDays, Sparkles, StickyNote } from "lucide-react"
+import { LogOut, MessageCircle, Network, PanelLeft, Settings, SquarePen, User as UserIcon, CalendarDays, Sparkles, StickyNote } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -23,6 +23,7 @@ import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { isFocusmapDesktopShell } from "@/lib/external-auth-launch"
+import { useAgentConnection, type AgentConnectionState } from "@/components/chat/agent-status-chip"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -109,6 +110,7 @@ export function Header({
 
     const desktopDragStyle = isDesktopShell ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined
     const desktopNoDragStyle = isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined
+    const isChatView = activeView === 'ai' || activeView === 'automation'
 
     const handleLogoClick = () => {
         if (onLogoClick) {
@@ -123,6 +125,14 @@ export function Header({
 
     const handleOpenSettings = () => {
         setActiveView('settings')
+    }
+
+    const handleToggleChatSidebar = () => {
+        window.dispatchEvent(new Event("focusmap:chat:toggle-sidebar"))
+    }
+
+    const handleNewChat = () => {
+        window.dispatchEvent(new Event("focusmap:chat:new"))
     }
 
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
@@ -205,6 +215,38 @@ export function Header({
                     </button>
                 )}
 
+                {isChatView && (
+                    <div
+                        className={cn(
+                            "flex items-center gap-1",
+                            !isDesktopShell && "rounded-lg border border-border/50 bg-muted/25 p-0.5",
+                        )}
+                    >
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                            onClick={handleToggleChatSidebar}
+                            aria-label="チャット履歴を開閉"
+                            title="チャット履歴"
+                        >
+                            <PanelLeft className="h-4 w-4" />
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                            onClick={handleNewChat}
+                            aria-label="新規チャット"
+                            title="新規チャット"
+                        >
+                            <SquarePen className="h-4 w-4" />
+                        </Button>
+                    </div>
+                )}
+
                 {onSelectSpace && onSelectProject && (
                     <>
                         {!isDesktopShell && <div className="h-6 w-px bg-border" />}
@@ -283,6 +325,7 @@ export function Header({
                 className="flex items-center gap-2"
                 style={desktopNoDragStyle}
             >
+                {isChatView && <ChatHeaderStatus />}
                 {showMapSplitToggle && onToggleMapSplit && (
                     <Button
                         variant={isMapSplitVisible ? "secondary" : "ghost"}
@@ -411,4 +454,45 @@ export function Header({
             />
         </header>
     )
+}
+
+function ChatHeaderStatus() {
+    const { state } = useAgentConnection()
+    const meta = chatStatusMeta(state)
+
+    return (
+        <span className={cn("hidden min-h-9 items-center gap-2 rounded-full px-2.5 text-xs font-medium sm:inline-flex", meta.className)}>
+            <span className={cn("h-2 w-2 rounded-full", meta.dotClassName)} />
+            {meta.label}
+        </span>
+    )
+}
+
+function chatStatusMeta(state: AgentConnectionState) {
+    if (state === "online") {
+        return {
+            label: "Mac online",
+            dotClassName: "bg-emerald-400",
+            className: "text-muted-foreground",
+        }
+    }
+    if (state === "offline") {
+        return {
+            label: "Mac offline",
+            dotClassName: "bg-amber-400",
+            className: "text-muted-foreground",
+        }
+    }
+    if (state === "absent") {
+        return {
+            label: "Mac未接続",
+            dotClassName: "bg-muted-foreground",
+            className: "text-muted-foreground",
+        }
+    }
+    return {
+        label: "確認中",
+        dotClassName: "bg-muted-foreground",
+        className: "text-muted-foreground",
+    }
 }

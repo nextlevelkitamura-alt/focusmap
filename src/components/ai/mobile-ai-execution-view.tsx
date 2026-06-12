@@ -5,6 +5,7 @@ import { UnifiedChat } from "@/components/chat/unified-chat"
 interface MobileAiExecutionViewProps {
   selectedSpaceId: string | null
   selectedProjectId: string | null
+  selectedProjectTitle?: string | null
   onMindmapUpdated: () => Promise<void>
   onCalendarEventCreated?: (eventData?: {
     id: string
@@ -18,6 +19,7 @@ interface MobileAiExecutionViewProps {
 export function MobileAiExecutionView({
   selectedSpaceId,
   selectedProjectId,
+  selectedProjectTitle = null,
   onMindmapUpdated,
   onCalendarEventCreated,
 }: MobileAiExecutionViewProps) {
@@ -26,7 +28,7 @@ export function MobileAiExecutionView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <UnifiedChat spaceId={selectedSpaceId} projectId={selectedProjectId} />
+      <UnifiedChat spaceId={selectedSpaceId} projectId={selectedProjectId} projectTitle={selectedProjectTitle} />
     </div>
   )
 }
