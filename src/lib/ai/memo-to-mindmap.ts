@@ -12,8 +12,10 @@ import { getModelForMemoMindmap, type MemoMindmapMode } from './providers'
 export const MAX_MINDMAP_DRAFT_DEPTH = 4
 export const MAX_CONVERSATION_LOG_CHARS = 5000
 export const MAX_HELD_CONVERSATION_ITEMS = 3
+export const MAX_MINDMAP_INSTRUCTION_CHARS = 400
 
 export const MindmapDraftItemKindSchema = z.enum(['policy', 'decision', 'question', 'task'])
+export const MindmapDraftOrganizationGoalSchema = z.enum(['auto', 'merge', 'tasks'])
 
 export const MindmapDraftTriageItemSchema = z.object({
   clientId: z.string().describe('一時ID。"h1","x1"... の形式'),
@@ -73,6 +75,7 @@ export type MindmapDraftNode = MindmapDraft['nodes'][number]
 export type ExistingNodeRenameSuggestion = MindmapDraft['existingNodeRenameSuggestions'][number]
 export type MindmapDraftTriageItem = z.infer<typeof MindmapDraftTriageItemSchema>
 export type MindmapDraftInputKind = 'memo' | 'conversation_log'
+export type MindmapDraftOrganizationGoal = z.infer<typeof MindmapDraftOrganizationGoalSchema>
 
 export interface MemoInput {
   id: string
@@ -98,7 +101,10 @@ const SYSTEM_PROMPT = `あなたは、散らばったメモを整理して論理
 11. 既存マップが与えられた場合、意味が明確に近い既存ノードがあれば、追加ルートの attachToExistingTaskId に既存ノードIDを入れて接続する。
 12. attachToExistingTaskId を指定できるのは parentTempId が null の追加ルートだけ。子ノードごとに別々の既存ノードへ散らさない。
 13. 異なるトピックなら無理に既存ノードへ接続せず、attachToExistingTaskId は null にする。
-14. 既存ノードに接続したいが既存ノード名が狭すぎる/ズレている場合だけ existingNodeRenameSuggestions に変更案を出す。既存ノード名は絶対に勝手に変更しない。`
+14. 既存ノードに接続したいが既存ノード名が狭すぎる/ズレている場合だけ existingNodeRenameSuggestions に変更案を出す。既存ノード名は絶対に勝手に変更しない。
+15. 既存マップが与えられた場合、プロジェクト概要、既存ノード見出し、既存ノードの memo プレビューを見て、重複や近い作業を増やさない。
+16. 複数の新規要素が同じ目的・同じ作業群・同じ判断軸に属する時は、意味のあるまとめ親ノードを作ってから具体ノードをぶら下げる。1件だけをまとめるだけの空疎な親ノードは禁止。
+17. 既存マップの大規模な移動・削除・並べ替えは提案しない。できることは、新規ノード群の追加、既存ノード配下への接続、既存ノード名の変更案だけ。`
 
 const CONVERSATION_LOG_PROMPT = `
 # 会話ログを整理する場合の追加ルール
@@ -133,15 +139,41 @@ interface BuildPromptArgs {
   notes: MemoInput[]
   existingTree?: string
   inputKind: MindmapDraftInputKind
+  organizationGoal: MindmapDraftOrganizationGoal
+  userInstruction?: string
 }
 
-function buildUserPrompt({ notes, existingTree, inputKind }: BuildPromptArgs): string {
+function buildGoalSection(goal: MindmapDraftOrganizationGoal): string {
+  if (goal === 'merge') {
+    return `# 整理方針
+- 既存マップへ意味が近いものを統合・接続することを優先する。
+- 同じ目的のメモが複数ある場合は、まとめ親ノードを作って枝として整理する。
+- 既存ノードと重複する単独タスクを増やさない。必要なら attachToExistingTaskId を使う。`
+  }
+  if (goal === 'tasks') {
+    return `# 整理方針
+- 実行タスク、未決論点、決定事項を優先して残す。
+- 背景説明や一般論は、実行や判断に必要な範囲だけ残す。
+- ノード名は次に取る行動や判断が分かる見出しにする。`
+  }
+  return `# 整理方針
+- プロジェクト目的と既存マップを見て、新規追加、既存ノード配下への接続、まとめ親ノード作成を自動判断する。
+- まとまりを作る時は、複数の具体ノードを束ねる意味がある場合だけにする。`
+}
+
+function buildUserPrompt({ notes, existingTree, inputKind, organizationGoal, userInstruction }: BuildPromptArgs): string {
   const noteList = notes
     .map((n, i) => `${i + 1}. [id: ${n.id}]\n${n.content.trim()}`)
     .join('\n\n')
 
+  const instruction = (userInstruction ?? '').trim()
+  const instructionSection = instruction
+    ? `\n\n# ユーザーからの追加指示\n${instruction.slice(0, MAX_MINDMAP_INSTRUCTION_CHARS)}`
+    : ''
+  const goalSection = `\n\n${buildGoalSection(organizationGoal)}`
+
   const existingSection = existingTree
-    ? `\n\n# 既存のマインドマップ構造\n以下は追記先の既存ツリーです。各行の [task:...] / [group:...] が既存ノードIDです。\n新しいノード群は、適切なら追加ルートの attachToExistingTaskId に既存ノードIDを入れて接続してください。合わなければ null のまま新規ルートにしてください。\n既存ノード名を広げた方がよい場合だけ existingNodeRenameSuggestions に変更案と理由を出してください。自動変更は禁止です。\n${existingTree}`
+    ? `\n\n# 追記先の既存プロジェクト文脈\n以下は追記先プロジェクトの目的・概要・既存ツリーです。各行の [task:...] / [group:...] が既存ノードIDです。memo は既存ノードのメモ冒頭です。\n新しいノード群は、適切なら追加ルートの attachToExistingTaskId に既存ノードIDを入れて接続してください。合わなければ null のまま新規ルートにしてください。\n既存ノード名を広げた方がよい場合だけ existingNodeRenameSuggestions に変更案と理由を出してください。自動変更は禁止です。\n${existingTree}`
     : ''
 
   const conversationSection = inputKind === 'conversation_log' ? `\n\n${CONVERSATION_LOG_PROMPT}` : ''
@@ -149,7 +181,7 @@ function buildUserPrompt({ notes, existingTree, inputKind }: BuildPromptArgs): s
   return `次の${inputKind === 'conversation_log' ? '会話ログ' : 'メモ群'}をロジックツリーに整理してください。
 
 # メモ一覧（全${notes.length}件）
-${noteList}${existingSection}${conversationSection}
+${noteList}${goalSection}${instructionSection}${existingSection}${conversationSection}
 
 ${inputKind === 'conversation_log'
     ? `採用候補だけを nodes に入れ、判断不能なものは最大${MAX_HELD_CONVERSATION_ITEMS}件まで holdItems、マップ不要なものは excludedItems に分けてください。nodes の title は必ず「方針:」「決定:」「論点:」「タスク:」のいずれかで始めてください。`
@@ -223,6 +255,8 @@ export async function generateMindmapDraft(args: {
   mode: MemoMindmapMode
   existingTree?: string
   inputKind?: MindmapDraftInputKind
+  organizationGoal?: MindmapDraftOrganizationGoal
+  userInstruction?: string
 }): Promise<GenerateDraftResult> {
   const { model, modelName } = getModelForMemoMindmap(args.mode)
   const usingDeepseek = modelName.toLowerCase().includes('deepseek')
@@ -235,6 +269,8 @@ export async function generateMindmapDraft(args: {
       notes: args.notes,
       existingTree: args.existingTree,
       inputKind: args.inputKind ?? 'memo',
+      organizationGoal: args.organizationGoal ?? 'auto',
+      userInstruction: args.userInstruction,
     }),
     temperature: args.inputKind === 'conversation_log' ? 0.2 : 0.3,
     ...(usingDeepseek

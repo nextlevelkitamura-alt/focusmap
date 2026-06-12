@@ -2,10 +2,12 @@ import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import {
   MAX_CONVERSATION_LOG_CHARS,
+  MAX_MINDMAP_INSTRUCTION_CHARS,
   generateMindmapDraft,
+  MindmapDraftOrganizationGoalSchema,
   type MindmapDraftInputKind,
 } from '@/lib/ai/memo-to-mindmap'
-import { loadMindmapStructure } from '@/lib/ai/context/mindmap-context'
+import { loadMindmapGenerationContext } from '@/lib/ai/context/mindmap-context'
 import { logAiUsage } from '@/lib/ai/usage'
 import type { MemoMindmapMode } from '@/lib/ai/providers'
 
@@ -26,6 +28,17 @@ export async function POST(request: Request) {
     const inputKind: MindmapDraftInputKind = body?.inputKind === 'conversation_log' ? 'conversation_log' : 'memo'
     const mode: MemoMindmapMode = inputKind === 'conversation_log' || body?.mode === 'deep' ? 'deep' : 'quick'
     const targetProjectId: string | undefined = body?.targetProjectId || undefined
+    const parsedOrganizationGoal = MindmapDraftOrganizationGoalSchema.safeParse(body?.organizationGoal)
+    const organizationGoal = parsedOrganizationGoal.success
+      ? parsedOrganizationGoal.data
+      : 'auto'
+    const userInstruction = typeof body?.userInstruction === 'string' ? body.userInstruction.trim() : ''
+    if (userInstruction.length > MAX_MINDMAP_INSTRUCTION_CHARS) {
+      return NextResponse.json(
+        { error: `AIへの指示は${MAX_MINDMAP_INSTRUCTION_CHARS}文字までです` },
+        { status: 400 },
+      )
+    }
 
     if (!Array.isArray(noteIds) || noteIds.length === 0) {
       return NextResponse.json({ error: 'noteIds が必要です' }, { status: 400 })
@@ -85,8 +98,8 @@ export async function POST(request: Request) {
     let existingTree: string | undefined
     let existingTasks: Array<{ id: string; title: string }> = []
     if (targetProjectId) {
-      const { treeText, nodeCount } = await loadMindmapStructure(supabase, user.id, targetProjectId)
-      if (nodeCount > 0) existingTree = treeText
+      const { contextText } = await loadMindmapGenerationContext(supabase, user.id, targetProjectId)
+      if (contextText.trim()) existingTree = contextText
       const { data: tasks, error: tasksError } = await supabase
         .from('tasks')
         .select('id, title')
@@ -105,6 +118,8 @@ export async function POST(request: Request) {
       mode,
       existingTree,
       inputKind,
+      organizationGoal,
+      userInstruction,
     })
 
     const { costUsd } = await logAiUsage(supabase, {
@@ -113,7 +128,7 @@ export async function POST(request: Request) {
       modelName,
       inputTokens,
       outputTokens,
-      metadata: { noteCount: validNotes.length, mode, source, inputKind, targetProjectId: targetProjectId ?? null },
+      metadata: { noteCount: validNotes.length, mode, source, inputKind, organizationGoal, targetProjectId: targetProjectId ?? null },
     })
 
     return NextResponse.json({

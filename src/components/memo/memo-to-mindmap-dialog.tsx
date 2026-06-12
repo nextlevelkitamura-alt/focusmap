@@ -15,12 +15,14 @@ import {
   buildDraftChildMap,
   MAX_CONVERSATION_LOG_CHARS,
   MAX_HELD_CONVERSATION_ITEMS,
+  MAX_MINDMAP_INSTRUCTION_CHARS,
   getDraftDepthViolations,
   isSourceBackedDraftNode,
   MAX_MINDMAP_DRAFT_DEPTH,
   type ExistingNodeRenameSuggestion,
   type MindmapDraft,
   type MindmapDraftNode,
+  type MindmapDraftOrganizationGoal,
   type MindmapDraftTriageItem,
 } from "@/lib/ai/memo-to-mindmap"
 import { useUndoRedo } from "@/hooks/useUndoRedo"
@@ -66,6 +68,16 @@ const KIND_LABEL: Record<MindmapDraftTriageItem["kind"], string> = {
   question: "論点",
   task: "タスク",
 }
+
+const ORGANIZATION_GOAL_OPTIONS: Array<{
+  value: MindmapDraftOrganizationGoal
+  label: string
+  description: string
+}> = [
+  { value: "auto", label: "自動整理", description: "追加と接続を判断" },
+  { value: "merge", label: "既存へ統合", description: "近い枝へ寄せる" },
+  { value: "tasks", label: "実行へ分解", description: "タスクを優先" },
+]
 
 function isRetryableRequestError(error: unknown) {
   if (!(error instanceof Error)) return false
@@ -148,6 +160,8 @@ export function MemoToMindmapDialog({
   const [step, setStep] = useState<Step>("config")
   const [mode, setMode] = useState<Mode>("quick")
   const [inputMode, setInputMode] = useState<InputMode>(allowTextImport && noteIds.length === 0 ? "conversation" : "memos")
+  const [organizationGoal, setOrganizationGoal] = useState<MindmapDraftOrganizationGoal>("auto")
+  const [userInstruction, setUserInstruction] = useState("")
   const [conversationLog, setConversationLog] = useState("")
   const [createdConversationMemoId, setCreatedConversationMemoId] = useState<string | null>(null)
   const [nodes, setNodes] = useState<MindmapDraftNode[]>([])
@@ -193,6 +207,8 @@ export function MemoToMindmapDialog({
     setStep("config")
     setMode("quick")
     setInputMode(allowTextImport && noteIds.length === 0 ? "conversation" : "memos")
+    setOrganizationGoal("auto")
+    setUserInstruction("")
     setConversationLog("")
     setCreatedConversationMemoId(null)
     setNodes([])
@@ -267,6 +283,8 @@ export function MemoToMindmapDialog({
           mode: inputMode === "conversation" ? "deep" : mode,
           inputKind: inputMode === "conversation" ? "conversation_log" : "memo",
           targetProjectId: target !== NEW_PROJECT ? target : undefined,
+          organizationGoal,
+          userInstruction: userInstruction.trim() || undefined,
         }),
       })
       const data = await res.json()
@@ -308,7 +326,7 @@ export function MemoToMindmapDialog({
       setError(err instanceof Error ? err.message : "生成に失敗しました")
       setStep("config")
     }
-  }, [inputMode, createConversationMemo, noteIds, source, mode, target])
+  }, [inputMode, createConversationMemo, noteIds, source, mode, target, organizationGoal, userInstruction])
 
   const existingTaskTitleById = useMemo(() => {
     return new Map(existingTasks.map(task => [task.id, task.title]))
@@ -338,6 +356,12 @@ export function MemoToMindmapDialog({
   // --- ノード編集 ---
   const updateTitle = useCallback((tempId: string, title: string) => {
     setNodes(prev => prev.map(n => (n.tempId === tempId ? { ...n, title } : n)))
+  }, [])
+
+  const updateAttachToExistingTask = useCallback((tempId: string, taskId: string | null) => {
+    setNodes(prev => prev.map(n => (
+      n.tempId === tempId ? { ...n, attachToExistingTaskId: taskId } : n
+    )))
   }, [])
 
   const deleteSubtree = useCallback((tempId: string) => {
@@ -379,7 +403,7 @@ export function MemoToMindmapDialog({
       : null
     return (
       <div key={node.tempId} className="flex items-center gap-3">
-        <div className="relative w-40 shrink-0 rounded-lg border bg-background p-1.5 shadow-sm sm:w-48">
+        <div className="relative w-48 shrink-0 rounded-lg border bg-background p-1.5 shadow-sm sm:w-60">
           <input
             value={node.title}
             onChange={e => updateTitle(node.tempId, e.target.value)}
@@ -396,6 +420,21 @@ export function MemoToMindmapDialog({
             <div className="mt-1 truncate text-[10px] text-muted-foreground">
               メモ {node.sourceNoteIds.length}
             </div>
+          )}
+          {target !== NEW_PROJECT && !node.parentTempId && existingTasks.length > 0 && (
+            <select
+              value={node.attachToExistingTaskId ?? ""}
+              onChange={e => updateAttachToExistingTask(node.tempId, e.target.value || null)}
+              className="mt-1 h-7 w-full rounded border border-input bg-background px-1.5 text-[10px] text-muted-foreground outline-none focus:ring-1 focus:ring-primary"
+              aria-label="既存ノードへの接続先"
+            >
+              <option value="">新しい枝にする</option>
+              {existingTasks.map(task => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
+            </select>
           )}
           {attachedTitle && (
             <div className="mt-1 flex min-w-0 items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-1 text-[10px] text-sky-700 dark:text-sky-300">
@@ -496,6 +535,12 @@ export function MemoToMindmapDialog({
 
   const rootNodes = childrenMap.get("__root__") || []
   const depthViolations = useMemo(() => getDraftDepthViolations(nodes), [nodes])
+  const previewStats = useMemo(() => {
+    const attachedCount = nodes.filter(node => !!node.attachToExistingTaskId).length
+    const sourceBackedCount = nodes.filter(node => isSourceBackedDraftNode(node, childIdMap)).length
+    const structureCount = Math.max(0, nodes.length - sourceBackedCount)
+    return { attachedCount, sourceBackedCount, structureCount }
+  }, [nodes, childIdMap])
 
   // --- 確定 ---
   const handleCommit = useCallback(async () => {
@@ -588,10 +633,13 @@ export function MemoToMindmapDialog({
   const canCreateNew = spaces.length > 0
   const newProjectInvalid = target === NEW_PROJECT && (!canCreateNew || !spaceId || !projectTitle.trim())
   const trimmedConversationLog = conversationLog.trim()
+  const trimmedUserInstruction = userInstruction.trim()
   const conversationTooLong = trimmedConversationLog.length > MAX_CONVERSATION_LOG_CHARS
+  const instructionTooLong = trimmedUserInstruction.length > MAX_MINDMAP_INSTRUCTION_CHARS
   const canGenerate = inputMode === "conversation"
-    ? trimmedConversationLog.length > 0 && !conversationTooLong
+    ? trimmedConversationLog.length > 0 && !conversationTooLong && !instructionTooLong
     : noteIds.length > 0
+      && !instructionTooLong
   const sourceCountLabel = inputMode === "conversation"
     ? "貼り付けた会話ログ"
     : `${noteIds.length} 件のメモ`
@@ -611,8 +659,8 @@ export function MemoToMindmapDialog({
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground">
               {inputMode === "conversation"
-                ? "GPT等との会話ログを貼り付けると、AIが取捨選択してマップ候補に整理します。"
-                : `選択した ${noteIds.length} 件のメモを、AIがロジックツリーに整理します。`}
+                ? "会話ログから、残す判断・論点・作業だけをマップ候補にします。"
+                : `選択した ${noteIds.length} 件のメモを、既存マップの文脈に合わせて整理します。`}
             </p>
 
             {allowTextImport && (
@@ -647,6 +695,50 @@ export function MemoToMindmapDialog({
                 </button>
               </div>
             )}
+
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">整理方針</span>
+              <div className="grid grid-cols-3 gap-2">
+                {ORGANIZATION_GOAL_OPTIONS.map(option => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setOrganizationGoal(option.value)}
+                    className={cn(
+                      "min-h-14 rounded-lg border px-2 py-2 text-left transition-colors",
+                      organizationGoal === option.value
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted",
+                    )}
+                  >
+                    <div className="text-xs font-semibold">{option.label}</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{option.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-muted-foreground">AIへの指示</span>
+                <span className={cn(
+                  "text-[11px]",
+                  instructionTooLong ? "text-destructive" : "text-muted-foreground",
+                )}>
+                  {trimmedUserInstruction.length} / {MAX_MINDMAP_INSTRUCTION_CHARS}
+                </span>
+              </div>
+              <textarea
+                value={userInstruction}
+                onChange={e => setUserInstruction(e.target.value)}
+                rows={2}
+                placeholder="例: UI改善だけ残す / 既存ノードに寄せる"
+                className={cn(
+                  "w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring",
+                  instructionTooLong && "border-destructive focus:ring-destructive/40",
+                )}
+              />
+            </div>
 
             {inputMode === "conversation" && (
               <div className="space-y-1.5">
@@ -714,34 +806,35 @@ export function MemoToMindmapDialog({
                 </p>
               )}
               <p className="text-[11px] text-muted-foreground/80">
-                ※ 確定すると、{sourceCountLabel}がこのプロジェクトに紐付け直されます。
+                ※ 既存マップに追加する時は、プロジェクト概要・ノード見出し・ノードのメモ冒頭を参照します。
               </p>
             </div>
 
             {inputMode !== "conversation" && (
               <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">整理の深さ</span>
-              <div className="flex gap-2">
-                {(["quick", "deep"] as Mode[]).map(m => (
-                  <button
-                    key={m}
-                    onClick={() => setMode(m)}
-                    className={cn(
-                      "flex-1 rounded-lg border px-3 py-2 text-left transition-colors",
-                      mode === m
-                        ? "border-primary bg-primary/5"
-                        : "border-border hover:bg-muted",
-                    )}
-                  >
-                    <div className="text-sm font-medium">
-                      {m === "quick" ? "クイック" : "じっくり"}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {m === "quick" ? "高速。通常のメモ整理" : "論理再構成が重い時"}
-                    </div>
-                  </button>
-                ))}
-              </div>
+                <span className="text-xs font-medium text-muted-foreground">整理の深さ</span>
+                <div className="flex gap-2">
+                  {(["quick", "deep"] as Mode[]).map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setMode(m)}
+                      className={cn(
+                        "flex-1 rounded-lg border px-3 py-2 text-left transition-colors",
+                        mode === m
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:bg-muted",
+                      )}
+                    >
+                      <div className="text-sm font-medium">
+                        {m === "quick" ? "クイック" : "じっくり"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {m === "quick" ? "高速。通常のメモ整理" : "論理再構成が重い時"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {error && <p className="text-sm text-destructive">{error}</p>}
@@ -767,6 +860,24 @@ export function MemoToMindmapDialog({
               placeholder="マインドマップのタイトル"
               className="h-9 px-2.5 rounded-md border border-input bg-background text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
             />
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-md border bg-muted/30 px-2 py-1.5">
+                <div className="text-[10px] text-muted-foreground">新規ノード</div>
+                <div className="text-sm font-semibold">{nodes.length}</div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-2 py-1.5">
+                <div className="text-[10px] text-muted-foreground">元メモ付き</div>
+                <div className="text-sm font-semibold">{previewStats.sourceBackedCount}</div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-2 py-1.5">
+                <div className="text-[10px] text-muted-foreground">まとめ</div>
+                <div className="text-sm font-semibold">{previewStats.structureCount}</div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-2 py-1.5">
+                <div className="text-[10px] text-muted-foreground">既存接続</div>
+                <div className="text-sm font-semibold">{previewStats.attachedCount}</div>
+              </div>
+            </div>
             {inputMode === "conversation" && (heldItems.length > 0 || excludedItems.length > 0) && (
               <div className="grid gap-2 sm:grid-cols-2">
                 {heldItems.length > 0 && (
