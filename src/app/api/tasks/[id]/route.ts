@@ -770,7 +770,8 @@ export async function PATCH(
           body.title !== undefined ||
           body.scheduled_at !== undefined ||
           body.estimated_time !== undefined ||
-          body.memo !== undefined;
+          body.memo !== undefined ||
+          body.calendar_id !== undefined;
 
         if (shouldUpdateCalendar) {
           console.log('[tasks/[id] PATCH] Updating Google Calendar event:', task.google_event_id);
@@ -781,7 +782,8 @@ export async function PATCH(
             scheduled_at: updatedTask.scheduled_at,
             estimated_time: updatedTask.estimated_time || 60,
             google_event_id: task.google_event_id,
-            calendar_id: task.calendar_id || 'primary',
+            calendar_id: updatedTask.calendar_id || task.calendar_id || 'primary',
+            source_calendar_id: task.calendar_id || updatedTask.calendar_id || 'primary',
             memo: updatedTask.memo
           });
 

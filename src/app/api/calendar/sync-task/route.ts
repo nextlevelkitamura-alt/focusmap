@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       googleEventId: result.googleEventId,
+      calendarId: result.calendarId || calendar_id,
     });
   } catch (error: unknown) {
     console.error('[sync-task POST] Error:', error);
@@ -190,6 +191,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({
       success: true,
       googleEventId: result.googleEventId,
+      calendarId: result.calendarId || calendar_id,
     });
   } catch (error: unknown) {
     console.error('[sync-task PATCH] Error:', error);

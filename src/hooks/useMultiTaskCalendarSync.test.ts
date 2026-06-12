@@ -48,10 +48,10 @@ function createCompleteTask(overrides: Partial<Task> = {}): Task {
   })
 }
 
-function mockSyncSuccess(googleEventId = 'gevt-123') {
+function mockSyncSuccess(googleEventId = 'gevt-123', calendarId?: string) {
   mockFetch.mockResolvedValueOnce({
     ok: true,
-    json: () => Promise.resolve({ success: true, googleEventId }),
+    json: () => Promise.resolve({ success: true, googleEventId, ...(calendarId ? { calendarId } : {}) }),
   })
 }
 
@@ -161,6 +161,7 @@ describe('useMultiTaskCalendarSync - 新規同期 (POST)', () => {
     // google_event_id が保存される
     expect(onUpdateTask).toHaveBeenCalledWith('task-1', {
       google_event_id: 'gevt-new',
+      calendar_id: 'cal@gmail.com',
     })
 
     // カレンダー更新
@@ -212,7 +213,7 @@ describe('useMultiTaskCalendarSync - 更新 (PATCH)', () => {
 
     // 初回: google_event_id あり
     const initialTask = createCompleteTask({
-      id: 'task-1',
+      id: 'task-scheduled',
       google_event_id: 'gevt-1',
     })
     const { rerender } = renderHook(
@@ -227,7 +228,7 @@ describe('useMultiTaskCalendarSync - 更新 (PATCH)', () => {
     // 2回目: scheduled_at 変更
     mockSyncSuccess('gevt-1')
     const updatedTask = createCompleteTask({
-      id: 'task-1',
+      id: 'task-scheduled',
       google_event_id: 'gevt-1',
       scheduled_at: '2026-02-20T10:00:00Z', // 変更
     })
@@ -247,7 +248,7 @@ describe('useMultiTaskCalendarSync - 更新 (PATCH)', () => {
     const onRefreshCalendar = vi.fn().mockResolvedValue(undefined)
 
     const initialTask = createCompleteTask({
-      id: 'task-1',
+      id: 'task-estimated',
       google_event_id: 'gevt-1',
     })
     const { rerender } = renderHook(
@@ -261,7 +262,7 @@ describe('useMultiTaskCalendarSync - 更新 (PATCH)', () => {
 
     mockSyncSuccess('gevt-1')
     const updatedTask = createCompleteTask({
-      id: 'task-1',
+      id: 'task-estimated',
       google_event_id: 'gevt-1',
       estimated_time: 90, // 変更
     })
@@ -287,7 +288,7 @@ describe('useMultiTaskCalendarSync - カレンダー変更 (PATCH)', () => {
     const onRefreshCalendar = vi.fn().mockResolvedValue(undefined)
 
     const initialTask = createCompleteTask({
-      id: 'task-1',
+      id: 'task-calendar',
       google_event_id: 'gevt-old',
       calendar_id: 'old@gmail.com',
     })
@@ -305,7 +306,7 @@ describe('useMultiTaskCalendarSync - カレンダー変更 (PATCH)', () => {
 
     // calendar_id を変更
     const updatedTask = createCompleteTask({
-      id: 'task-1',
+      id: 'task-calendar',
       google_event_id: 'gevt-old',
       calendar_id: 'new@gmail.com', // 変更
     })
@@ -318,16 +319,54 @@ describe('useMultiTaskCalendarSync - カレンダー変更 (PATCH)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1)
     expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: 'PATCH' })
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({
-      taskId: 'task-1',
+      taskId: 'task-calendar',
       calendar_id: 'new@gmail.com',
       source_calendar_id: 'old@gmail.com',
       google_event_id: 'gevt-old',
     })
 
     // 新しい google_event_id が保存される
-    expect(onUpdateTask).toHaveBeenCalledWith('task-1', {
+    expect(onUpdateTask).toHaveBeenCalledWith('task-calendar', {
       google_event_id: 'gevt-new',
       calendar_id: 'new@gmail.com',
+    })
+  })
+
+  test('API が返した実カレンダーIDを保存する', async () => {
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+    const onRefreshCalendar = vi.fn().mockResolvedValue(undefined)
+
+    const initialTask = createCompleteTask({
+      id: 'task-resolved',
+      google_event_id: 'gevt-old',
+      calendar_id: 'old@gmail.com',
+    })
+    const { rerender } = renderHook(
+      ({ t }) =>
+        useMultiTaskCalendarSync({ tasks: t, onRefreshCalendar, onUpdateTask }),
+      { initialProps: { t: [initialTask] } }
+    )
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+
+    mockSyncSuccess('gevt-new', 'resolved@gmail.com')
+
+    const updatedTask = createCompleteTask({
+      id: 'task-resolved',
+      google_event_id: 'gevt-old',
+      calendar_id: 'new@gmail.com',
+    })
+
+    await act(async () => {
+      rerender({ t: [updatedTask] })
+      await new Promise(resolve => setTimeout(resolve, 150))
+    })
+
+    expect(onUpdateTask).toHaveBeenCalledWith('task-resolved', {
+      google_event_id: 'gevt-new',
+      calendar_id: 'resolved@gmail.com',
     })
   })
 })
@@ -388,7 +427,7 @@ describe('useMultiTaskCalendarSync - エラーハンドリング', () => {
   test('API エラーでも例外はスローしない（silent failure）', async () => {
     const onRefreshCalendar = vi.fn().mockResolvedValue(undefined)
 
-    const initialTask = createTask({ id: 'task-1' })
+    const initialTask = createTask({ id: 'task-error' })
     const { rerender } = renderHook(
       ({ t }) => useMultiTaskCalendarSync({ tasks: t, onRefreshCalendar }),
       { initialProps: { t: [initialTask] } }
@@ -400,7 +439,7 @@ describe('useMultiTaskCalendarSync - エラーハンドリング', () => {
 
     mockSyncError('Internal Server Error')
 
-    const completeTask = createCompleteTask({ id: 'task-1' })
+    const completeTask = createCompleteTask({ id: 'task-error' })
 
     // act() が正常に完了すれば silent failure が確認できる
     await act(async () => {

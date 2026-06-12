@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Calendar as CalendarIcon, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronDown, ChevronUp, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
@@ -55,8 +55,8 @@ const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
 ]
 
 const LOCAL_SUBTASK_ID_PREFIX = "local-subtask-"
-const CALENDAR_WHEEL_ITEM_HEIGHT = 34
-const CALENDAR_WHEEL_VISIBLE_HEIGHT = 92
+const CALENDAR_WHEEL_ITEM_HEIGHT = 40
+const CALENDAR_WHEEL_VISIBLE_HEIGHT = 154
 const CALENDAR_WHEEL_PADDING_Y = Math.floor(CALENDAR_WHEEL_VISIBLE_HEIGHT / 2 - CALENDAR_WHEEL_ITEM_HEIGHT / 2)
 
 function toDateTimeLocalValue(date: Date | undefined) {
@@ -127,24 +127,36 @@ function CalendarWheelPicker({
 
     return (
         <div
-            className="relative overflow-hidden rounded-xl border border-white/10 bg-black/35"
-            style={{ height: CALENDAR_WHEEL_VISIBLE_HEIGHT }}
+            className="relative overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.12),rgba(0,0,0,0.45)_54%,rgba(0,0,0,0.72))] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_-18px_38px_rgba(0,0,0,0.38)]"
+            style={{ height: CALENDAR_WHEEL_VISIBLE_HEIGHT, perspective: 420 }}
         >
             <div
-                className="pointer-events-none absolute inset-x-3 rounded-lg border border-sky-300/50 bg-sky-400/10 shadow-[0_0_18px_rgba(56,189,248,0.18)]"
+                className="pointer-events-none absolute inset-x-4 z-[1] rounded-xl border border-sky-300/55 bg-sky-400/[0.16] shadow-[0_0_22px_rgba(56,189,248,0.24),inset_0_1px_0_rgba(255,255,255,0.08)]"
                 style={{
                     top: CALENDAR_WHEEL_PADDING_Y,
                     height: CALENDAR_WHEEL_ITEM_HEIGHT,
                 }}
             />
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-8 bg-gradient-to-b from-neutral-950 via-neutral-950/85 to-transparent" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-8 bg-gradient-to-t from-neutral-950 via-neutral-950/85 to-transparent" />
+            <div
+                className="pointer-events-none absolute inset-x-5 z-[2] h-px bg-sky-200/25"
+                style={{ top: CALENDAR_WHEEL_PADDING_Y - 1 }}
+            />
+            <div
+                className="pointer-events-none absolute inset-x-5 z-[2] h-px bg-sky-200/25"
+                style={{ top: CALENDAR_WHEEL_PADDING_Y + CALENDAR_WHEEL_ITEM_HEIGHT }}
+            />
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-[3] h-11 bg-gradient-to-b from-neutral-950 via-neutral-950/70 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[3] h-11 bg-gradient-to-t from-neutral-950 via-neutral-950/70 to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 z-[3] w-8 bg-gradient-to-r from-neutral-950/70 to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 z-[3] w-8 bg-gradient-to-l from-neutral-950/70 to-transparent" />
+            <ChevronUp className="pointer-events-none absolute left-1/2 top-2 z-[4] h-3.5 w-3.5 -translate-x-1/2 text-sky-200/45" />
+            <ChevronDown className="pointer-events-none absolute bottom-2 left-1/2 z-[4] h-3.5 w-3.5 -translate-x-1/2 text-sky-200/45" />
 
             <div
                 ref={scrollRef}
                 role="listbox"
                 aria-label="追加先カレンダー"
-                className="relative z-[1] h-full touch-none select-none overflow-y-scroll overscroll-contain no-scrollbar"
+                className="relative z-[2] h-full touch-none select-none overflow-y-scroll overscroll-contain no-scrollbar"
                 style={{ WebkitOverflowScrolling: 'touch' }}
                 onPointerDown={wheel.onPointerDown}
                 onPointerMove={wheel.onPointerMove}
@@ -161,6 +173,10 @@ function CalendarWheelPicker({
                 <div className="flex flex-col" style={{ paddingTop: CALENDAR_WHEEL_PADDING_Y, paddingBottom: CALENDAR_WHEEL_PADDING_Y }}>
                     {calendars.map((calendar, index) => {
                         const isActive = index === activeIndex
+                        const distance = Math.abs(index - activeIndex)
+                        const isAdjacent = distance === 1
+                        const itemScale = isActive ? 1 : isAdjacent ? 0.96 : 0.91
+                        const itemOpacity = isActive ? 1 : isAdjacent ? 0.78 : 0.38
 
                         return (
                             <button
@@ -170,15 +186,27 @@ function CalendarWheelPicker({
                                 aria-selected={value === calendar.id}
                                 onClick={() => wheel.selectIndex(scrollRef.current, index)}
                                 className={cn(
-                                    "flex w-full shrink-0 items-center gap-2 rounded-lg px-4 text-left transition-[color,opacity,transform] duration-150",
+                                    "mx-2 flex shrink-0 items-center gap-2 rounded-xl border px-3.5 text-left transition-[background-color,border-color,color,opacity,transform] duration-150",
                                     isActive
-                                        ? "scale-[1.01] text-neutral-50 opacity-100"
-                                        : "text-neutral-500 opacity-60"
+                                        ? "border-sky-100/20 bg-white/[0.035] text-neutral-50 shadow-[0_5px_18px_rgba(56,189,248,0.08)]"
+                                        : isAdjacent
+                                            ? "border-white/[0.04] bg-white/[0.025] text-neutral-300"
+                                            : "border-transparent text-neutral-500"
                                 )}
-                                style={{ height: CALENDAR_WHEEL_ITEM_HEIGHT }}
+                                style={{
+                                    height: CALENDAR_WHEEL_ITEM_HEIGHT,
+                                    opacity: itemOpacity,
+                                    transform: `scale(${itemScale}) rotateX(${index < activeIndex ? 8 : index > activeIndex ? -8 : 0}deg)`,
+                                    transformOrigin: "center",
+                                }}
                             >
                                 <span
-                                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                    className={cn(
+                                        "h-2.5 w-2.5 shrink-0 rounded-full ring-2 transition-shadow duration-150",
+                                        isActive
+                                            ? "ring-white/20 shadow-[0_0_10px_rgba(125,211,252,0.42)]"
+                                            : "ring-white/5"
+                                    )}
                                     style={{ backgroundColor: calendar.background_color || '#4285F4' }}
                                 />
                                 <span className="min-w-0 truncate text-sm font-semibold">

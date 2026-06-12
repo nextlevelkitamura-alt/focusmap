@@ -207,25 +207,32 @@ export function useMultiTaskCalendarSync({
       const data = await response.json()
 
       // 新規作成時: google_event_id をDBに保存
+      const effectiveCalendarId = data.calendarId || data.calendar_id || task.calendar_id
+
       if (method === 'POST' && data.googleEventId) {
-        await onUpdateTask?.(taskId, { google_event_id: data.googleEventId })
+        await onUpdateTask?.(taskId, { google_event_id: data.googleEventId, calendar_id: effectiveCalendarId })
         // prevTasksRef を更新
         const prev = prevTasksRef.current.get(taskId)
         if (prev) {
           prevTasksRef.current.set(taskId, {
             ...prev,
+            calendar_id: effectiveCalendarId,
             google_event_id: data.googleEventId,
           })
         }
       }
 
-      if (method === 'PATCH' && data.googleEventId && data.googleEventId !== task.google_event_id) {
-        await onUpdateTask?.(taskId, { google_event_id: data.googleEventId, calendar_id: task.calendar_id })
+      if (
+        method === 'PATCH' &&
+        data.googleEventId &&
+        (data.googleEventId !== task.google_event_id || effectiveCalendarId !== task.calendar_id)
+      ) {
+        await onUpdateTask?.(taskId, { google_event_id: data.googleEventId, calendar_id: effectiveCalendarId })
         const prev = prevTasksRef.current.get(taskId)
         if (prev) {
           prevTasksRef.current.set(taskId, {
             ...prev,
-            calendar_id: task.calendar_id,
+            calendar_id: effectiveCalendarId,
             google_event_id: data.googleEventId,
           })
         }

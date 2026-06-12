@@ -416,6 +416,48 @@ describe('PATCH /api/tasks/[id]', () => {
       expect(mockSyncToCalendar).toHaveBeenCalled()
     })
 
+    test('google_event_id ありでcalendar_id変更 → 移動先と移動元を渡してカレンダー更新する', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setSelectResult({
+        data: {
+          ...baseTask,
+          google_event_id: 'gevt-1',
+          calendar_id: 'old@gmail.com',
+          scheduled_at: '2026-02-19T14:00:00Z',
+          estimated_time: 60,
+        },
+        error: null,
+      })
+      setUpdateResult({
+        data: {
+          ...baseTask,
+          google_event_id: 'gevt-1',
+          calendar_id: 'new@gmail.com',
+          scheduled_at: '2026-02-19T14:00:00Z',
+          estimated_time: 60,
+        },
+        error: null,
+      })
+
+      const res = await PATCH(
+        makeRequest('PATCH', 'task-1', { calendar_id: 'new@gmail.com' }),
+        mockParams('task-1')
+      )
+      const json = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(mockSyncToCalendar).toHaveBeenCalledWith(
+        'user-1',
+        'task-1',
+        expect.objectContaining({
+          google_event_id: 'gevt-1',
+          calendar_id: 'new@gmail.com',
+          source_calendar_id: 'old@gmail.com',
+        })
+      )
+    })
+
     test('google_event_id なしの場合はカレンダー更新しない', async () => {
       mockGetUser.mockResolvedValue({ data: { user: mockUser } })
       // google_event_id = null (デフォルト)

@@ -336,7 +336,7 @@ export async function syncTaskToCalendar(
       sync_data: { task, event },
     });
 
-    return { success: true, googleEventId };
+    return { success: true, googleEventId, calendarId };
   } catch (error: unknown) {
     const errorMessage = getErrorMessage(error, 'Failed to sync task to calendar');
     // エラーログを記録

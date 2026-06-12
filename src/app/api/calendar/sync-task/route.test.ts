@@ -117,7 +117,7 @@ beforeEach(() => {
   setTaskSelectResult({ data: { ...baseTask }, error: null })
   setTaskUpdateResult({ error: null })
   setSettingsResult({ data: { ...baseSettings }, error: null })
-  mockSyncTaskToCalendar.mockResolvedValue({ googleEventId: 'gevt-123' })
+  mockSyncTaskToCalendar.mockResolvedValue({ googleEventId: 'gevt-123', calendarId: 'cal@gmail.com' })
   mockDeleteTaskFromCalendar.mockResolvedValue(undefined)
 })
 
@@ -135,6 +135,7 @@ describe('POST /api/calendar/sync-task', () => {
       expect(res.status).toBe(200)
       expect(json.success).toBe(true)
       expect(json.googleEventId).toBe('gevt-123')
+      expect(json.calendarId).toBe('cal@gmail.com')
 
       expect(mockSyncTaskToCalendar).toHaveBeenCalledWith(
         'user-1',
@@ -327,6 +328,7 @@ describe('PATCH /api/calendar/sync-task', () => {
       expect(res.status).toBe(200)
       expect(json.success).toBe(true)
       expect(json.googleEventId).toBe('gevt-123')
+      expect(json.calendarId).toBe('cal@gmail.com')
 
       expect(mockSyncTaskToCalendar).toHaveBeenCalledWith(
         'user-1',

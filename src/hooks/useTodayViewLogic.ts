@@ -1039,6 +1039,7 @@ export function useTodayViewLogic({
         const { reminders, ...taskUpdates } = updates
         const task = localTasks.find(t => t.id === taskId)
         const previousTasks = localTasks
+        const previousEditTarget = editTarget
         setLocalTasks(prev => prev.map(t =>
             t.id === taskId ? { ...t, ...taskUpdates } : t
         ))
@@ -1062,12 +1063,6 @@ export function useTodayViewLogic({
             const end = new Date(start.getTime() + nextDuration * 60 * 1000)
             broadcastCalendarEventTimeUpdate(task.google_event_id, start.toISOString(), end.toISOString())
         }
-        try {
-            await onUpdateTask(taskId, taskUpdates)
-        } catch (err) {
-            setLocalTasks(previousTasks)
-            throw err
-        }
 
         const hasCalendarSyncUpdate =
             !!task?.google_event_id &&
@@ -1080,6 +1075,9 @@ export function useTodayViewLogic({
                 taskUpdates.memo !== undefined
             )
 
+        let persistedTaskUpdates: Partial<Task> = taskUpdates as Partial<Task>
+        let linkedCalendarEventUpdated = false
+
         if (task && hasCalendarSyncUpdate) {
             const nextStartTime = taskUpdates.scheduled_at ?? task.scheduled_at
             const nextDuration = taskUpdates.estimated_time ?? task.estimated_time
@@ -1088,36 +1086,65 @@ export function useTodayViewLogic({
             if (nextStartTime && nextDuration > 0 && nextCalendarId) {
                 const nextStart = new Date(nextStartTime)
                 const nextEnd = new Date(nextStart.getTime() + nextDuration * 60 * 1000)
-                const res = await fetch(`/api/calendar/events/${task.calendar_event_id || task.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: taskUpdates.title ?? task.title,
-                        start_time: nextStart.toISOString(),
-                        end_time: nextEnd.toISOString(),
-                        description: taskUpdates.memo !== undefined ? taskUpdates.memo : task.memo,
-                        googleEventId: task.google_event_id,
-                        calendarId: nextCalendarId,
-                        originalCalendarId: task.calendar_id || nextCalendarId,
-                        estimated_time: nextDuration,
-                        reminders,
-                    }),
-                })
-                const data = await res.json().catch(() => ({}))
-                if (!res.ok || data.success === false) {
-                    throw new Error(data.error?.message || 'Failed to update linked Google Calendar event')
+                let data: Record<string, string | boolean | { message?: string } | undefined> = {}
+                try {
+                    const res = await fetch(`/api/calendar/events/${task.calendar_event_id || task.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            title: taskUpdates.title ?? task.title,
+                            start_time: nextStart.toISOString(),
+                            end_time: nextEnd.toISOString(),
+                            description: taskUpdates.memo !== undefined ? taskUpdates.memo : task.memo,
+                            googleEventId: task.google_event_id,
+                            calendarId: nextCalendarId,
+                            originalCalendarId: task.calendar_id || nextCalendarId,
+                            estimated_time: nextDuration,
+                            reminders,
+                        }),
+                    })
+                    data = await res.json().catch(() => ({}))
+                    if (!res.ok || data.success === false) {
+                        const message = typeof data.error === 'object' ? data.error?.message : undefined
+                        throw new Error(message || 'Failed to update linked Google Calendar event')
+                    }
+                } catch (err) {
+                    setLocalTasks(previousTasks)
+                    setEditTarget(previousEditTarget)
+                    throw err
                 }
 
-                const effectiveGoogleEventId = data.google_event_id || task.google_event_id
+                const effectiveGoogleEventId = typeof data.google_event_id === 'string'
+                    ? data.google_event_id
+                    : task.google_event_id
+                const effectiveCalendarId = typeof data.calendar_id === 'string'
+                    ? data.calendar_id
+                    : nextCalendarId
+                persistedTaskUpdates = {
+                    ...taskUpdates,
+                    google_event_id: effectiveGoogleEventId,
+                    calendar_id: effectiveCalendarId,
+                } as Partial<Task>
+                linkedCalendarEventUpdated = true
                 setLocalTasks(prev => prev.map(t =>
                     t.id === taskId
-                        ? { ...t, google_event_id: effectiveGoogleEventId, calendar_id: data.calendar_id || nextCalendarId }
+                        ? { ...t, google_event_id: effectiveGoogleEventId, calendar_id: effectiveCalendarId }
                         : t
                 ))
+                setEditTarget(prev => {
+                    if (!prev || prev.taskId !== taskId) return prev
+                    return {
+                        ...prev,
+                        calendarId: effectiveCalendarId,
+                        originalTask: prev.originalTask
+                            ? { ...prev.originalTask, ...persistedTaskUpdates }
+                            : prev.originalTask,
+                    }
+                })
                 broadcastCalendarEventDetailUpdate({
                     eventId: task.calendar_event_id || task.id,
-                    googleEventId: task.google_event_id || undefined,
-                    calendarId: data.calendar_id || nextCalendarId,
+                    googleEventId: effectiveGoogleEventId || undefined,
+                    calendarId: effectiveCalendarId,
                     previousCalendarId: task.calendar_id || nextCalendarId,
                     taskId,
                     title: taskUpdates.title ?? task.title,
@@ -1129,6 +1156,17 @@ export function useTodayViewLogic({
                 invalidateCalendarCache()
                 broadcastCalendarSync()
             }
+        }
+
+        try {
+            await onUpdateTask(taskId, persistedTaskUpdates)
+        } catch (err) {
+            if (!linkedCalendarEventUpdated) {
+                setLocalTasks(previousTasks)
+                setEditTarget(previousEditTarget)
+                throw err
+            }
+            console.warn('[useTodayViewLogic] Linked calendar event was saved, but task state refresh failed:', err)
         }
 
         if (task && Object.keys(taskUpdates).length > 0) {
@@ -1162,7 +1200,7 @@ export function useTodayViewLogic({
             })
         }
 
-    }, [onUpdateTask, localTasks, pushAction])
+    }, [onUpdateTask, localTasks, editTarget, pushAction])
 
     // Save event
     const handleSaveEvent = useCallback(async (eventId: string, updates: {

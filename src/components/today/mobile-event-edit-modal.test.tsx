@@ -77,4 +77,29 @@ describe('MobileEventEditModal', () => {
     }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  test('カレンダーホイールは前後の候補が見える高さで複数カレンダーを表示する', () => {
+    render(
+      <MobileEventEditModal
+        target={calendarEventBlock()}
+        isOpen
+        onClose={vi.fn()}
+        onSaveTask={vi.fn()}
+        onSaveEvent={vi.fn()}
+        onDeleteEvent={vi.fn()}
+        availableCalendars={[
+          { id: 'calendar-1', name: 'Main', background_color: '#039BE5' },
+          { id: 'calendar-2', name: 'Work', background_color: '#33B679' },
+          { id: 'calendar-3', name: 'Personal', background_color: '#D50000' },
+        ]}
+      />,
+    )
+
+    const listbox = screen.getByRole('listbox', { name: '追加先カレンダー' })
+
+    expect(listbox.parentElement).toHaveStyle({ height: '154px' })
+    expect(screen.getByRole('option', { name: 'Main' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Personal' })).toBeInTheDocument()
+  })
 })
