@@ -1398,7 +1398,7 @@ export function DashboardClient({
                 )}
 
                 {isViewReady && activeView === 'long-term' && (
-                    <div className={cn("flex-1 overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
+                    <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
                         {isMapSplitVisible ? (
                             <div className="flex h-full min-h-0 overflow-hidden">
                                 <div className="h-full min-w-[420px] max-w-[720px] border-r bg-background" style={{ width: '46%' }}>

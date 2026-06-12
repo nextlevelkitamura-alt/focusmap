@@ -2955,7 +2955,7 @@ export function WishlistView({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {!useDesktopMemoBoard && (
       <div className={cn("shrink-0 border-b px-3 py-2", compactComposer ? "space-y-2 md:px-3" : "space-y-2 md:px-5")}>
         {compactComposer ? (
@@ -3357,9 +3357,9 @@ export function WishlistView({
       </div>
       )}
 
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <div className={cn(
-          "h-full",
+          "h-full min-h-0",
           useDesktopMemoBoard ? "overflow-hidden p-3" : "overflow-y-auto px-4 py-4 pb-24 md:px-6",
         )}>
           {linkedMemoFocus && (
@@ -3510,7 +3510,7 @@ export function WishlistView({
                       </Button>
                     </div>
 
-                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4">
                       <label className="block space-y-1.5">
                         <span className="text-xs font-medium text-muted-foreground">見出し</span>
                         <Input
@@ -3773,20 +3773,21 @@ export function WishlistView({
                         </div>
                       )}
 
-                      <div className="sticky bottom-0 z-10 -mx-3 border-t bg-background/95 p-3">
-                        <Button
-                          type="button"
-                          onClick={() => { void handleSaveDesktopDraft() }}
-                          disabled={!desktopDraftCanSave || isSavingDesktopDraft}
-                          className={cn(
-                            "min-h-11 w-full gap-2 rounded-md bg-[#19e85f] font-semibold text-black hover:bg-[#22f06a] disabled:bg-muted disabled:text-muted-foreground",
-                            desktopDraftCanSave && "shadow-[0_0_20px_rgba(25,232,95,0.24)]",
-                          )}
-                        >
-                          {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}
-                          保存
-                        </Button>
-                      </div>
+                    </div>
+
+                    <div className="shrink-0 border-t bg-background/95 p-3">
+                      <Button
+                        type="button"
+                        onClick={() => { void handleSaveDesktopDraft() }}
+                        disabled={!desktopDraftCanSave || isSavingDesktopDraft}
+                        className={cn(
+                          "min-h-11 w-full gap-2 rounded-md bg-[#19e85f] font-semibold text-black hover:bg-[#22f06a] disabled:bg-muted disabled:text-muted-foreground",
+                          desktopDraftCanSave && "shadow-[0_0_20px_rgba(25,232,95,0.24)]",
+                        )}
+                      >
+                        {isSavingDesktopDraft && <Loader2 className="h-4 w-4 animate-spin" />}
+                        保存
+                      </Button>
                     </div>
                   </>
                 </section>
@@ -4393,8 +4394,8 @@ function MemoSection({
   onToggleSelect?: (memoId: string) => void
 }) {
   return (
-    <section className={cn("min-w-0", className)}>
-      <div className="mb-2 flex min-h-8 items-center gap-2">
+    <section className={cn("flex min-h-0 min-w-0 flex-col", className)}>
+      <div className="mb-2 flex min-h-8 shrink-0 items-center gap-2">
         <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
         {onAdd && (
@@ -4422,7 +4423,7 @@ function MemoSection({
             )}
           >
             {items.length === 0 ? (
-              <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+              <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-center text-xs text-muted-foreground md:min-h-full">
                 {emptyText}
               </div>
             ) : (
