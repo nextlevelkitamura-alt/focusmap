@@ -9,12 +9,37 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { cn } from "@/lib/utils"
 import type { Project } from "@/types/database"
 
-type VoiceTarget = "heading" | "details"
+type VoiceTarget = "heading" | "details" | "progress"
+type ProjectProgressStatus = "not_started" | "in_progress" | "blocked" | "done" | "archived"
+
+const PROJECT_PROGRESS_STATUS_OPTIONS: Array<{
+  value: ProjectProgressStatus
+  label: string
+}> = [
+  { value: "not_started", label: "未着手" },
+  { value: "in_progress", label: "進行中" },
+  { value: "blocked", label: "ブロック" },
+  { value: "done", label: "完了" },
+  { value: "archived", label: "アーカイブ" },
+]
+
+function normalizeProgressStatus(value: unknown): ProjectProgressStatus {
+  return PROJECT_PROGRESS_STATUS_OPTIONS.some(option => option.value === value)
+    ? (value as ProjectProgressStatus)
+    : "not_started"
+}
 
 interface ProjectContextDialogProps {
   open: boolean
@@ -25,6 +50,8 @@ interface ProjectContextDialogProps {
 type ProjectContextPayload = {
   heading: string
   details: string
+  progress?: string | null
+  progress_status?: string | null
 }
 
 export function ProjectContextDialog({
@@ -34,6 +61,8 @@ export function ProjectContextDialog({
 }: ProjectContextDialogProps) {
   const [heading, setHeading] = useState("")
   const [details, setDetails] = useState("")
+  const [progress, setProgress] = useState("")
+  const [progressStatus, setProgressStatus] = useState<ProjectProgressStatus>("not_started")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -45,6 +74,10 @@ export function ProjectContextDialog({
     const target = activeVoiceTargetRef.current
     if (target === "heading") {
       setHeading(text.trim())
+      return
+    }
+    if (target === "progress") {
+      setProgress(prev => [prev.trim(), text.trim()].filter(Boolean).join("\n"))
       return
     }
     setDetails(prev => [prev.trim(), text.trim()].filter(Boolean).join("\n"))
@@ -68,6 +101,8 @@ export function ProjectContextDialog({
     setMessage(null)
     setHeading("")
     setDetails("")
+    setProgress("")
+    setProgressStatus("not_started")
 
     fetch(`/api/projects/${project.id}/context`)
       .then(async res => {
@@ -79,6 +114,8 @@ export function ProjectContextDialog({
         if (cancelled) return
         setHeading(data.heading ?? "")
         setDetails(data.details ?? "")
+        setProgress(data.progress ?? "")
+        setProgressStatus(normalizeProgressStatus(data.progress_status))
       })
       .catch(err => {
         if (cancelled) return
@@ -146,6 +183,8 @@ export function ProjectContextDialog({
         body: JSON.stringify({
           heading: heading.trim(),
           details: details.trim(),
+          progress: progress.trim(),
+          progress_status: progressStatus,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -157,7 +196,7 @@ export function ProjectContextDialog({
     } finally {
       setSaving(false)
     }
-  }, [details, heading, onClose, project, saving])
+  }, [details, heading, onClose, progress, progressStatus, project, saving])
 
   const recordingTarget = activeVoiceTargetRef.current
   const voiceBusy = isRecording || isTranscribing
@@ -243,8 +282,52 @@ export function ProjectContextDialog({
                   id="project-context-details"
                   value={details}
                   onChange={e => setDetails(e.target.value)}
-                  placeholder="背景、目的、制約、関係者、判断基準などを話す/書く"
+                  placeholder={"## 目的\n## 判断基準\n## 重要制約\n## 最近の決定\n\n背景、目的、制約、関係者、判断基準などを話す/書く"}
                   className="min-h-[180px] w-full resize-y rounded-md border border-input bg-background p-3 text-sm leading-6 outline-none focus:ring-1 focus:ring-primary sm:min-h-[210px]"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex min-h-9 items-center justify-between gap-3">
+                  <label htmlFor="project-context-progress" className="text-sm font-medium text-muted-foreground">
+                    状況
+                  </label>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Select
+                      value={progressStatus}
+                      onValueChange={value => setProgressStatus(normalizeProgressStatus(value))}
+                    >
+                      <SelectTrigger size="sm" className="h-8 w-[128px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROJECT_PROGRESS_STATUS_OPTIONS.map(option => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      onClick={() => void toggleVoice("progress")}
+                      aria-label="状況を音声入力"
+                      title="状況を音声入力"
+                      className={cn(isRecording && recordingTarget === "progress" && "border-destructive text-destructive")}
+                      disabled={isTranscribing}
+                    >
+                      {isRecording && recordingTarget === "progress" ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <textarea
+                  id="project-context-progress"
+                  value={progress}
+                  onChange={e => setProgress(e.target.value)}
+                  placeholder={"## 現在地\n## 次の論点\n## ブロッカー\n\n今どこまで進んでいるか、何を決めるべきかを残す"}
+                  className="min-h-[140px] w-full resize-y rounded-md border border-input bg-background p-3 text-sm leading-6 outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
 

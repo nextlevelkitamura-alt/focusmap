@@ -11,6 +11,7 @@ import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
 import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
 import { parseAgentCalendarPreferences } from '@/lib/ai/agent-preferences'
+import { matchProjectSearch } from '@/lib/ai/project-search'
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
@@ -783,7 +784,7 @@ export const addCalendarEvent = tool({
 
 export const listProjects = tool({
   description:
-    'Focusmapのプロジェクト一覧を確認する。ユーザーがプロジェクト名を曖昧に言った時、またはどのプロジェクトに記録するか確認したい時に使う。',
+    'Focusmapのプロジェクト一覧を確認する。ユーザーがプロジェクト名を言った時はqueryで検索する。resolved_projectが返ったら聞き返さず、そのprojectIdでgetProjectContextを呼ぶ。',
   inputSchema: z.object({
     query: z.string().optional().describe('プロジェクト名・説明の検索語。未指定なら最近のプロジェクトを返す。'),
     includeArchived: z.boolean().optional().describe('archived/completed も含めるか。通常はfalse。'),
@@ -795,12 +796,13 @@ export const listProjects = tool({
     if (!user) return { success: false, error: '認証エラー' }
 
     const maxRows = normalizeLimit(limit, 10, 20)
+    const hasQuery = Boolean(query?.trim())
     let dbQuery = supabase
       .from('projects')
-      .select('id, title, description, status, space_id, repo_path, created_at')
+      .select('id, title, description, purpose, status, space_id, repo_path, created_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
-      .limit(query?.trim() ? Math.min(maxRows * 5, 100) : maxRows)
+      .limit(hasQuery ? Math.min(maxRows * 5, 100) : maxRows)
 
     if (!includeArchived) {
       dbQuery = dbQuery.not('status', 'in', '("archived","completed")')
@@ -808,13 +810,58 @@ export const listProjects = tool({
 
     const { data, error } = await dbQuery
     if (error) return { success: false, error: error.message }
-    const projects = (data || [])
-      .filter(project => recordTextMatches(project, ['title', 'description'], query))
+    const matchedProjects = (data || [])
+      .map(project => {
+        const match = matchProjectSearch(project, ['title', 'description', 'purpose', 'repo_path'], query)
+        return { project, match }
+      })
+      .filter(({ match }) => match.matches)
+      .sort((a, b) => b.match.score - a.match.score || String(b.project.created_at ?? '').localeCompare(String(a.project.created_at ?? '')))
       .slice(0, maxRows)
+    const projects = matchedProjects.map(({ project, match }) => ({
+      ...project,
+      match: hasQuery
+        ? {
+          score: match.score,
+          confidence: match.confidence,
+          matched_fields: match.matchedFields,
+          needles: match.needles,
+        }
+        : undefined,
+    }))
+    const [top, second] = matchedProjects
+    const resolvedProject = hasQuery &&
+      top &&
+      (top.match.confidence === 'exact' || top.match.confidence === 'strong') &&
+      (!second || top.match.score - second.match.score >= 20 || (top.match.score >= 90 && second.match.score < 70))
+      ? {
+        id: top.project.id,
+        title: top.project.title,
+        description: top.project.description ?? null,
+        status: top.project.status ?? null,
+        repo_path: top.project.repo_path ?? null,
+        match: {
+          score: top.match.score,
+          confidence: top.match.confidence,
+          matched_fields: top.match.matchedFields,
+          needles: top.match.needles,
+        },
+      }
+      : null
     return {
       success: true,
       projects,
-      message: `${projects.length}件のプロジェクトを取得しました`,
+      resolved_project: resolvedProject,
+      project_resolution: {
+        query: query?.trim() || null,
+        confident_single_match: Boolean(resolvedProject),
+        instruction: resolvedProject
+          ? 'このresolved_projectを対象にして、ユーザーへどのプロジェクトか聞き返さずgetProjectContextを呼んでください。'
+          : '候補が複数または弱一致です。誤認しそうな場合だけユーザーへ対象確認してください。',
+      },
+      message: resolvedProject
+        ? `「${resolvedProject.title}」を対象プロジェクトとして解決しました`
+        : `${projects.length}件のプロジェクトを取得しました`,
     }
   },
 })
@@ -876,13 +923,13 @@ export const getProjectContext = tool({
 
 export const saveProjectContext = tool({
   description:
-    'プロジェクトの概要や進捗メモをFocusmap DBへ記録・更新する。「このプロジェクトについて記録して」「概要を更新して」などで使う。',
+    'プロジェクトの概要や進捗メモをFocusmap DBへ記録・更新する。「このプロジェクトについて記録して」「概要を更新して」などで使う。安定概要はprojectDescription、AGENTS.md風の背景整理はdetails、現在地・次の論点・ブロッカーはprogressに分ける。',
   inputSchema: z.object({
     projectId: z.string().describe('プロジェクトID'),
-    projectDescription: z.string().optional().describe('projects.description に保存するプロジェクト概要。未指定なら変更しない。'),
+    projectDescription: z.string().optional().describe('projects.description に保存する安定したプロジェクト概要。何のプロジェクトか・目的・対象を短くまとめる。未指定なら変更しない。'),
     heading: z.string().optional().describe('project_contexts.heading に保存する短い見出し。'),
-    details: z.string().optional().describe('project_contexts.details に保存する詳細メモ。'),
-    progress: z.string().optional().describe('project_contexts.progress に保存する進捗メモ。'),
+    details: z.string().optional().describe('project_contexts.details に保存する背景メモ。必要に応じて ## 目的 / ## 判断基準 / ## 重要制約 / ## 最近の決定 のような小見出しで整理する。'),
+    progress: z.string().optional().describe('project_contexts.progress に保存する状況メモ。必要に応じて ## 現在地 / ## 次の論点 / ## ブロッカー のような小見出しで整理する。'),
     progressStatus: z.enum(PROJECT_CONTEXT_STATUSES).optional().describe('進捗状態。'),
   }),
   execute: async ({ projectId, projectDescription, heading, details, progress, progressStatus }) => {
