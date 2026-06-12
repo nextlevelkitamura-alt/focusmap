@@ -102,12 +102,13 @@ type CodexNodeState = {
 
 const PADDING = 72;
 const DRAG_START_THRESHOLD = 6;
-const TOUCH_DRAG_LONG_PRESS_DELAY_MS = 500;
 const DROP_TARGET_MAX_DISTANCE = 190;
 const WHEEL_PAN_SENSITIVITY = 1;
 const WHEEL_ZOOM_SENSITIVITY = 0.0035;
 const TOUCH_PINCH_SENSITIVITY = 1;
 const DESKTOP_GESTURE_SENSITIVITY = 1.35;
+const MOBILE_DRAG_AUTOPAN_EDGE_PX = 72;
+const MOBILE_DRAG_AUTOPAN_MAX_PX_PER_FRAME = 12;
 const MOBILE_KEYBOARD_NODE_MARGIN = 12;
 const MOBILE_KEYBOARD_ACCESSORY_CLEARANCE = 68;
 const MOBILE_NODE_FOCUS_DURATION_MS = 120;
@@ -133,6 +134,8 @@ type DragState = {
     primaryStartY: number;
     deltaX: number;
     deltaY: number;
+    lastClientX: number;
+    lastClientY: number;
     dragging: boolean;
     target: CustomDropTarget | null;
 };
@@ -167,13 +170,6 @@ type PinchGestureState = {
     initialDistance: number;
     initialZoom: number;
     initialStagePoint: Point;
-};
-
-type PendingLongPressDragState = {
-    timerId: number;
-    node: MindMapModelNode;
-    startClientX: number;
-    startClientY: number;
 };
 
 type CustomTaskEditController = {
@@ -409,7 +405,7 @@ function CustomTaskNode({
     triggerEdit?: boolean;
     initialEditValue?: string;
     floatingEditing?: boolean;
-    onSelectNode: (nodeId: string, options?: { additive: boolean }) => void;
+    onSelectNode: (nodeId: string, options?: { additive: boolean }) => boolean | void;
     onStartDrag: (node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => void;
     onToggleCollapse: (taskId: string) => void;
     onAddChild?: (taskId: string) => void | Promise<void>;
@@ -812,7 +808,8 @@ function CustomTaskNode({
             }}
             onClick={(event) => {
                 event.stopPropagation();
-                onSelectNode(node.id, { additive: event.shiftKey || event.metaKey || event.ctrlKey });
+                const shouldContinue = onSelectNode(node.id, { additive: event.shiftKey || event.metaKey || event.ctrlKey });
+                if (shouldContinue === false) return;
                 if (isMobile && !isEditing && !mobilePlacementMode) beginEditing();
             }}
             onDoubleClick={(event) => {
@@ -1425,10 +1422,10 @@ export function CustomMindMapView({
     const pendingViewportTransformRef = useRef<{ zoom: number; pan: Point } | null>(null);
     const viewportRafRef = useRef<number | null>(null);
     const viewportAnimationFrameRef = useRef<number | null>(null);
+    const dragAutoPanFrameRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
     const panMovedRef = useRef(false);
     const pendingResizeSavesRef = useRef(new Map<string, number>());
-    const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
     const savedNodeWidthById = useMemo(() => {
         const byId = new Map<string, number | null>();
@@ -1884,11 +1881,11 @@ export function CustomMindMapView({
     }, [isDescendantNode, nodeById, positionedNodes]);
 
     const handleSelectTaskNode = useCallback((nodeId: string, options?: { additive: boolean }) => {
-        if (Date.now() < suppressPaneClickUntilRef.current) return;
+        if (Date.now() < suppressPaneClickUntilRef.current) return false;
 
         if (!options?.additive) {
             onSelectNode(nodeId);
-            return;
+            return true;
         }
 
         const next = new Set(selectedNodeIds);
@@ -1899,6 +1896,7 @@ export function CustomMindMapView({
         }
         const primaryNodeId = next.has(selectedNodeId ?? "") ? selectedNodeId : nodeId;
         onSelectNodes(Array.from(next), next.size > 0 ? primaryNodeId : null);
+        return true;
     }, [onSelectNode, onSelectNodes, selectedNodeId, selectedNodeIds]);
 
     const syncFloatingTextareaHeight = useCallback((input: HTMLTextAreaElement) => {
@@ -2221,12 +2219,31 @@ export function CustomMindMapView({
         };
     }, [floatingEditNodeId, isKeyboardOpen, isMobile, keepNodeAboveKeyboard, mobileKeyboardAccessoryPinned, nodeById, pendingEditNodeId, selectedNodeId, viewportBottom, zoom]);
 
-    const clearPendingLongPressDrag = useCallback(() => {
-        const pending = pendingLongPressDragRef.current;
-        if (!pending) return;
-        window.clearTimeout(pending.timerId);
-        pendingLongPressDragRef.current = null;
-    }, []);
+    const getDragStateForClientPoint = useCallback((
+        prev: DragState,
+        clientX: number,
+        clientY: number,
+        options: { forceDragging?: boolean } = {},
+    ): DragState | null => {
+        const point = getStagePoint(clientX, clientY);
+        if (!point) return null;
+        const deltaX = point.x - prev.startPointerX;
+        const deltaY = point.y - prev.startPointerY;
+        const x = prev.primaryStartX + deltaX;
+        const y = prev.primaryStartY + deltaY;
+        const distance = Math.hypot(deltaX, deltaY);
+        const dragging = Boolean(options.forceDragging) || prev.dragging || distance >= DRAG_START_THRESHOLD;
+
+        return {
+            ...prev,
+            deltaX,
+            deltaY,
+            lastClientX: clientX,
+            lastClientY: clientY,
+            dragging,
+            target: dragging ? getDropTarget(prev.nodeIds, prev.primaryNodeId, x, y) : null,
+        };
+    }, [getDropTarget, getStagePoint]);
 
     const beginDragFromClientPoint = useCallback((node: MindMapModelNode, clientX: number, clientY: number) => {
         if (node.kind !== "task") return;
@@ -2258,6 +2275,8 @@ export function CustomMindMapView({
             primaryStartY: node.y,
             deltaX: 0,
             deltaY: 0,
+            lastClientX: clientX,
+            lastClientY: clientY,
             dragging: false,
             target: null,
         };
@@ -2272,26 +2291,12 @@ export function CustomMindMapView({
             return;
         }
 
-        clearPendingLongPressDrag();
-
         if (isMobile && event.pointerType === "touch") {
-            const startClientX = event.clientX;
-            const startClientY = event.clientY;
-            const timerId = window.setTimeout(() => {
-                const pending = pendingLongPressDragRef.current;
-                if (!pending || pending.node.id !== node.id) return;
-                pendingLongPressDragRef.current = null;
-                setPanState(null);
-                setSelectionBox(null);
-                beginDragFromClientPoint(node, startClientX, startClientY);
-            }, TOUCH_DRAG_LONG_PRESS_DELAY_MS);
-
-            pendingLongPressDragRef.current = {
-                timerId,
-                node,
-                startClientX,
-                startClientY,
-            };
+            event.stopPropagation();
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            setPanState(null);
+            setSelectionBox(null);
+            beginDragFromClientPoint(node, event.clientX, event.clientY);
             return;
         }
 
@@ -2299,7 +2304,7 @@ export function CustomMindMapView({
         event.stopPropagation();
         event.currentTarget.setPointerCapture?.(event.pointerId);
         beginDragFromClientPoint(node, event.clientX, event.clientY);
-    }, [beginDragFromClientPoint, clearPendingLongPressDrag, isMobile]);
+    }, [beginDragFromClientPoint, isMobile]);
 
     const startRangeSelection = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (event.button !== 0) return;
@@ -2383,7 +2388,6 @@ export function CustomMindMapView({
         const startPinch = (event: TouchEvent) => {
             if (event.touches.length !== 2) return;
             event.preventDefault();
-            clearPendingLongPressDrag();
             const midpoint = getTouchMidpoint(event.touches, viewport);
             const currentZoom = zoomRef.current;
             const currentPan = panOffsetRef.current;
@@ -2520,11 +2524,7 @@ export function CustomMindMapView({
             viewport.removeEventListener("gesturechange", moveGesture);
             viewport.removeEventListener("gestureend", endGesture);
         };
-    }, [applyViewportTransform, clearPendingLongPressDrag, commitViewportTransform, getStagePoint, handleWheel, isMobile, zoomBounds]);
-
-    useEffect(() => {
-        return () => clearPendingLongPressDrag();
-    }, [clearPendingLongPressDrag]);
+    }, [applyViewportTransform, commitViewportTransform, getStagePoint, handleWheel, isMobile, zoomBounds]);
 
     useEffect(() => {
         return () => {
@@ -2534,6 +2534,10 @@ export function CustomMindMapView({
             if (viewportAnimationFrameRef.current !== null) {
                 window.cancelAnimationFrame(viewportAnimationFrameRef.current);
                 viewportAnimationFrameRef.current = null;
+            }
+            if (dragAutoPanFrameRef.current !== null) {
+                window.cancelAnimationFrame(dragAutoPanFrameRef.current);
+                dragAutoPanFrameRef.current = null;
             }
         };
     }, []);
@@ -2553,27 +2557,98 @@ export function CustomMindMapView({
         }
     }, [onUpdateStatus]);
 
+    const cancelDragAutoPan = useCallback(() => {
+        if (dragAutoPanFrameRef.current === null) return;
+        window.cancelAnimationFrame(dragAutoPanFrameRef.current);
+        dragAutoPanFrameRef.current = null;
+    }, []);
+
+    const getDragAutoPanVelocity = useCallback((clientX: number, clientY: number): Point => {
+        const rect = viewportRef.current?.getBoundingClientRect();
+        if (!isMobile || !rect || rect.width <= 0 || rect.height <= 0) return { x: 0, y: 0 };
+        const visualViewport = window.visualViewport;
+        const visualLeft = visualViewport?.offsetLeft ?? 0;
+        const visualTop = visualViewport?.offsetTop ?? 0;
+        const visualRight = visualLeft + (visualViewport?.width ?? window.innerWidth);
+        const visualBottom = visualTop + (visualViewport?.height ?? window.innerHeight);
+        const visibleRect = {
+            left: Math.max(rect.left, visualLeft),
+            right: Math.min(rect.right, visualRight),
+            top: Math.max(rect.top, visualTop),
+            bottom: Math.min(rect.bottom, visualBottom),
+        };
+        const visibleWidth = visibleRect.right - visibleRect.left;
+        const visibleHeight = visibleRect.bottom - visibleRect.top;
+        if (visibleWidth <= 0 || visibleHeight <= 0) return { x: 0, y: 0 };
+        const edgeSize = Math.max(36, Math.min(MOBILE_DRAG_AUTOPAN_EDGE_PX, visibleWidth / 3, visibleHeight / 3));
+        const speedForDistance = (distanceToEdge: number) => {
+            const pressure = Math.min(1, Math.max(0, (edgeSize - distanceToEdge) / edgeSize));
+            return MOBILE_DRAG_AUTOPAN_MAX_PX_PER_FRAME * pressure * pressure;
+        };
+
+        let x = 0;
+        let y = 0;
+        const distanceLeft = clientX - visibleRect.left;
+        const distanceRight = visibleRect.right - clientX;
+        const distanceTop = clientY - visibleRect.top;
+        const distanceBottom = visibleRect.bottom - clientY;
+
+        if (distanceLeft < edgeSize) x = speedForDistance(distanceLeft);
+        else if (distanceRight < edgeSize) x = -speedForDistance(distanceRight);
+        if (distanceTop < edgeSize) y = speedForDistance(distanceTop);
+        else if (distanceBottom < edgeSize) y = -speedForDistance(distanceBottom);
+
+        return { x, y };
+    }, [isMobile]);
+
+    const startDragAutoPan = useCallback(() => {
+        if (dragAutoPanFrameRef.current !== null) return;
+
+        const step = () => {
+            const current = dragStateRef.current;
+            if (!current?.dragging) {
+                dragAutoPanFrameRef.current = null;
+                return;
+            }
+
+            const velocity = getDragAutoPanVelocity(current.lastClientX, current.lastClientY);
+            if (Math.abs(velocity.x) >= 0.1 || Math.abs(velocity.y) >= 0.1) {
+                applyViewportTransform(zoomRef.current, {
+                    x: panOffsetRef.current.x + velocity.x,
+                    y: panOffsetRef.current.y + velocity.y,
+                }, { deferCommit: true });
+
+                const next = getDragStateForClientPoint(current, current.lastClientX, current.lastClientY, { forceDragging: true });
+                if (next) {
+                    dragStateRef.current = next;
+                    setDragState(next);
+                    publishNodeCalendarDrag("move", next, next.lastClientX, next.lastClientY);
+                }
+            }
+
+            dragAutoPanFrameRef.current = window.requestAnimationFrame(step);
+        };
+
+        dragAutoPanFrameRef.current = window.requestAnimationFrame(step);
+    }, [applyViewportTransform, getDragAutoPanVelocity, getDragStateForClientPoint, publishNodeCalendarDrag]);
+
+    useEffect(() => {
+        if (!isMobile || !dragState?.dragging) {
+            cancelDragAutoPan();
+            return;
+        }
+        startDragAutoPan();
+        return cancelDragAutoPan;
+    }, [cancelDragAutoPan, dragState?.dragging, isMobile, startDragAutoPan]);
+
     useEffect(() => {
         if (!dragState) return;
 
         const handlePointerMove = (event: PointerEvent) => {
-            const point = getStagePoint(event.clientX, event.clientY);
-            if (!point) return;
             const prev = dragStateRef.current;
             if (!prev) return;
-            const deltaX = point.x - prev.startPointerX;
-            const deltaY = point.y - prev.startPointerY;
-            const x = prev.primaryStartX + deltaX;
-            const y = prev.primaryStartY + deltaY;
-            const distance = Math.hypot(deltaX, deltaY);
-            const dragging = prev.dragging || distance >= DRAG_START_THRESHOLD;
-            const next: DragState = {
-                ...prev,
-                deltaX,
-                deltaY,
-                dragging,
-                target: dragging ? getDropTarget(prev.nodeIds, prev.primaryNodeId, x, y) : null,
-            };
+            const next = getDragStateForClientPoint(prev, event.clientX, event.clientY);
+            if (!next) return;
             dragStateRef.current = next;
             setDragState(next);
             if (next.dragging) {
@@ -2619,6 +2694,7 @@ export function CustomMindMapView({
             }
             dragStateRef.current = null;
             setDragState(null);
+            commitViewportTransform();
         };
 
         window.addEventListener("pointermove", handlePointerMove);
@@ -2629,7 +2705,7 @@ export function CustomMindMapView({
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, [dragState, getDropTarget, getStagePoint, onDuplicateTasks, onMoveTask, onMoveTasks, publishNodeCalendarDrag]);
+    }, [commitViewportTransform, dragState, getDragStateForClientPoint, onDuplicateTasks, onMoveTask, onMoveTasks, publishNodeCalendarDrag]);
 
     useEffect(() => {
         if (!selectionBox) return;
@@ -2688,10 +2764,6 @@ export function CustomMindMapView({
             if (pinchGestureRef.current) return;
             const deltaX = event.clientX - panState.startClientX;
             const deltaY = event.clientY - panState.startClientY;
-            const pendingDrag = pendingLongPressDragRef.current;
-            if (pendingDrag && Math.hypot(event.clientX - pendingDrag.startClientX, event.clientY - pendingDrag.startClientY) >= DRAG_START_THRESHOLD) {
-                clearPendingLongPressDrag();
-            }
             const nextPan = {
                 x: panState.startPanX + deltaX,
                 y: panState.startPanY + deltaY,
@@ -2701,7 +2773,6 @@ export function CustomMindMapView({
         };
 
         const handlePointerUp = () => {
-            clearPendingLongPressDrag();
             if (panMovedRef.current) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
             }
@@ -2718,7 +2789,7 @@ export function CustomMindMapView({
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, [applyViewportTransform, clearPendingLongPressDrag, commitViewportTransform, panState]);
+    }, [applyViewportTransform, commitViewportTransform, panState]);
 
     const handleEditingChange = useCallback((taskId: string, editing: boolean) => {
         setActiveEditingNodeId(prev => {

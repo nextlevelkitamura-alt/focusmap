@@ -114,6 +114,7 @@ const getNode = (label: string, id: string) => {
   return node
 }
 
+const originalInnerWidth = window.innerWidth
 const originalInnerHeight = window.innerHeight
 
 const installOpenKeyboardViewport = (height = 500) => {
@@ -180,6 +181,7 @@ const mockViewportRect = (rect: Partial<DOMRect> = {}) => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth })
   Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
   Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined })
 })
@@ -395,6 +397,66 @@ describe("CustomMindMapView keyboard operations", () => {
       })
     })
     expect(onMoveTask).not.toHaveBeenCalled()
+  })
+
+  test("starts mobile task dragging from touch movement without waiting for long press", async () => {
+    mockViewportRect()
+    renderMap({ isMobile: true })
+
+    const rootNode = getNode("Root task", "root-1")
+    const initialLeft = parseFloat(rootNode.style.left)
+
+    fireEvent.pointerDown(rootNode, { button: 0, pointerId: 1, pointerType: "touch", clientX: 280, clientY: 280 })
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "touch", clientX: 330, clientY: 280 })
+
+    await waitFor(() => {
+      expect(parseFloat(rootNode.style.left)).toBeGreaterThan(initialLeft + 40)
+    })
+    expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
+  })
+
+  test("auto-pans the mobile viewport while a dragged task is held near the edge", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 })
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 })
+    mockViewportRect({ width: 1120, height: 720, right: 1120, bottom: 720 })
+    const rafCallbacks: FrameRequestCallback[] = []
+    let nextFrameId = 1
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      rafCallbacks.push(callback)
+      return nextFrameId++
+    })
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
+    renderMap({ isMobile: true })
+
+    const rootNode = getNode("Root task", "root-1")
+    const stage = screen.getByTestId("custom-mind-map-stage")
+
+    fireEvent.pointerDown(rootNode, { button: 0, pointerId: 1, pointerType: "touch", clientX: 320, clientY: 280 })
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "touch", clientX: 386, clientY: 280 })
+
+    await waitFor(() => expect(rafCallbacks.length).toBeGreaterThan(0))
+    await act(async () => {
+      const callback = rafCallbacks.shift()
+      callback?.(16)
+    })
+
+    const match = /translate3d\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px, 0\)/.exec(stage.style.transform)
+    expect(match).not.toBeNull()
+    expect(Number(match?.[1])).toBeLessThan(-20)
+    expect(Number(match?.[2])).toBeCloseTo(4)
+  })
+
+  test("does not open the mobile title editor from the click after a touch drag", () => {
+    mockViewportRect()
+    renderMap({ isMobile: true })
+
+    const rootNode = getNode("Root task", "root-1")
+    fireEvent.pointerDown(rootNode, { button: 0, pointerId: 1, pointerType: "touch", clientX: 280, clientY: 280 })
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "touch", clientX: 330, clientY: 280 })
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "touch", clientX: 330, clientY: 280 })
+    fireEvent.click(rootNode)
+
+    expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
   })
 
   test("adds a child with Tab and a sibling with Enter", async () => {
