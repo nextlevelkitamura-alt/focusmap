@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Project, Task } from "@/types/database";
 import { buildMindMapModel } from "./mindmap-model";
-import { estimateProjectNodeWidth, estimateTaskNodeHeight, estimateTaskNodeWidth } from "./mindmap-geometry";
+import { PROJECT_NODE_MAX_WIDTH, estimateProjectNodeWidth, estimateTaskNodeHeight, estimateTaskNodeWidth } from "./mindmap-geometry";
 
 const project = {
     id: "project-1",
@@ -65,6 +65,21 @@ describe("buildMindMapModel", () => {
         const projectNode = model.nodes.find(node => node.kind === "project");
         expect(projectNode?.width).toBe(estimateProjectNodeWidth("仕事", true));
         expect(projectNode?.width).toBeLessThan(140);
+    });
+
+    test("lets long project titles grow beyond the old fixed width", () => {
+        const title = "ラットレース脱出計画をスマホでも見切れず確認する";
+        const model = buildMindMapModel({
+            project: { ...project, title },
+            groups: [],
+            tasks: [],
+            isMobile: true,
+        });
+
+        const projectNode = model.nodes.find(node => node.kind === "project");
+        expect(projectNode?.width).toBe(estimateProjectNodeWidth(title, true));
+        expect(projectNode?.width).toBeGreaterThan(220);
+        expect(projectNode?.width).toBeLessThanOrEqual(PROJECT_NODE_MAX_WIDTH);
     });
 
     test("keeps same-depth node left edges aligned even when text widths differ", () => {

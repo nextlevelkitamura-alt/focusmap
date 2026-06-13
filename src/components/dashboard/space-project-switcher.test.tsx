@@ -112,4 +112,27 @@ describe('SpaceProjectSwitcher', () => {
     expect(screen.queryByLabelText('仕事 を編集')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('仕事プロジェクト を編集')).not.toBeInTheDocument()
   })
+
+  test('コンパクト表示ではプロジェクト名の表示幅を広く取れる', () => {
+    render(
+      <SpaceProjectSwitcher
+        spaces={spaces}
+        projects={[
+          {
+            ...projects[0],
+            title: 'ラットレース脱出計画をスマホでも確認する',
+          },
+        ]}
+        selectedSpaceId="space-work"
+        selectedProjectId="project-work"
+        onSelectSpace={vi.fn()}
+        onSelectProject={vi.fn()}
+        variant="memoHeaderCompact"
+      />,
+    )
+
+    const projectButton = screen.getByTitle('プロジェクトを切替')
+    expect(projectButton).toHaveClass('max-w-[220px]')
+    expect(projectButton).not.toHaveClass('max-w-[112px]')
+  })
 })
