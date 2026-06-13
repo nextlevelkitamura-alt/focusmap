@@ -45,7 +45,7 @@ type MindMapCallbacks = {
     saveTaskTitle: (taskId: string, newTitle: string) => Promise<void>;
     addChildTask: (taskId: string) => Promise<void>;
     addSiblingTask: (taskId: string) => Promise<void>;
-    deleteTask: (taskId: string) => Promise<void>;
+    deleteTask: (taskId: string, options?: { skipConfirm?: boolean }) => Promise<void>;
     handleNavigate: (taskId: string, direction: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => void;
     promoteTask: (taskId: string) => Promise<void>;
     updateTaskScheduledAt: (taskId: string, dateStr: string | null) => Promise<void>;
@@ -1318,10 +1318,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     }, [getTaskById, onUpdateTask, focusNodeWithPollingV2, project?.id]);
 
     // Delete task（フォーカス移動を即座に行い、API呼び出しはバックグラウンドで実行）
-    const deleteTask = useCallback(async (taskId: string) => {
+    const deleteTask = useCallback(async (taskId: string, options?: { skipConfirm?: boolean }) => {
         if (!onDeleteTask) return;
 
-        if (hasChildren(taskId)) {
+        if (!options?.skipConfirm && hasChildren(taskId)) {
             if (typeof window === 'undefined') return;
             const confirmed = window.confirm('子タスクを含むタスクを削除しますか？\nすべての子タスクも削除されます。');
             if (!confirmed) return;
@@ -2019,7 +2019,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? 'done' : 'todo'); }}
                     onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}
-                    onDelete={(taskId) => { void callbacks.deleteTask(taskId); }}
+                    onDelete={(taskId) => { void callbacks.deleteTask(taskId, { skipConfirm: true }); }}
                 />
             )}
 

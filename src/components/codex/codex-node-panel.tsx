@@ -274,6 +274,7 @@ export function CodexNodePanel({
   onSaveHeading,
   onSaveDraft,
   onSaveTaskDetails,
+  onDelete,
 }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -733,6 +734,17 @@ export function CodexNodePanel({
       setDeletingAttachmentId(null)
     }
   }, [attachments, node.taskId])
+
+  const handleDeleteNode = useCallback(() => {
+    if (!onDelete) return
+    const title = heading.trim() || node.title.trim() || "このノード"
+    const confirmed = typeof window === "undefined"
+      ? false
+      : window.confirm(`「${title}」を削除しますか？\nこの操作は取り消せません。`)
+    if (!confirmed) return
+    onDelete(node.taskId)
+    onClose()
+  }, [heading, node.taskId, node.title, onClose, onDelete])
 
   const handleTranscribed = useCallback((text: string) => {
     setDetail(prev => {
@@ -1567,6 +1579,20 @@ export function CodexNodePanel({
                   className="hidden"
                   onChange={handleFileInputChange}
                 />
+                {onDelete && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleDeleteNode}
+                      className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-red-500/25 bg-red-500/5 px-3 text-xs font-medium text-red-200 transition-colors hover:border-red-400/45 hover:bg-red-500/10 hover:text-red-100"
+                      aria-label="ノードを削除"
+                      title="ノードを削除"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      ノードを削除
+                    </button>
+                  </div>
+                )}
 	                {imageNotice && (
 	                  <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">{imageNotice}</p>
 	                )}

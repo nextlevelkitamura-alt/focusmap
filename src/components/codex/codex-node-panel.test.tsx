@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, test, vi, beforeEach } from "vitest"
 
 import { CodexNodePanel } from "./codex-node-panel"
@@ -292,4 +292,42 @@ describe("CodexNodePanel", () => {
 	    expect(screen.getByRole("dialog", { name: "IMG_3776.jpgのプレビュー" })).toBeInTheDocument()
 	    expect(screen.getByRole("button", { name: "プレビューを閉じる" })).toBeInTheDocument()
 	  })
+
+  test("shows a compact node delete button under the image add controls", async () => {
+    const onClose = vi.fn()
+    const onDelete = vi.fn()
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true)
+
+    try {
+      render(
+        <CodexNodePanel
+          open
+          node={{
+            taskId: "task-1",
+            title: "削除対象ノード",
+            memo: "削除ボタンの配置確認",
+            cwd: "/repo/focusmap",
+            status: "todo",
+          }}
+          candidates={["/repo/focusmap"]}
+          onClose={onClose}
+          onPersistDir={vi.fn()}
+          onDelete={onDelete}
+        />,
+      )
+
+      const imageSection = await screen.findByTestId("codex-node-image-section")
+      const deleteButton = within(imageSection).getByRole("button", { name: "ノードを削除" })
+
+      expect(deleteButton).toHaveClass("text-xs")
+
+      fireEvent.click(deleteButton)
+
+      expect(confirmSpy).toHaveBeenCalledWith("「削除対象ノード」を削除しますか？\nこの操作は取り消せません。")
+      expect(onDelete).toHaveBeenCalledWith("task-1")
+      expect(onClose).toHaveBeenCalled()
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
 	})
