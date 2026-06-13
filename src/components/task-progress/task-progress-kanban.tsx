@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  ExternalLink,
   FolderGit2,
   Loader2,
   RefreshCw,
@@ -27,16 +28,19 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import {
+  codexMonitorAccentClass,
+  codexMonitorCardClass,
   codexMonitorToneClass,
   codexMonitorUiLabel,
   compactCodexMonitorText,
+  codexThreadUrl,
   formatTaskProgressDateTime,
   getCodexMonitorUiStatus,
   isSameLocalDate,
 } from "@/lib/task-progress-ui"
 import { cn } from "@/lib/utils"
 import type { Project, Space, Task } from "@/types/database"
-import type { TaskProgressSnapshotTask } from "@/types/task-progress"
+import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
 const HEARTBEAT_POLL_INTERVAL_MS = 30_000
@@ -76,12 +80,15 @@ type MobileCodexSheetTab = "import" | "board"
 
 export type TaskProgressImportItem = {
   id: string
+  aiTaskId?: string | null
   title: string
   snippet: string | null
   repoPath: string | null
   threadId?: string | null
+  status?: TaskProgressStatus | string | null
   statusLabel: string | null
   updatedLabel: string
+  updatedAtIso?: string | null
 }
 
 export type TaskProgressImportRepoOption = {
@@ -191,6 +198,55 @@ function repoNameFromPath(value: string | null | undefined) {
 
 function normalizeRepoPath(value: string | null | undefined) {
   return (value ?? "").trim().replace(/\/+$/, "")
+}
+
+function CodexMonitorRunningOutline() {
+  return (
+    <span className="codex-monitor-running-orbit" aria-label="Codex 実行中">
+      <svg
+        className="codex-monitor-running-orbit__svg"
+        viewBox="0 0 100 100"
+        aria-hidden="true"
+        focusable="false"
+        preserveAspectRatio="none"
+      >
+        <rect
+          className="codex-monitor-running-orbit__rail"
+          x="1.5"
+          y="1.5"
+          width="97"
+          height="97"
+          rx="7"
+          pathLength={100}
+        />
+        <rect
+          className="codex-monitor-running-orbit__runner"
+          x="1.5"
+          y="1.5"
+          width="97"
+          height="97"
+          rx="7"
+          pathLength={100}
+        />
+      </svg>
+    </span>
+  )
+}
+
+function taskProgressStatusFromVisualStatus(status: TaskProgressStatus | string | null | undefined): TaskProgressStatus {
+  switch (getCodexMonitorUiStatus(status)) {
+    case "running":
+      return "running"
+    case "connection_failed":
+      return "failed"
+    case "unsent":
+      return "pending"
+    case "done":
+      return "completed"
+    case "review":
+    default:
+      return "awaiting_approval"
+  }
 }
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
@@ -399,6 +455,7 @@ function KanbanCard({
 }) {
   const statusLabel = forceDone ? "完了済み" : codexMonitorUiLabel(task.status)
   const uiStatus = forceDone ? "done" : getCodexMonitorUiStatus(task.status)
+  const visualStatus = forceDone ? "done" : task.status
   const toneClass = forceDone
     ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
     : codexMonitorToneClass(task.status)
@@ -422,15 +479,21 @@ function KanbanCard({
   const sourceTaskId = sourceTask?.id ?? null
   const sourceTaskDone = sourceTask?.status === "done"
   const shortTitle = task.title || "Codexタスク"
+  const threadHref = codexThreadUrl(task.codex_thread_id)
   const openPrimary = () => {
     onOpen(task)
   }
 
   return (
     <article
-      className="group w-full rounded-lg border bg-background px-2.5 py-2 text-left shadow-sm transition-colors hover:bg-muted/30"
+      className={cn(
+        "group relative w-full overflow-visible rounded-lg border px-2.5 py-2 pl-3.5 text-left transition-all duration-150 hover:brightness-105",
+        codexMonitorCardClass(visualStatus),
+      )}
       title={task.title ?? "Codexタスク"}
     >
+      {uiStatus === "running" && <CodexMonitorRunningOutline />}
+      <span className={cn("absolute bottom-2 left-0 top-2 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
       <div className="flex min-w-0 items-start gap-2">
         {sourceTaskId && onToggleComplete && (
           <label
@@ -517,6 +580,17 @@ function KanbanCard({
           </button>
         )}
       </div>
+      {threadHref && (
+        <a
+          href={threadHref}
+          className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-md border border-emerald-400/35 bg-background/70 px-2 text-[11px] font-semibold text-foreground/80 transition-colors hover:bg-background"
+          aria-label={`「${shortTitle}」のCodexチャットを開く`}
+          title="Codexチャットを開く"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Codexチャット
+        </a>
+      )}
     </article>
   )
 }
@@ -1075,6 +1149,25 @@ export function TaskProgressKanban({
     setMobileOpen(false)
   }, [onPlaceImportItem])
 
+  const handleOpenImportItem = useCallback((item: TaskProgressImportItem) => {
+    const aiTaskId = item.aiTaskId?.trim()
+    if (!aiTaskId) return
+    onOpenTask({
+      id: aiTaskId,
+      title: item.title,
+      status: taskProgressStatusFromVisualStatus(item.status),
+      executor: "codex_app",
+      codex_thread_id: item.threadId?.trim() || null,
+      current_step: item.statusLabel,
+      progress_percent: null,
+      summary: item.snippet,
+      updated_at: item.updatedAtIso || new Date().toISOString(),
+      source_type: "mindmap",
+      source_id: item.id,
+    })
+    setMobileOpen(false)
+  }, [onOpenTask])
+
   const handleMobileLanePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse") return
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -1267,47 +1360,78 @@ export function TaskProgressKanban({
                         ? "リポを選択すると取り込みチャットを表示します"
                         : "このリポで取り込めるCodexチャットはありません"}
                     </div>
-                  ) : mobileImportItems.map(item => (
-                    <div key={item.id} className="rounded-lg border bg-card p-3 shadow-sm">
-                      <div className="flex min-w-0 items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="line-clamp-2 text-sm font-semibold leading-snug">{item.title}</div>
-                          {item.snippet && (
-                            <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                              {item.snippet}
-                            </div>
+                  ) : mobileImportItems.map(item => {
+                    const visualStatus = item.status ?? "awaiting_approval"
+                    const uiStatus = getCodexMonitorUiStatus(visualStatus)
+                    const threadHref = codexThreadUrl(item.threadId)
+                    return (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "relative overflow-visible rounded-lg border p-3 pl-4 transition-all duration-150",
+                          codexMonitorCardClass(visualStatus),
+                        )}
+                      >
+                        {uiStatus === "running" && <CodexMonitorRunningOutline />}
+                        <span className={cn("absolute bottom-3 left-0 top-3 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
+                        <div className="flex min-w-0 items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="line-clamp-2 text-sm font-semibold leading-snug">{item.title}</div>
+                            {item.snippet && (
+                              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                                {item.snippet}
+                              </div>
+                            )}
+                          </div>
+                          {(item.statusLabel || visualStatus) && (
+                            <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold", codexMonitorToneClass(visualStatus))}>
+                              {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                              {item.statusLabel ?? codexMonitorUiLabel(visualStatus)}
+                            </span>
                           )}
                         </div>
-                        {item.statusLabel && (
-                          <span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {item.statusLabel}
-                          </span>
-                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                          {item.repoPath && (
+                            <span className="rounded-full bg-muted px-1.5 py-0.5" title={item.repoPath}>
+                              {repoNameFromPath(item.repoPath)}
+                            </span>
+                          )}
+                          <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-2">
+                          {item.aiTaskId && (
+                            <button
+                              type="button"
+                              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md border border-white/10 bg-background/75 px-3 text-sm font-semibold text-foreground transition-colors hover:bg-background"
+                              onClick={() => handleOpenImportItem(item)}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                              チャットを見る
+                            </button>
+                          )}
+                          {threadHref && (
+                            <a
+                              href={threadHref}
+                              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-200"
+                              aria-label={`「${item.title}」のCodexチャットを開く`}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                              Codexチャット
+                            </a>
+                          )}
+                          {onPlaceImportItem && (
+                            <button
+                              type="button"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+                              onClick={() => handlePlaceImportItem(item.id)}
+                            >
+                              配置先を選ぶ
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                        {item.repoPath && (
-                          <span className="rounded-full bg-muted px-1.5 py-0.5" title={item.repoPath}>
-                            {repoNameFromPath(item.repoPath)}
-                          </span>
-                        )}
-                        {item.threadId && (
-                          <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono" title={item.threadId}>
-                            {item.threadId.slice(0, 8)}
-                          </span>
-                        )}
-                        <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
-                      </div>
-                      {onPlaceImportItem && (
-                        <button
-                          type="button"
-                          className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
-                          onClick={() => handlePlaceImportItem(item.id)}
-                        >
-                          配置先を選ぶ
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 <div

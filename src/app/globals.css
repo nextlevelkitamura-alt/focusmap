@@ -218,8 +218,50 @@
   }
 }
 
+.codex-monitor-running-orbit {
+  position: absolute;
+  inset: -4px;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: visible;
+}
+
+.codex-monitor-running-orbit__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.codex-monitor-running-orbit__rail,
+.codex-monitor-running-orbit__runner {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.codex-monitor-running-orbit__rail {
+  stroke: rgba(16, 185, 129, 0.18);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 5px rgba(16, 185, 129, 0.12));
+}
+
+.codex-monitor-running-orbit__runner {
+  stroke: rgba(52, 211, 153, 0.76);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 8 92;
+  stroke-dashoffset: 0;
+  filter:
+    drop-shadow(0 0 2px rgba(52, 211, 153, 0.34))
+    drop-shadow(0 0 5px rgba(16, 185, 129, 0.18));
+  animation: codexNodeOrbitStroke 1.45s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .codex-node-running-orbit__runner {
+  .codex-node-running-orbit__runner,
+  .codex-monitor-running-orbit__runner {
     animation: none;
   }
 }

@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ChevronUp,
   Clock,
+  ExternalLink,
   Layers,
   Loader2,
   Package,
@@ -22,6 +23,7 @@ import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { codexThreadUrl } from "@/lib/task-progress-ui"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiTasks } from "@/hooks/useAiTasks"
 import { useScheduledTasks } from "@/hooks/useScheduledTasks"
@@ -360,6 +362,7 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
   const packageName = packageTitle(task)
   const hasDetails = !!(progress || liveLog || message || task.error || task.remote_session_url || task.codex_thread_id || steps.length || metadata.length)
   const cwdLabel = task.cwd ? task.cwd.split("/").filter(Boolean).at(-1) : null
+  const threadHref = codexThreadUrl(task.codex_thread_id)
 
   return (
     <div className="relative pl-5">
@@ -507,14 +510,20 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
             )}
             {message && <DetailBlock label="result" value={message} />}
             {liveLog && <DetailBlock label="live log" value={liveLog} />}
-            {(task.remote_session_url || task.codex_thread_id) && (
-              <div className="space-y-1 text-[11px] text-muted-foreground">
+            {(task.remote_session_url || threadHref) && (
+              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                 {task.remote_session_url && (
-                  <a className="block truncate text-primary hover:underline" href={task.remote_session_url} target="_blank" rel="noreferrer">
-                    {task.remote_session_url}
+                  <a className="inline-flex min-h-8 items-center gap-1 rounded-md border border-border/60 bg-background px-2 font-semibold text-primary hover:bg-muted/60" href={task.remote_session_url} target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-3 w-3" />
+                    リモートセッション
                   </a>
                 )}
-                {task.codex_thread_id && <p className="truncate">thread: {task.codex_thread_id}</p>}
+                {threadHref && (
+                  <a className="inline-flex min-h-8 items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 font-semibold text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-200" href={threadHref}>
+                    <ExternalLink className="h-3 w-3" />
+                    Codexチャット
+                  </a>
+                )}
               </div>
             )}
             {task.executor === "codex" && task.codex_thread_id && task.status !== "running" && task.status !== "pending" && (

@@ -328,12 +328,15 @@ describe('TaskProgressKanban', () => {
     const onPlaceImportItem = vi.fn()
     const importItem = {
       id: 'chat-node-1',
+      aiTaskId: 'ai-task-1',
       title: 'チャットがアーカイブされたのか',
       snippet: 'この確認に必要な返信期限と背景を取り込む',
       repoPath: '/Users/me/focusmap',
       threadId: 'thread-abcdef123456',
+      status: 'awaiting_approval',
       statusLabel: '確認待ち',
       updatedLabel: '最終 6/12 08:10',
+      updatedAtIso: '2026-06-12T08:10:00.000Z',
     }
 
     const { rerender } = render(
@@ -371,10 +374,61 @@ describe('TaskProgressKanban', () => {
     expect(await screen.findByText('チャットがアーカイブされたのか')).toBeInTheDocument()
     expect(screen.getByText('この確認に必要な返信期限と背景を取り込む')).toBeInTheDocument()
     expect(screen.getByText('focusmap')).toBeInTheDocument()
+    expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Codexチャットを開く/ })).toHaveAttribute(
+      'href',
+      'codex://threads/thread-abcdef123456',
+    )
 
     fireEvent.click(screen.getByRole('button', { name: '配置先を選ぶ' }))
 
     expect(onPlaceImportItem).toHaveBeenCalledWith('chat-node-1')
+  })
+
+  test('スマホ取り込みカードから全画面のCodex詳細へ遷移できる', async () => {
+    const onOpenTask = vi.fn()
+    const importItem = {
+      id: 'chat-node-1',
+      aiTaskId: 'ai-task-1',
+      title: '実行中チャットを見る',
+      snippet: 'スマホでもチャット詳細を全画面で開く',
+      repoPath: '/Users/me/focusmap',
+      threadId: 'thread-running123',
+      status: 'running',
+      statusLabel: '実行中',
+      updatedLabel: '最終 6/12 09:20',
+      updatedAtIso: '2026-06-12T09:20:00.000Z',
+    }
+
+    const renderKanban = (mobileOpenSignal: number) => (
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={mobileOpenSignal}
+        mobileImportItems={[importItem]}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={onOpenTask}
+      />
+    )
+    const { rerender } = render(renderKanban(0))
+    rerender(renderKanban(1))
+
+    expect(await screen.findByText('実行中チャットを見る')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'チャットを見る' }))
+
+    expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'ai-task-1',
+      title: '実行中チャットを見る',
+      status: 'running',
+      executor: 'codex_app',
+      codex_thread_id: 'thread-running123',
+      source_type: 'mindmap',
+      source_id: 'chat-node-1',
+    }))
   })
 
   test('スマホCodexシートで取り込みリポを選択・解除・監視できる', async () => {
@@ -502,6 +556,26 @@ describe('TaskProgressKanban', () => {
     fireEvent.click(screen.getByRole('button', { name: /看板操作テスト.+削除/ }))
     expect(callbacks.onDeleteSourceTask).toHaveBeenCalledWith('node-1')
     expect(callbacks.onOpenTask).toHaveBeenCalledTimes(1)
+  })
+
+  test('デスクトップ看板カードはthread IDを隠してCodexチャットボタンを出す', async () => {
+    renderDesktopKanban({
+      tasks: [
+        progressTask({
+          title: 'リンク付きCodexタスク',
+          codex_thread_id: 'thread-abcdef123456',
+        }),
+      ],
+    })
+    await screen.findByText('Mac offline')
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+
+    expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Codexチャットを開く/ })).toHaveAttribute(
+      'href',
+      'codex://threads/thread-abcdef123456',
+    )
   })
 
   test('デスクトップ看板カードの完了チェックと削除はAPI完了前に即時反映する', async () => {

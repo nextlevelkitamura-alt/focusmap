@@ -5,11 +5,15 @@ export type CodexMonitorUiStatus = "unsent" | "running" | "review" | "connection
 export function getCodexMonitorUiStatus(status: TaskProgressStatus | string | null | undefined): CodexMonitorUiStatus {
   switch (status) {
     case "pending":
+    case "prompt_waiting":
       return "unsent"
     case "running":
       return "running"
     case "failed":
+    case "connection_failed":
       return "connection_failed"
+    case "done":
+      return "done"
     case "awaiting_approval":
     case "needs_input":
     case "completed":
@@ -48,6 +52,43 @@ export function codexMonitorToneClass(status: TaskProgressStatus | string | null
     default:
       return "border-amber-400/70 bg-amber-500/10 text-amber-800 dark:text-amber-200"
   }
+}
+
+export function codexMonitorCardClass(status: TaskProgressStatus | string | null | undefined) {
+  switch (getCodexMonitorUiStatus(status)) {
+    case "running":
+      return "border-emerald-400/55 bg-emerald-500/[0.07] shadow-[0_0_14px_rgba(16,185,129,0.15)]"
+    case "connection_failed":
+      return "border-red-400/70 bg-red-500/[0.08] shadow-[0_0_16px_rgba(248,113,113,0.16)]"
+    case "unsent":
+      return "border-sky-400/55 bg-sky-500/[0.07] shadow-[0_0_14px_rgba(14,165,233,0.12)]"
+    case "done":
+      return "border-emerald-400/40 bg-emerald-500/[0.05] shadow-[0_0_10px_rgba(16,185,129,0.1)]"
+    case "review":
+    default:
+      return "border-amber-400/70 bg-amber-500/[0.08] shadow-[0_0_16px_rgba(245,158,11,0.16)]"
+  }
+}
+
+export function codexMonitorAccentClass(status: TaskProgressStatus | string | null | undefined) {
+  switch (getCodexMonitorUiStatus(status)) {
+    case "running":
+      return "bg-emerald-400"
+    case "connection_failed":
+      return "bg-red-400"
+    case "unsent":
+      return "bg-sky-400"
+    case "done":
+      return "bg-emerald-400/60"
+    case "review":
+    default:
+      return "bg-amber-400"
+  }
+}
+
+export function codexThreadUrl(threadId: string | null | undefined) {
+  const id = threadId?.trim()
+  return id ? `codex://threads/${id}` : null
 }
 
 export function formatTaskProgressDateTime(value: string | null | undefined) {

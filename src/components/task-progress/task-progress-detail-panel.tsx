@@ -22,6 +22,7 @@ import {
 import {
   codexMonitorToneClass,
   codexMonitorUiLabel,
+  codexThreadUrl,
   formatTaskProgressDateTime,
   getCodexMonitorUiStatus,
 } from "@/lib/task-progress-ui"
@@ -350,10 +351,10 @@ export function TaskProgressDetailPanel({
     !!message.body.trim()
   )?.body.trim() ?? ""
   const canCopyPrompt = !!promptToCopy && getCodexMonitorUiStatus(status) !== "running"
+  const directCodexThreadUrl = codexThreadUrl(taskForDisplay?.codex_thread_id)
   const isMobileOpenTarget = isMobile || isLikelyMobileDevice()
-  const codexThreadUrl = taskForDisplay?.codex_thread_id ? `codex://threads/${taskForDisplay.codex_thread_id}` : null
   const codexOpenTarget = buildCodexOpenTarget(
-    { prompt: promptToCopy, repoPath: null, threadUrl: codexThreadUrl },
+    { prompt: promptToCopy, repoPath: null, threadUrl: directCodexThreadUrl },
     { preferMobile: isMobileOpenTarget, mobilePlatform: getCurrentMobilePlatform() },
   )
 
@@ -417,10 +418,10 @@ export function TaskProgressDetailPanel({
         side={isMobile ? "bottom" : "right"}
         className={cn(
           "flex flex-col gap-0 p-0",
-          isMobile ? "max-h-[82dvh] rounded-t-2xl" : "h-dvh w-[420px] sm:max-w-[420px]",
+          isMobile ? "h-dvh max-h-dvh rounded-none" : "h-dvh w-[420px] sm:max-w-[420px]",
         )}
       >
-        <SheetHeader className="border-b px-4 pb-3 pt-4">
+        <SheetHeader className={cn("border-b px-4 pb-3 pt-4", isMobile && "pt-[calc(env(safe-area-inset-top)+1rem)]")}>
           <div className="flex items-start justify-between gap-8">
             <div className="min-w-0">
               <SheetTitle className="break-words pr-2 text-sm leading-snug">
@@ -436,8 +437,19 @@ export function TaskProgressDetailPanel({
                 {isLoading && <span className="text-muted-foreground">読み込み中...</span>}
               </SheetDescription>
             </div>
-            {canCopyPrompt && (
+            {(directCodexThreadUrl || canCopyPrompt) && (
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                {directCodexThreadUrl && (
+                  <a
+                    href={directCodexThreadUrl}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-200"
+                    aria-label="Codexチャットを開く"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Codexチャット
+                  </a>
+                )}
+                {canCopyPrompt && (
                 <a
                   href={codexOpenTarget.url}
                   onClick={(event) => void openCodex(event)}
@@ -453,6 +465,8 @@ export function TaskProgressDetailPanel({
                   )}
                   Codexを開く
                 </a>
+                )}
+                {canCopyPrompt && (
                 <button
                   type="button"
                   onClick={() => void copyPrompt()}
@@ -468,6 +482,7 @@ export function TaskProgressDetailPanel({
                   )}
                   {promptCopied ? "コピー済み" : "再コピー"}
                 </button>
+                )}
               </div>
             )}
           </div>

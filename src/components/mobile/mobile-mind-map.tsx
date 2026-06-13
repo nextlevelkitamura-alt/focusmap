@@ -112,6 +112,7 @@ export function MobileMindMap({
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
+    const [taskProgressPanelTaskOverride, setTaskProgressPanelTaskOverride] = useState<TaskProgressSnapshotTask | null>(null)
     const [generatingHeadingNodeIds, setGeneratingHeadingNodeIds] = useState<Set<string>>(new Set())
     const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null)
     const [codexRepoPathOverride, setCodexRepoPathOverride] = useState<string | null | undefined>(undefined)
@@ -662,12 +663,15 @@ export function MobileMindMap({
                 if (codexRun?.state === "prompt_waiting") return []
                 return [{
                     id: task.id,
+                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? null,
                     title: task.title,
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
+                    status: progressTask?.status ?? codexRun?.state ?? null,
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
                     updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
+                    updatedAtIso: task.updated_at ?? task.created_at,
                 }]
             })
             .sort((a, b) => {
@@ -729,8 +733,15 @@ export function MobileMindMap({
 
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null
-        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ?? null
-    }, [getTaskProgressById, taskProgressDisplayTasks, taskProgressPanelTaskId])
+        return getTaskProgressById(taskProgressPanelTaskId) ??
+            taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ??
+            (taskProgressPanelTaskOverride?.id === taskProgressPanelTaskId ? taskProgressPanelTaskOverride : null)
+    }, [getTaskProgressById, taskProgressDisplayTasks, taskProgressPanelTaskId, taskProgressPanelTaskOverride])
+
+    const handleOpenTaskProgress = useCallback((task: TaskProgressSnapshotTask) => {
+        setTaskProgressPanelTaskOverride(task)
+        setTaskProgressPanelTaskId(task.id)
+    }, [])
 
     const codexPanelTask = useMemo(() => {
         if (!codexPanelTaskId) return null
@@ -1139,7 +1150,7 @@ export function MobileMindMap({
                 codexThreadImportRepoPath={selectedCodexImportRepoPath || null}
                 onToggleCodexThreadImport={toggleSelectedRepoImport}
                 taskProgressByNodeId={taskProgressByNodeId}
-                onOpenTaskProgress={(task) => setTaskProgressPanelTaskId(task.id)}
+                onOpenTaskProgress={handleOpenTaskProgress}
                 onMoveTask={handleMoveTask}
             />
             <TaskProgressKanban
@@ -1157,7 +1168,7 @@ export function MobileMindMap({
                 error={taskProgressSnapshotError}
                 pollIntervalMs={taskProgressPollIntervalMs}
                 onRefresh={handleRefreshTaskProgressSnapshot}
-                onOpenTask={(task) => setTaskProgressPanelTaskId(task.id)}
+                onOpenTask={handleOpenTaskProgress}
                 onRunSourceTask={(taskId) => setCodexPanelTaskId(taskId)}
                 onToggleSourceTaskComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
                 onDeleteSourceTask={(taskId) => { void handleDeleteTaskFromKanban(taskId) }}
@@ -1200,7 +1211,10 @@ export function MobileMindMap({
                 task={taskProgressPanelTask}
                 isMobile
                 onOpenChange={(open) => {
-                    if (!open) setTaskProgressPanelTaskId(null)
+                    if (!open) {
+                        setTaskProgressPanelTaskId(null)
+                        setTaskProgressPanelTaskOverride(null)
+                    }
                 }}
             />
             {codexPanelNode && (

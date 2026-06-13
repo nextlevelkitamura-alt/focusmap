@@ -41,6 +41,8 @@ const chatItems: CodexChatImportItem[] = [
     title: "Codexスレッド連携UI",
     snippet: "右側サイドバーにチャット一覧を表示する",
     repoPath: "/Users/me/focusmap",
+    threadId: "thread-abcdef123456",
+    status: "awaiting_approval",
     projectTitle: "仕事",
     placementLabel: "未配置",
     statusLabel: "確認待ち",
@@ -107,6 +109,11 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
     expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
+    expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Codexチャットを開く Codexスレッド連携UI/ })).toHaveAttribute(
+      "href",
+      "codex://threads/thread-abcdef123456",
+    )
     expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
   })
@@ -211,6 +218,11 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByLabelText("チャットを検索")).not.toBeInTheDocument()
     expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
     expect(screen.queryByText("Codexの返答")).not.toBeInTheDocument()
+    expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /Codexチャットを開く Codexスレッド連携UI/ })).toHaveAttribute(
+      "href",
+      "codex://threads/thread-abcdef123456",
+    )
     expect(screen.getByText("右側サイドバーにチャット一覧を表示する").className).toContain("bg-white")
 
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))

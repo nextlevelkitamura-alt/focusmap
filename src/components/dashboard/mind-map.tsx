@@ -614,6 +614,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
+                    status: progressTask?.status ?? codexRun?.state ?? null,
                     projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
                     placementLabel: '未配置',
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,

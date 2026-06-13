@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, FolderGit2, FolderOpen, GitBranch, Loader2, RefreshCw, Search, Trash2 } from "lucide-react"
+import { ArrowLeft, Check, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, RefreshCw, Search, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -11,6 +11,14 @@ import {
   CODEX_CHAT_IMPORT_DRAG_TYPE,
   encodeCodexChatImportDragPayload,
 } from "@/lib/codex-chat-import-dnd"
+import {
+  codexMonitorAccentClass,
+  codexMonitorCardClass,
+  codexMonitorToneClass,
+  codexMonitorUiLabel,
+  codexThreadUrl,
+  getCodexMonitorUiStatus,
+} from "@/lib/task-progress-ui"
 import { cn } from "@/lib/utils"
 import type { AiTaskActivityKind, AiTaskActivityMessage, AiTaskActivityRole } from "@/types/ai-task"
 
@@ -21,6 +29,7 @@ export type CodexChatImportItem = {
   snippet: string | null
   repoPath: string | null
   threadId?: string | null
+  status?: string | null
   projectTitle: string | null
   placementLabel: string
   statusLabel: string | null
@@ -209,6 +218,23 @@ function createChatDragImage(item: CodexChatImportItem) {
     window.setTimeout(removePreview, 0)
   }
   return preview
+}
+
+function CodexMonitorRunningOutline() {
+  return (
+    <span className="codex-monitor-running-orbit" aria-label="Codex 実行中">
+      <svg
+        className="codex-monitor-running-orbit__svg"
+        viewBox="0 0 100 100"
+        aria-hidden="true"
+        focusable="false"
+        preserveAspectRatio="none"
+      >
+        <rect className="codex-monitor-running-orbit__rail" x="1.5" y="1.5" width="97" height="97" rx="7" pathLength={100} />
+        <rect className="codex-monitor-running-orbit__runner" x="1.5" y="1.5" width="97" height="97" rx="7" pathLength={100} />
+      </svg>
+    </span>
+  )
 }
 
 function isUserActivityMessage(message: AiTaskActivityMessage) {
@@ -526,6 +552,7 @@ export function CodexChatImportSidebar({
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
+  const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
   const finishChatDrag = React.useCallback(() => {
     setDraggingChatId(null)
     onChatDragStateChange?.(null)
@@ -693,6 +720,16 @@ export function CodexChatImportSidebar({
               <div className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100" title={selectedChatItem.title}>
                 {selectedChatItem.title}
               </div>
+              {selectedThreadHref && (
+                <a
+                  href={selectedThreadHref}
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20"
+                  aria-label={`Codexチャットを開く ${selectedChatItem.title}`}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Codexチャット
+                </a>
+              )}
             </div>
           </div>
 
@@ -760,6 +797,9 @@ export function CodexChatImportSidebar({
               <div className="space-y-1">
                 {filteredChatItems.map(item => {
                   const isDragging = draggingChatId === item.id
+                  const visualStatus = item.status ?? "awaiting_approval"
+                  const uiStatus = getCodexMonitorUiStatus(visualStatus)
+                  const threadHref = codexThreadUrl(item.threadId)
                   return (
                     <div
                       key={item.id}
@@ -767,8 +807,9 @@ export function CodexChatImportSidebar({
                       role="button"
                       tabIndex={0}
                       className={cn(
-                        "group flex w-full cursor-grab flex-col gap-1 rounded-lg px-3 py-2 text-left text-zinc-300 transition-all duration-150 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:cursor-grabbing",
-                        isDragging && "scale-[0.985] bg-sky-400/10 text-sky-100 opacity-60 shadow-inner ring-1 ring-sky-400/60",
+                        "group relative flex w-full cursor-grab flex-col gap-1 overflow-visible rounded-lg border px-3 py-2 pl-4 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:cursor-grabbing",
+                        codexMonitorCardClass(visualStatus),
+                        isDragging && "scale-[0.985] opacity-70 shadow-inner ring-1 ring-sky-400/60",
                       )}
                       data-testid={`codex-chat-import-row-${item.id}`}
                       aria-grabbed={isDragging}
@@ -795,6 +836,8 @@ export function CodexChatImportSidebar({
                       onDragEnd={finishChatDrag}
                       title={item.snippet ?? item.title}
                     >
+                    {uiStatus === "running" && <CodexMonitorRunningOutline />}
+                    <span className={cn("absolute bottom-2 left-0 top-2 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex min-w-0 flex-1 items-start gap-1.5">
                         <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", isDragging && "text-sky-300")} />
@@ -833,18 +876,14 @@ export function CodexChatImportSidebar({
                         {item.placementLabel}
                       </span>
                       {item.statusLabel && (
-                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
-                          {item.statusLabel}
+                        <span className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold", codexMonitorToneClass(visualStatus))}>
+                          {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                          {item.statusLabel ?? codexMonitorUiLabel(visualStatus)}
                         </span>
                       )}
                       {item.repoPath && (
                         <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500" title={item.repoPath}>
                           {repoNameFromPath(item.repoPath)}
-                        </span>
-                      )}
-                      {item.threadId && (
-                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-500" title={item.threadId}>
-                          {item.threadId.slice(0, 8)}
                         </span>
                       )}
                       {item.projectTitle && (
@@ -853,6 +892,18 @@ export function CodexChatImportSidebar({
                         </span>
                       )}
                     </div>
+                    {threadHref && (
+                      <a
+                        href={threadHref}
+                        className="mt-1 inline-flex min-h-8 w-fit items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20"
+                        onClick={event => event.stopPropagation()}
+                        draggable={false}
+                        aria-label={`Codexチャットを開く ${item.title}`}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Codexチャット
+                      </a>
+                    )}
                   </div>
                   )
                 })}
