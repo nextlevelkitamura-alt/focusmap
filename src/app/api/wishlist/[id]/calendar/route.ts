@@ -103,7 +103,7 @@ export async function POST(
 
     const { data: item, error: updateError } = await supabase
       .from('ideal_goals')
-      .update({ google_event_id: gcalRes.data.id, scheduled_at, duration_minutes, calendar_id: calendarId, memo_status: 'scheduled', is_today: false })
+      .update({ google_event_id: gcalRes.data.id, scheduled_at, duration_minutes, memo_status: 'scheduled', is_today: false })
       .eq('id', id)
       .eq('user_id', user.id)
       .select('*, ideal_items(*)')

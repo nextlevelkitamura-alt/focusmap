@@ -408,7 +408,7 @@ describe('WishlistView calendar D&D', () => {
     expect(screen.getByText('Unsorted memo')).toBeInTheDocument()
   })
 
-  test('スマホの予定ボタンはメモタブ内カレンダーを開き、ドラッグ終了で保存して一覧に戻る', async () => {
+  test('スマホの予定ボタンはメモタブ内カレンダーを開き、ドラッグ終了後も戻るボタンまで維持する', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: true,
       media: query,
@@ -462,7 +462,7 @@ describe('WishlistView calendar D&D', () => {
     fireEvent.pointerUp(draft, { pointerId: 1, button: 0, clientY: 770 })
 
     await waitFor(() => {
-      expect(screen.queryByTestId('memo-inline-scheduler')).not.toBeInTheDocument()
+      expect(screen.getByTestId('memo-inline-scheduler')).toBeInTheDocument()
       const calendarCall = fetchMock.mock.calls.find(([input]) => requestUrl(input) === '/api/wishlist/memo-1/calendar')
       expect(calendarCall).toBeDefined()
       expect(JSON.parse(calendarCall?.[1]?.body as string)).toMatchObject({
@@ -470,6 +470,10 @@ describe('WishlistView calendar D&D', () => {
         calendar_id: 'work-cal',
         title: 'Schedule from memo',
       })
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'メモ一覧に戻る' }))
+    await waitFor(() => {
+      expect(screen.queryByTestId('memo-inline-scheduler')).not.toBeInTheDocument()
     })
     expect(screen.getByText('Schedule from memo')).toBeInTheDocument()
   })

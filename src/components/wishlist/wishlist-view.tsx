@@ -3114,7 +3114,6 @@ export function WishlistView({
   }, [waitForMemoPersistence])
 
   const handleMemoSchedulerSchedule = useCallback((item: MemoItem, startTime: Date, durationMinutes: number) => {
-    setMemoSchedulerItemId(null)
     void handleMemoCalendarDrop(item.id, startTime, durationMinutes).catch(err => {
       setIntakeError(err instanceof Error ? err.message : "カレンダー登録に失敗しました")
     })
