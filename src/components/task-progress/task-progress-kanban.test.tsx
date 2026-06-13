@@ -418,7 +418,8 @@ describe('TaskProgressKanban', () => {
 
     expect(await screen.findByText('実行中チャットを見る')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'チャットを見る' }))
+    expect(screen.queryByRole('button', { name: 'チャットを見る' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '「実行中チャットを見る」のチャットを見る' }))
 
     expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({
       id: 'ai-task-1',
@@ -478,7 +479,7 @@ describe('TaskProgressKanban', () => {
 
     const monitorSwitch = await screen.findByRole('switch', { name: 'リポ監視' })
     expect(monitorSwitch).toBeChecked()
-    expect(screen.getByText('監視: 仕事')).toBeInTheDocument()
+    expect(screen.getByText('仕事')).toBeInTheDocument()
 
     fireEvent.click(monitorSwitch)
     expect(onToggleImport).toHaveBeenCalledTimes(1)
@@ -491,7 +492,7 @@ describe('TaskProgressKanban', () => {
     fireEvent.click(screen.getByRole('button', { name: 'リポ候補を更新' }))
     expect(onRefreshRepos).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByRole('button', { name: '選択解除' }))
+    fireEvent.click(screen.getByRole('button', { name: 'リポ選択を解除' }))
     expect(onSelectRepoPath).toHaveBeenCalledWith(null)
   })
 

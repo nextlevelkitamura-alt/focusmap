@@ -3256,7 +3256,7 @@ export function CustomMindMapView({
                     className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
                 />
             )}
-            {(onToggleCodexThreadImport || shouldShowCodexSummary) && (
+            {!isMobile && (onToggleCodexThreadImport || shouldShowCodexSummary) && (
                 <div className="absolute left-12 top-3 z-30 flex max-w-[calc(100%-6rem)] items-center gap-2">
                     {onToggleCodexThreadImport && (
                         <button

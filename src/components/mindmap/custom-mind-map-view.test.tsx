@@ -301,6 +301,18 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
 
+  test("hides the map-level Codex import toggle on mobile", () => {
+    renderMap({
+      isMobile: true,
+      codexThreadImportAvailable: true,
+      codexThreadImportEnabled: true,
+      codexThreadImportRepoPath: "/Users/me/project",
+      onToggleCodexThreadImport: vi.fn(),
+    })
+
+    expect(screen.queryByRole("button", { name: "Codex thread取り込みをOFFにする" })).not.toBeInTheDocument()
+  })
+
   test("drops an imported Codex chat onto a map node as a child", () => {
     const onDropImportedChatNode = vi.fn()
     renderMap({ onDropImportedChatNode })

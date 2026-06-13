@@ -15,6 +15,7 @@ import {
   Trash2,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
@@ -875,9 +876,9 @@ function MobileImportRepoControls({
   }, [control, isBusy, runAction])
 
   return (
-    <section className="rounded-lg border bg-card px-3 py-3 shadow-sm" aria-label="Codex取り込みリポ">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
+    <section className="rounded-lg border bg-card px-2.5 py-2 shadow-sm" aria-label="Codex取り込みリポ">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <FolderGit2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />
             <span className="text-sm font-semibold">リポ監視</span>
@@ -889,17 +890,17 @@ function MobileImportRepoControls({
             )}>
               {control.importEnabled && hasRepoPath ? "ON" : "OFF"}
             </span>
-          </div>
-          <div className="mt-1 min-w-0 truncate text-xs text-muted-foreground" title={hasRepoPath ? selectedRepoPath : undefined}>
-            {selectedRepoLabel}
-          </div>
-          {hasRepoPath && control.importOwnerLabel && (
-            <div className="mt-1 truncate text-[11px] text-muted-foreground" title={control.importOwnerLabel}>
-              監視: {control.importOwnerLabel}
-            </div>
-          )}
-          <div className="mt-1">
             <RunnerCompactStatus state={runnerState} />
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span className="min-w-0 truncate" title={hasRepoPath ? selectedRepoPath : undefined}>
+              {selectedRepoLabel}
+            </span>
+            {hasRepoPath && control.importOwnerLabel && (
+              <span className="max-w-[38%] shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5" title={control.importOwnerLabel}>
+                {control.importOwnerLabel}
+              </span>
+            )}
           </div>
         </div>
         <Switch
@@ -908,18 +909,18 @@ function MobileImportRepoControls({
           disabled={!hasRepoPath || isBusy || runnerUnavailable || !control.onToggleImport}
           aria-label="リポ監視"
           title={runnerUnavailable ? runnerUnavailableMessage : undefined}
-          className="h-7 w-12 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-6 [&>span]:w-6 [&>span[data-state=checked]]:translate-x-5"
+          className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-300 dark:data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-[minmax(0,1fr)_44px_auto] gap-2">
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_40px_40px] gap-1.5">
         <label htmlFor="mobile-codex-import-repo" className="sr-only">取り込みリポを選択</label>
         <select
           id="mobile-codex-import-repo"
           value={selectedRepoPath}
           onChange={(event) => handleSelectRepoPath(event.target.value || null)}
           disabled={isBusy || !control.onSelectRepoPath}
-          className="min-h-11 min-w-0 rounded-md border bg-background px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="min-h-10 min-w-0 rounded-md border bg-background px-2.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           aria-label="取り込みリポを選択"
         >
           <option value="">
@@ -935,7 +936,7 @@ function MobileImportRepoControls({
           type="button"
           variant="outline"
           size="icon"
-          className="h-11 w-11"
+          className="h-10 w-10"
           onClick={handleRefreshRepos}
           disabled={isBusy || !control.onRefreshRepos}
           aria-label="リポ候補を更新"
@@ -945,13 +946,15 @@ function MobileImportRepoControls({
         </Button>
         <Button
           type="button"
-          variant="ghost"
-          size="sm"
-          className="h-11 px-2 text-xs text-muted-foreground"
+          variant="outline"
+          size="icon"
+          className="h-10 w-10"
           onClick={() => handleSelectRepoPath(null)}
           disabled={!hasRepoPath || isBusy || !control.onSelectRepoPath}
+          aria-label="リポ選択を解除"
+          title="リポ選択を解除"
         >
-          選択解除
+          <X className="h-4 w-4" />
         </Button>
       </div>
       {visibleError && (
@@ -1250,12 +1253,13 @@ export function TaskProgressKanban({
           </button>
         )}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="bottom" className="flex max-h-[86dvh] flex-col rounded-t-2xl p-0">
-            <SheetHeader className="border-b px-4 py-3 text-left">
+          <SheetContent side="bottom" className="flex max-h-[84dvh] flex-col rounded-t-xl p-0">
+            <SheetHeader className="border-b px-3 py-2 text-left">
               <div className="flex items-center justify-between gap-3">
-                <div>
+                <div className="flex min-w-0 items-center gap-2">
                   <SheetTitle className="text-base">Codex</SheetTitle>
-                  <SheetDescription className="mt-1 text-xs">
+                  <RunnerChip state={runnerState} />
+                  <SheetDescription className="sr-only">
                     取り込んだチャットと実行状況を切り替える
                   </SheetDescription>
                 </div>
@@ -1263,7 +1267,7 @@ export function TaskProgressKanban({
                   type="button"
                   variant="outline"
                   size="icon"
-                  className="h-11 w-11 shrink-0"
+                  className="h-10 w-10 shrink-0"
                   onClick={() => void refreshAll()}
                   disabled={isRefreshing}
                   aria-label="Codex看板を更新"
@@ -1271,10 +1275,7 @@ export function TaskProgressKanban({
                   <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
                 </Button>
               </div>
-              <div className="flex flex-wrap gap-1.5 pt-2">
-                <RunnerChip state={runnerState} />
-              </div>
-              <div className="grid grid-cols-2 gap-1 rounded-md border bg-muted/30 p-1">
+              <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border bg-muted/30 p-1">
                 {[
                   { id: "import" as const, label: "取り込み", count: mobileImportItems.length },
                   { id: "board" as const, label: "看板", count: total },
@@ -1283,7 +1284,7 @@ export function TaskProgressKanban({
                     key={tab.id}
                     type="button"
                     className={cn(
-                      "min-h-11 rounded px-3 text-sm font-semibold transition-colors",
+                      "min-h-9 rounded px-3 text-xs font-semibold transition-colors",
                       activeMobileTab === tab.id
                         ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground",
@@ -1296,17 +1297,6 @@ export function TaskProgressKanban({
                     </span>
                   </button>
                 ))}
-              </div>
-              <div className="pt-2">
-                <KanbanScopeSwitcher
-                  spaces={spaces}
-                  projects={projects}
-                  selectedSpaceId={selectedSpaceId}
-                  selectedProjectId={selectedProjectId}
-                  onSelectSpace={onSelectSpace}
-                  onSelectProject={onSelectProject}
-                  compact
-                />
               </div>
               {activeMobileTab === "board" && (
                 <div className="-mx-1 overflow-x-auto pt-2">
@@ -1324,7 +1314,7 @@ export function TaskProgressKanban({
                         aria-controls={`codex-kanban-lane-panel-${lane.id}`}
                         aria-label={`${lane.label} ${counts[lane.id]}件`}
                         className={cn(
-                          "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors",
+                          "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold transition-colors",
                           active
                             ? cn("bg-background text-foreground shadow-sm", lane.className)
                             : "border-border bg-muted/40 text-muted-foreground",
@@ -1343,7 +1333,7 @@ export function TaskProgressKanban({
                 </div>
               )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+            <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
               {error && (
                 <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
                   {error}
@@ -1364,13 +1354,28 @@ export function TaskProgressKanban({
                     const visualStatus = item.status ?? "awaiting_approval"
                     const uiStatus = getCodexMonitorUiStatus(visualStatus)
                     const threadHref = codexThreadUrl(item.threadId)
+                    const canOpenDetail = Boolean(item.aiTaskId)
+                    const openImportDetail = () => {
+                      if (canOpenDetail) handleOpenImportItem(item)
+                    }
                     return (
                       <div
                         key={item.id}
+                        role={canOpenDetail ? "button" : undefined}
+                        tabIndex={canOpenDetail ? 0 : undefined}
                         className={cn(
-                          "relative overflow-visible rounded-lg border p-3 pl-4 transition-all duration-150",
+                          "relative overflow-visible rounded-lg border p-2.5 pl-4 transition-all duration-150",
+                          canOpenDetail && "cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring active:scale-[0.99]",
                           codexMonitorCardClass(visualStatus),
                         )}
+                        onClick={openImportDetail}
+                        onKeyDown={event => {
+                          if (!canOpenDetail) return
+                          if (event.key !== "Enter" && event.key !== " ") return
+                          event.preventDefault()
+                          openImportDetail()
+                        }}
+                        aria-label={canOpenDetail ? `「${item.title}」のチャットを見る` : undefined}
                       >
                         {uiStatus === "running" && <CodexMonitorRunningOutline />}
                         <span className={cn("absolute bottom-3 left-0 top-3 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
@@ -1398,32 +1403,26 @@ export function TaskProgressKanban({
                           )}
                           <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
                         </div>
-                        <div className="mt-3 grid grid-cols-1 gap-2">
-                          {item.aiTaskId && (
-                            <button
-                              type="button"
-                              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md border border-white/10 bg-background/75 px-3 text-sm font-semibold text-foreground transition-colors hover:bg-background"
-                              onClick={() => handleOpenImportItem(item)}
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                              チャットを見る
-                            </button>
-                          )}
+                        <div className="mt-2 grid grid-cols-1 gap-1.5">
                           {threadHref && (
                             <a
                               href={threadHref}
-                              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-200"
+                              className="inline-flex min-h-9 w-fit items-center justify-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-200"
                               aria-label={`「${item.title}」のCodexチャットを開く`}
+                              onClick={event => event.stopPropagation()}
                             >
-                              <ExternalLink className="h-4 w-4" />
+                              <ExternalLink className="h-3.5 w-3.5" />
                               Codexチャット
                             </a>
                           )}
                           {onPlaceImportItem && (
                             <button
                               type="button"
-                              className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
-                              onClick={() => handlePlaceImportItem(item.id)}
+                              className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+                              onClick={event => {
+                                event.stopPropagation()
+                                handlePlaceImportItem(item.id)
+                              }}
                             >
                               配置先を選ぶ
                             </button>
