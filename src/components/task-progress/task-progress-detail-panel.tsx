@@ -1,7 +1,7 @@
 "use client"
 
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react"
-import { AlertCircle, Check, Clock, Copy, ExternalLink, Loader2, Smartphone, Terminal } from "lucide-react"
+import { AlertCircle, ArrowLeft, Bot, Check, Clock, Copy, ExternalLink, Loader2, Smartphone, Terminal } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -418,26 +418,48 @@ export function TaskProgressDetailPanel({
         side={isMobile ? "bottom" : "right"}
         className={cn(
           "flex flex-col gap-0 p-0",
-          isMobile ? "h-dvh max-h-dvh rounded-none" : "h-dvh w-[420px] sm:max-w-[420px]",
+          isMobile ? "h-dvh max-h-dvh rounded-none [&>button:last-child]:hidden" : "h-dvh w-[420px] sm:max-w-[420px]",
         )}
       >
         <SheetHeader className={cn("border-b px-4 pb-3 pt-4", isMobile && "pt-[calc(env(safe-area-inset-top)+1rem)]")}>
           <div className="flex items-start justify-between gap-8">
-            <div className="min-w-0">
-              <SheetTitle className="break-words pr-2 text-sm leading-snug">
-                {taskForDisplay?.title || task?.title || "Codexタスク"}
-              </SheetTitle>
-              <SheetDescription className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium", statusClass(status))}>
-                  {statusIcon(status)}
-                  {statusLabel}
-                </span>
-                {taskForDisplay?.executor && <span>{taskForDisplay.executor}</span>}
-                {formatDateTime(taskForDisplay?.updated_at) && <span>{formatDateTime(taskForDisplay?.updated_at)}</span>}
-                {isLoading && <span className="text-muted-foreground">読み込み中...</span>}
-              </SheetDescription>
+            <div className={cn("min-w-0", isMobile && "flex flex-1 items-start gap-2")}>
+              {isMobile && (
+                <button
+                  type="button"
+                  className="mt-[-0.375rem] flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
+                  onClick={() => onOpenChange(false)}
+                  aria-label="AIチャット履歴を閉じて戻る"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
+              )}
+              <div className="min-w-0">
+                <SheetTitle className="break-words pr-2 text-sm leading-snug">
+                  {isMobile ? "AIチャット履歴" : taskForDisplay?.title || task?.title || "Codexタスク"}
+                </SheetTitle>
+                {isMobile && (
+                  <div className="mt-1 line-clamp-2 text-xs font-medium text-muted-foreground">
+                    {taskForDisplay?.title || task?.title || "Codexタスク"}
+                  </div>
+                )}
+                <SheetDescription className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                  <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium", statusClass(status))}>
+                    {statusIcon(status)}
+                    {statusLabel}
+                  </span>
+                  {taskForDisplay?.executor && <span>{taskForDisplay.executor}</span>}
+                  {formatDateTime(taskForDisplay?.updated_at) && <span>{formatDateTime(taskForDisplay?.updated_at)}</span>}
+                  {isLoading && <span className="text-muted-foreground">読み込み中...</span>}
+                </SheetDescription>
+              </div>
             </div>
-            {(directCodexThreadUrl || canCopyPrompt) && (
+            {isMobile ? (
+              <span className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                <Bot className="h-3.5 w-3.5" />
+                Codex
+              </span>
+            ) : (directCodexThreadUrl || canCopyPrompt) && (
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
                 {directCodexThreadUrl && (
                   <a

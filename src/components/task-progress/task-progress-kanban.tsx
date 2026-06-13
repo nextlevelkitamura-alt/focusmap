@@ -3,9 +3,11 @@
 import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
+  ArrowLeft,
   Bot,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   ExternalLink,
@@ -78,6 +80,7 @@ type RunnerConnectionState = {
 
 type CodexKanbanLaneId = "running" | "review" | "connection_failed" | "done"
 type MobileCodexSheetTab = "import" | "board"
+type MobileImportHistoryFilterId = "all" | "review" | "running" | "done" | "connection_failed"
 
 export type TaskProgressImportItem = {
   id: string
@@ -178,6 +181,17 @@ const LANES: Array<{
 ]
 
 const LANE_IDS = LANES.map(lane => lane.id)
+
+const MOBILE_IMPORT_HISTORY_FILTERS: Array<{
+  id: MobileImportHistoryFilterId
+  label: string
+}> = [
+  { id: "all", label: "すべて" },
+  { id: "review", label: "確認待ち" },
+  { id: "running", label: "実行中" },
+  { id: "done", label: "完了" },
+  { id: "connection_failed", label: "接続失敗" },
+]
 
 function clampDesktopBoardHeight(heightPx: number) {
   const minHeight = DESKTOP_BOARD_MIN_HEIGHT_PX
@@ -995,6 +1009,7 @@ export function TaskProgressKanban({
   const [mobileOpen, setMobileOpen] = useState(false)
   const [activeMobileTab, setActiveMobileTab] = useState<MobileCodexSheetTab>("board")
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
+  const [activeMobileImportFilter, setActiveMobileImportFilter] = useState<MobileImportHistoryFilterId>("review")
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [desktopBodyHeightPx, setDesktopBodyHeightPx] = useState(readStoredDesktopBoardHeight)
   const [sourceTaskStatusOverrides, setSourceTaskStatusOverrides] = useState<Map<string, string>>(new Map())
@@ -1082,6 +1097,27 @@ export function TaskProgressKanban({
   }, [lanes])
   const total = counts.running + counts.review + counts.connection_failed + counts.done
 
+  const mobileImportFilterCounts = useMemo(() => {
+    const next: Record<MobileImportHistoryFilterId, number> = {
+      all: mobileImportItems.length,
+      review: 0,
+      running: 0,
+      done: 0,
+      connection_failed: 0,
+    }
+    for (const item of mobileImportItems) {
+      const uiStatus = getCodexMonitorUiStatus(item.status ?? "awaiting_approval")
+      if (uiStatus === "unsent") continue
+      next[uiStatus] += 1
+    }
+    return next
+  }, [mobileImportItems])
+
+  const filteredMobileImportItems = useMemo(() => {
+    if (activeMobileImportFilter === "all") return mobileImportItems
+    return mobileImportItems.filter(item => getCodexMonitorUiStatus(item.status ?? "awaiting_approval") === activeMobileImportFilter)
+  }, [activeMobileImportFilter, mobileImportItems])
+
   const refreshAll = useCallback(async () => {
     await Promise.all([
       Promise.resolve(onRefresh()),
@@ -1128,13 +1164,25 @@ export function TaskProgressKanban({
   }, [onDeleteSourceTask])
 
   const openMobileKanban = useCallback((tab?: MobileCodexSheetTab) => {
-    setActiveMobileTab(tab ?? (mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board"))
+    const nextTab = tab ?? (mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
+    setActiveMobileTab(nextTab)
+    if (nextTab === "import") {
+      setActiveMobileImportFilter(
+        mobileImportFilterCounts.review > 0
+          ? "review"
+          : mobileImportFilterCounts.running > 0
+            ? "running"
+            : mobileImportFilterCounts.done > 0
+              ? "done"
+              : "all",
+      )
+    }
     setActiveMobileLaneId(current => {
       if (counts[current] > 0) return current
       return LANES.find(lane => counts[lane.id] > 0)?.id ?? current
     })
     setMobileOpen(true)
-  }, [counts, hasMobileImportRepoControl, mobileImportItems.length])
+  }, [counts, hasMobileImportRepoControl, mobileImportFilterCounts.done, mobileImportFilterCounts.review, mobileImportFilterCounts.running, mobileImportItems.length])
 
   useEffect(() => {
     if (!isMobile) return
@@ -1253,52 +1301,71 @@ export function TaskProgressKanban({
           </button>
         )}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="bottom" className="flex max-h-[84dvh] flex-col rounded-t-xl p-0">
+          <SheetContent side="bottom" className="flex max-h-[84dvh] flex-col gap-0 rounded-t-xl p-0 [&>button:last-child]:hidden">
             <SheetHeader className="border-b px-3 py-2 text-left">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <SheetTitle className="text-base">Codex</SheetTitle>
-                  <RunnerChip state={runnerState} />
-                  <SheetDescription className="sr-only">
-                    取り込んだチャットと実行状況を切り替える
-                  </SheetDescription>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 shrink-0"
-                  onClick={() => void refreshAll()}
-                  disabled={isRefreshing}
-                  aria-label="Codex看板を更新"
-                >
-                  <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-                </Button>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border bg-muted/30 p-1">
-                {[
-                  { id: "import" as const, label: "取り込み", count: mobileImportItems.length },
-                  { id: "board" as const, label: "看板", count: total },
-                ].map(tab => (
+                <div className="flex min-w-0 flex-1 items-center gap-2">
                   <button
-                    key={tab.id}
                     type="button"
-                    className={cn(
-                      "min-h-9 rounded px-3 text-xs font-semibold transition-colors",
-                      activeMobileTab === tab.id
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground",
-                    )}
-                    onClick={() => setActiveMobileTab(tab.id)}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
+                    onClick={() => setMobileOpen(false)}
+                    aria-label="AIチャット履歴を閉じて戻る"
                   >
-                    {tab.label}
-                    <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      {tab.count}
-                    </span>
+                    <ArrowLeft className="h-5 w-5" />
                   </button>
-                ))}
+                  <div className="min-w-0">
+                    <SheetTitle className="truncate text-base">
+                      {activeMobileTab === "import" ? "AIチャット履歴" : "Codex看板"}
+                    </SheetTitle>
+                    <SheetDescription className="sr-only">
+                      {activeMobileTab === "import"
+                        ? "Codex画面から開いたAIチャット履歴をステータス別に確認する"
+                        : "Codexの実行状況を確認する"}
+                    </SheetDescription>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                    <Bot className="h-3.5 w-3.5" />
+                    Codex
+                  </span>
+                  <RunnerChip state={runnerState} />
+                </div>
               </div>
-              {activeMobileTab === "board" && (
+              {activeMobileTab === "import" ? (
+                <div className="-mx-1 overflow-x-auto pt-2">
+                  <div className="flex w-max gap-1.5 px-1" role="tablist" aria-label="AIチャット履歴ステータス">
+                    {MOBILE_IMPORT_HISTORY_FILTERS.map(filter => {
+                      const active = filter.id === activeMobileImportFilter
+                      return (
+                        <button
+                          key={filter.id}
+                          id={`codex-import-history-filter-${filter.id}`}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          aria-controls="codex-import-history-list"
+                          aria-label={`${filter.label} ${mobileImportFilterCounts[filter.id]}件`}
+                          className={cn(
+                            "inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors",
+                            active
+                              ? filter.id === "review"
+                                ? "border-amber-400/70 bg-amber-500/10 text-amber-800 shadow-sm dark:text-amber-200"
+                                : "border-emerald-400/45 bg-emerald-500/10 text-emerald-700 shadow-sm dark:text-emerald-200"
+                              : "border-border bg-muted/40 text-muted-foreground",
+                          )}
+                          onClick={() => setActiveMobileImportFilter(filter.id)}
+                        >
+                          <span>{filter.label}</span>
+                          <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {mobileImportFilterCounts[filter.id]}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
                 <div className="-mx-1 overflow-x-auto pt-2">
                 <div className="flex w-max gap-1.5 px-1" role="tablist" aria-label="Codexステータス">
                   {LANES.map(lane => {
@@ -1340,7 +1407,7 @@ export function TaskProgressKanban({
                 </div>
               )}
               {activeMobileTab === "import" ? (
-                <div className="space-y-2">
+                <div id="codex-import-history-list" className="space-y-2" role="tabpanel" aria-labelledby={`codex-import-history-filter-${activeMobileImportFilter}`}>
                   {mobileImportRepoControl && (
                     <MobileImportRepoControls control={mobileImportRepoControl} runnerState={runnerState} />
                   )}
@@ -1350,10 +1417,13 @@ export function TaskProgressKanban({
                         ? "リポを選択すると取り込みチャットを表示します"
                         : "このリポで取り込めるCodexチャットはありません"}
                     </div>
-                  ) : mobileImportItems.map(item => {
+                  ) : filteredMobileImportItems.length === 0 ? (
+                    <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
+                      この条件のAIチャット履歴はありません
+                    </div>
+                  ) : filteredMobileImportItems.map(item => {
                     const visualStatus = item.status ?? "awaiting_approval"
                     const uiStatus = getCodexMonitorUiStatus(visualStatus)
-                    const threadHref = codexThreadUrl(item.threadId)
                     const canOpenDetail = Boolean(item.aiTaskId)
                     const openImportDetail = () => {
                       if (canOpenDetail) handleOpenImportItem(item)
@@ -1394,6 +1464,9 @@ export function TaskProgressKanban({
                               {item.statusLabel ?? codexMonitorUiLabel(visualStatus)}
                             </span>
                           )}
+                          {canOpenDetail && (
+                            <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          )}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                           {item.repoPath && (
@@ -1404,16 +1477,17 @@ export function TaskProgressKanban({
                           <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
                         </div>
                         <div className="mt-2 grid grid-cols-1 gap-1.5">
-                          {threadHref && (
-                            <a
-                              href={threadHref}
-                              className="inline-flex min-h-9 w-fit items-center justify-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-200"
-                              aria-label={`「${item.title}」のCodexチャットを開く`}
-                              onClick={event => event.stopPropagation()}
+                          {canOpenDetail && (
+                            <button
+                              type="button"
+                              className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-amber-400/50 bg-amber-500/10 px-3 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+                              onClick={event => {
+                                event.stopPropagation()
+                                handleOpenImportItem(item)
+                              }}
                             >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                              Codexチャット
-                            </a>
+                              履歴を見る
+                            </button>
                           )}
                           {onPlaceImportItem && (
                             <button

@@ -370,15 +370,6 @@ export function TodayMemoBoard({
     () => items.find(item => item.id === selectedMemoId) ?? null,
     [items, selectedMemoId],
   )
-  const tagOptions = useMemo(() => {
-    const tags = new Set<string>()
-    items.forEach(item => {
-      if (item.category) tags.add(item.category)
-      item.tags?.forEach(tag => tags.add(tag))
-    })
-    return Array.from(tags)
-  }, [items])
-
   useEffect(() => {
     if (!selectedCalendarId) return
     if (writableCalendars.some(calendar => calendar.google_calendar_id === selectedCalendarId)) return
@@ -1301,7 +1292,6 @@ export function TodayMemoBoard({
           await handleCalendarAdd(item as MemoItem, calendarId)
         }}
         onSaved={() => setSelectedMemoId(null)}
-        tagOptions={tagOptions}
         projects={projects}
         calendars={calendars}
         onMemoChanged={() => {

@@ -324,8 +324,9 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
   })
 
-  test('スマホCodexシートは外部ボタンから取り込みタブを開き配置選択へ進める', async () => {
+  test('スマホCodexシートは外部ボタンからAIチャット履歴を開き配置選択へ進める', async () => {
     const onPlaceImportItem = vi.fn()
+    const onOpenTask = vi.fn()
     const importItem = {
       id: 'chat-node-1',
       aiTaskId: 'ai-task-1',
@@ -349,7 +350,7 @@ describe('TaskProgressKanban', () => {
         mobileImportItems={[importItem]}
         pollIntervalMs={3000}
         onRefresh={vi.fn()}
-        onOpenTask={vi.fn()}
+        onOpenTask={onOpenTask}
         onPlaceImportItem={onPlaceImportItem}
       />
     )
@@ -366,23 +367,80 @@ describe('TaskProgressKanban', () => {
         mobileImportItems={[importItem]}
         pollIntervalMs={3000}
         onRefresh={vi.fn()}
-        onOpenTask={vi.fn()}
+        onOpenTask={onOpenTask}
         onPlaceImportItem={onPlaceImportItem}
       />
     )
 
+    expect(await screen.findByText('AIチャット履歴')).toBeInTheDocument()
     expect(await screen.findByText('チャットがアーカイブされたのか')).toBeInTheDocument()
     expect(screen.getByText('この確認に必要な返信期限と背景を取り込む')).toBeInTheDocument()
     expect(screen.getByText('focusmap')).toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Codexチャットを開く/ })).toHaveAttribute(
-      'href',
-      'codex://threads/thread-abcdef123456',
-    )
+    expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Codexチャットを開く/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '履歴を見る' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '配置先を選ぶ' }))
 
     expect(onPlaceImportItem).toHaveBeenCalledWith('chat-node-1')
+    expect(onOpenTask).not.toHaveBeenCalled()
+  })
+
+  test('スマホAIチャット履歴はステータス横スクロールタブで絞り込める', async () => {
+    const reviewItem = {
+      id: 'chat-review',
+      aiTaskId: 'ai-review',
+      title: '確認待ちチャット',
+      snippet: '確認が必要な履歴',
+      repoPath: '/Users/me/focusmap',
+      threadId: 'thread-review',
+      status: 'awaiting_approval',
+      statusLabel: '確認待ち',
+      updatedLabel: '最終 6/12 08:10',
+      updatedAtIso: '2026-06-12T08:10:00.000Z',
+    }
+    const runningItem = {
+      id: 'chat-running',
+      aiTaskId: 'ai-running',
+      title: '実行中チャット',
+      snippet: 'Codexが処理している履歴',
+      repoPath: '/Users/me/focusmap',
+      threadId: 'thread-running',
+      status: 'running',
+      statusLabel: '実行中',
+      updatedLabel: '最終 6/12 09:20',
+      updatedAtIso: '2026-06-12T09:20:00.000Z',
+    }
+
+    const renderKanban = (mobileOpenSignal: number) => (
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={mobileOpenSignal}
+        mobileImportItems={[reviewItem, runningItem]}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+      />
+    )
+    const { rerender } = render(renderKanban(0))
+    rerender(renderKanban(1))
+
+    expect(await screen.findByText('確認待ちチャット')).toBeInTheDocument()
+    expect(screen.queryByText('実行中チャット')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /実行中 1件/ }))
+
+    expect(screen.getByText('実行中チャット')).toBeInTheDocument()
+    expect(screen.queryByText('確認待ちチャット')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /すべて 2件/ }))
+
+    expect(screen.getByText('確認待ちチャット')).toBeInTheDocument()
+    expect(screen.getByText('実行中チャット')).toBeInTheDocument()
   })
 
   test('スマホ取り込みカードから全画面のCodex詳細へ遷移できる', async () => {
@@ -419,7 +477,8 @@ describe('TaskProgressKanban', () => {
     expect(await screen.findByText('実行中チャットを見る')).toBeInTheDocument()
 
     expect(screen.queryByRole('button', { name: 'チャットを見る' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '「実行中チャットを見る」のチャットを見る' }))
+    expect(screen.getByRole('tab', { name: /実行中 1件/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '履歴を見る' }))
 
     expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({
       id: 'ai-task-1',
