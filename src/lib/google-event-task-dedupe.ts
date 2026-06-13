@@ -8,8 +8,13 @@ type GoogleEventTaskLike = {
   created_at?: string | null
 }
 
-function isGoogleEventTask(task: GoogleEventTaskLike): boolean {
-  return !!task.google_event_id && task.source === 'google_event'
+function isGoogleLinkedTask(task: GoogleEventTaskLike): boolean {
+  return !!task.google_event_id
+}
+
+function sourceRank(source?: string | null): number {
+  if (!source) return 0
+  return source === 'google_event' ? 1 : 2
 }
 
 function statusRank(status?: string | null): number {
@@ -26,6 +31,10 @@ function dateValue(value?: string | null): number {
 }
 
 export function isPreferredGoogleEventTask<T extends GoogleEventTaskLike>(candidate: T, current: T): boolean {
+  const candidateSourceRank = sourceRank(candidate.source)
+  const currentSourceRank = sourceRank(current.source)
+  if (candidateSourceRank !== currentSourceRank) return candidateSourceRank > currentSourceRank
+
   const candidateRank = statusRank(candidate.status)
   const currentRank = statusRank(current.status)
   if (candidateRank !== currentRank) return candidateRank > currentRank
@@ -51,7 +60,7 @@ export function dedupeGoogleEventTasks<T extends GoogleEventTaskLike>(tasks: T[]
   const preferredByGoogleEventId = new Map<string, T>()
 
   for (const task of tasks) {
-    if (task.deleted_at || !isGoogleEventTask(task) || !task.google_event_id) continue
+    if (task.deleted_at || !isGoogleLinkedTask(task) || !task.google_event_id) continue
     const current = preferredByGoogleEventId.get(task.google_event_id)
     if (!current || isPreferredGoogleEventTask(task, current)) {
       preferredByGoogleEventId.set(task.google_event_id, task)
@@ -62,7 +71,7 @@ export function dedupeGoogleEventTasks<T extends GoogleEventTaskLike>(tasks: T[]
 
   const preferredIds = new Set([...preferredByGoogleEventId.values()].map(task => task.id))
   return tasks.filter(task => {
-    if (task.deleted_at || !isGoogleEventTask(task) || !task.google_event_id) return true
+    if (task.deleted_at || !isGoogleLinkedTask(task) || !task.google_event_id) return true
     return preferredIds.has(task.id)
   })
 }

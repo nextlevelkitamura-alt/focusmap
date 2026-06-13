@@ -1,6 +1,7 @@
 import type { Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { eventToTimeBlock, taskToTimeBlock, type TimeBlock } from "@/lib/time-block"
+import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
 
 const DEFAULT_CALENDAR_EVENT_COLOR = "#039BE5"
 
@@ -43,13 +44,13 @@ export function buildTimeBlocksForDay({
   const dayStart = startOfDay(date)
   const dayEnd = endOfDay(date)
   const habitGroupIds = new Set(tasks.filter((task) => task.is_habit).map((task) => task.id))
-  const dayTasks = tasks.filter((task) => {
+  const dayTasks = dedupeGoogleEventTasks(tasks.filter((task) => {
     if (!isDisplayableTask(task, habitGroupIds) || !task.scheduled_at) return false
     const start = new Date(task.scheduled_at)
     const duration = task.estimated_time || 30
     const end = new Date(start.getTime() + duration * 60 * 1000)
     return overlapsDay(start, end, dayStart, dayEnd)
-  })
+  }))
 
   const scheduledTaskIds = new Set(dayTasks.map((task) => task.id))
   const taskGoogleIds = new Set(dayTasks.filter((task) => task.google_event_id).map((task) => task.google_event_id!))

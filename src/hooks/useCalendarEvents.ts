@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, type SetStateAction } from 'react';
 import { CalendarEvent } from '@/types/calendar';
+import { dedupeCalendarEventsForDisplay } from '@/lib/calendar-event-dedupe';
 
 interface UseCalendarEventsOptions {
   timeMin: Date;
@@ -108,7 +109,11 @@ function getUsableCacheEntry(cacheKey: string): CacheEntry | null {
   const now = Date.now();
   const memoryEntry = cache.get(cacheKey);
   if (memoryEntry) {
-    if (memoryEntry.expiresAt > now) return memoryEntry;
+    if (memoryEntry.expiresAt > now) {
+      const normalized = normalizeCacheEntry(memoryEntry);
+      cache.set(cacheKey, normalized);
+      return normalized;
+    }
     cache.delete(cacheKey);
   }
 
@@ -119,18 +124,26 @@ function getUsableCacheEntry(cacheKey: string): CacheEntry | null {
     return null;
   }
 
-  cache.set(cacheKey, sessionEntry);
-  return sessionEntry;
+  const normalized = normalizeCacheEntry(sessionEntry);
+  cache.set(cacheKey, normalized);
+  return normalized;
 }
 
 function shouldRevalidate(entry: CacheEntry | null): boolean {
   return !entry || Date.now() >= entry.staleAt;
 }
 
+function normalizeCacheEntry(entry: CacheEntry): CacheEntry {
+  return {
+    ...entry,
+    events: dedupeCalendarEventsForDisplay(entry.events),
+  };
+}
+
 function createCacheEntry(events: CalendarEvent[], syncedAt = new Date()): CacheEntry {
   const now = Date.now();
   return {
-    events: filterRecentlyRemovedEvents(events),
+    events: dedupeCalendarEventsForDisplay(filterRecentlyRemovedEvents(events)),
     syncedAt,
     staleAt: now + CACHE_REVALIDATE_AFTER_MS,
     expiresAt: now + CACHE_DISPLAY_TTL_MS,
@@ -281,7 +294,7 @@ function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): Ca
     ) return false;
     return true;
   });
-  return sortEventsByStartTime([...next, event]);
+  return sortEventsByStartTime(dedupeCalendarEventsForDisplay([...next, event]));
 }
 
 function cleanupRemovedEvents() {
@@ -358,7 +371,7 @@ function mergeRecentOptimisticEvents(fetchedEvents: CalendarEvent[], previousEve
     return true;
   });
 
-  return sortEventsByStartTime(filterRecentlyRemovedEvents([...fetchedEvents, ...survivors]));
+  return sortEventsByStartTime(dedupeCalendarEventsForDisplay(filterRecentlyRemovedEvents([...fetchedEvents, ...survivors])));
 }
 
 async function fetchEventsShared(
@@ -533,14 +546,15 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       const next = typeof update === 'function'
         ? (update as (previous: CalendarEvent[]) => CalendarEvent[])(prev)
         : update;
+      const dedupedNext = dedupeCalendarEventsForDisplay(next);
       const existing = getUsableCacheEntry(cacheKey);
       writeCacheEntry(cacheKey, {
-        events: next,
+        events: dedupedNext,
         syncedAt: cacheSource?.syncedAt ?? existing?.syncedAt ?? new Date(),
         staleAt: cacheSource?.staleAt ?? existing?.staleAt ?? Date.now() + CACHE_REVALIDATE_AFTER_MS,
         expiresAt: cacheSource?.expiresAt ?? Math.max(existing?.expiresAt ?? 0, Date.now() + CACHE_DISPLAY_TTL_MS),
       });
-      return next;
+      return dedupedNext;
     });
   }, [cacheKey]);
 

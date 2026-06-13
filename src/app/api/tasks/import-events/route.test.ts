@@ -44,12 +44,12 @@ import { POST } from './route'
 // --- Helpers ---
 const mockUser = { id: 'user-1', email: 'test@example.com' }
 
-function postReq(body: Record<string, unknown>): Request {
+function postReq(body: Record<string, unknown>): Parameters<typeof POST>[0] {
   return new Request('http://localhost/api/tasks/import-events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }) as unknown as Request
+  }) as Parameters<typeof POST>[0]
 }
 
 function createEventPayload(overrides: Record<string, unknown> = {}) {
@@ -73,6 +73,7 @@ beforeEach(() => {
 
   const selectBuilder = {
     eq: vi.fn(() => selectBuilder),
+    not: vi.fn(() => Promise.resolve(getSelectResult())),
     in: vi.fn(() => selectBuilder),
     is: vi.fn(() => Promise.resolve(getSelectResult())),
     then: vi.fn((resolve, reject) => Promise.resolve(getSelectResult()).then(resolve, reject)),
@@ -98,7 +99,7 @@ describe('POST /api/tasks/import-events', () => {
   test('未認証の場合は 401 を返す', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: { message: 'Not authenticated' } })
 
-    const res = await POST(postReq({ events: [] }) as any)
+    const res = await POST(postReq({ events: [] }))
     const json = await res.json()
 
     expect(res.status).toBe(401)
@@ -109,7 +110,7 @@ describe('POST /api/tasks/import-events', () => {
   test('events が空の場合はスキップして成功を返す', async () => {
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
 
-    const res = await POST(postReq({ events: [] }) as any)
+    const res = await POST(postReq({ events: [] }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -130,7 +131,7 @@ describe('POST /api/tasks/import-events', () => {
 
     const res = await POST(postReq({
       events: [createEventPayload({ google_event_id: 'gevt-new' })],
-    }) as any)
+    }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -153,7 +154,35 @@ describe('POST /api/tasks/import-events', () => {
 
     const res = await POST(postReq({
       events: [createEventPayload()],
-    }) as any)
+    }))
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.skipped).toBe(1)
+    expect(json.result.inserted).toBe(0)
+    expect(json.result.updated).toBe(0)
+  })
+
+  test('既存の手動Google連携タスクがある場合は自動取り込みタスクを増やさない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({
+      data: [{
+        id: 'manual-linked-task',
+        google_event_id: 'gevt-1',
+        google_event_fingerprint: 'Test Event|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
+        source: 'manual',
+        calendar_id: 'cal-1',
+        scheduled_at: '2026-02-20T10:00:00Z',
+        updated_at: '2026-02-20T08:00:00Z',
+        deleted_at: null,
+      }],
+      error: null,
+    })
+
+    const res = await POST(postReq({
+      events: [createEventPayload()],
+    }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -178,7 +207,7 @@ describe('POST /api/tasks/import-events', () => {
 
     const res = await POST(postReq({
       events: [createEventPayload()],
-    }) as any)
+    }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -202,7 +231,7 @@ describe('POST /api/tasks/import-events', () => {
 
     const res = await POST(postReq({
       events: [createEventPayload()],
-    }) as any)
+    }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -229,7 +258,7 @@ describe('POST /api/tasks/import-events', () => {
 
     const res = await POST(postReq({
       events: [createEventPayload({ google_event_id: 'gevt-new' })],
-    }) as any)
+    }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -254,7 +283,7 @@ describe('POST /api/tasks/import-events', () => {
 
     const res = await POST(postReq({
       events: [createEventPayload({ google_event_id: 'gevt-new' })],
-    }) as any)
+    }))
     const json = await res.json()
 
     expect(res.status).toBe(200)
@@ -265,7 +294,7 @@ describe('POST /api/tasks/import-events', () => {
   test('events フィールドがない場合は 400 を返す', async () => {
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
 
-    const res = await POST(postReq({}) as any)
+    const res = await POST(postReq({}))
     const json = await res.json()
 
     expect(res.status).toBe(400)
