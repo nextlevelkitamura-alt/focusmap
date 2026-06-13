@@ -8,6 +8,55 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function getGoogleApiStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const status = 'status' in error ? Number((error as { status?: unknown }).status) : null;
+  if (status && Number.isFinite(status)) return status;
+  const code = 'code' in error ? Number((error as { code?: unknown }).code) : null;
+  return code && Number.isFinite(code) ? code : null;
+}
+
+function isMissingCalendarEventError(error: unknown): boolean {
+  const status = getGoogleApiStatus(error);
+  if (status === 404 || status === 410) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Not Found') || message.includes('notFound');
+}
+
+function isCalendarEventConflictError(error: unknown): boolean {
+  const status = getGoogleApiStatus(error);
+  if (status === 409) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('already exists') || message.includes('duplicate');
+}
+
+export class GoogleCalendarEventMissingError extends Error {
+  readonly googleEventId: string;
+  readonly calendarId: string;
+
+  constructor(googleEventId: string, calendarId: string) {
+    super(`Google Calendar event is missing: ${googleEventId}`);
+    this.name = 'GoogleCalendarEventMissingError';
+    this.googleEventId = googleEventId;
+    this.calendarId = calendarId;
+  }
+}
+
+export function isGoogleCalendarEventMissingError(error: unknown): error is GoogleCalendarEventMissingError {
+  return error instanceof GoogleCalendarEventMissingError || (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'GoogleCalendarEventMissingError' &&
+    typeof (error as { googleEventId?: unknown }).googleEventId === 'string'
+  );
+}
+
+export function createStableGoogleEventId(prefix: 'fmtask' | 'fmmemo', sourceId: string): string | null {
+  const normalized = sourceId.toLowerCase().replace(/[^a-v0-9]/g, '');
+  if (!normalized) return null;
+  return `${prefix}${normalized}`.slice(0, 1024);
+}
+
 function isPopupReminder(
   reminder: calendar_v3.Schema$EventReminder
 ): reminder is calendar_v3.Schema$EventReminder & { method: 'popup'; minutes: number } {
@@ -244,21 +293,28 @@ export async function syncTaskToCalendar(
     if (task.google_event_id) {
       // 既存イベントを更新。カレンダー自体が変わっている場合は、先に Google 側で move する。
       let targetGoogleEventId = task.google_event_id;
-      if (sourceCalendarId !== calendarId) {
-        const moveResponse = await calendar.events.move({
-          calendarId: sourceCalendarId,
-          eventId: task.google_event_id,
-          destination: calendarId,
-        });
-        targetGoogleEventId = moveResponse.data.id || task.google_event_id;
-      }
+      try {
+        if (sourceCalendarId !== calendarId) {
+          const moveResponse = await calendar.events.move({
+            calendarId: sourceCalendarId,
+            eventId: task.google_event_id,
+            destination: calendarId,
+          });
+          targetGoogleEventId = moveResponse.data.id || task.google_event_id;
+        }
 
-      const response = await calendar.events.update({
-        calendarId,
-        eventId: targetGoogleEventId,
-        requestBody: event,
-      });
-      googleEventId = response.data.id!;
+        const response = await calendar.events.update({
+          calendarId,
+          eventId: targetGoogleEventId,
+          requestBody: event,
+        });
+        googleEventId = response.data.id!;
+      } catch (error) {
+        if (isMissingCalendarEventError(error)) {
+          throw new GoogleCalendarEventMissingError(task.google_event_id, sourceCalendarId);
+        }
+        throw error;
+      }
 
       if (googleEventId !== task.google_event_id || sourceCalendarId !== calendarId) {
         const { error: saveError } = await supabase
@@ -273,6 +329,7 @@ export async function syncTaskToCalendar(
     } else {
       // べき等性チェック: Extended Properties で既存イベントを検索（リトライ時の重複防止）
       let existingEventId: string | null = null;
+      const stableEventId = createStableGoogleEventId('fmtask', taskId);
       try {
         const searchResult = await calendar.events.list({
           calendarId,
@@ -299,11 +356,22 @@ export async function syncTaskToCalendar(
         googleEventId = response.data.id!;
       } else {
         // 既存イベントなし → 新規作成
-        const response = await calendar.events.insert({
-          calendarId,
-          requestBody: event,
-        });
-        googleEventId = response.data.id!;
+        const eventForInsert = stableEventId ? { ...event, id: stableEventId } : event;
+        try {
+          const response = await calendar.events.insert({
+            calendarId,
+            requestBody: eventForInsert,
+          });
+          googleEventId = response.data.id!;
+        } catch (insertError) {
+          if (!stableEventId || !isCalendarEventConflictError(insertError)) throw insertError;
+          const response = await calendar.events.update({
+            calendarId,
+            eventId: stableEventId,
+            requestBody: event,
+          });
+          googleEventId = response.data.id || stableEventId;
+        }
       }
 
       // google_event_id をタスクに保存
@@ -395,6 +463,19 @@ export async function deleteTaskFromCalendar(
 
     return { success: true };
   } catch (error: unknown) {
+    if (isMissingCalendarEventError(error)) {
+      await supabase.from('calendar_sync_log').insert({
+        user_id: userId,
+        task_id: taskId,
+        google_event_id: googleEventId,
+        action: 'delete',
+        direction: 'to_calendar',
+        status: 'success',
+        sync_data: { already_missing: true, calendar_id: targetCalendarId },
+      });
+      return { success: true };
+    }
+
     const errorMessage = getErrorMessage(error, 'Failed to delete task from calendar');
     // エラーログを記録
     await supabase.from('calendar_sync_log').insert({

@@ -328,6 +328,7 @@ export function TodayMemoBoard({
   const wheelLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastWheelAbsDeltaRef = useRef(0)
   const lastWheelMoveAtRef = useRef(0)
+  const calendarAddInFlightRef = useRef(new Set<string>())
   const touchStartColumnIndexRef = useRef<number | null>(null)
   const touchStartXRef = useRef<number | null>(null)
   const dropzoneRef = useRef<HTMLDivElement | null>(null)
@@ -455,6 +456,10 @@ export function TodayMemoBoard({
     const handler = async (memoId: string, startTime: Date, durationMinutes: number) => {
       const target = items.find(it => it.id === memoId)
       if (!target) return
+      const calendarId = targetCalendar?.google_calendar_id ?? "primary"
+      const requestKey = `${memoId}:${startTime.toISOString()}:${durationMinutes}:${calendarId}`
+      if (calendarAddInFlightRef.current.has(requestKey)) return
+      calendarAddInFlightRef.current.add(requestKey)
       const prev = items
       setMemoPending(memoId, true)
       // 楽観更新: メモ一覧から消す
@@ -465,7 +470,6 @@ export function TodayMemoBoard({
       // 楽観更新: カレンダーにも即座に予定枠を表示
       const tempId = `optimistic-memo-${memoId}-${Date.now()}`
       const nowIso = new Date().toISOString()
-      const calendarId = targetCalendar?.google_calendar_id ?? "primary"
       const calendarColor = targetCalendar?.background_color ?? "#F59E0B"
       if (target.google_event_id) {
         broadcastCalendarOptimisticEventRemoval(target.google_event_id, target.google_event_id)
@@ -527,6 +531,7 @@ export function TodayMemoBoard({
         setItems(prev)
         setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
       } finally {
+        calendarAddInFlightRef.current.delete(requestKey)
         setMemoPending(memoId, false)
       }
     }
@@ -786,6 +791,9 @@ export function TodayMemoBoard({
     const calendarColor = calendars.find(calendar => calendar.google_calendar_id === calendarId)?.background_color
       ?? targetCalendar?.background_color
       ?? "#F59E0B"
+    const requestKey = `${item.id}:${item.scheduled_at ?? ""}:${item.duration_minutes ?? ""}:${calendarId}`
+    if (calendarAddInFlightRef.current.has(requestKey)) return
+    calendarAddInFlightRef.current.add(requestKey)
 
     if (startTime && !Number.isNaN(startTime.getTime())) {
       if (item.google_event_id) {
@@ -845,6 +853,8 @@ export function TodayMemoBoard({
       broadcastCalendarSync()
       setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
       throw e
+    } finally {
+      calendarAddInFlightRef.current.delete(requestKey)
     }
   }, [calendars, handleUpdate, targetCalendar])
 

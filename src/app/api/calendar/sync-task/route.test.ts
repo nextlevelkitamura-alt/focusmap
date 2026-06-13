@@ -68,6 +68,7 @@ vi.mock('@/utils/supabase/server', () => ({
 vi.mock('@/lib/google-calendar', () => ({
   syncTaskToCalendar: mockSyncTaskToCalendar,
   deleteTaskFromCalendar: mockDeleteTaskFromCalendar,
+  isGoogleCalendarEventMissingError: () => false,
 }))
 
 // --- テスト対象 ---

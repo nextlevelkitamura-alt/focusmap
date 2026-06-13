@@ -1,9 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { syncTaskToCalendar, deleteTaskFromCalendar } from '@/lib/google-calendar';
+import { syncTaskToCalendar, deleteTaskFromCalendar, isGoogleCalendarEventMissingError } from '@/lib/google-calendar';
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+async function cleanupMissingGoogleEvent(
+  supabase: SupabaseServerClient,
+  userId: string,
+  task: {
+    id: string;
+    source?: string | null;
+    status?: string | null;
+  },
+  googleEventId: string,
+) {
+  const now = new Date().toISOString();
+
+  await supabase
+    .from('calendar_events')
+    .delete()
+    .eq('user_id', userId)
+    .eq('google_event_id', googleEventId);
+
+  await supabase
+    .from('event_completions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('google_event_id', googleEventId);
+
+  if (task.source === 'google_event') {
+    return supabase
+      .from('tasks')
+      .update({
+        deleted_at: now,
+        is_timer_running: false,
+        last_started_at: null,
+        updated_at: now,
+      })
+      .eq('id', task.id)
+      .eq('user_id', userId);
+  }
+
+  return supabase
+    .from('tasks')
+    .update({
+      google_event_id: null,
+      calendar_event_id: null,
+      calendar_id: null,
+      scheduled_at: null,
+      stage: task.status === 'done' ? 'done' : 'plan',
+      updated_at: now,
+    })
+    .eq('id', task.id)
+    .eq('user_id', userId);
 }
 
 /**
@@ -57,22 +110,6 @@ export async function POST(request: NextRequest) {
       }, { status: 404 });
     }
 
-    // タスクに calendar_id を保存し、stage を 'scheduled' に遷移
-    const { error: updateError } = await supabase
-      .from('tasks')
-      .update({
-        calendar_id,
-        stage: task.status === 'done' ? 'done' : 'scheduled',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', taskId)
-      .eq('user_id', user.id);
-
-    if (updateError) {
-      console.error('[sync-task POST] Update error:', updateError);
-      return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
-    }
-
     // カレンダー連携設定を確認
     const { data: settings, error: settingsError } = await supabase
       .from('user_calendar_settings')
@@ -109,21 +146,53 @@ export async function POST(request: NextRequest) {
     const currentGoogleEventId = latestTask?.google_event_id || task.google_event_id || undefined;
 
     // DB上で既に google_event_id がある場合は更新として扱う（重複防止）
-    const result = await syncTaskToCalendar(user.id, taskId, {
-      title: task.title,
-      scheduled_at,
-      estimated_time,
-      google_event_id: currentGoogleEventId,
-      calendar_id,
-      source_calendar_id: task.calendar_id,
-      memo: task.memo,
-      reminders,
-    });
+    let result;
+    try {
+      result = await syncTaskToCalendar(user.id, taskId, {
+        title: task.title,
+        scheduled_at,
+        estimated_time,
+        google_event_id: currentGoogleEventId,
+        calendar_id,
+        source_calendar_id: task.calendar_id,
+        memo: task.memo,
+        reminders,
+      });
+    } catch (error) {
+      if (isGoogleCalendarEventMissingError(error)) {
+        await cleanupMissingGoogleEvent(supabase, user.id, task, error.googleEventId);
+        return NextResponse.json(
+          { error: 'Google Calendar event was already deleted. Local task schedule was cleared.', calendarEventMissing: true },
+          { status: 410 },
+        );
+      }
+      throw error;
+    }
+
+    // Google同期が成功した時点で task 側の予定情報を確定する。
+    const effectiveCalendarId = result.calendarId || calendar_id;
+    const { error: updateError } = await supabase
+      .from('tasks')
+      .update({
+        scheduled_at,
+        estimated_time,
+        calendar_id: effectiveCalendarId,
+        google_event_id: result.googleEventId,
+        stage: task.status === 'done' ? 'done' : 'scheduled',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', taskId)
+      .eq('user_id', user.id);
+
+    if (updateError) {
+      console.error('[sync-task POST] Update error after Google sync:', updateError);
+      return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
       googleEventId: result.googleEventId,
-      calendarId: result.calendarId || calendar_id,
+      calendarId: effectiveCalendarId,
     });
   } catch (error: unknown) {
     console.error('[sync-task POST] Error:', error);
@@ -177,21 +246,52 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Googleカレンダーイベントを更新
-    const result = await syncTaskToCalendar(user.id, taskId, {
-      title: task.title,
-      scheduled_at,
-      estimated_time,
-      google_event_id: task.google_event_id,
-      calendar_id,
-      source_calendar_id: source_calendar_id || task.calendar_id,
-      memo: task.memo,
-      reminders,
-    });
+    let result;
+    try {
+      result = await syncTaskToCalendar(user.id, taskId, {
+        title: task.title,
+        scheduled_at,
+        estimated_time,
+        google_event_id: task.google_event_id,
+        calendar_id,
+        source_calendar_id: source_calendar_id || task.calendar_id,
+        memo: task.memo,
+        reminders,
+      });
+    } catch (error) {
+      if (isGoogleCalendarEventMissingError(error)) {
+        await cleanupMissingGoogleEvent(supabase, user.id, task, error.googleEventId);
+        return NextResponse.json(
+          { error: 'Google Calendar event was already deleted. Local task schedule was cleared.', calendarEventMissing: true },
+          { status: 410 },
+        );
+      }
+      throw error;
+    }
+
+    const effectiveCalendarId = result.calendarId || calendar_id;
+    const { error: updateError } = await supabase
+      .from('tasks')
+      .update({
+        scheduled_at,
+        estimated_time,
+        calendar_id: effectiveCalendarId,
+        google_event_id: result.googleEventId,
+        stage: task.status === 'done' ? 'done' : 'scheduled',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', taskId)
+      .eq('user_id', user.id);
+
+    if (updateError) {
+      console.error('[sync-task PATCH] Update error after Google sync:', updateError);
+      return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
       googleEventId: result.googleEventId,
-      calendarId: result.calendarId || calendar_id,
+      calendarId: effectiveCalendarId,
     });
   } catch (error: unknown) {
     console.error('[sync-task PATCH] Error:', error);

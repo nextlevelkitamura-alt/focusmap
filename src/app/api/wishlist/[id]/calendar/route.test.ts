@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => {
   const memoUpdate = vi.fn()
   const calendarInsert = vi.fn()
   const calendarDelete = vi.fn()
+  const calendarGet = vi.fn()
+  const calendarMove = vi.fn()
+  const calendarUpdate = vi.fn()
+  const userCalendarsSelect = vi.fn()
 
   const from = vi.fn((table: string) => {
     if (table === 'user_calendar_settings') {
@@ -53,6 +57,14 @@ const mocks = vi.hoisted(() => {
       }
     }
 
+    if (table === 'user_calendars') {
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => userCalendarsSelect()),
+        })),
+      }
+    }
+
     return {}
   })
 
@@ -68,6 +80,10 @@ const mocks = vi.hoisted(() => {
     memoUpdate,
     calendarInsert,
     calendarDelete,
+    calendarGet,
+    calendarMove,
+    calendarUpdate,
+    userCalendarsSelect,
   }
 })
 
@@ -81,9 +97,13 @@ vi.mock('@/lib/google-calendar', () => ({
       events: {
         insert: mocks.calendarInsert,
         delete: mocks.calendarDelete,
+        get: mocks.calendarGet,
+        move: mocks.calendarMove,
+        update: mocks.calendarUpdate,
       },
     },
   })),
+  createStableGoogleEventId: vi.fn((prefix: string, sourceId: string) => `${prefix}${sourceId.replace(/-/g, '')}`),
 }))
 
 import { POST } from './route'
@@ -113,6 +133,13 @@ describe('POST /api/wishlist/[id]/calendar', () => {
     })
     mocks.calendarInsert.mockResolvedValue({
       data: { id: 'google-event-1' },
+    })
+    mocks.calendarGet.mockRejectedValue({ status: 404, message: 'Not Found' })
+    mocks.calendarMove.mockResolvedValue({ data: { id: 'google-event-1' } })
+    mocks.calendarUpdate.mockResolvedValue({ data: { id: 'google-event-1' } })
+    mocks.userCalendarsSelect.mockResolvedValue({
+      data: [{ google_calendar_id: 'work-cal' }],
+      error: null,
     })
     mocks.memoUpdateSingle.mockResolvedValue({
       data: {
@@ -154,5 +181,40 @@ describe('POST /api/wishlist/[id]/calendar', () => {
     }))
     const updatePayload = mocks.memoUpdate.mock.calls[0]?.[0] as Record<string, unknown>
     expect(updatePayload).not.toHaveProperty('calendar_id')
+  })
+
+  test('同じメモの同時作成競合は安定IDのupdateに収束する', async () => {
+    mocks.calendarInsert.mockRejectedValueOnce({ status: 409, message: 'already exists' })
+    mocks.calendarUpdate.mockResolvedValueOnce({ data: { id: 'fmmemomemo1' } })
+    mocks.memoUpdateSingle.mockResolvedValueOnce({
+      data: {
+        id: 'memo-1',
+        title: 'メモを予定化',
+        scheduled_at: '2026-06-13T01:30:00.000Z',
+        duration_minutes: 15,
+        google_event_id: 'fmmemomemo1',
+        memo_status: 'scheduled',
+        ideal_items: [],
+      },
+      error: null,
+    })
+
+    const res = await POST(createRequest({
+      scheduled_at: '2026-06-13T01:30:00.000Z',
+      duration_minutes: 15,
+      title: 'メモを予定化',
+      description: '詳細',
+      calendar_id: 'work-cal',
+    }), {
+      params: Promise.resolve({ id: 'memo-1' }),
+    })
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.google_event_id).toBe('fmmemomemo1')
+    expect(mocks.calendarUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      calendarId: 'work-cal',
+      eventId: 'fmmemomemo1',
+    }))
   })
 })

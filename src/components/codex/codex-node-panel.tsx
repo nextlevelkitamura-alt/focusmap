@@ -1227,12 +1227,6 @@ export function CodexNodePanel({
 
     try {
       await saveDraft(headingRef.current, detailRef.current)
-      const saved = await patchTaskDetail({
-        scheduled_at: nextScheduledAt,
-        estimated_time: nextDuration,
-        calendar_id: targetCalendarId,
-      })
-      if (!saved) throw new Error("予定の保存に失敗しました")
 
       const syncResponse = await fetch("/api/calendar/sync-task", {
         method: "POST",
@@ -1259,6 +1253,8 @@ export function CodexNodePanel({
       setCalendarId(effectiveCalendarId)
       if (onSaveTaskDetails && effectiveGoogleEventId) {
         await onSaveTaskDetails(node.taskId, {
+          scheduled_at: nextScheduledAt,
+          estimated_time: nextDuration,
           google_event_id: effectiveGoogleEventId,
           calendar_id: effectiveCalendarId,
         } as Partial<Task>)
@@ -1280,11 +1276,6 @@ export function CodexNodePanel({
       setEstimatedMinutes(previousEstimatedMinutes)
       setCalendarId(previousCalendarId)
       setGoogleEventId(previousGoogleEventId)
-      await patchTaskDetail({
-        scheduled_at: previousScheduledAt,
-        estimated_time: previousEstimatedMinutes,
-        calendar_id: previousCalendarId || null,
-      })
       broadcastCalendarSync()
       setSaveStatus("error")
       setError(err instanceof Error ? err.message : "予定の登録に失敗しました")
@@ -1299,7 +1290,6 @@ export function CodexNodePanel({
     node.taskId,
     node.title,
     onSaveTaskDetails,
-    patchTaskDetail,
     saveDraft,
     scheduledAt,
   ])

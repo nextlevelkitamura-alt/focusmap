@@ -99,7 +99,10 @@ export function useMultiTaskCalendarSync({
 
       // 新規作成: 3つのフィールドが揃った瞬間（prevで揃っていなかった → 今揃った）
       const prevHasAllFields = !!(prev.scheduled_at && prev.calendar_id && prev.estimated_time && prev.estimated_time > 0)
-      if (hasAllFields && !prevHasAllFields && !task.google_event_id) {
+      if (hasAllFields && !prevHasAllFields && task.google_event_id) {
+        // 別UI/APIがGoogle同期まで完了した状態を一括で反映したケース。
+        // ここでPATCHすると、直前のPOSTと二重同期になるため記録だけ更新する。
+      } else if (hasAllFields && !prevHasAllFields && !task.google_event_id) {
         syncToCalendar(taskId, 'POST', task)
       }
       // 更新: 既存イベントがあり、いずれかのフィールドが変更された

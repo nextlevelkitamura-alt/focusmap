@@ -202,6 +202,35 @@ describe('useMultiTaskCalendarSync - 新規同期 (POST)', () => {
     // scheduled_at / estimated_time / calendar_id が同一 → API 呼ばれない
     expect(mockFetch).not.toHaveBeenCalled()
   })
+
+  test('外部同期済みの予定情報が一括反映された場合はPOST/PATCHしない', async () => {
+    const onRefreshCalendar = vi.fn().mockResolvedValue(undefined)
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+
+    const initialTask = createTask({ id: 'task-direct-sync' })
+    const { rerender } = renderHook(
+      ({ t }) => useMultiTaskCalendarSync({ tasks: t, onRefreshCalendar, onUpdateTask }),
+      { initialProps: { t: [initialTask] } }
+    )
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+
+    const syncedTask = createCompleteTask({
+      id: 'task-direct-sync',
+      google_event_id: 'gevt-created-by-panel',
+    })
+
+    await act(async () => {
+      rerender({ t: [syncedTask] })
+      await new Promise(resolve => setTimeout(resolve, 80))
+    })
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    expect(onUpdateTask).not.toHaveBeenCalled()
+    expect(onRefreshCalendar).not.toHaveBeenCalled()
+  })
 })
 
 // ============================================================
