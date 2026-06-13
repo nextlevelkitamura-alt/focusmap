@@ -1046,7 +1046,11 @@ function MemoInlineScheduler({
     if (!scrollElement) return
     const targetTop = Math.max(0, (draftMinutes / 60) * MEMO_SCHEDULER_HOUR_HEIGHT - 180)
     const frameId = window.requestAnimationFrame(() => {
-      scrollElement.scrollTo({ top: targetTop })
+      if (typeof scrollElement.scrollTo === "function") {
+        scrollElement.scrollTo({ top: targetTop })
+      } else {
+        scrollElement.scrollTop = targetTop
+      }
     })
     return () => window.cancelAnimationFrame(frameId)
     // 初回表示時だけ予定ブロック付近へ寄せる。
@@ -1891,7 +1895,10 @@ export function WishlistView({
     return [...set].slice(0, 12)
   }, [items, managedTags])
 
-  const projectById = useMemo(() => new Map(projects.map(project => [project.id, project])), [projects])
+  const projectById = useMemo(
+    () => selectedProjectId ? new Map<string, Project>() : new Map(projects.map(project => [project.id, project])),
+    [projects, selectedProjectId],
+  )
 
   const linkedMemoIds = useMemo(() => {
     if (!linkedMemoFocus) return null
@@ -2823,17 +2830,6 @@ export function WishlistView({
         project_id: selectedProjectId,
         category: suggestedCategory,
         tags: [],
-        tag_suggestions: [
-          ...new Set([
-            ...(
-              typeof data.suggestion?.category === "string" && data.suggestion.category.trim()
-                ? [data.suggestion.category.trim()]
-                : []
-            ),
-            ...(Array.isArray(data.suggestion?.tags) ? data.suggestion.tags.filter((tag: unknown): tag is string => typeof tag === "string" && tag.trim().length > 0) : []),
-            ...allTags,
-          ]),
-        ],
       })
       setSuggestionOpen(true)
     } finally {
@@ -2873,8 +2869,8 @@ export function WishlistView({
       const item = await createWishlistMemo({
         title: suggestion.title,
         project_id: suggestion.project_id ?? selectedProjectId,
-        category: suggestion.category || null,
-        tags: suggestion.tags,
+        category: null,
+        tags: [],
         description: suggestion.description,
         time_candidates: suggestion.time_candidates,
         subtask_suggestions: suggestion.subtask_suggestions,
@@ -2908,7 +2904,6 @@ export function WishlistView({
     const startTime = item.scheduled_at ? new Date(item.scheduled_at) : null
     const durationMinutes = item.duration_minutes ?? 60
     const calendarId = calendarIdOverride ?? targetCalendarId
-
     if (startTime && !Number.isNaN(startTime.getTime())) {
       if (item.google_event_id) {
         broadcastCalendarOptimisticEventRemoval(item.google_event_id, item.google_event_id)
@@ -3009,9 +3004,6 @@ export function WishlistView({
       const title = typeof suggestion.title === "string" && suggestion.title.trim()
         ? suggestion.title.trim()
         : deriveDraftMemoTitle(sourceText)
-      const tags = Array.isArray(suggestion.tags)
-        ? suggestion.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
-        : []
       const baseAiSourcePayload = { suggestion, intakeText: sourceText }
       const targetColumn = scheduledAt ? "scheduled" : getMemoCreateDestinationColumn(activeMobileColumn)
       const mobileColumnOverrides = isMobileMemoLayout
@@ -3021,8 +3013,8 @@ export function WishlistView({
       const item = await createWishlistMemo({
         title,
         project_id: selectedProjectId,
-        category: typeof suggestion.category === "string" && suggestion.category.trim() ? suggestion.category.trim() : null,
-        tags,
+        category: null,
+        tags: [],
         description: sourceText,
         time_candidates: timeCandidates,
         subtask_suggestions: Array.isArray(suggestion.subtask_suggestions) ? suggestion.subtask_suggestions : [],
@@ -3996,7 +3988,7 @@ export function WishlistView({
               onClick={handleAddMemoFromComposer}
               disabled={disableMemoAdd}
               size="icon"
-              className="h-11 w-11 shrink-0 rounded-full bg-neutral-100 text-neutral-950 shadow-[0_8px_22px_rgba(255,255,255,0.14)] hover:bg-white disabled:bg-neutral-700 disabled:text-neutral-400 disabled:opacity-100"
+              className="h-11 w-11 shrink-0 rounded-xl bg-neutral-100 text-neutral-950 shadow-[0_8px_22px_rgba(255,255,255,0.14)] hover:bg-white disabled:bg-neutral-700 disabled:text-neutral-400 disabled:opacity-100"
               aria-label="メモを追加"
               title={hasIntakeText ? "入力内容をメモとして追加" : "新しいメモを追加"}
             >
@@ -4119,7 +4111,6 @@ export function WishlistView({
                     onDelete={handleDelete}
                     onOpen={openDetail}
                     projectById={projectById}
-                    tagColors={tagColors}
                     nativeMemoDrag={isCalendarSplitVisible}
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
@@ -4492,7 +4483,6 @@ export function WishlistView({
                     onOpen={openDetail}
                     onAdd={() => resetDesktopDraft("unsorted")}
                     projectById={projectById}
-                    tagColors={tagColors}
                     nativeMemoDrag={isCalendarSplitVisible}
                     nativeMemoDragForItem={item => isCalendarSplitVisible && getColumn(item, todayRange.start, todayRange.end) === "unsorted"}
                     className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
@@ -4512,7 +4502,6 @@ export function WishlistView({
                     onOpen={openDetail}
                     onAdd={() => resetDesktopDraft("today")}
                     projectById={projectById}
-                    tagColors={tagColors}
                     nativeMemoDrag={isCalendarSplitVisible}
                     className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
                     selectMode={selectMode}
@@ -4529,7 +4518,6 @@ export function WishlistView({
                     onDelete={handleDelete}
                     onOpen={openDetail}
                     projectById={projectById}
-                    tagColors={tagColors}
                     nativeMemoDrag={false}
                     className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
                     selectMode={selectMode}
@@ -4572,7 +4560,6 @@ export function WishlistView({
                           onDelete={handleDelete}
                           onOpen={openDetail}
                           projectById={projectById}
-                          tagColors={tagColors}
                           nativeMemoDrag={(column === "unsorted" || column === "today") && isCalendarSplitVisible}
                           className="h-full"
                           showHeader={false}
@@ -4613,7 +4600,6 @@ export function WishlistView({
                   onDelete={handleDelete}
                   onOpen={openDetail}
                   projectById={projectById}
-                  tagColors={tagColors}
                   nativeMemoDrag={isCalendarSplitVisible}
                   className={unscheduledItems.length >= 2 ? "md:col-span-2" : undefined}
                   listClassName={unscheduledItems.length >= 2 ? "sm:grid-cols-2" : undefined}
@@ -4631,7 +4617,6 @@ export function WishlistView({
                   onDelete={handleDelete}
                   onOpen={openDetail}
                   projectById={projectById}
-                  tagColors={tagColors}
                   nativeMemoDrag={isCalendarSplitVisible}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -4647,7 +4632,6 @@ export function WishlistView({
                   onDelete={handleDelete}
                   onOpen={openDetail}
                   projectById={projectById}
-                  tagColors={tagColors}
                   nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -4663,7 +4647,6 @@ export function WishlistView({
                   onDelete={handleDelete}
                   onOpen={openDetail}
                   projectById={projectById}
-                  tagColors={tagColors}
                   nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -4679,7 +4662,6 @@ export function WishlistView({
                   onDelete={handleDelete}
                   onOpen={openDetail}
                   projectById={projectById}
-                  tagColors={tagColors}
                   nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -4698,8 +4680,6 @@ export function WishlistView({
         onOpenChange={setSuggestionOpen}
         onChange={setSuggestion}
         onSave={saveSuggestion}
-        registeredTags={allTags}
-        tagColors={tagColors}
         projects={projects}
         isSaving={isSavingSuggestion}
       />
@@ -4711,10 +4691,8 @@ export function WishlistView({
         onUpdate={handleUpdate}
         onCalendarAdd={async (item, calendarId) => { await handleCalendarAdd(item, calendarId) }}
         onSaved={() => handleDetailOpenChange(false)}
-        tagOptions={allTags}
         projects={projects}
         calendars={calendars}
-        tagColors={tagColors}
         onLaunchCodex={launchCodexForMemo}
         onCopyCodexPrompt={copyCodexPromptForMemo}
         onReadyForAttachments={waitForMemoPersistence}
@@ -5024,7 +5002,6 @@ function MemoSection({
   onOpen,
   onAdd,
   projectById,
-  tagColors,
   className,
   listClassName,
   nativeMemoDrag = false,
@@ -5045,7 +5022,6 @@ function MemoSection({
   onOpen: (item: MemoItem) => void
   onAdd?: () => void
   projectById: Map<string, Project>
-  tagColors: Record<string, string>
   className?: string
   listClassName?: string
   nativeMemoDrag?: boolean
@@ -5114,7 +5090,6 @@ function MemoSection({
                           onDelete={onDelete}
                           onClick={() => selectMode ? onToggleSelect?.(item.id) : onOpen(item)}
                           project={item.project_id ? projectById.get(item.project_id) ?? null : null}
-                          tagColors={tagColors}
                           nativeMemoDrag={nativeMemoDragForItem ? nativeMemoDragForItem(item) : nativeMemoDrag}
                           onScheduleClick={!selectMode && onScheduleClick ? () => onScheduleClick(item) : undefined}
                         />
@@ -5227,8 +5202,6 @@ function SuggestionSheet({
   onOpenChange,
   onChange,
   onSave,
-  registeredTags,
-  tagColors,
   projects,
   isSaving,
 }: {
@@ -5237,49 +5210,21 @@ function SuggestionSheet({
   onOpenChange: (open: boolean) => void
   onChange: (suggestion: MemoSuggestion | null) => void
   onSave: (candidate?: MemoSuggestion["time_candidates"][number], addToCalendar?: boolean) => Promise<void>
-  registeredTags: string[]
-  tagColors: Record<string, string>
   projects: Project[]
   isSaving: boolean
 }) {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null)
-  const [newTagText, setNewTagText] = useState("")
 
   if (!suggestion) return null
 
   const update = (updates: Partial<MemoSuggestion>) => onChange({ ...suggestion, ...updates })
   const selectedCandidate = selectedCandidateIndex === null ? undefined : suggestion.time_candidates[selectedCandidateIndex]
   const canCalendar = !!(selectedCandidate?.scheduled_at || suggestion.scheduled_at) && !!suggestion.duration_minutes
-  const selectedTags = Array.from(new Set([suggestion.category, ...suggestion.tags].filter(Boolean)))
-  const registeredTagOptions = registeredTags.filter(tag => !selectedTags.includes(tag)).slice(0, 8)
   const durationText = suggestion.duration_input ?? (suggestion.duration_minutes ? String(suggestion.duration_minutes) : "")
   const dateValue = suggestion.date_input ?? formatDateValue(suggestion.scheduled_at)
   const timeValue = suggestion.time_input ?? formatTimeInput(suggestion.scheduled_at)
   const dateOptions = buildDateOptions(dateValue)
   const timeOptions = buildTimeOptions(timeValue)
-
-  const setTags = (tags: string[]) => {
-    const nextTags = Array.from(new Set(tags.map(tag => tag.trim()).filter(Boolean))).slice(0, 6)
-    update({
-      category: nextTags[0] ?? "",
-      tags: nextTags.slice(1),
-    })
-  }
-
-  const addTag = (tag: string) => {
-    const trimmed = tag.trim()
-    if (!trimmed || selectedTags.includes(trimmed)) return
-    setTags([...selectedTags, trimmed])
-  }
-
-  const removeTag = (tag: string) => {
-    setTags(selectedTags.filter(selectedTag => selectedTag !== tag))
-  }
-
-  const handleAddNewTag = () => {
-    addTag(newTagText)
-    setNewTagText("")
-  }
 
   const handleScheduleChange = (nextDateValue: string, nextTimeValue: string) => {
     update({
@@ -5345,79 +5290,6 @@ function SuggestionSheet({
               rows={4}
               className="w-full resize-none rounded-xl border border-border/80 bg-muted/20 px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
             />
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs text-muted-foreground">タグ</label>
-            <div className="flex flex-wrap gap-1.5">
-              {selectedTags.map(tag => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => removeTag(tag)}
-                  className="min-h-9 rounded-full border px-3 text-xs transition-colors"
-                  style={{
-                    borderColor: getTagColor(tag, tagColors),
-                    backgroundColor: `${getTagColor(tag, tagColors)}22`,
-                    color: getTagColor(tag, tagColors),
-                  }}
-                >
-                  {tag} ×
-                </button>
-              ))}
-            </div>
-            <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
-              <div className="relative">
-                <select
-                  value=""
-                  onChange={e => {
-                    addTag(e.target.value)
-                    e.target.value = ""
-                  }}
-                  className="min-h-[48px] w-full appearance-none rounded-xl border border-border/80 bg-muted/20 px-4 pr-10 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
-                  aria-label="登録タグを選択"
-                >
-                  <option value="">登録タグから選択</option>
-                  {registeredTagOptions.map(tag => (
-                    <option key={tag} value={tag}>
-                      {tag}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
-              <Input
-                value={newTagText}
-                onChange={e => setNewTagText(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter") handleAddNewTag()
-                }}
-                placeholder="新しいタグ"
-                className="min-h-[48px] rounded-xl bg-muted/20"
-              />
-              <Button type="button" variant="outline" onClick={handleAddNewTag} className="min-h-[48px] rounded-xl px-4">
-                <Plus className="mr-1 h-4 w-4" />
-                追加
-              </Button>
-            </div>
-            {registeredTagOptions.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {registeredTagOptions.map(tag => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => addTag(tag)}
-                    className="min-h-9 rounded-full border px-3 text-xs transition-colors"
-                    style={{
-                      borderColor: `${getTagColor(tag, tagColors)}88`,
-                      backgroundColor: `${getTagColor(tag, tagColors)}14`,
-                      color: getTagColor(tag, tagColors),
-                    }}
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
           <div className="space-y-2">
             <label className="text-xs text-muted-foreground">所要時間</label>

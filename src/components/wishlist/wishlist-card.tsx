@@ -5,7 +5,7 @@ import { Calendar, CalendarPlus, Check, Clock, GripVertical, Trash2 } from "luci
 import { Button } from "@/components/ui/button"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { colorToRgba, DEFAULT_PROJECT_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
+import { colorToRgba, DEFAULT_PROJECT_COLOR, normalizeColor } from "@/lib/color-utils"
 import { MEMO_DRAG_MIME, TODAY_DURATION_DEFAULT, TODAY_DURATION_PRESETS } from "@/lib/calendar-constants"
 
 // グローバル: dragover ハンドラは dataTransfer の中身を読めないため、
@@ -28,7 +28,6 @@ interface WishlistCardProps {
   onDelete: (id: string) => Promise<void>
   onClick: () => void
   project?: Project | null
-  tagColors?: Record<string, string>
   draggable?: boolean
   onDragStart?: () => void
   // Today タブで native HTML5 D&D を有効化（カレンダー上に配置するため）
@@ -56,7 +55,6 @@ export function WishlistCard({
   onDelete,
   onClick,
   project,
-  tagColors = {},
   draggable,
   onDragStart,
   nativeMemoDrag = false,
@@ -66,17 +64,11 @@ export function WishlistCard({
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
   const isCompleted = item.is_completed || item.memo_status === "completed"
   const isToday = !!item.is_today
-  const tags = item.tags ?? []
   const subCount = item.ideal_items?.length ?? 0
   const formattedDate = formatDateTime(item.scheduled_at)
   const firstUrl = extractFirstUrl(item.description)
   const projectColor = project ? normalizeColor(project.color_theme, DEFAULT_PROJECT_COLOR) : null
   const accentColor = projectColor ?? (isScheduled ? "#3b82f6" : undefined)
-  const displayTags = Array.from(new Set(
-    [item.category, ...tags]
-      .map(tag => tag?.trim())
-      .filter((tag): tag is string => !!tag),
-  ))
   const hasTopBadges = !!project || isScheduled
 
   const handleCheck = async (e: React.MouseEvent) => {
@@ -225,25 +217,6 @@ export function WishlistCard({
           <p className={cn("line-clamp-2 break-words text-sm font-semibold leading-snug", isCompleted && "line-through text-muted-foreground")}>
             {item.title}
           </p>
-          {displayTags.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {displayTags.slice(0, 4).map(tag => {
-                const tagColor = getTagColor(tag, tagColors)
-                return (
-                  <span
-                    key={tag}
-                    className="rounded px-1.5 py-0.5 text-[11px]"
-                    style={{
-                      backgroundColor: colorToRgba(tagColor, 0.14),
-                      color: tagColor,
-                    }}
-                  >
-                    {tag}
-                  </span>
-                )
-              })}
-            </div>
-          )}
         </div>
       </div>
 
@@ -305,7 +278,7 @@ export function WishlistCard({
       <Button
         variant="ghost"
         size="icon"
-        className="absolute right-2 top-12 z-10 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
+        className="absolute bottom-2 right-2 z-10 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
         onPointerDown={e => e.stopPropagation()}
         onMouseDown={e => e.stopPropagation()}
         onClick={handleDelete}
@@ -317,7 +290,7 @@ export function WishlistCard({
       </Button>
 
       {onScheduleClick && !isCompleted && !isScheduled && (
-        <div className="mt-2 flex items-center" onClick={e => e.stopPropagation()}>
+        <div className="mt-2 flex items-center pr-12" onClick={e => e.stopPropagation()}>
           <Button
             type="button"
             variant="outline"

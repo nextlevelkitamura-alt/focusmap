@@ -218,12 +218,12 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                 <button
                     onClick={handleFabClick}
                     className={cn(
-                        "h-16 w-16 rounded-full",
-                        "bg-[#0b57d0] text-white",
-                        "shadow-[0_14px_32px_rgba(11,87,208,0.38)] ring-1 ring-white/15",
+                        "h-16 w-16 rounded-2xl",
+                        "bg-neutral-100 text-neutral-950",
+                        "shadow-[0_14px_32px_rgba(255,255,255,0.14)] ring-1 ring-white/15",
                         "flex items-center justify-center pointer-events-auto",
                         "active:scale-95 transition-all duration-150",
-                        "hover:bg-[#0a4fc0]"
+                        "hover:bg-white"
                     )}
                     aria-label="タスクを追加"
                 >

@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from "@/lib/color-utils"
+import { DEFAULT_PROJECT_COLOR, colorToRgba, normalizeColor } from "@/lib/color-utils"
 import Link from "next/link"
 import { Settings as SettingsIcon } from "lucide-react"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
@@ -186,10 +186,8 @@ interface WishlistCardDetailProps {
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
   onCalendarAdd: (item: IdealGoalWithItems, calendarId?: string) => Promise<void>
   onSaved?: () => void
-  tagOptions: string[]
   projects?: Project[]
   calendars?: UserCalendar[]
-  tagColors?: Record<string, string>
   onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
   onLaunchCodex?: (item: IdealGoalWithItems) => Promise<void>
   onCopyCodexPrompt?: (item: IdealGoalWithItems) => Promise<void>
@@ -1029,10 +1027,8 @@ export function WishlistCardDetail({
   onUpdate,
   onCalendarAdd,
   onSaved,
-  tagOptions,
   projects = [],
   calendars = [],
-  tagColors = {},
   onLaunchCodex,
   onCopyCodexPrompt,
   onReadyForAttachments,
@@ -1065,7 +1061,6 @@ export function WishlistCardDetail({
   const [draftTitle, setDraftTitle] = useState("")
   const [draftDescription, setDraftDescription] = useState("")
   const [memoDraftSyncStatus, setMemoDraftSyncStatus] = useState<MemoDraftSyncStatus>("idle")
-  const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
   const [pendingImages, setPendingImages] = useState<PendingMemoImage[]>([])
   const [copyingCodexImageId, setCopyingCodexImageId] = useState<string | null>(null)
@@ -1105,22 +1100,6 @@ export function WishlistCardDetail({
     stopRecording: stopMemoRecording,
   } = useVoiceRecorder(handleMemoVoiceTranscribed)
 
-  const tags = useMemo(() => item?.tags ?? [], [item?.tags])
-  const selectedTags = useMemo(() => {
-    return Array.from(new Set(
-      [item?.category, ...(item?.tags ?? [])]
-        .filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0),
-    ))
-  }, [item?.category, item?.tags])
-  const categoryOptions = useMemo(() => {
-    const set = new Set<string>(tagOptions)
-    if (item?.category) set.add(item.category)
-    for (const tag of item?.tags ?? []) set.add(tag)
-    return [...set].slice(0, 12)
-  }, [item?.category, item?.tags, tagOptions])
-  const tagSuggestions = useMemo(() => {
-    return categoryOptions.filter(tag => !selectedTags.includes(tag))
-  }, [categoryOptions, selectedTags])
   const calendarOptions = useMemo(() => {
     const writable = calendars.filter(calendar => (
       calendar.google_calendar_id &&
@@ -1955,29 +1934,6 @@ export function WishlistCardDetail({
     }
   }
 
-  const addTagValue = async (value: string) => {
-    const tag = value.trim()
-    if (!tag || selectedTags.includes(tag)) return
-    setTagText("")
-    if (!item.category) {
-      await update({ category: tag })
-    } else {
-      await update({ tags: [...tags, tag] })
-    }
-  }
-
-  const handleAddTag = async () => {
-    await addTagValue(tagText)
-  }
-
-  const removeTag = async (tag: string) => {
-    if (item.category === tag) {
-      await update({ category: null })
-      return
-    }
-    await update({ tags: tags.filter(t => t !== tag) })
-  }
-
   const uploadImages = async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
     if (imageFiles.length === 0) {
@@ -2158,85 +2114,6 @@ export function WishlistCardDetail({
           <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>
       </label>
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            タグ
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{selectedTags.length}</span>
-          </Label>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button type="button" variant="outline" aria-label="タグを追加" className="h-8 gap-1.5 px-2 text-xs">
-                <Plus className="h-3.5 w-3.5" />
-                追加
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] space-y-3 p-3">
-              <div className="flex gap-2">
-                <Input
-                  value={tagText}
-                  onChange={e => setTagText(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") {
-                      e.preventDefault()
-                      void handleAddTag()
-                    }
-                  }}
-                  placeholder="新規タグ"
-                  className="h-10"
-                />
-                <Button variant="outline" onClick={() => void handleAddTag()} className="h-10 shrink-0 px-3">追加</Button>
-              </div>
-              {tagSuggestions.length > 0 && (
-                <div className="grid grid-cols-2 gap-2">
-                  {tagSuggestions.map(tag => {
-                    const color = getTagColor(tag, tagColors)
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => void addTagValue(tag)}
-                        className="min-h-[40px] rounded-md border px-3 text-left text-sm font-medium"
-                        style={{
-                          borderColor: colorToRgba(color, 0.45),
-                          backgroundColor: colorToRgba(color, 0.1),
-                          color,
-                        }}
-                      >
-                        {tag}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
-        </div>
-        <div className="min-h-[44px] rounded-lg border bg-background/40 p-2">
-          {selectedTags.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {selectedTags.map(tag => {
-                const color = getTagColor(tag, tagColors)
-                return (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => void removeTag(tag)}
-                    className="min-h-9 rounded-full border px-3 text-sm font-medium hover:opacity-80"
-                    style={{
-                      borderColor: colorToRgba(color, 0.55),
-                      backgroundColor: colorToRgba(color, 0.12),
-                      color,
-                    }}
-                  >
-                    {tag} ×
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   )
 

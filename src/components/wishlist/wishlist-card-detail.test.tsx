@@ -107,7 +107,6 @@ function DetailHarness() {
         }) as IdealGoalWithItems)
       }}
       onCalendarAdd={vi.fn()}
-      tagOptions={['仕事', 'アイデア']}
     />
   )
 }
@@ -168,21 +167,12 @@ describe('WishlistCardDetail', () => {
     })))
   })
 
-  test('タグ変更で入力中の見出しと本文を消さない', async () => {
+  test('メモ詳細にタグ編集UIを表示しない', async () => {
     render(<DetailHarness />)
 
-    const titleInput = await screen.findByDisplayValue('Original title')
-    const bodyInput = screen.getByPlaceholderText('本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。')
-
-    fireEvent.change(titleInput, { target: { value: 'Draft title' } })
-    fireEvent.change(bodyInput, { target: { value: 'Draft body' } })
-    fireEvent.click(screen.getByRole('button', { name: /タグを追加/ }))
-    fireEvent.click(screen.getByRole('button', { name: '仕事' }))
-
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('Draft title')).toBeInTheDocument()
-      expect(screen.getByDisplayValue('Draft body')).toBeInTheDocument()
-    })
+    await screen.findByDisplayValue('Original title')
+    expect(screen.queryByText('タグ')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /タグを追加/ })).not.toBeInTheDocument()
   })
 
   test('画像エリアでフォルダー選択・ドラッグ&ドロップ・クリップボード貼り付け導線を表示する', async () => {
@@ -203,7 +193,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -252,7 +241,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -289,7 +277,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={onUpdate}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -350,7 +337,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={onOpenChange}
         onUpdate={onUpdate}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
       />,
     )
 
@@ -387,7 +373,6 @@ describe('WishlistCardDetail', () => {
       onOpenChange: vi.fn(),
       onUpdate,
       onCalendarAdd: vi.fn(),
-      tagOptions: [] as string[],
     }
 
     const { rerender } = render(<WishlistCardDetail {...props} open />)
@@ -427,7 +412,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
       />,
     )
 
@@ -460,7 +444,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -515,7 +498,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -684,7 +666,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -778,7 +759,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',
@@ -937,7 +917,6 @@ describe('WishlistCardDetail', () => {
         onOpenChange={vi.fn()}
         onUpdate={vi.fn()}
         onCalendarAdd={vi.fn()}
-        tagOptions={[]}
         projects={[{
           id: 'project-1',
           user_id: 'user-1',

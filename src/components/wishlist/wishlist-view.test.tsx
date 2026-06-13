@@ -360,7 +360,7 @@ describe('WishlistView calendar D&D', () => {
     ]
     vi.stubGlobal('fetch', vi.fn<Window['fetch']>(async (input) => {
       const url = requestUrl(input)
-      if (url === '/api/wishlist') return jsonResponse({ items: wishlistItems })
+      if (url.startsWith('/api/wishlist')) return jsonResponse({ items: wishlistItems })
       if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
       return jsonResponse({})
     }))
@@ -374,6 +374,75 @@ describe('WishlistView calendar D&D', () => {
     expect(screen.getByText('Today memo').closest('div[draggable="true"]')).toBeTruthy()
     expect(screen.getByText('Scheduled memo').closest('div[draggable="true"]')).toBeNull()
     expect(screen.getByText('Completed memo').closest('div[draggable="true"]')).toBeNull()
+  })
+
+  test('全体表示ではカードにプロジェクト名を表示する', async () => {
+    const wishlistItems = [
+      createMemoItem({ id: 'memo-project', title: 'Project memo', project_id: 'project-1' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist') return jsonResponse({ items: wishlistItems })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    }))
+
+    render(
+      <WishlistView
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project Badge',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: '#22c55e',
+          repo_path: null,
+          created_at: '2026-05-21T00:00:00.000Z',
+        } as never]}
+      />,
+    )
+
+    await screen.findByText('Project memo')
+    expect(screen.getByText('Project Badge')).toBeInTheDocument()
+  })
+
+  test('プロジェクト選択中はカードのプロジェクト名を表示しない', async () => {
+    const wishlistItems = [
+      createMemoItem({ id: 'memo-project', title: 'Project memo', project_id: 'project-1' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url.startsWith('/api/wishlist')) return jsonResponse({ items: wishlistItems })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    }))
+
+    render(
+      <WishlistView
+        selectedProjectId="project-1"
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project Badge',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: '#22c55e',
+          repo_path: null,
+          created_at: '2026-05-21T00:00:00.000Z',
+        } as never]}
+      />,
+    )
+
+    await screen.findByText('Project memo')
+    expect(screen.queryByText('Project Badge')).not.toBeInTheDocument()
   })
 
   test('マインドマップ連携済みメモをマップ追加済みカラムに表示する', async () => {

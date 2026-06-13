@@ -113,6 +113,8 @@ describe('WishlistCard', () => {
       expect(onDelete).toHaveBeenCalledWith('memo-1')
     })
     expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByTitle('削除')).toHaveClass('bottom-2')
+    expect(screen.getByTitle('削除')).toHaveClass('right-2')
   })
 
   test('未予定カードは左側の予定ボタンからスケジュール画面を開ける', () => {
@@ -149,7 +151,7 @@ describe('WishlistCard', () => {
     expect(screen.queryByRole('button', { name: '予定に入れる' })).not.toBeInTheDocument()
   })
 
-  test('プロジェクトは左上、タグは見出し下に1回だけ表示し、チェックボックスを右上に置く', () => {
+  test('プロジェクトは左上に表示し、タグは表示せず、チェックボックスを右上に置く', () => {
     render(
       <WishlistCard
         item={createMemoItem({ category: 'アイデア', tags: ['アイデア', '採用'] })}
@@ -161,8 +163,8 @@ describe('WishlistCard', () => {
     )
 
     expect(screen.getByText('転職')).toBeInTheDocument()
-    expect(screen.getAllByText('アイデア')).toHaveLength(1)
-    expect(screen.getByText('採用')).toBeInTheDocument()
+    expect(screen.queryByText('アイデア')).not.toBeInTheDocument()
+    expect(screen.queryByText('採用')).not.toBeInTheDocument()
 
     const checkButton = screen.getByTitle('完了にする')
     expect(checkButton).toHaveClass('absolute')
