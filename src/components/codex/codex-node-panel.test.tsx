@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, test, vi, beforeEach } from "vitest"
 
 import { CodexNodePanel } from "./codex-node-panel"
-import { OPEN_TODAY_CALENDAR_EVENT } from "@/lib/calendar-constants"
 
 const fetchWithSupabaseAuthMock = vi.hoisted(() => ({
   fetchWithSupabaseAuth: vi.fn(),
@@ -30,6 +29,21 @@ vi.mock("@/hooks/useIsMobile", () => ({
 
 vi.mock("@/hooks/useCalendars", () => ({
   useCalendars: () => ({ calendars: [] }),
+}))
+
+const calendarEventsMock = vi.hoisted(() => ({
+  broadcastCalendarOptimisticEvent: vi.fn(),
+  broadcastCalendarOptimisticEventRemoval: vi.fn(),
+  broadcastCalendarSync: vi.fn(),
+  invalidateCalendarCache: vi.fn(),
+}))
+
+vi.mock("@/hooks/useCalendarEvents", () => ({
+  useCalendarEvents: () => ({ events: [], isLoading: false }),
+  broadcastCalendarOptimisticEvent: calendarEventsMock.broadcastCalendarOptimisticEvent,
+  broadcastCalendarOptimisticEventRemoval: calendarEventsMock.broadcastCalendarOptimisticEventRemoval,
+  broadcastCalendarSync: calendarEventsMock.broadcastCalendarSync,
+  invalidateCalendarCache: calendarEventsMock.invalidateCalendarCache,
 }))
 
 vi.mock("@/hooks/useMemoAiTasks", () => ({
@@ -131,8 +145,6 @@ describe("CodexNodePanel", () => {
 
 	  test("desktop opens as a compact right-side edit sheet with memo and schedule controls", async () => {
     const onClose = vi.fn()
-    const openCalendarListener = vi.fn()
-    window.addEventListener(OPEN_TODAY_CALENDAR_EVENT, openCalendarListener)
 
 	    render(
 	      <CodexNodePanel
@@ -174,13 +186,70 @@ describe("CodexNodePanel", () => {
 
     fireEvent.click(scheduleButton)
 
-    await waitFor(() => {
-      expect(openCalendarListener).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
-    })
-
-    window.removeEventListener(OPEN_TODAY_CALENDAR_EVENT, openCalendarListener)
+    expect(await screen.findByTestId("codex-node-task-scheduler")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "予定フォームに戻る" })).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
 	  })
+
+  test("keeps the scheduler open after dragging a task onto a time slot", async () => {
+    const onClose = vi.fn()
+
+    render(
+      <CodexNodePanel
+        open
+        node={{
+          taskId: "task-1",
+          title: "新規案件に向けた準備と確認作業",
+          memo: "初めての内容になるのでしっかりするということ",
+          cwd: "/repo/focusmap",
+          status: "todo",
+          estimatedLabel: "15分",
+        }}
+        candidates={["/repo/focusmap"]}
+        onClose={onClose}
+        onPersistDir={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: "予定を入れる" }))
+
+    const scheduler = await screen.findByTestId("codex-node-task-scheduler")
+    const grid = screen.getByTestId("codex-node-scheduler-grid")
+    const draft = screen.getByTestId("codex-node-scheduler-draft")
+    vi.spyOn(grid, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 360,
+      bottom: 1536,
+      width: 360,
+      height: 1536,
+      toJSON: () => ({}),
+    } as DOMRect)
+    vi.spyOn(draft, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 640,
+      top: 640,
+      left: 0,
+      right: 300,
+      bottom: 680,
+      width: 300,
+      height: 40,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    fireEvent.pointerDown(draft, { pointerId: 1, button: 0, clientY: 650 })
+    fireEvent.pointerMove(draft, { pointerId: 1, clientY: 720 })
+    fireEvent.pointerUp(draft, { pointerId: 1, clientY: 720 })
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith("/api/calendar/sync-task", expect.objectContaining({ method: "POST" }))
+    })
+    expect(scheduler).toBeInTheDocument()
+    expect(screen.getByText("Googleカレンダーに登録しました")).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
 
   test("shows heading generation only after memo detail has text", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

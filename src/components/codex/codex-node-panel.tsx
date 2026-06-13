@@ -1,12 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type MouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react"
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
@@ -33,12 +34,21 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert, X } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, ChevronLeft, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert, X } from "lucide-react"
 import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
-import { useCalendars } from "@/hooks/useCalendars"
-import { OPEN_TODAY_CALENDAR_EVENT, type OpenTodayCalendarEventDetail } from "@/lib/calendar-constants"
+import { useCalendars, type UserCalendar } from "@/hooks/useCalendars"
+import {
+  broadcastCalendarOptimisticEvent,
+  broadcastCalendarOptimisticEventRemoval,
+  broadcastCalendarSync,
+  invalidateCalendarCache,
+  useCalendarEvents,
+} from "@/hooks/useCalendarEvents"
 import type { Task, TaskAttachment } from "@/types/database"
+import type { CalendarEvent } from "@/types/calendar"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
+import { colorToRgba } from "@/lib/color-utils"
+import { calculateTodayTimelineLayout } from "@/lib/today-timeline-layout"
 
 type NodeInfo = {
   taskId: string
@@ -83,6 +93,36 @@ const CODEX_PANEL_WATCH_PING_INTERVAL_MS = 10_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 const QUICK_ESTIMATED_MINUTES = [5, 15, 30, 60, 120] as const
 const DEFAULT_ESTIMATED_MINUTES = 15
+const TASK_SCHEDULER_HOUR_HEIGHT = 64
+const TASK_SCHEDULER_TOTAL_HEIGHT = TASK_SCHEDULER_HOUR_HEIGHT * 24
+const TASK_SCHEDULER_MIN_EVENT_HEIGHT = 28
+const TASK_SCHEDULER_SNAP_MINUTES = 15
+const TASK_SCHEDULER_MINUTES_PER_DAY = 24 * 60
+const TASK_SCHEDULER_HOURS = Array.from({ length: 24 }, (_, hour) => hour)
+const TASK_SCHEDULER_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"]
+const TASK_SCHEDULER_VIEW_MODES = [
+  { key: "day", label: "Day" },
+  { key: "3days", label: "3days" },
+  { key: "month", label: "Month" },
+] as const
+
+type TaskSchedulerViewMode = typeof TASK_SCHEDULER_VIEW_MODES[number]["key"]
+type TaskSchedulerDragState = {
+  pointerId: number
+  offsetY: number
+  startY: number
+  hasMoved: boolean
+}
+
+type TaskSchedulerCalendarBlock = {
+  id: string
+  source: "calendar"
+  title: string
+  startTime: Date
+  endTime: Date
+  color: string
+  syncStatus?: CalendarEvent["sync_status"]
+}
 
 type TaskAttachmentPreview = Pick<TaskAttachment, "id" | "file_name" | "file_url" | "file_type" | "file_size">
 type PendingTaskAttachmentPreview = TaskAttachmentPreview & {
@@ -117,6 +157,96 @@ function formatDurationLabel(minutes: number | null) {
   const hours = Math.floor(minutes / 60)
   const rest = minutes % 60
   return rest ? `${hours}時間${rest}分` : `${hours}時間`
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function startOfLocalDay(date: Date) {
+  const next = new Date(date)
+  next.setHours(0, 0, 0, 0)
+  return next
+}
+
+function addLocalDays(date: Date, days: number) {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function isSameLocalDate(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate()
+}
+
+function createLocalDayRange(date: Date) {
+  const start = startOfLocalDay(date)
+  return { start, end: addLocalDays(start, 1) }
+}
+
+function minutesFromLocalMidnight(date: Date) {
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+function dateWithLocalMinutes(day: Date, minutes: number) {
+  const next = startOfLocalDay(day)
+  next.setMinutes(minutes, 0, 0)
+  return next
+}
+
+function snapSchedulerMinutes(rawMinutes: number, durationMinutes: number) {
+  const maxStart = Math.max(0, TASK_SCHEDULER_MINUTES_PER_DAY - durationMinutes)
+  const snapped = Math.round(rawMinutes / TASK_SCHEDULER_SNAP_MINUTES) * TASK_SCHEDULER_SNAP_MINUTES
+  return clampNumber(snapped, 0, maxStart)
+}
+
+function getTaskSchedulerInitialState(scheduledAt: string | null | undefined, durationMinutesValue: number | null | undefined) {
+  const durationMinutes = Math.max(5, durationMinutesValue ?? DEFAULT_ESTIMATED_MINUTES)
+  const scheduledDate = scheduledAt ? new Date(scheduledAt) : null
+  if (scheduledDate && !Number.isNaN(scheduledDate.getTime())) {
+    return {
+      selectedDate: startOfLocalDay(scheduledDate),
+      draftMinutes: snapSchedulerMinutes(minutesFromLocalMidnight(scheduledDate), durationMinutes),
+      durationMinutes,
+    }
+  }
+
+  const now = new Date()
+  const nextSlot = snapSchedulerMinutes(minutesFromLocalMidnight(now) + TASK_SCHEDULER_SNAP_MINUTES, durationMinutes)
+  return {
+    selectedDate: startOfLocalDay(now),
+    draftMinutes: nextSlot,
+    durationMinutes,
+  }
+}
+
+function formatTaskSchedulerDate(date: Date) {
+  return `${date.getMonth() + 1}月${date.getDate()}日(${TASK_SCHEDULER_WEEKDAYS[date.getDay()]})`
+}
+
+function formatTaskSchedulerShortDate(date: Date) {
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function formatTaskSchedulerTimeFromMinutes(minutes: number) {
+  const hour = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+}
+
+function buildTaskSchedulerMonthDays(selectedDate: Date) {
+  const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1)
+  const monthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0)
+  const startOffset = (monthStart.getDay() + 6) % 7
+  const days: Date[] = []
+  const start = addLocalDays(monthStart, -startOffset)
+  const totalDays = Math.ceil((startOffset + monthEnd.getDate()) / 7) * 7
+  for (let index = 0; index < totalDays; index += 1) {
+    days.push(addLocalDays(start, index))
+  }
+  return days
 }
 
 function formatFileSize(value: number | null) {
@@ -184,6 +314,427 @@ function sanitizeCodexDisplayLog(value: string): string {
 function buildCodexDisplayLog(liveLog: string, message: string, preview: string): string {
   const base = liveLog || message || preview
   return sanitizeCodexDisplayLog(base).slice(-CODEX_DISPLAY_LOG_CHARS)
+}
+
+function TaskInlineScheduler({
+  taskId,
+  title,
+  scheduledAt,
+  durationMinutes: durationMinutesValue,
+  googleEventId,
+  calendars,
+  targetCalendarId,
+  onBack,
+  onSchedule,
+  isScheduling,
+  notice,
+  error,
+}: {
+  taskId: string
+  title: string
+  scheduledAt: string | null
+  durationMinutes: number | null
+  googleEventId: string | null
+  calendars: UserCalendar[]
+  targetCalendarId: string
+  onBack: () => void
+  onSchedule: (startTime: Date, durationMinutes: number) => void
+  isScheduling: boolean
+  notice: string | null
+  error: string | null
+}) {
+  const initialState = useMemo(
+    () => getTaskSchedulerInitialState(scheduledAt, durationMinutesValue),
+    [durationMinutesValue, scheduledAt],
+  )
+  const [selectedDate, setSelectedDate] = useState(initialState.selectedDate)
+  const [draftMinutes, setDraftMinutes] = useState(initialState.draftMinutes)
+  const [viewMode, setViewMode] = useState<TaskSchedulerViewMode>("day")
+  const timelineScrollRef = useRef<HTMLDivElement>(null)
+  const timelineGridRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<TaskSchedulerDragState | null>(null)
+  const durationMinutes = initialState.durationMinutes
+  const dayRange = useMemo(() => createLocalDayRange(selectedDate), [selectedDate])
+  const selectedCalendarIds = useMemo(() => {
+    const selected = calendars
+      .filter(calendar => calendar.selected)
+      .map(calendar => calendar.google_calendar_id)
+      .filter(Boolean)
+    if (selected.length > 0) return selected
+    return targetCalendarId ? [targetCalendarId] : undefined
+  }, [calendars, targetCalendarId])
+  const calendarColorById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const calendar of calendars) {
+      map.set(calendar.google_calendar_id, calendar.background_color ?? calendar.color ?? "#3b82f6")
+    }
+    return map
+  }, [calendars])
+  const { events, isLoading: isEventsLoading } = useCalendarEvents({
+    timeMin: dayRange.start,
+    timeMax: dayRange.end,
+    calendarIds: selectedCalendarIds,
+    enabled: true,
+    autoSync: false,
+  })
+
+  useEffect(() => {
+    setSelectedDate(initialState.selectedDate)
+    setDraftMinutes(initialState.draftMinutes)
+    setViewMode("day")
+  }, [initialState, taskId])
+
+  useEffect(() => {
+    const scrollElement = timelineScrollRef.current
+    if (!scrollElement) return
+    const targetTop = Math.max(0, (draftMinutes / 60) * TASK_SCHEDULER_HOUR_HEIGHT - 180)
+    const frameId = window.requestAnimationFrame(() => {
+      if (typeof scrollElement.scrollTo === "function") {
+        scrollElement.scrollTo({ top: targetTop })
+      } else {
+        scrollElement.scrollTop = targetTop
+      }
+    })
+    return () => window.cancelAnimationFrame(frameId)
+    // 初回表示時だけ予定ブロック付近へ寄せる。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId])
+
+  const calendarBlocks = useMemo<TaskSchedulerCalendarBlock[]>(() => {
+    const dayStart = dayRange.start.getTime()
+    const dayEnd = dayRange.end.getTime()
+    return events.flatMap(event => {
+      if (googleEventId && event.google_event_id === googleEventId) return []
+      const start = new Date(event.start_time)
+      const end = new Date(event.end_time)
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return []
+      if (end.getTime() <= dayStart || start.getTime() >= dayEnd) return []
+      return [{
+        id: event.id,
+        source: "calendar" as const,
+        title: event.title || "予定",
+        startTime: new Date(Math.max(start.getTime(), dayStart)),
+        endTime: new Date(Math.min(end.getTime(), dayEnd)),
+        color: event.background_color ?? event.color ?? calendarColorById.get(event.calendar_id) ?? "#3b82f6",
+        syncStatus: event.sync_status,
+      }]
+    })
+  }, [calendarColorById, dayRange.end, dayRange.start, events, googleEventId])
+  const positionedBlocks = useMemo(() => calculateTodayTimelineLayout(calendarBlocks, {
+    totalHeight: TASK_SCHEDULER_TOTAL_HEIGHT,
+    minHeight: TASK_SCHEDULER_MIN_EVENT_HEIGHT,
+  }), [calendarBlocks])
+  const monthDays = useMemo(() => buildTaskSchedulerMonthDays(selectedDate), [selectedDate])
+  const threeDayDates = useMemo(() => [0, 1, 2].map(offset => addLocalDays(selectedDate, offset)), [selectedDate])
+  const draftTop = (draftMinutes / TASK_SCHEDULER_MINUTES_PER_DAY) * TASK_SCHEDULER_TOTAL_HEIGHT
+  const draftHeight = Math.max(
+    TASK_SCHEDULER_MIN_EVENT_HEIGHT + 8,
+    (durationMinutes / TASK_SCHEDULER_MINUTES_PER_DAY) * TASK_SCHEDULER_TOTAL_HEIGHT,
+  )
+  const draftEndMinutes = Math.min(TASK_SCHEDULER_MINUTES_PER_DAY, draftMinutes + durationMinutes)
+  const draftTimeLabel = `${formatTaskSchedulerTimeFromMinutes(draftMinutes)}-${formatTaskSchedulerTimeFromMinutes(draftEndMinutes)}`
+
+  const minutesFromPointer = useCallback((clientY: number, offsetY: number) => {
+    const grid = timelineGridRef.current
+    if (!grid) return draftMinutes
+    const rect = grid.getBoundingClientRect()
+    const rawY = clientY - rect.top - offsetY
+    const rawMinutes = (rawY / TASK_SCHEDULER_TOTAL_HEIGHT) * TASK_SCHEDULER_MINUTES_PER_DAY
+    return snapSchedulerMinutes(rawMinutes, durationMinutes)
+  }, [draftMinutes, durationMinutes])
+
+  const autoScrollTimeline = useCallback((clientY: number) => {
+    const scrollElement = timelineScrollRef.current
+    if (!scrollElement) return
+    const rect = scrollElement.getBoundingClientRect()
+    const edge = 72
+    if (clientY < rect.top + edge) {
+      scrollElement.scrollTop = Math.max(0, scrollElement.scrollTop - 18)
+      return
+    }
+    if (clientY > rect.bottom - edge) {
+      scrollElement.scrollTop = Math.min(
+        scrollElement.scrollHeight - scrollElement.clientHeight,
+        scrollElement.scrollTop + 18,
+      )
+    }
+  }, [])
+
+  const handleDraftPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      offsetY: event.clientY - rect.top,
+      startY: event.clientY,
+      hasMoved: false,
+    }
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+  }
+
+  const handleDraftPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (Math.abs(event.clientY - dragState.startY) >= 3) {
+      dragState.hasMoved = true
+    }
+    autoScrollTimeline(event.clientY)
+    setDraftMinutes(minutesFromPointer(event.clientY, dragState.offsetY))
+  }
+
+  const clearPointerCapture = (event: ReactPointerEvent<HTMLDivElement>, pointerId: number) => {
+    if (
+      typeof event.currentTarget.hasPointerCapture === "function"
+      && typeof event.currentTarget.releasePointerCapture === "function"
+      && event.currentTarget.hasPointerCapture(pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(pointerId)
+    }
+  }
+
+  const handleDraftPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    clearPointerCapture(event, dragState.pointerId)
+    const finalMinutes = minutesFromPointer(event.clientY, dragState.offsetY)
+    dragStateRef.current = null
+    setDraftMinutes(finalMinutes)
+    if (dragState.hasMoved) {
+      onSchedule(dateWithLocalMinutes(selectedDate, finalMinutes), durationMinutes)
+    }
+  }
+
+  const handleDraftPointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    clearPointerCapture(event, dragState.pointerId)
+    dragStateRef.current = null
+  }
+
+  const selectDate = (date: Date) => {
+    setSelectedDate(startOfLocalDay(date))
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#050607] text-neutral-100" data-testid="codex-node-task-scheduler">
+      <div className="shrink-0 border-b border-white/10 bg-[#050607]/95 px-4 pb-3 pt-3">
+        <div className="mx-auto flex max-w-xl items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onBack}
+            className="h-10 w-10 shrink-0 rounded-full text-neutral-300 hover:bg-white/10 hover:text-white"
+            aria-label="予定フォームに戻る"
+            title="予定フォームに戻る"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-xl font-bold tracking-normal text-white">{formatTaskSchedulerDate(selectedDate)}</h1>
+            <p className="text-xs text-neutral-400">
+              {isScheduling
+                ? "予定を保存中"
+                : isEventsLoading
+                  ? "スケジュール読込中"
+                  : `${calendarBlocks.length}件のスケジュール`}
+            </p>
+          </div>
+          <div className="flex h-9 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.06] p-0.5">
+            {TASK_SCHEDULER_VIEW_MODES.map(mode => (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={() => setViewMode(mode.key)}
+                className={cn(
+                  "h-8 rounded-md px-2 text-[11px] font-semibold transition-colors",
+                  viewMode === mode.key
+                    ? "bg-white text-black"
+                    : "text-neutral-400 hover:bg-white/10 hover:text-neutral-100",
+                )}
+                aria-pressed={viewMode === mode.key}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 shrink-0 rounded-lg border-white/10 bg-white/[0.06] text-neutral-200 hover:bg-white/10"
+            aria-label="AI"
+            title="AI"
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {notice && (
+          <p className="mx-auto mt-3 max-w-xl rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+            {notice}
+          </p>
+        )}
+        {error && (
+          <p className="mx-auto mt-3 max-w-xl rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+            {error}
+          </p>
+        )}
+
+        {viewMode === "3days" && (
+          <div className="mx-auto mt-3 grid max-w-xl grid-cols-3 gap-2">
+            {threeDayDates.map(date => {
+              const active = isSameLocalDate(date, selectedDate)
+              return (
+                <button
+                  key={date.toISOString()}
+                  type="button"
+                  onClick={() => selectDate(date)}
+                  className={cn(
+                    "min-h-11 rounded-lg border px-2 text-left transition-colors",
+                    active
+                      ? "border-emerald-500 bg-emerald-500/20 text-emerald-100"
+                      : "border-white/10 bg-white/[0.04] text-neutral-300",
+                  )}
+                >
+                  <span className="block text-xs font-semibold">{TASK_SCHEDULER_WEEKDAYS[date.getDay()]}</span>
+                  <span className="block text-sm font-bold">{formatTaskSchedulerShortDate(date)}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {viewMode === "month" && (
+          <div className="mx-auto mt-3 max-w-xl rounded-lg border border-white/10 bg-white/[0.035] p-2">
+            <div className="mb-2 flex items-center justify-between text-xs font-semibold text-neutral-300">
+              <button type="button" onClick={() => selectDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))} className="rounded px-2 py-1 hover:bg-white/10">
+                前月
+              </button>
+              <span>{selectedDate.getFullYear()}年{selectedDate.getMonth() + 1}月</span>
+              <button type="button" onClick={() => selectDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))} className="rounded px-2 py-1 hover:bg-white/10">
+                次月
+              </button>
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-neutral-500">
+              {["月", "火", "水", "木", "金", "土", "日"].map(day => <span key={day}>{day}</span>)}
+            </div>
+            <div className="mt-1 grid grid-cols-7 gap-1">
+              {monthDays.map(date => {
+                const active = isSameLocalDate(date, selectedDate)
+                const currentMonth = date.getMonth() === selectedDate.getMonth()
+                return (
+                  <button
+                    key={date.toISOString()}
+                    type="button"
+                    onClick={() => selectDate(date)}
+                    className={cn(
+                      "aspect-square rounded-md text-xs font-semibold transition-colors",
+                      active
+                        ? "bg-emerald-500 text-emerald-950"
+                        : currentMonth
+                          ? "text-neutral-200 hover:bg-white/10"
+                          : "text-neutral-600 hover:bg-white/5",
+                    )}
+                    aria-pressed={active}
+                  >
+                    {date.getDate()}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div ref={timelineScrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-3">
+        <div ref={timelineGridRef} data-testid="codex-node-scheduler-grid" className="relative mx-auto w-full max-w-xl" style={{ height: TASK_SCHEDULER_TOTAL_HEIGHT }}>
+          {TASK_SCHEDULER_HOURS.map(hour => (
+            <div
+              key={hour}
+              className="absolute left-0 right-0 border-t border-white/[0.055]"
+              style={{ top: hour * TASK_SCHEDULER_HOUR_HEIGHT }}
+            >
+              <span className="absolute -top-2 left-0 w-12 pr-2 text-right text-xs tabular-nums text-neutral-500">
+                {String(hour).padStart(2, "0")}:00
+              </span>
+            </div>
+          ))}
+          <div className="absolute bottom-0 left-14 right-0 top-0 border-l border-white/[0.08]" />
+          <div className="absolute bottom-0 left-14 right-0 top-0">
+            {positionedBlocks.map(block => {
+              const left = (block.column / block.totalColumns) * 100
+              const width = (block.columnSpan / block.totalColumns) * 100
+              return (
+                <div
+                  key={block.id}
+                  className="absolute overflow-hidden rounded-lg border border-white/10 px-2 py-1 text-[11px] leading-4 text-neutral-300 shadow-sm"
+                  style={{
+                    top: block.top,
+                    height: block.height,
+                    left: `calc(${left}% + 3px)`,
+                    width: `calc(${width}% - 6px)`,
+                    borderLeftColor: block.color,
+                    backgroundColor: colorToRgba(block.color, block.syncStatus === "pending" ? 0.2 : 0.12),
+                  }}
+                >
+                  <div className="flex min-w-0 items-start gap-1.5">
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium text-neutral-200">{block.title}</div>
+                      <div className="truncate text-[10px] text-neutral-500">
+                        {formatTaskSchedulerTimeFromMinutes(minutesFromLocalMidnight(block.startTime))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="予定ブロックをドラッグして時間を決める"
+              data-testid="codex-node-scheduler-draft"
+              onPointerDown={handleDraftPointerDown}
+              onPointerMove={handleDraftPointerMove}
+              onPointerUp={handleDraftPointerUp}
+              onPointerCancel={handleDraftPointerCancel}
+              className={cn(
+                "absolute left-0 right-0 touch-none select-none rounded-lg border border-emerald-400/70 bg-emerald-400/22 px-3 py-2 text-left text-sm text-white shadow-[0_12px_32px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/35 active:cursor-grabbing",
+                isScheduling && "opacity-70",
+              )}
+              style={{
+                top: draftTop,
+                height: draftHeight,
+                cursor: dragStateRef.current ? "grabbing" : "grab",
+              }}
+            >
+              <div className="flex min-w-0 items-start gap-2">
+                {isScheduling ? (
+                  <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-emerald-100" />
+                ) : (
+                  <CalendarIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-100" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold">{title || "無題"}</div>
+                  <div className="mt-0.5 text-xs font-medium text-emerald-50">{draftTimeLabel} / {formatDurationLabel(durationMinutes)}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function activityMessagesToDisplayLog(messages: AiTaskActivityMessage[]): string {
@@ -305,6 +856,9 @@ export function CodexNodePanel({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(DEFAULT_ESTIMATED_MINUTES)
   const [calendarId, setCalendarId] = useState("")
+  const [scheduledAt, setScheduledAt] = useState<string | null>(null)
+  const [googleEventId, setGoogleEventId] = useState<string | null>(null)
+  const [isScheduleCalendarOpen, setIsScheduleCalendarOpen] = useState(false)
   const [isRegisteringSchedule, setIsRegisteringSchedule] = useState(false)
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<TaskAttachmentPreview[]>([])
@@ -374,6 +928,7 @@ export function CodexNodePanel({
     setCodexImageCopyNotice(null)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
+    setIsScheduleCalendarOpen(false)
     setIsRegisteringSchedule(false)
     setScheduleNotice(null)
     setImageNotice(null)
@@ -421,6 +976,8 @@ export function CodexNodePanel({
               : DEFAULT_ESTIMATED_MINUTES,
           )
           setCalendarId(taskData.task.calendar_id ?? "")
+          setScheduledAt(taskData.task.scheduled_at ?? null)
+          setGoogleEventId(taskData.task.google_event_id ?? null)
         }
 
         if (attachmentsRes.ok && Array.isArray(attachmentsData.attachments)) {
@@ -607,22 +1164,145 @@ export function CodexNodePanel({
         calendar_id: targetCalendarId,
       })
       if (!saved) return
-      window.dispatchEvent(new CustomEvent<OpenTodayCalendarEventDetail>(OPEN_TODAY_CALENDAR_EVENT, {
-        detail: {
-          source: "mindmap-node-panel",
-          taskId: node.taskId,
-        },
-      }))
-      setScheduleNotice("カレンダーで予定を入れられます")
+      setIsScheduleCalendarOpen(true)
       setSaveStatus("saved")
-      onClose()
     } catch (err) {
       setSaveStatus("error")
       setError(err instanceof Error ? err.message : "予定の準備に失敗しました")
     } finally {
       setIsRegisteringSchedule(false)
     }
-  }, [calendarId, estimatedMinutes, node.taskId, onClose, patchTaskDetail])
+  }, [calendarId, estimatedMinutes, patchTaskDetail])
+
+  const handleTaskSchedulerSchedule = useCallback(async (startTime: Date, durationMinutes: number) => {
+    if (Number.isNaN(startTime.getTime())) {
+      setError("日時を取得できませんでした")
+      return
+    }
+    if (!calendarId.trim()) {
+      setError("カレンダーを選択してください")
+      return
+    }
+
+    const targetCalendarId = calendarId.trim()
+    const nextDuration = Math.max(5, Math.round(durationMinutes || estimatedMinutes || DEFAULT_ESTIMATED_MINUTES))
+    const nextScheduledAt = startTime.toISOString()
+    const previousScheduledAt = scheduledAt
+    const previousEstimatedMinutes = estimatedMinutes
+    const previousCalendarId = calendarId
+    const previousGoogleEventId = googleEventId
+    const optimisticEventId = `optimistic-codex-node-${node.taskId}`
+    const calendarColor = calendarOptions.find(calendar => calendar.id === targetCalendarId)?.color ?? "#10B981"
+    const nowIso = new Date().toISOString()
+    const optimisticEvent: CalendarEvent = {
+      id: optimisticEventId,
+      user_id: "",
+      google_event_id: previousGoogleEventId ?? "",
+      calendar_id: targetCalendarId,
+      title: headingRef.current.trim() || node.title || "無題",
+      description: detailRef.current.trim() || undefined,
+      start_time: nextScheduledAt,
+      end_time: new Date(startTime.getTime() + nextDuration * 60_000).toISOString(),
+      is_all_day: false,
+      timezone: "Asia/Tokyo",
+      synced_at: nowIso,
+      created_at: nowIso,
+      updated_at: nowIso,
+      task_id: node.taskId,
+      estimated_time: nextDuration,
+      background_color: calendarColor,
+      sync_status: "pending",
+    }
+
+    setIsRegisteringSchedule(true)
+    setError(null)
+    setScheduleNotice(null)
+    setScheduledAt(nextScheduledAt)
+    setEstimatedMinutes(nextDuration)
+    setCalendarId(targetCalendarId)
+    if (previousGoogleEventId) {
+      broadcastCalendarOptimisticEventRemoval(previousGoogleEventId, previousGoogleEventId, previousCalendarId || targetCalendarId)
+    }
+    broadcastCalendarOptimisticEvent(optimisticEvent)
+
+    try {
+      await saveDraft(headingRef.current, detailRef.current)
+      const saved = await patchTaskDetail({
+        scheduled_at: nextScheduledAt,
+        estimated_time: nextDuration,
+        calendar_id: targetCalendarId,
+      })
+      if (!saved) throw new Error("予定の保存に失敗しました")
+
+      const syncResponse = await fetch("/api/calendar/sync-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskId: node.taskId,
+          scheduled_at: nextScheduledAt,
+          estimated_time: nextDuration,
+          calendar_id: targetCalendarId,
+        }),
+      })
+      const syncData = await syncResponse.json().catch(() => ({})) as {
+        error?: string
+        googleEventId?: string
+        calendarId?: string
+      }
+      if (!syncResponse.ok) {
+        throw new Error(syncData.error || "Googleカレンダー登録に失敗しました")
+      }
+
+      const effectiveGoogleEventId = syncData.googleEventId || previousGoogleEventId || ""
+      const effectiveCalendarId = syncData.calendarId || targetCalendarId
+      if (effectiveGoogleEventId) setGoogleEventId(effectiveGoogleEventId)
+      setCalendarId(effectiveCalendarId)
+      if (onSaveTaskDetails && effectiveGoogleEventId) {
+        await onSaveTaskDetails(node.taskId, {
+          google_event_id: effectiveGoogleEventId,
+          calendar_id: effectiveCalendarId,
+        } as Partial<Task>)
+      }
+      broadcastCalendarOptimisticEvent({
+        ...optimisticEvent,
+        google_event_id: effectiveGoogleEventId,
+        calendar_id: effectiveCalendarId,
+        sync_status: "confirmed",
+        updated_at: new Date().toISOString(),
+      })
+      invalidateCalendarCache()
+      broadcastCalendarSync()
+      setSaveStatus("saved")
+      setScheduleNotice("Googleカレンダーに登録しました")
+    } catch (err) {
+      broadcastCalendarOptimisticEventRemoval(optimisticEventId, previousGoogleEventId ?? undefined, targetCalendarId)
+      setScheduledAt(previousScheduledAt)
+      setEstimatedMinutes(previousEstimatedMinutes)
+      setCalendarId(previousCalendarId)
+      setGoogleEventId(previousGoogleEventId)
+      await patchTaskDetail({
+        scheduled_at: previousScheduledAt,
+        estimated_time: previousEstimatedMinutes,
+        calendar_id: previousCalendarId || null,
+      })
+      broadcastCalendarSync()
+      setSaveStatus("error")
+      setError(err instanceof Error ? err.message : "予定の登録に失敗しました")
+    } finally {
+      setIsRegisteringSchedule(false)
+    }
+  }, [
+    calendarId,
+    calendarOptions,
+    estimatedMinutes,
+    googleEventId,
+    node.taskId,
+    node.title,
+    onSaveTaskDetails,
+    patchTaskDetail,
+    saveDraft,
+    scheduledAt,
+  ])
 
   const uploadImages = useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
@@ -1373,6 +2053,23 @@ export function CodexNodePanel({
           マインドマップノードの見出し、メモ、所要時間、画像、Codex実行を編集します。
         </SheetDescription>
 
+        {isScheduleCalendarOpen ? (
+          <TaskInlineScheduler
+            taskId={node.taskId}
+            title={heading}
+            scheduledAt={scheduledAt}
+            durationMinutes={estimatedMinutes}
+            googleEventId={googleEventId}
+            calendars={calendars}
+            targetCalendarId={calendarId || selectedCalendar?.id || "primary"}
+            onBack={() => setIsScheduleCalendarOpen(false)}
+            onSchedule={handleTaskSchedulerSchedule}
+            isScheduling={isRegisteringSchedule}
+            notice={scheduleNotice}
+            error={error}
+          />
+        ) : (
+        <>
         <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-x-none px-4 pb-3 pt-4 sm:px-6 [touch-action:pan-y]">
           <div className="grid min-w-0 gap-3 xl:items-start">
             <section className="order-1 min-w-0 space-y-1.5 pr-9" data-testid="codex-node-heading-section">
@@ -1954,7 +2651,9 @@ export function CodexNodePanel({
 	            </div>
 	          </div>
 	        )}
-	      </SheetContent>
+	      </>
+        )}
+      </SheetContent>
     </Sheet>
   )
 }
