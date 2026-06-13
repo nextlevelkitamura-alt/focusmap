@@ -3042,6 +3042,7 @@ export function WishlistView({
         } as MemoItem)
         if (scheduled) {
           window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+          setDetailOpen(true)
           return
         }
       }
@@ -3983,17 +3984,6 @@ export function WishlistView({
                 )
               })}
             </div>
-            <Button
-              type="button"
-              onClick={handleAddMemoFromComposer}
-              disabled={disableMemoAdd}
-              size="icon"
-              className="h-11 w-11 shrink-0 rounded-xl bg-neutral-100 text-neutral-950 shadow-[0_8px_22px_rgba(255,255,255,0.14)] hover:bg-white disabled:bg-neutral-700 disabled:text-neutral-400 disabled:opacity-100"
-              aria-label="メモを追加"
-              title={hasIntakeText ? "入力内容をメモとして追加" : "新しいメモを追加"}
-            >
-              <Plus className="h-5 w-5" />
-            </Button>
           </div>
         )}
         {SHOW_MEMO_MINDMAP_ENTRY && selectMode && (
@@ -4734,7 +4724,7 @@ export function WishlistView({
                 {voiceError && <span className="min-w-0 flex-1 truncate text-red-200">{voiceError}</span>}
               </div>
             )}
-            <div className="rounded-[1.15rem] border border-[#34363a] bg-[#15171a]/95 p-2 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
+            <div className="relative rounded-[1.15rem] border border-[#34363a] bg-[#15171a]/95 p-2 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
               <textarea
                 value={intakeText}
                 onChange={e => setIntakeText(e.target.value)}
@@ -4744,24 +4734,36 @@ export function WishlistView({
                 }}
                 placeholder="話した内容やメモを入力"
                 rows={1}
-                className="max-h-28 min-h-8 w-full resize-none border-0 bg-transparent px-1 py-0 text-[15px] leading-5 text-neutral-100 outline-none placeholder:text-neutral-500"
+                className="max-h-28 min-h-20 w-full resize-none border-0 bg-transparent px-1 pb-9 pr-12 pt-0 text-[15px] leading-5 text-neutral-100 outline-none placeholder:text-neutral-500"
                 disabled={isAnalyzing || isTranscribing}
               />
-              <div className="mt-0 flex min-h-8 items-center justify-end gap-1.5">
-                {hasIntakeText && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => { void handleScheduleMemoFromComposer() }}
-                    disabled={isRecording || isAnalyzing || isTranscribing}
-                    size="icon"
-                    className="h-8 w-8 shrink-0 rounded-full text-lime-100 hover:bg-lime-300/15 hover:text-lime-50 disabled:text-neutral-500 disabled:opacity-100"
-                    aria-label="AIでメモを予約"
-                    title="AIでメモを予約"
-                  >
-                    {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  </Button>
-                )}
+              {hasIntakeText && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => { void handleScheduleMemoFromComposer() }}
+                  disabled={isRecording || isAnalyzing || isTranscribing}
+                  size="icon"
+                  className="absolute bottom-2 right-11 h-8 w-8 shrink-0 rounded-full text-lime-100 hover:bg-lime-300/15 hover:text-lime-50 disabled:text-neutral-500 disabled:opacity-100"
+                  aria-label="AIでメモを予約"
+                  title="AIでメモを予約"
+                >
+                  {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                </Button>
+              )}
+              <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
+                <Button
+                  type="button"
+                  onClick={handleAddMemoFromComposer}
+                  disabled={disableMemoAdd}
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 rounded-full bg-neutral-100 text-neutral-950 hover:bg-white disabled:bg-neutral-700 disabled:text-neutral-400 disabled:opacity-100"
+                  aria-label="メモを追加"
+                  title={hasIntakeText ? "入力内容をメモとして追加" : "新しいメモを追加"}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
                 <Button
                   type="button"
                   onClick={handleVoiceToggle}

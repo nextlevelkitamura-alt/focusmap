@@ -1142,5 +1142,8 @@ describe('WishlistView calendar D&D', () => {
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input) === '/api/wishlist/scheduled-memo/calendar' && init?.method === 'POST',
     )).toBe(true)
+    await waitFor(() => {
+      expect(screen.getByTestId('memo-detail')).toHaveTextContent('商談内容の整理')
+    })
   })
 })
