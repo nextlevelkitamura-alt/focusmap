@@ -928,9 +928,21 @@ export function DashboardClient({
         }
     }, [])
 
+    const currentGroupsForDisplay = useMemo(() => {
+        return currentGroups
+            .filter(task => !hiddenTaskIds.has(task.id))
+            .map(task => taskOverrides[task.id] ? { ...task, ...taskOverrides[task.id] } as Task : task)
+    }, [currentGroups, hiddenTaskIds, taskOverrides])
+
+    const currentTasksForDisplay = useMemo(() => {
+        return currentTasks
+            .filter(task => !hiddenTaskIds.has(task.id))
+            .map(task => taskOverrides[task.id] ? { ...task, ...taskOverrides[task.id] } as Task : task)
+    }, [currentTasks, hiddenTaskIds, taskOverrides])
+
     // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
     const allTasksMerged = useMemo(() => {
-        const currentMap = new Map(currentTasks.map(t => [t.id, t]))
+        const currentMap = new Map([...currentGroupsForDisplay, ...currentTasksForDisplay].map(t => [t.id, t]))
         const merged = initialTasks.map(t => {
             const base = currentMap.get(t.id) || t
             const override = taskOverrides[base.id]
@@ -938,15 +950,14 @@ export function DashboardClient({
         })
         const existingIds = new Set(merged.map(t => t.id))
         // Add new tasks from mind map (created during session, not in initialTasks)
-        for (const ct of currentTasks) {
+        for (const ct of currentTasksForDisplay) {
             if (!existingIds.has(ct.id)) {
-                const override = taskOverrides[ct.id]
-                merged.push(override ? { ...ct, ...override } as Task : ct)
+                merged.push(ct)
                 existingIds.add(ct.id)
             }
         }
         // Add groups from mind map (for completeness)
-        for (const cg of currentGroups) {
+        for (const cg of currentGroupsForDisplay) {
             if (!existingIds.has(cg.id)) {
                 merged.push(cg)
                 existingIds.add(cg.id)
@@ -957,7 +968,7 @@ export function DashboardClient({
             if (!existingIds.has(qt.id)) merged.push(qt)
         }
         return dedupeGoogleEventTasks(merged).filter(task => !hiddenTaskIds.has(task.id))
-    }, [currentGroups, currentTasks, hiddenTaskIds, initialTasks, quickTasks, taskOverrides])
+    }, [currentGroupsForDisplay, currentTasksForDisplay, hiddenTaskIds, initialTasks, quickTasks, taskOverrides])
 
     // Save daily timer for habit child tasks
     const handleTimerSessionEnd = useCallback((taskId: string, sessionSeconds: number) => {
@@ -1358,8 +1369,8 @@ export function DashboardClient({
                             onSelectProject={setSelectedProjectId}
                             onSelectSpace={setSelectedSpaceId}
                             selectedProject={selectedProject}
-                            groups={currentGroups}
-                            tasks={currentTasks}
+                            groups={currentGroupsForDisplay}
+                            tasks={currentTasksForDisplay}
                             allTasks={allTasksMerged}
                             onCreateGroup={handleCreateGroup}
                             onDeleteGroup={handleDeleteGroup}
@@ -1444,8 +1455,8 @@ export function DashboardClient({
                                         project={selectedProject}
                                         spaces={spaces}
                                         projects={projects}
-                                        groups={currentGroups}
-                                        tasks={currentTasks}
+                                        groups={currentGroupsForDisplay}
+                                        tasks={currentTasksForDisplay}
                                         allTasks={allTasksMerged}
                                         onUpdateProject={handleUpdateProjectTitle}
                                         onCreateGroup={handleCreateGroup}
@@ -1682,8 +1693,8 @@ export function DashboardClient({
                                     project={selectedProject}
                                     spaces={spaces}
                                     projects={projects}
-                                    groups={currentGroups}
-                                    tasks={currentTasks}
+                                    groups={currentGroupsForDisplay}
+                                    tasks={currentTasksForDisplay}
                                     allTasks={allTasksMerged}
                                     onUpdateProject={handleUpdateProjectTitle}
                                     onCreateGroup={handleCreateGroup}
@@ -1709,8 +1720,8 @@ export function DashboardClient({
                             project={selectedProject}
                             spaces={spaces}
                             projects={projects}
-                            groups={currentGroups}
-                            tasks={currentTasks}
+                            groups={currentGroupsForDisplay}
+                            tasks={currentTasksForDisplay}
                             allTasks={allTasksMerged}
                             onUpdateProject={handleUpdateProjectTitle}
                             onCreateGroup={handleCreateGroup}

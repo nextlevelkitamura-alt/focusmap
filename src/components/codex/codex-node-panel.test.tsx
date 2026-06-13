@@ -232,66 +232,128 @@ describe("CodexNodePanel", () => {
     })
   })
 
-	  test("shows compact attachment copy controls and image preview without the date field", async () => {
-	    const attachment = {
-	      id: "image-1",
-	      file_name: "IMG_3776.jpg",
-	      file_url: "https://example.com/IMG_3776.jpg",
-	      file_type: "image/jpeg",
-	      file_size: 120 * 1024,
-	    }
-	    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-	      const url = String(input)
-	      if (url === "/api/tasks/task-1") {
-	        return jsonResponse({
-	          task: {
-	            id: "task-1",
-	            title: "AI生成マインドマップのUIと処理ロジックの再構築",
-	            memo: "既存のマインドマップを整理したい",
-	            scheduled_at: null,
-	            estimated_time: null,
-	            calendar_id: null,
-	            google_event_id: null,
-	          },
-	        })
-	      }
-	      if (url === "/api/tasks/task-1/attachments") {
-	        return jsonResponse({ attachments: [attachment] })
-	      }
-	      return jsonResponse({})
-	    }))
+  test("saves the generated heading as the node title when closing from the save button", async () => {
+    const memo = "ノード生成ボタンの配置変更とUIデザイン案を整理したい"
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/tasks/task-1") {
+        return jsonResponse({
+          task: {
+            id: "task-1",
+            title: "えっとこのノードに関して長い文章を書いた",
+            memo,
+            scheduled_at: null,
+            estimated_time: null,
+            calendar_id: null,
+            google_event_id: null,
+          },
+        })
+      }
+      if (url === "/api/tasks/task-1/attachments") {
+        return jsonResponse({ attachments: [] })
+      }
+      if (url === "/api/ai/generate-memo-heading") {
+        return jsonResponse({ heading: "ノード生成ボタンの配置改善" })
+      }
+      return jsonResponse({})
+    }))
+    const onSaveDraft = vi.fn()
+    const onClose = vi.fn()
 
-	    render(
-	      <CodexNodePanel
-	        open
-	        node={{
-	          taskId: "task-1",
-	          title: "AI生成マインドマップのUIと処理ロジックの再構築",
-	          memo: "既存のマインドマップを整理したい",
-	          cwd: "/repo/focusmap",
-	          status: "todo",
-	        }}
-	        candidates={["/repo/focusmap"]}
-	        onClose={vi.fn()}
-	        onPersistDir={vi.fn()}
-	      />,
-	    )
+    render(
+      <CodexNodePanel
+        open
+        node={{
+          taskId: "task-1",
+          title: "えっとこのノードに関して長い文章を書いた",
+          memo,
+          cwd: "/repo/focusmap",
+          status: "todo",
+        }}
+        candidates={["/repo/focusmap"]}
+        onClose={onClose}
+        onPersistDir={vi.fn()}
+        onSaveDraft={onSaveDraft}
+      />,
+    )
 
-	    expect(await screen.findByText("IMG_3776.jpg")).toBeInTheDocument()
-	    expect(screen.queryByText("画像コピー")).not.toBeInTheDocument()
-	    expect(screen.queryByText("日付")).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole("button", { name: "見出し生成" }))
 
-	    fireEvent.click(screen.getByRole("button", { name: "IMG_3776.jpgをCodex貼り付け用にコピー" }))
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("ノード生成ボタンの配置改善")).toBeInTheDocument()
+    })
 
-	    await waitFor(() => {
-	      expect(codexAppLaunchMock.copyCodexImageToClipboard).toHaveBeenCalledWith("https://example.com/IMG_3776.jpg")
-	    })
+    fireEvent.click(screen.getByRole("button", { name: "保存" }))
 
-	    fireEvent.click(screen.getByRole("button", { name: "IMG_3776.jpgをプレビュー" }))
+    await waitFor(() => {
+      expect(onSaveDraft).toHaveBeenLastCalledWith("task-1", {
+        title: "ノード生成ボタンの配置改善",
+        memo,
+      })
+      expect(onClose).toHaveBeenCalled()
+    })
+  })
 
-	    expect(screen.getByRole("dialog", { name: "IMG_3776.jpgのプレビュー" })).toBeInTheDocument()
-	    expect(screen.getByRole("button", { name: "プレビューを閉じる" })).toBeInTheDocument()
-	  })
+  test("shows compact attachment copy controls and image preview without the date field", async () => {
+    const attachment = {
+      id: "image-1",
+      file_name: "IMG_3776.jpg",
+      file_url: "https://example.com/IMG_3776.jpg",
+      file_type: "image/jpeg",
+      file_size: 120 * 1024,
+    }
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/tasks/task-1") {
+        return jsonResponse({
+          task: {
+            id: "task-1",
+            title: "AI生成マインドマップのUIと処理ロジックの再構築",
+            memo: "既存のマインドマップを整理したい",
+            scheduled_at: null,
+            estimated_time: null,
+            calendar_id: null,
+            google_event_id: null,
+          },
+        })
+      }
+      if (url === "/api/tasks/task-1/attachments") {
+        return jsonResponse({ attachments: [attachment] })
+      }
+      return jsonResponse({})
+    }))
+
+    render(
+      <CodexNodePanel
+        open
+        node={{
+          taskId: "task-1",
+          title: "AI生成マインドマップのUIと処理ロジックの再構築",
+          memo: "既存のマインドマップを整理したい",
+          cwd: "/repo/focusmap",
+          status: "todo",
+        }}
+        candidates={["/repo/focusmap"]}
+        onClose={vi.fn()}
+        onPersistDir={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText("IMG_3776.jpg")).toBeInTheDocument()
+    expect(screen.queryByText("画像コピー")).not.toBeInTheDocument()
+    expect(screen.queryByText("日付")).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "IMG_3776.jpgをCodex貼り付け用にコピー" }))
+
+    await waitFor(() => {
+      expect(codexAppLaunchMock.copyCodexImageToClipboard).toHaveBeenCalledWith("https://example.com/IMG_3776.jpg")
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "IMG_3776.jpgをプレビュー" }))
+
+    expect(screen.getByRole("dialog", { name: "IMG_3776.jpgのプレビュー" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "プレビューを閉じる" })).toBeInTheDocument()
+  })
 
   test("shows a compact node delete button under the image add controls", async () => {
     const onClose = vi.fn()
@@ -329,5 +391,5 @@ describe("CodexNodePanel", () => {
     } finally {
       confirmSpy.mockRestore()
     }
-  })
+})
 	})

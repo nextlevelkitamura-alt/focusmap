@@ -315,6 +315,8 @@ export function CodexNodePanel({
   const [imageNotice, setImageNotice] = useState<string | null>(null)
   const [previewAttachment, setPreviewAttachment] = useState<TaskAttachmentPreview | PendingTaskAttachmentPreview | null>(null)
   const [isImageDragActive, setIsImageDragActive] = useState(false)
+  const headingRef = useRef(node.title)
+  const detailRef = useRef(node.memo)
   const saveVersionRef = useRef(0)
   const codexWatchIdRef = useRef<string | null>(null)
   const codexSyncInFlightRef = useRef(false)
@@ -354,6 +356,8 @@ export function CodexNodePanel({
     const platform = getCurrentMobilePlatform()
     setMobilePlatform(platform)
     setIsMobileOpenTarget(isLikelyMobileDevice())
+    headingRef.current = node.title
+    detailRef.current = node.memo
     setHeading(node.title)
     setDetail(node.memo)
     setError(null)
@@ -469,7 +473,7 @@ export function CodexNodePanel({
     return () => window.cancelAnimationFrame(firstFrame)
   }, [moveFocusToPanel, open])
 
-  const saveDraft = useCallback(async (nextHeading: string, nextDetail: string) => {
+  const saveDraft = useCallback(async (nextHeading = headingRef.current, nextDetail = detailRef.current) => {
     const version = saveVersionRef.current + 1
     saveVersionRef.current = version
     setError(null)
@@ -508,14 +512,16 @@ export function CodexNodePanel({
   }, [node.taskId, node.title, onSaveDraft, onSaveHeading])
 
   const handleHeadingChange = useCallback((nextHeading: string) => {
+    headingRef.current = nextHeading
     setHeading(nextHeading)
-    void saveDraft(nextHeading, detail)
-  }, [detail, saveDraft])
+    void saveDraft(nextHeading, detailRef.current)
+  }, [saveDraft])
 
   const handleDetailChange = useCallback((nextDetail: string) => {
+    detailRef.current = nextDetail
     setDetail(nextDetail)
-    void saveDraft(heading, nextDetail)
-  }, [heading, saveDraft])
+    void saveDraft(headingRef.current, nextDetail)
+  }, [saveDraft])
 
   const calendarOptions = useMemo(() => {
     const writable = calendars.filter(calendar => (
@@ -749,10 +755,11 @@ export function CodexNodePanel({
   const handleTranscribed = useCallback((text: string) => {
     setDetail(prev => {
       const nextDetail = prev.trim() ? `${prev.trim()}\n${text}` : text
-      void saveDraft(heading, nextDetail)
+      detailRef.current = nextDetail
+      void saveDraft(headingRef.current, nextDetail)
       return nextDetail
     })
-  }, [heading, saveDraft])
+  }, [saveDraft])
 
   const {
     isRecording,
@@ -1127,7 +1134,8 @@ export function CodexNodePanel({
   }, [codexAiTaskId, isCodexTask, open])
 
   const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
-    const promptHeading = heading || node.title
+    const promptHeading = headingRef.current || node.title
+    const promptDetail = detailRef.current
     if (isWaitingForImageSave) {
       event?.preventDefault()
       setCodexFeedback("画像を保存中です。保存が終わるとCodexへ送れます。")
@@ -1138,13 +1146,13 @@ export function CodexNodePanel({
       setCodexFeedback(codexRunnerUnavailableMessage)
       return
     }
-    if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(detail)) {
+    if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(promptDetail)) {
       event?.preventDefault()
       setError("Codexに渡す内容を入力してください")
       return
     }
 
-    const basePrompt = buildCodexPrompt(promptHeading, detail)
+    const basePrompt = buildCodexPrompt(promptHeading, promptDetail)
     const handoffToken = buildCodexHandoffToken(node.taskId)
     const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
@@ -1166,7 +1174,7 @@ export function CodexNodePanel({
     setCodexSendStatus("sending")
 
     try {
-      const savePromise = saveDraft(heading, detail).catch((saveError: unknown) => {
+      const savePromise = saveDraft().catch((saveError: unknown) => {
         console.warn("[codex-node-panel] draft save failed before Codex handoff:", saveError)
       })
       const scheduleCodexTask = async () => {
@@ -1320,7 +1328,7 @@ export function CodexNodePanel({
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, codexCopyableImages.length, codexRunnerUnavailableMessage, detail, heading, isCodexRunnerUnavailable, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [candidates, codexCopyableImages.length, codexRunnerUnavailableMessage, isCodexRunnerUnavailable, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt = codexRunnerStatus.checked && !codexRunnerStatus.ready
   const initialCodexSendDisabled = codexSendStatus === "sending" || isWaitingForImageSave || isCodexRunnerUnavailable
@@ -1339,7 +1347,7 @@ export function CodexNodePanel({
       open={open}
       onOpenChange={(nextOpen) => {
         if (!nextOpen) {
-          void saveDraft(heading, detail)
+          void saveDraft()
           onClose()
         }
       }}
@@ -1874,7 +1882,7 @@ export function CodexNodePanel({
           <button
             type="button"
             onClick={() => {
-              void saveDraft(heading, detail)
+              void saveDraft()
               onClose()
             }}
             className="sticky bottom-0 z-10 mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-4 text-base font-semibold text-neutral-950 shadow-[0_-18px_30px_rgba(10,10,10,0.85)] transition-colors hover:bg-white disabled:opacity-50"
