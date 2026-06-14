@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  type WheelEvent,
   useCallback,
   useEffect,
   useRef,
@@ -11,6 +10,8 @@ import { cn } from "@/lib/utils"
 
 const IOS_WHEEL_ITEM_HEIGHT = 44
 const IOS_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
+const IOS_WHEEL_SCROLL_IDLE_MS = 110
+const IOS_WHEEL_MAX_ITEMS_PER_WHEEL = 1.25
 
 type WheelDragState = {
   baseVirtualIndex: number
@@ -55,6 +56,13 @@ function defaultFormatValue(value: number) {
   return String(value).padStart(2, "0")
 }
 
+function getWheelDeltaPixels(event: WheelEvent) {
+  let primaryDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+  if (event.deltaMode === 1) primaryDelta *= 16
+  if (event.deltaMode === 2) primaryDelta *= IOS_WHEEL_ITEM_HEIGHT * 4
+  return primaryDelta
+}
+
 export function IosWheelColumn({
   label,
   values,
@@ -76,12 +84,20 @@ export function IosWheelColumn({
   const activePointerIdRef = useRef<number | null>(null)
   const ignoreClickUntilRef = useRef(0)
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wheelEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wheelActiveRef = useRef(false)
   const columnKey = dataColumn ?? label
 
   const clearSettleTimer = useCallback(() => {
     if (!settleTimerRef.current) return
     window.clearTimeout(settleTimerRef.current)
     settleTimerRef.current = null
+  }, [])
+
+  const clearWheelEndTimer = useCallback(() => {
+    if (!wheelEndTimerRef.current) return
+    window.clearTimeout(wheelEndTimerRef.current)
+    wheelEndTimerRef.current = null
   }, [])
 
   const updateVirtualIndex = useCallback((nextVirtualIndex: number) => {
@@ -99,6 +115,8 @@ export function IosWheelColumn({
   const settleToIndex = useCallback((absoluteIndex: number, commit: boolean) => {
     if (values.length === 0) return
 
+    wheelActiveRef.current = false
+    setIsDragging(false)
     const nextIndex = moduloIndex(absoluteIndex, values.length)
     previewIndexRef.current = nextIndex
     virtualIndexRef.current = absoluteIndex
@@ -132,6 +150,8 @@ export function IosWheelColumn({
   }, [settleToIndex, values.length])
 
   const startDrag = useCallback((clientY: number) => {
+    clearWheelEndTimer()
+    wheelActiveRef.current = false
     clearSettleTimer()
     setIsDragging(true)
     setIsSettling(false)
@@ -143,7 +163,7 @@ export function IosWheelColumn({
       velocity: 0,
       moved: false,
     }
-  }, [clearSettleTimer])
+  }, [clearSettleTimer, clearWheelEndTimer])
 
   const moveDrag = useCallback((clientY: number) => {
     const drag = dragRef.current
@@ -164,30 +184,45 @@ export function IosWheelColumn({
 
   const handleOptionClick = useCallback((absoluteIndex: number) => {
     if (Date.now() < ignoreClickUntilRef.current) return
+    clearWheelEndTimer()
+    wheelActiveRef.current = false
     const targetIndex = nearestWheelIndex(virtualIndexRef.current, moduloIndex(absoluteIndex, values.length), values.length)
     settleToIndex(targetIndex, true)
-  }, [settleToIndex, values.length])
+  }, [clearWheelEndTimer, settleToIndex, values.length])
 
-  const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     if (values.length === 0) return
 
     event.preventDefault()
     event.stopPropagation()
+    const deltaPixels = getWheelDeltaPixels(event)
+    if (deltaPixels === 0) return
+
     clearSettleTimer()
-    setIsDragging(false)
+    setIsDragging(true)
     setIsSettling(false)
     dragRef.current = null
     activePointerIdRef.current = null
 
-    const primaryDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-    if (primaryDelta === 0) return
-    const step = primaryDelta > 0 ? 1 : -1
-    settleToIndex(Math.round(virtualIndexRef.current) + step, true)
-  }, [clearSettleTimer, settleToIndex, values.length])
+    wheelActiveRef.current = true
+    const deltaItems = clampNumber(
+      deltaPixels / IOS_WHEEL_ITEM_HEIGHT,
+      -IOS_WHEEL_MAX_ITEMS_PER_WHEEL,
+      IOS_WHEEL_MAX_ITEMS_PER_WHEEL,
+    )
+    updateVirtualIndex(virtualIndexRef.current + deltaItems)
+
+    clearWheelEndTimer()
+    wheelEndTimerRef.current = window.setTimeout(() => {
+      wheelEndTimerRef.current = null
+      wheelActiveRef.current = false
+      settleToIndex(Math.round(virtualIndexRef.current), true)
+    }, IOS_WHEEL_SCROLL_IDLE_MS)
+  }, [clearSettleTimer, clearWheelEndTimer, settleToIndex, updateVirtualIndex, values.length])
 
   useEffect(() => {
     previewIndexRef.current = selectedIndex
-    if (dragRef.current) return
+    if (dragRef.current || wheelActiveRef.current) return
     const nextVirtualIndex = nearestWheelIndex(virtualIndexRef.current, selectedIndex, values.length)
     virtualIndexRef.current = nextVirtualIndex
     setVirtualIndex(nextVirtualIndex)
@@ -245,6 +280,10 @@ export function IosWheelColumn({
       finishDrag()
     }
 
+    const handleNativeWheel = (event: WheelEvent) => {
+      handleWheel(event)
+    }
+
     node.addEventListener("touchstart", handleTouchStart, { passive: false })
     node.addEventListener("touchmove", handleTouchMove, { passive: false })
     node.addEventListener("touchend", handleTouchEnd, { passive: false })
@@ -253,6 +292,7 @@ export function IosWheelColumn({
     node.addEventListener("pointermove", handlePointerMove)
     node.addEventListener("pointerup", handlePointerEnd)
     node.addEventListener("pointercancel", handlePointerEnd)
+    node.addEventListener("wheel", handleNativeWheel, { passive: false })
 
     return () => {
       node.removeEventListener("touchstart", handleTouchStart)
@@ -263,15 +303,20 @@ export function IosWheelColumn({
       node.removeEventListener("pointermove", handlePointerMove)
       node.removeEventListener("pointerup", handlePointerEnd)
       node.removeEventListener("pointercancel", handlePointerEnd)
+      node.removeEventListener("wheel", handleNativeWheel)
     }
-  }, [finishDrag, moveDrag, startDrag])
+  }, [finishDrag, handleWheel, moveDrag, startDrag])
 
   useEffect(() => {
-    return () => clearSettleTimer()
-  }, [clearSettleTimer])
+    return () => {
+      clearSettleTimer()
+      clearWheelEndTimer()
+    }
+  }, [clearSettleTimer, clearWheelEndTimer])
 
   const roundedVirtualIndex = Math.round(virtualIndex)
   const currentIndex = moduloIndex(roundedVirtualIndex, values.length)
+  const optionTop = `calc(50% - ${IOS_WHEEL_ITEM_HEIGHT / 2}px)`
 
   return (
     <div
@@ -279,7 +324,6 @@ export function IosWheelColumn({
       className="relative h-full min-w-0 touch-none select-none overflow-hidden [touch-action:none]"
       data-wheel-column={columnKey}
       data-time-wheel-column={columnKey}
-      onWheel={handleWheel}
       aria-label={label}
       role="listbox"
       aria-activedescendant={`${idPrefix}-${values[currentIndex]}`}
@@ -308,12 +352,14 @@ export function IosWheelColumn({
             data-time-wheel-value={optionValue}
             onClick={() => handleOptionClick(absoluteIndex)}
             className={cn(
-              "absolute inset-x-1 top-1/2 flex h-11 -translate-y-1/2 items-center justify-center rounded-xl text-[22px] font-semibold leading-none tabular-nums tracking-normal outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/60",
+              "absolute inset-x-1 flex h-11 items-center justify-center rounded-xl text-[22px] font-semibold leading-none tabular-nums tracking-normal outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/60",
               isCurrent ? "text-neutral-50" : "text-neutral-500",
             )}
             style={{
+              top: optionTop,
               opacity,
-              transform: `translate3d(0, ${y}px, 0) translateY(-50%) scale(${scale})`,
+              transform: `translate3d(0, ${y}px, 0) scale(${scale})`,
+              transformOrigin: "center",
               transition: isDragging ? "none" : isSettling ? "transform 190ms cubic-bezier(.2,.85,.2,1), opacity 190ms ease" : "color 120ms ease",
             }}
           >
