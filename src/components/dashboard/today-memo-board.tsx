@@ -463,7 +463,7 @@ export function TodayMemoBoard({
       const nowIso = new Date().toISOString()
       const calendarColor = targetCalendar?.background_color ?? "#F59E0B"
       if (target.google_event_id) {
-        broadcastCalendarOptimisticEventRemoval(target.google_event_id, target.google_event_id)
+        broadcastCalendarOptimisticEventRemoval(target.google_event_id, target.google_event_id, calendarId)
       }
       const optimisticEvent: CalendarEvent = {
         id: tempId,
@@ -726,7 +726,12 @@ export function TodayMemoBoard({
     setItems(curr => curr.map(it => it.id === id ? { ...it, ...updates, updated_at: new Date().toISOString() } : it))
     try {
       if (target && shouldSyncCalendarCompletion) {
-        broadcastEventCompletion(target.google_event_id!, nextCompleted!, target.google_event_id!)
+        broadcastEventCompletion(
+          target.google_event_id!,
+          nextCompleted!,
+          target.google_event_id!,
+          targetCalendar?.google_calendar_id,
+        )
         await syncLinkedCalendarCompletion(target, nextCompleted!)
       }
 
@@ -749,7 +754,12 @@ export function TodayMemoBoard({
       dispatchWishlistRefresh()
     } catch (e) {
       if (target && shouldSyncCalendarCompletion) {
-        broadcastEventCompletion(target.google_event_id!, currentCompleted, target.google_event_id!)
+        broadcastEventCompletion(
+          target.google_event_id!,
+          currentCompleted,
+          target.google_event_id!,
+          targetCalendar?.google_calendar_id,
+        )
         syncLinkedCalendarCompletion(target, currentCompleted).catch(err => {
           console.warn("[TodayMemoBoard] Failed to rollback linked calendar completion:", err)
         })
@@ -757,7 +767,7 @@ export function TodayMemoBoard({
       setItems(prev)
       setError(e instanceof Error ? e.message : "メモの更新に失敗しました")
     }
-  }, [items, syncLinkedCalendarCompletion])
+  }, [items, syncLinkedCalendarCompletion, targetCalendar?.google_calendar_id])
 
   const handleDelete = useCallback(async (id: string) => {
     const prev = items

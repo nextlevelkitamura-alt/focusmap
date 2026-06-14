@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { fetchUserCalendars } from '@/lib/google-calendar';
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 /**
  * ユーザーの全カレンダーを取得
  * GET /api/calendars
@@ -33,13 +37,13 @@ export async function GET(request: NextRequest) {
     // Google Calendar APIからカレンダーを取得
     let googleCalendars;
     try {
-      console.log('[calendars] Fetching calendars from Google API for user:', user.id);
+      console.log('[calendars] Fetching calendars from Google API:', { userId: user.id, forceSync });
       googleCalendars = await fetchUserCalendars(user.id);
       console.log('[calendars] Fetched calendars from Google API:', {
         count: googleCalendars.length,
         calendars: googleCalendars.map(c => ({ name: c.name, id: c.googleCalendarId, primary: c.primary }))
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[calendars] Failed to fetch from Google API:', error);
 
       // Google APIエラーの場合、キャッシュから返す
@@ -63,6 +67,7 @@ export async function GET(request: NextRequest) {
     // データベースと同期
     console.log('[calendars] Syncing calendars to database...');
     const syncedCalendars = [];
+    const liveGoogleCalendarIds = new Set(googleCalendars.map(cal => cal.googleCalendarId));
 
     for (const googleCal of googleCalendars) {
       const { data: existing, error } = await supabase
@@ -148,20 +153,46 @@ export async function GET(request: NextRequest) {
       throw new Error(`Failed to fetch calendars from database: ${selectError.message}`);
     }
 
+    const staleCalendars = (allCalendars || []).filter(cal => !liveGoogleCalendarIds.has(cal.google_calendar_id));
+    if (staleCalendars.length > 0) {
+      console.log('[calendars] Marking stale calendars as unselected:', staleCalendars.map(cal => cal.google_calendar_id));
+      const staleUpdateResults = await Promise.all(
+        staleCalendars.map(cal =>
+          supabase
+            .from('user_calendars')
+            .update({
+              selected: false,
+              synced_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('user_id', user.id)
+            .eq('id', cal.id)
+        )
+      );
+      const staleUpdateError = staleUpdateResults.find(result => result.error)?.error;
+      if (staleUpdateError) {
+        console.error('[calendars] Failed to mark stale calendars:', staleUpdateError);
+      }
+    }
+
+    const liveCalendars = (allCalendars || []).filter(cal => liveGoogleCalendarIds.has(cal.google_calendar_id));
+
     console.log('[calendars] Returning calendars:', {
-      count: allCalendars?.length || 0,
-      calendars: allCalendars?.map(c => ({ name: c.name, id: c.google_calendar_id, selected: c.selected, primary: c.is_primary }))
+      count: liveCalendars.length,
+      staleCount: staleCalendars.length,
+      calendars: liveCalendars.map(c => ({ name: c.name, id: c.google_calendar_id, selected: c.selected, primary: c.is_primary }))
     });
 
     return NextResponse.json({
       success: true,
-      calendars: allCalendars || [],
-      syncedAt: new Date().toISOString()
+      calendars: liveCalendars,
+      syncedAt: new Date().toISOString(),
+      removedCalendarIds: staleCalendars.map(cal => cal.google_calendar_id)
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[calendars] Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch calendars' },
+      { error: getErrorMessage(error, 'Failed to fetch calendars') },
       { status: 500 }
     );
   }

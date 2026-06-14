@@ -533,6 +533,7 @@ export async function POST(request: Request) {
           .from('calendar_events')
           .select('id')
           .eq('user_id', user.id)
+          .eq('calendar_id', targetCalendarId)
           .eq('google_event_id', eventId)
           .maybeSingle()
 
@@ -545,7 +546,7 @@ export async function POST(request: Request) {
         } else {
           await supabase
             .from('calendar_events')
-            .upsert(eventPayload, { onConflict: 'user_id,google_event_id', ignoreDuplicates: false })
+            .upsert(eventPayload, { onConflict: 'user_id,calendar_id,google_event_id', ignoreDuplicates: false })
         }
 
         await supabase
@@ -560,6 +561,7 @@ export async function POST(request: Request) {
           })
           .eq('user_id', user.id)
           .eq('google_event_id', eventId)
+          .in('calendar_id', Array.from(new Set([sourceCalendarId, targetCalendarId])))
 
         await supabase
           .from('ideal_goals')

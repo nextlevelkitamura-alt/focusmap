@@ -126,15 +126,15 @@ export function mergeTimeBlocks(
   projectColorMap?: Map<string, string>,
   calendarColorMap?: Map<string, string>
 ): TimeBlock[] {
-  const eventByGoogleId = new Map(
-    events.map((event) => [event.google_event_id, event] as const)
+  const eventByGoogleKey = new Map(
+    events.map((event) => [`${event.calendar_id}::${event.google_event_id}`, event] as const)
   )
 
   // タスクが持つ google_event_id を集める
-  const taskGoogleIds = new Set(
+  const taskGoogleEventKeys = new Set(
     tasks
-      .filter((t) => t.google_event_id)
-      .map((t) => t.google_event_id!)
+      .filter((t) => t.google_event_id && t.calendar_id)
+      .map((t) => `${t.calendar_id}::${t.google_event_id}`)
   )
 
   // タスクを TimeBlock に変換
@@ -143,14 +143,14 @@ export function mergeTimeBlocks(
       t,
       projectColorMap?.get(t.project_id || ''),
       calendarColorMap?.get(t.calendar_id || ''),
-      t.google_event_id ? eventByGoogleId.get(t.google_event_id) : undefined
+      t.google_event_id && t.calendar_id ? eventByGoogleKey.get(`${t.calendar_id}::${t.google_event_id}`) : undefined
     )
   )
 
   // イベントを TimeBlock に変換（タスク重複・終日を除外）
   const eventBlocks = events
     .filter(
-      (e) => !e.is_all_day && !taskGoogleIds.has(e.google_event_id)
+      (e) => !e.is_all_day && !taskGoogleEventKeys.has(`${e.calendar_id}::${e.google_event_id}`)
     )
     .map((e) => eventToTimeBlock(e))
 

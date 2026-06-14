@@ -510,7 +510,7 @@ describe('PATCH /api/tasks/[id]', () => {
         calendar_id: 'cal@gmail.com',
         completed_date: '2026-02-19',
       }, {
-        onConflict: 'user_id,google_event_id,completed_date',
+        onConflict: 'user_id,calendar_id,google_event_id,completed_date',
       })
     })
 

@@ -2906,7 +2906,7 @@ export function WishlistView({
     const calendarId = calendarIdOverride ?? targetCalendarId
     if (startTime && !Number.isNaN(startTime.getTime())) {
       if (item.google_event_id) {
-        broadcastCalendarOptimisticEventRemoval(item.google_event_id, item.google_event_id)
+        broadcastCalendarOptimisticEventRemoval(item.google_event_id, item.google_event_id, calendarId)
       }
       const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000)
       const now = new Date().toISOString()

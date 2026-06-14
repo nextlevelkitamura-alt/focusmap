@@ -62,7 +62,7 @@ Shikumika App全体のデータベーススキーマ設計書。Phase 1で必要
 
 ### 1. calendar_events テーブル
 
-**ファイル:** `supabase/migrations/20260128_create_calendar_events.sql`
+**ファイル:** `supabase/migrations/20260128_create_calendar_events.sql`, `supabase/migrations/20260614174000_calendar_composite_event_keys.sql`
 
 ```sql
 -- Googleカレンダーイベントのキャッシュテーブル
@@ -99,7 +99,7 @@ CREATE TABLE calendar_events (
   updated_at TIMESTAMPTZ DEFAULT now(),
 
   -- 制約
-  UNIQUE(user_id, google_event_id)
+  UNIQUE(user_id, calendar_id, google_event_id)
 );
 
 -- インデックス
@@ -143,11 +143,11 @@ CREATE TABLE user_calendars (
   -- 表示情報
   color TEXT,
   background_color TEXT,
-  is_visible BOOLEAN DEFAULT true,
+  selected BOOLEAN DEFAULT true,
   is_primary BOOLEAN DEFAULT false,
 
   -- アクセス権限
-  access_role TEXT CHECK (access_role IN ('owner', 'writer', 'reader')),
+  access_level TEXT CHECK (access_level IN ('owner', 'writer', 'reader', 'freeBusyReader')),
 
   -- メタ情報
   google_created_at TIMESTAMPTZ,
@@ -162,7 +162,7 @@ CREATE TABLE user_calendars (
 
 -- インデックス
 CREATE INDEX idx_user_calendars_user_id ON user_calendars(user_id);
-CREATE INDEX idx_user_calendars_visible ON user_calendars(user_id, is_visible);
+CREATE INDEX idx_user_calendars_selected ON user_calendars(user_id, selected) WHERE selected = true;
 
 -- RLS
 ALTER TABLE user_calendars ENABLE ROW LEVEL SECURITY;
@@ -480,9 +480,9 @@ export interface UserCalendar {
   timezone: string;
   color?: string;
   background_color?: string;
-  is_visible: boolean;
+  selected: boolean;
   is_primary: boolean;
-  access_role?: 'owner' | 'writer' | 'reader';
+  access_level?: 'owner' | 'writer' | 'reader' | 'freeBusyReader';
   google_created_at?: string;
   google_updated_at?: string;
   synced_at: string;

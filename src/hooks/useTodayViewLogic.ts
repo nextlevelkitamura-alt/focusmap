@@ -275,13 +275,15 @@ export function useTodayViewLogic({
     useEffect(() => {
         if (typeof window === 'undefined') return
         const handler = (e: Event) => {
-            const detail = (e as CustomEvent<{ eventId?: string; googleEventId?: string; isCompleted: boolean }>).detail
-            const { eventId, googleEventId, isCompleted } = detail
+            const detail = (e as CustomEvent<{ eventId?: string; googleEventId?: string; calendarId?: string; isCompleted: boolean }>).detail
+            const { eventId, googleEventId, calendarId, isCompleted } = detail
             const ids = new Set([eventId, googleEventId].filter((id): id is string => !!id))
             if (typeof isCompleted !== 'boolean') return
             if (ids.size === 0) return
             setLocalCalendarEvents(prev => prev.map(ev =>
-                ids.has(ev.id) || ids.has(ev.google_event_id) ? { ...ev, is_completed: isCompleted } : ev
+                ids.has(ev.id) || (ids.has(ev.google_event_id) && (!calendarId || ev.calendar_id === calendarId))
+                    ? { ...ev, is_completed: isCompleted }
+                    : ev
             ))
         }
         window.addEventListener(EVENT_COMPLETION_EVENT, handler)
@@ -361,7 +363,7 @@ export function useTodayViewLogic({
     const prevEventIdsRef = useRef<string>('')
     useEffect(() => {
         if (eventsLoading || allFetchedEvents.length === 0 || isImporting) return
-        const currentIds = allFetchedEvents.map(e => e.google_event_id).sort().join(',')
+        const currentIds = allFetchedEvents.map(e => `${e.calendar_id}::${e.google_event_id}`).sort().join(',')
         if (currentIds === prevEventIdsRef.current) return
         prevEventIdsRef.current = currentIds
         importEvents(allFetchedEvents).catch(() => { })
@@ -463,7 +465,7 @@ export function useTodayViewLogic({
         setLocalCalendarEvents(prev => prev.map(e =>
             e.id === event.id ? { ...e, is_completed: isCompleted } : e
         ))
-        broadcastEventCompletion(event.id, isCompleted, event.google_event_id)
+        broadcastEventCompletion(event.id, isCompleted, event.google_event_id, event.calendar_id)
 
         if (event.google_event_id) {
             const response = await fetch('/api/calendar/events/complete', {
@@ -511,11 +513,12 @@ export function useTodayViewLogic({
             const scheduled = new Date(t.scheduled_at)
             return scheduled >= today && scheduled < tomorrow
         })
-        const seenGoogleEventIds = new Set<string>()
+        const seenGoogleEventKeys = new Set<string>()
         return filtered.filter(t => {
-            if (!t.google_event_id) return true
-            if (seenGoogleEventIds.has(t.google_event_id)) return false
-            seenGoogleEventIds.add(t.google_event_id)
+            if (!t.google_event_id || !t.calendar_id) return true
+            const key = `${t.calendar_id}::${t.google_event_id}`
+            if (seenGoogleEventKeys.has(key)) return false
+            seenGoogleEventKeys.add(key)
             return true
         })
     }, [visibleTasks, habitGroupIds, today, tomorrow])
@@ -533,11 +536,12 @@ export function useTodayViewLogic({
             const endTime = new Date(scheduled.getTime() + estimatedMin * 60 * 1000)
             return endTime > today
         })
-        const seenGoogleEventIds = new Set<string>()
+        const seenGoogleEventKeys = new Set<string>()
         return filtered.filter(t => {
-            if (!t.google_event_id) return true
-            if (seenGoogleEventIds.has(t.google_event_id)) return false
-            seenGoogleEventIds.add(t.google_event_id)
+            if (!t.google_event_id || !t.calendar_id) return true
+            const key = `${t.calendar_id}::${t.google_event_id}`
+            if (seenGoogleEventKeys.has(key)) return false
+            seenGoogleEventKeys.add(key)
             return true
         })
     }, [visibleTasks, habitGroupIds, previousDay, today])
@@ -621,15 +625,15 @@ export function useTodayViewLogic({
 
     // Merge calendar events + scheduled tasks into timeline
     const allTasksWithGoogleEvent = useMemo(() =>
-        [...todayScheduledTasks, ...overflowTasks].filter(t => t.google_event_id),
+        [...todayScheduledTasks, ...overflowTasks].filter(t => t.google_event_id && t.calendar_id),
         [todayScheduledTasks, overflowTasks]
     )
     const scheduledTaskIds = useMemo(
         () => new Set([...todayScheduledTasks, ...overflowTasks].map(t => t.id)),
         [todayScheduledTasks, overflowTasks]
     )
-    const taskGoogleIds = useMemo(
-        () => new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!)),
+    const taskGoogleEventKeys = useMemo(
+        () => new Set(allTasksWithGoogleEvent.map(t => `${t.calendar_id}::${t.google_event_id}`)),
         [allTasksWithGoogleEvent]
     )
     const scheduledTaskEventKeys = useMemo(
@@ -663,7 +667,7 @@ export function useTodayViewLogic({
         for (const event of calendarEvents) {
             if (event.is_all_day) continue
             if (event.task_id && scheduledTaskIds.has(event.task_id)) continue
-            if (taskGoogleIds.has(event.google_event_id)) continue
+            if (taskGoogleEventKeys.has(`${event.calendar_id}::${event.google_event_id}`)) continue
             const eventMinute = Math.floor(new Date(event.start_time).getTime() / 60000)
             const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
             if (scheduledTaskEventKeys.has(eventKey)) continue
@@ -707,7 +711,7 @@ export function useTodayViewLogic({
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         return items
-    }, [calendarEvents, eventLikeTaskKeys, scheduledTaskIds, scheduledTaskEventKeys, stableCalendarColorMap, taskGoogleIds, todayScheduledTasks, overflowTasks, today, tomorrow])
+    }, [calendarEvents, eventLikeTaskKeys, scheduledTaskIds, scheduledTaskEventKeys, stableCalendarColorMap, taskGoogleEventKeys, todayScheduledTasks, overflowTasks, today, tomorrow])
 
     // All-day events
     const allDayEvents = useMemo(() => {
@@ -733,7 +737,11 @@ export function useTodayViewLogic({
         const newStatus = task.status === 'done' ? 'todo' : 'done'
         const isSameCompletionTarget = (candidate: Task) =>
             candidate.id === taskId ||
-            (!!task.google_event_id && candidate.google_event_id === task.google_event_id)
+            (
+                !!task.google_event_id &&
+                candidate.google_event_id === task.google_event_id &&
+                (!task.calendar_id || candidate.calendar_id === task.calendar_id)
+            )
         const applyStatus = (status: string) => {
             setLocalTasks(prev => prev.map(t =>
                 isSameCompletionTarget(t) ? { ...t, status } : t
@@ -742,7 +750,7 @@ export function useTodayViewLogic({
 
         applyStatus(newStatus)
         if (task.google_event_id) {
-            broadcastEventCompletion(task.calendar_event_id || task.google_event_id, newStatus === 'done', task.google_event_id)
+            broadcastEventCompletion(task.calendar_event_id || task.google_event_id, newStatus === 'done', task.google_event_id, task.calendar_id || undefined)
         }
 
         try {
@@ -753,7 +761,7 @@ export function useTodayViewLogic({
         } catch (err) {
             applyStatus(previousStatus)
             if (task.google_event_id) {
-                broadcastEventCompletion(task.calendar_event_id || task.google_event_id, previousStatus === 'done', task.google_event_id)
+                broadcastEventCompletion(task.calendar_event_id || task.google_event_id, previousStatus === 'done', task.google_event_id, task.calendar_id || undefined)
             }
             throw err
         }
@@ -762,7 +770,7 @@ export function useTodayViewLogic({
             undo: async () => {
                 applyStatus(previousStatus)
                 if (task.google_event_id) {
-                    broadcastEventCompletion(task.calendar_event_id || task.google_event_id, previousStatus === 'done', task.google_event_id)
+                    broadcastEventCompletion(task.calendar_event_id || task.google_event_id, previousStatus === 'done', task.google_event_id, task.calendar_id || undefined)
                     invalidateCalendarCache()
                 }
                 await onUpdateTask(taskId, { status: previousStatus })
@@ -770,7 +778,7 @@ export function useTodayViewLogic({
             redo: async () => {
                 applyStatus(newStatus)
                 if (task.google_event_id) {
-                    broadcastEventCompletion(task.calendar_event_id || task.google_event_id, newStatus === 'done', task.google_event_id)
+                    broadcastEventCompletion(task.calendar_event_id || task.google_event_id, newStatus === 'done', task.google_event_id, task.calendar_id || undefined)
                     invalidateCalendarCache()
                 }
                 await onUpdateTask(taskId, { status: newStatus })
@@ -797,7 +805,7 @@ export function useTodayViewLogic({
             e.id === eventId ? { ...e, is_completed: newCompleted } : e
         ))
         // 他パネルに即時反映（API ラウンドトリップ不要）
-        broadcastEventCompletion(eventId, newCompleted)
+        broadcastEventCompletion(eventId, newCompleted, googleEventId, targetEvent.calendar_id)
         try {
             if (googleEventId) {
                 // Google イベント: サーバー側 API 経由で更新（RLS/型の問題を回避）
@@ -843,7 +851,7 @@ export function useTodayViewLogic({
                 e.id === eventId ? { ...e, is_completed: !newCompleted } : e
             ))
             // 失敗時はロールバックも即時通知
-            broadcastEventCompletion(eventId, !newCompleted)
+            broadcastEventCompletion(eventId, !newCompleted, googleEventId, targetEvent.calendar_id)
         }
     }, [localCalendarEvents, pushAction, setCalendarEventCompletion])
 
@@ -1342,7 +1350,9 @@ export function useTodayViewLogic({
         setLocalTasks(prev => prev.filter(t => t.id !== taskId))
 
         if (taskToDelete?.google_event_id) {
-            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== taskToDelete.google_event_id))
+            setLocalCalendarEvents(prev => prev.filter(e =>
+                !(e.google_event_id === taskToDelete.google_event_id && (!taskToDelete.calendar_id || e.calendar_id === taskToDelete.calendar_id))
+            ))
         }
 
         try {
@@ -1408,7 +1418,9 @@ export function useTodayViewLogic({
                         setPendingDeleteTaskIds(prev => prev.includes(taskId) ? prev : [...prev, taskId])
                         setLocalTasks(prev => prev.filter(t => t.id !== taskId))
                         if (taskToDelete.google_event_id) {
-                            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== taskToDelete.google_event_id))
+                            setLocalCalendarEvents(prev => prev.filter(e =>
+                                !(e.google_event_id === taskToDelete.google_event_id && (!taskToDelete.calendar_id || e.calendar_id === taskToDelete.calendar_id))
+                            ))
                         }
                         if (onDeleteTaskProp) {
                             await onDeleteTaskProp(taskId)

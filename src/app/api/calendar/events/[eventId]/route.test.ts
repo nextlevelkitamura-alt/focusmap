@@ -69,6 +69,11 @@ const {
         payload = nextPayload;
         return query;
       }),
+      delete: vi.fn(() => {
+        operation = 'update';
+        payload = null;
+        return query;
+      }),
       upsert: vi.fn((nextPayload: unknown) => {
         operation = 'upsert';
         payload = nextPayload;
@@ -85,6 +90,7 @@ const {
         return query;
       }),
       not: vi.fn(() => query),
+      in: vi.fn(() => query),
       limit: vi.fn(() => Promise.resolve(resolveSelect(table, columns))),
       maybeSingle: vi.fn(() => Promise.resolve(resolveSelect(table, columns))),
       then: (

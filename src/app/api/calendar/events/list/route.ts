@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
+import { fetchCalendarEvents, fetchMultipleCalendarEventsWithStatus, getCalendarClient } from '@/lib/google-calendar';
 import { classifyCalendarAuthError, shouldAttemptTokenRefresh } from '@/lib/calendar-auth-errors';
 import { buildCalendarReauthUrl } from '@/lib/google-oauth';
 import type { CalendarEvent } from '@/types/calendar';
@@ -112,7 +112,7 @@ function buildHolidayCalendarIds(userCalendars: UserCalendarRow[]) {
 function normalizeDbEventForResponse(event: CalendarEventRow): CalendarResponseEvent {
   return {
     ...event,
-    id: event.google_event_id || event.id,
+    id: event.google_event_id ? getCompletionKey(event.calendar_id, event.google_event_id) : event.id,
     google_event_id: event.google_event_id || '',
     description: event.description || undefined,
     location: event.location || undefined,
@@ -188,7 +188,7 @@ async function enrichEventsForResponse(
   if (eventIdsToCheck.length > 0) {
     const { data: tasksWithEvents } = await supabase
       .from('tasks')
-      .select('id, google_event_id, priority, estimated_time')
+      .select('id, google_event_id, calendar_id, priority, estimated_time')
       .eq('user_id', userId)
       .is('deleted_at', null)
       .in('google_event_id', eventIdsToCheck)
@@ -196,8 +196,8 @@ async function enrichEventsForResponse(
 
     if (tasksWithEvents) {
       tasksWithEvents.forEach(task => {
-        if (task.google_event_id) {
-          taskMap.set(task.google_event_id, {
+        if (task.google_event_id && task.calendar_id) {
+          taskMap.set(getCompletionKey(task.calendar_id, task.google_event_id), {
             id: task.id,
             priority: task.priority,
             estimated_time: task.estimated_time
@@ -221,20 +221,18 @@ async function enrichEventsForResponse(
   }
 
   const completionMap = new Map<string, boolean>();
-  const completionFallbackMap = new Map<string, boolean>();
   const setCompleted = (calendarId: string | null | undefined, googleEventId: string | null | undefined) => {
     if (!googleEventId) return;
     if (calendarId) {
       completionMap.set(getCompletionKey(calendarId, googleEventId), true);
     }
-    completionFallbackMap.set(googleEventId, true);
   };
   const isEventCompleted = (event: { calendar_id?: string | null; google_event_id?: string | null }) => {
     if (!event.google_event_id) return false;
     if (event.calendar_id && completionMap.get(getCompletionKey(event.calendar_id, event.google_event_id))) {
       return true;
     }
-    return completionFallbackMap.get(event.google_event_id) || false;
+    return false;
   };
 
   dbEvents.forEach(event => {
@@ -249,7 +247,7 @@ async function enrichEventsForResponse(
   return events
     .filter(event => !holidayCalendarIds.has(event.calendar_id))
     .map(event => {
-      const taskInfo = event.google_event_id ? taskMap.get(event.google_event_id) : undefined;
+      const taskInfo = event.google_event_id ? taskMap.get(getCompletionKey(event.calendar_id, event.google_event_id)) : undefined;
       const calendarColor = calendarColorMap.get(event.calendar_id);
       return {
         ...event,
@@ -367,12 +365,18 @@ export async function GET(request: NextRequest) {
     // 常に Google Calendar API から最新のイベントを取得（キャッシュチェックを削除）
     // Google カレンダーを正確性のソースとして扱う
     let googleEvents;
+    const authoritativeCalendarIds = new Set<string>();
     if (calendarIds && calendarIds.length > 0) {
       // 複数カレンダーから並列取得
-      googleEvents = await fetchMultipleCalendarEvents(user.id, calendarIds, {
+      const fetchResult = await fetchMultipleCalendarEventsWithStatus(user.id, calendarIds, {
         timeMin,
         timeMax,
       });
+      googleEvents = fetchResult.events;
+      fetchResult.successfulCalendarIds.forEach(id => authoritativeCalendarIds.add(id));
+      if (fetchResult.failedCalendarIds.length > 0) {
+        console.warn('[events/list] Skipping orphan cleanup for failed calendars:', fetchResult.failedCalendarIds);
+      }
     } else {
       // 単一カレンダー（デフォルトはprimary）
       googleEvents = await fetchCalendarEvents(user.id, {
@@ -380,6 +384,7 @@ export async function GET(request: NextRequest) {
         timeMin,
         timeMax,
       });
+      googleEvents.forEach(event => authoritativeCalendarIds.add(event.calendar_id));
     }
 
     // カレンダーの色情報を取得
@@ -419,7 +424,7 @@ export async function GET(request: NextRequest) {
     const googleEventsWithId = googleEvents
       .map(event => ({
         ...event,
-        id: event.google_event_id // google_event_id を id として使用
+        id: getCompletionKey(event.calendar_id, event.google_event_id)
       }))
       .filter(event => {
         const key = getCompletionKey(event.calendar_id, event.google_event_id);
@@ -462,14 +467,18 @@ export async function GET(request: NextRequest) {
 
     // 孤児イベントを非同期でDBからクリーンアップ（Google Calendarに存在しないDB行）
     const orphanDbEvents = (allDbEvents || [])
-      .filter(e => e.google_event_id && !googleEventKeys.has(getCompletionKey(e.calendar_id, e.google_event_id)));
+      .filter(e =>
+        e.google_event_id &&
+        authoritativeCalendarIds.has(e.calendar_id) &&
+        !googleEventKeys.has(getCompletionKey(e.calendar_id, e.google_event_id))
+      );
     const orphanGoogleEventIds = Array.from(new Set(
       orphanDbEvents
         .map(e => e.google_event_id)
         .filter((id): id is string => typeof id === 'string' && id.length > 0)
     ));
-    if (orphanGoogleEventIds.length > 0) {
-      console.log('[events/list] Cleaning up orphan DB events:', orphanGoogleEventIds.length);
+    if (orphanDbEvents.length > 0) {
+      console.log('[events/list] Cleaning up orphan DB events:', orphanDbEvents.length);
       const orphanDeleteResults = await Promise.all(
         orphanDbEvents.map(event =>
           supabase
@@ -484,70 +493,86 @@ export async function GET(request: NextRequest) {
       if (orphanDelErr) console.error('[events/list] Orphan cleanup failed:', orphanDelErr);
 
       // Google Calendarに存在しないイベントに対応する取り込みタスクはsoft-deleteする。
-      const { error: importedTaskOrphanErr } = await supabase
-        .from('tasks')
-        .update({
-          deleted_at: new Date().toISOString(),
-          is_timer_running: false,
-          last_started_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', user.id)
-        .eq('source', 'google_event')
-        .is('deleted_at', null)
-        .in('google_event_id', orphanGoogleEventIds);
+      const importedTaskOrphanResults = await Promise.all(orphanDbEvents.map(event =>
+        supabase
+          .from('tasks')
+          .update({
+            deleted_at: new Date().toISOString(),
+            is_timer_running: false,
+            last_started_at: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .eq('source', 'google_event')
+          .eq('calendar_id', event.calendar_id)
+          .eq('google_event_id', event.google_event_id)
+          .is('deleted_at', null)
+      ));
+      const importedTaskOrphanErr = importedTaskOrphanResults.find(result => result.error)?.error;
       if (importedTaskOrphanErr) {
         console.error('[events/list] Orphan imported task cleanup failed:', importedTaskOrphanErr);
       } else {
-        console.log('[events/list] Soft-deleted orphan imported tasks for', orphanGoogleEventIds.length, 'google events');
+        console.log('[events/list] Soft-deleted orphan imported tasks for', orphanDbEvents.length, 'calendar events');
       }
 
       // 手動/マインドマップ由来タスクはタスク自体を残し、予定リンクだけ外す。
       // scheduled_at/calendar_id を残すと自動同期でGoogle予定を復活させるため、Google削除を正にする。
-      const { error: manualTaskOrphanErr } = await supabase
-        .from('tasks')
-        .update({
-          google_event_id: null,
-          calendar_event_id: null,
-          calendar_id: null,
-          scheduled_at: null,
-          stage: 'plan',
-          is_timer_running: false,
-          last_started_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', user.id)
-        .neq('source', 'google_event')
-        .is('deleted_at', null)
-        .in('google_event_id', orphanGoogleEventIds);
+      const manualTaskOrphanResults = await Promise.all(orphanDbEvents.map(event =>
+        supabase
+          .from('tasks')
+          .update({
+            google_event_id: null,
+            calendar_event_id: null,
+            calendar_id: null,
+            scheduled_at: null,
+            stage: 'plan',
+            is_timer_running: false,
+            last_started_at: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .neq('source', 'google_event')
+          .eq('calendar_id', event.calendar_id)
+          .eq('google_event_id', event.google_event_id)
+          .is('deleted_at', null)
+      ));
+      const manualTaskOrphanErr = manualTaskOrphanResults.find(result => result.error)?.error;
       if (manualTaskOrphanErr) {
         console.error('[events/list] Orphan manual task detach failed:', manualTaskOrphanErr);
       }
 
       // 孤児イベントの完了記録もクリーンアップ
-      const { error: completionErr } = await supabase
-        .from('event_completions')
-        .delete()
-        .eq('user_id', user.id)
-        .in('google_event_id', orphanGoogleEventIds);
+      const completionResults = await Promise.all(orphanDbEvents.map(event =>
+        supabase
+          .from('event_completions')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('calendar_id', event.calendar_id)
+          .eq('google_event_id', event.google_event_id)
+      ));
+      const completionErr = completionResults.find(result => result.error)?.error;
       if (completionErr) {
         console.error('[events/list] Orphan event_completions cleanup failed:', completionErr);
       }
 
       // メモ予定もGoogle側削除を正として未予定へ戻す。
-      const { error: memoOrphanErr } = await supabase
-        .from('ideal_goals')
-        .update({
-          scheduled_at: null,
-          google_event_id: null,
-          memo_status: 'unsorted',
-          is_today: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', user.id)
-        .in('google_event_id', orphanGoogleEventIds);
-      if (memoOrphanErr) {
-        console.error('[events/list] Orphan memo detach failed:', memoOrphanErr);
+      const liveGoogleEventIds = new Set(googleEventsWithId.map(event => event.google_event_id));
+      const memoSafeOrphanGoogleEventIds = orphanGoogleEventIds.filter(id => !liveGoogleEventIds.has(id));
+      if (memoSafeOrphanGoogleEventIds.length > 0) {
+        const { error: memoOrphanErr } = await supabase
+          .from('ideal_goals')
+          .update({
+            scheduled_at: null,
+            google_event_id: null,
+            memo_status: 'unsorted',
+            is_today: false,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .in('google_event_id', memoSafeOrphanGoogleEventIds);
+        if (memoOrphanErr) {
+          console.error('[events/list] Orphan memo detach failed:', memoOrphanErr);
+        }
       }
     }
 
@@ -563,7 +588,7 @@ export async function GET(request: NextRequest) {
     if (eventIdsToCheck.length > 0) {
       const { data: tasksWithEvents } = await supabase
         .from('tasks')
-        .select('id, google_event_id, priority, estimated_time')
+        .select('id, google_event_id, calendar_id, priority, estimated_time')
         .eq('user_id', user.id)
         .is('deleted_at', null)
         .in('google_event_id', eventIdsToCheck)
@@ -571,8 +596,8 @@ export async function GET(request: NextRequest) {
 
       if (tasksWithEvents) {
         tasksWithEvents.forEach(task => {
-          if (task.google_event_id) {
-            taskMap.set(task.google_event_id, {
+          if (task.google_event_id && task.calendar_id) {
+            taskMap.set(getCompletionKey(task.calendar_id, task.google_event_id), {
               id: task.id,
               priority: task.priority,
               estimated_time: task.estimated_time
@@ -598,20 +623,18 @@ export async function GET(request: NextRequest) {
 
     // Build is_completed map from DB event cache and completion sidecar records.
     const completionMap = new Map<string, boolean>();
-    const completionFallbackMap = new Map<string, boolean>();
     const setCompleted = (calendarId: string | null | undefined, googleEventId: string | null | undefined) => {
       if (!googleEventId) return;
       if (calendarId) {
         completionMap.set(getCompletionKey(calendarId, googleEventId), true);
       }
-      completionFallbackMap.set(googleEventId, true);
     };
     const isEventCompleted = (event: { calendar_id?: string | null; google_event_id?: string | null }) => {
       if (!event.google_event_id) return false;
       if (event.calendar_id && completionMap.get(getCompletionKey(event.calendar_id, event.google_event_id))) {
         return true;
       }
-      return completionFallbackMap.get(event.google_event_id) || false;
+      return false;
     };
 
     if (allDbEvents) {
@@ -628,7 +651,7 @@ export async function GET(request: NextRequest) {
     // Google Calendar API のイベントとローカルのみのイベントをマージ（task_id, priority, estimated_time, is_completed を追加）
     const allEvents = [
       ...googleEventsWithId.map(event => {
-        const taskInfo = taskMap.get(event.google_event_id);
+        const taskInfo = taskMap.get(getCompletionKey(event.calendar_id, event.google_event_id));
         return {
           ...event,
           task_id: taskInfo?.id,
@@ -638,7 +661,7 @@ export async function GET(request: NextRequest) {
         };
       }),
       ...localOnlyEvents.map(event => {
-        const taskInfo = event.google_event_id ? taskMap.get(event.google_event_id) : undefined;
+        const taskInfo = event.google_event_id ? taskMap.get(getCompletionKey(event.calendar_id, event.google_event_id)) : undefined;
         return {
           ...event,
           task_id: taskInfo?.id,
@@ -684,40 +707,23 @@ export async function GET(request: NextRequest) {
     // id は UUID カラム（DB が自動生成）のため除外する。
     // google_event_id は UUID 形式ではないため id に渡すと PostgreSQL の型エラーで
     // INSERT が失敗し、新規行が一切 upsert されない原因となっていた。
-    const seenCacheGoogleEventIds = new Set<string>();
-    const skippedDuplicateCacheEvents: Array<{ google_event_id: string; calendar_id: string; title: string }> = [];
-    const eventsWithSyncTime = googleEventsWithId.flatMap((eventWithId) => {
-      if (seenCacheGoogleEventIds.has(eventWithId.google_event_id)) {
-        skippedDuplicateCacheEvents.push({
-          google_event_id: eventWithId.google_event_id,
-          calendar_id: eventWithId.calendar_id,
-          title: eventWithId.title,
-        });
-        return [];
-      }
-      seenCacheGoogleEventIds.add(eventWithId.google_event_id);
+    const eventsWithSyncTime = googleEventsWithId.map((eventWithId) => {
       const event = { ...eventWithId };
       delete (event as Partial<typeof event>).id;
-      return [{
+      return {
         ...event,
         // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
         is_completed: isEventCompleted(event),
         synced_at: now
-      }];
+      };
     });
-    if (skippedDuplicateCacheEvents.length > 0) {
-      console.warn('[events/list] Skipped duplicate google_event_id rows before DB cache upsert:', {
-        count: skippedDuplicateCacheEvents.length,
-        samples: skippedDuplicateCacheEvents.slice(0, 5),
-      });
-    }
 
     // DBに保存（エラーがあってもレスポンスはブロックしないが、awaitでDB整合性を確保）
     if (eventsWithSyncTime.length > 0) {
       const { error: upsertErr } = await supabase
         .from('calendar_events')
         .upsert(eventsWithSyncTime, {
-          onConflict: 'user_id,google_event_id',
+          onConflict: 'user_id,calendar_id,google_event_id',
           ignoreDuplicates: false
         });
       if (upsertErr) {

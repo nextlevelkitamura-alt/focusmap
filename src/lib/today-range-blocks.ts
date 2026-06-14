@@ -53,7 +53,11 @@ export function buildTimeBlocksForDay({
   }))
 
   const scheduledTaskIds = new Set(dayTasks.map((task) => task.id))
-  const taskGoogleIds = new Set(dayTasks.filter((task) => task.google_event_id).map((task) => task.google_event_id!))
+  const taskGoogleEventKeys = new Set(
+    dayTasks
+      .filter((task) => task.google_event_id && task.calendar_id)
+      .map((task) => `${task.calendar_id}::${task.google_event_id}`),
+  )
   const scheduledTaskEventKeys = new Set(
     dayTasks
       .filter((task) => task.scheduled_at && task.calendar_id)
@@ -79,7 +83,7 @@ export function buildTimeBlocksForDay({
     const end = new Date(event.end_time)
     if (!overlapsDay(start, end, dayStart, dayEnd)) continue
     if (event.task_id && scheduledTaskIds.has(event.task_id)) continue
-    if (taskGoogleIds.has(event.google_event_id)) continue
+    if (event.google_event_id && taskGoogleEventKeys.has(`${event.calendar_id}::${event.google_event_id}`)) continue
 
     const eventMinute = Math.floor(start.getTime() / 60000)
     const eventKey = `${event.calendar_id || ""}|${event.title.trim().toLowerCase()}|${eventMinute}`

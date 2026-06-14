@@ -21,7 +21,7 @@ function event(overrides: Partial<CalendarEvent>): CalendarEvent {
 }
 
 describe("dedupeCalendarEventsForDisplay", () => {
-  test("同じgoogle_event_idのイベントは1件に畳み込む", () => {
+  test("同じカレンダー内の同じgoogle_event_idは1件に畳み込む", () => {
     const events = dedupeCalendarEventsForDisplay([
       event({ id: "old", title: "古い予定", updated_at: "2026-06-12T09:00:00.000Z" }),
       event({ id: "new", title: "新しい予定", updated_at: "2026-06-12T10:00:00.000Z" }),
@@ -29,6 +29,16 @@ describe("dedupeCalendarEventsForDisplay", () => {
 
     expect(events).toHaveLength(1)
     expect(events[0].title).toBe("新しい予定")
+  })
+
+  test("別カレンダーの同じgoogle_event_idは別イベントとして残す", () => {
+    const events = dedupeCalendarEventsForDisplay([
+      event({ id: "work", google_event_id: "shared-id", calendar_id: "work", title: "仕事" }),
+      event({ id: "personal", google_event_id: "shared-id", calendar_id: "personal", title: "個人" }),
+    ])
+
+    expect(events).toHaveLength(2)
+    expect(events.map(item => item.id).sort()).toEqual(["personal", "work"])
   })
 
   test("同じ時刻とタイトルの楽観イベントは実イベントに置き換わる", () => {

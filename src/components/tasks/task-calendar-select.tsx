@@ -34,15 +34,7 @@ export function TaskCalendarSelect({
         setOpen(false)
     }
 
-    // Get primary calendar or fallback
-    const displayCalendar = selectedCalendar || {
-        name: "未設定",
-        color: null,
-        background_color: null
-    }
-
-    // Filter out read-only calendars if needed (optional)
-    const selectableCalendars = calendars.filter(c => c.access_level !== 'read')
+    const selectableCalendars = calendars.filter(c => c.access_level === 'owner' || c.access_level === 'writer')
 
     if (isLoading) {
         return (

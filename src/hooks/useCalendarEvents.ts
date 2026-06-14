@@ -223,10 +223,10 @@ export function broadcastCalendarOptimisticEventRemoval(eventId: string, googleE
 }
 
 /** イベント完了状態の変更を即時ブロードキャスト（API ラウンドトリップ不要） */
-export function broadcastEventCompletion(eventId: string, isCompleted: boolean, googleEventId?: string) {
+export function broadcastEventCompletion(eventId: string, isCompleted: boolean, googleEventId?: string, calendarId?: string) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EVENT_COMPLETION_EVENT, {
-      detail: { eventId, googleEventId, isCompleted },
+      detail: { eventId, googleEventId, calendarId, isCompleted },
     }));
   }
 }
@@ -306,8 +306,11 @@ function cleanupRemovedEvents() {
 
 function removalKeys(eventId: string, googleEventId?: string, calendarId?: string): string[] {
   const keys = [`id:${eventId}`];
-  if (googleEventId) keys.push(`google:${googleEventId}`);
-  if (googleEventId && calendarId) keys.push(`google-calendar:${calendarId}::${googleEventId}`);
+  if (googleEventId && calendarId) {
+    keys.push(`google-calendar:${calendarId}::${googleEventId}`);
+  } else if (googleEventId) {
+    keys.push(`google:${googleEventId}`);
+  }
   return keys;
 }
 

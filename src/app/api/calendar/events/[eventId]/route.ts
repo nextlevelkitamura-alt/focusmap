@@ -249,7 +249,10 @@ export async function POST(
 
     const { data: event, error: dbError } = await supabase
       .from('calendar_events')
-      .upsert(eventPayload)
+      .upsert(eventPayload, {
+        onConflict: 'user_id,calendar_id,google_event_id',
+        ignoreDuplicates: false,
+      })
       .select()
       .single();
 
@@ -466,7 +469,10 @@ export async function DELETE(
           .from('tasks')
           .update({
             google_event_id: null,
+            calendar_event_id: null,
             calendar_id: null,
+            scheduled_at: null,
+            stage: 'plan',
             updated_at: new Date().toISOString(),
           })
           .eq('user_id', user.id)
@@ -604,10 +610,12 @@ export async function PATCH(
 
     let existingEvent = existingEventById;
     if (!existingEvent) {
+      const lookupCalendarId = body.originalCalendarId || calendarId;
       const { data: existingEventByGoogleId, error: existingEventByGoogleIdError } = await supabase
         .from('calendar_events')
         .select('id, calendar_id, google_event_id')
         .eq('user_id', user.id)
+        .eq('calendar_id', lookupCalendarId)
         .eq('google_event_id', googleEventId)
         .maybeSingle();
       if (existingEventByGoogleIdError) throw existingEventByGoogleIdError;
@@ -747,7 +755,7 @@ export async function PATCH(
       : await supabase
           .from('calendar_events')
           .upsert(eventPayload, {
-            onConflict: 'user_id,google_event_id',
+            onConflict: 'user_id,calendar_id,google_event_id',
             ignoreDuplicates: false,
           });
 
@@ -757,12 +765,26 @@ export async function PATCH(
       console.log('[events/update] Updated database');
     }
 
+    if (sourceCalendarId !== destinationCalendarId) {
+      const { error: oldCacheDeleteError } = await supabase
+        .from('calendar_events')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('calendar_id', sourceCalendarId)
+        .eq('google_event_id', googleEventId);
+      if (oldCacheDeleteError) {
+        console.error('[events/update] Failed to remove moved source cache row:', oldCacheDeleteError);
+      }
+    }
+
     // 関連するタスクも更新（google_event_idが一致するタスク）
+    const taskCalendarIds = Array.from(new Set([sourceCalendarId, destinationCalendarId].filter(Boolean)));
     const { data: relatedTasks } = await supabase
       .from('tasks')
       .select('id')
       .eq('user_id', user.id)
-      .eq('google_event_id', googleEventId);
+      .eq('google_event_id', googleEventId)
+      .in('calendar_id', taskCalendarIds);
 
     let linkedTaskId: string | null = null;
 
@@ -792,7 +814,7 @@ export async function PATCH(
         .from('tasks')
         .update(taskUpdates)
         .eq('user_id', user.id)
-        .eq('google_event_id', googleEventId);
+        .in('id', relatedTasks.map(task => task.id));
 
       if (taskUpdateError) {
         console.error('[events/update] Failed to update tasks:', taskUpdateError);

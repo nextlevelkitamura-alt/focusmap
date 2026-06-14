@@ -17,20 +17,29 @@ async function cleanupMissingGoogleEvent(
     status?: string | null;
   },
   googleEventId: string,
+  calendarId?: string | null,
 ) {
   const now = new Date().toISOString();
 
-  await supabase
+  let calendarEventsDelete = supabase
     .from('calendar_events')
     .delete()
     .eq('user_id', userId)
     .eq('google_event_id', googleEventId);
+  if (calendarId) {
+    calendarEventsDelete = calendarEventsDelete.eq('calendar_id', calendarId);
+  }
+  await calendarEventsDelete;
 
-  await supabase
+  let completionsDelete = supabase
     .from('event_completions')
     .delete()
     .eq('user_id', userId)
     .eq('google_event_id', googleEventId);
+  if (calendarId) {
+    completionsDelete = completionsDelete.eq('calendar_id', calendarId);
+  }
+  await completionsDelete;
 
   if (task.source === 'google_event') {
     return supabase
@@ -160,7 +169,7 @@ export async function POST(request: NextRequest) {
       });
     } catch (error) {
       if (isGoogleCalendarEventMissingError(error)) {
-        await cleanupMissingGoogleEvent(supabase, user.id, task, error.googleEventId);
+        await cleanupMissingGoogleEvent(supabase, user.id, task, error.googleEventId, error.calendarId);
         return NextResponse.json(
           { error: 'Google Calendar event was already deleted. Local task schedule was cleared.', calendarEventMissing: true },
           { status: 410 },
@@ -260,7 +269,7 @@ export async function PATCH(request: NextRequest) {
       });
     } catch (error) {
       if (isGoogleCalendarEventMissingError(error)) {
-        await cleanupMissingGoogleEvent(supabase, user.id, task, error.googleEventId);
+        await cleanupMissingGoogleEvent(supabase, user.id, task, error.googleEventId, error.calendarId);
         return NextResponse.json(
           { error: 'Google Calendar event was already deleted. Local task schedule was cleared.', calendarEventMissing: true },
           { status: 410 },

@@ -98,6 +98,7 @@ export async function POST(
           .select('calendar_id')
           .eq('user_id', user.id)
           .eq('google_event_id', existingMemo.google_event_id)
+          .limit(1)
           .maybeSingle()
       : { data: null }
     const { data: userCalendars } = await supabase
@@ -158,11 +159,15 @@ export async function POST(
     }
 
     if (existingMemo?.google_event_id && existingMemo.google_event_id !== googleEventId) {
-      await supabase
+      let staleEventDelete = supabase
         .from('calendar_events')
         .delete()
         .eq('user_id', user.id)
-        .eq('google_event_id', existingMemo.google_event_id)
+        .eq('google_event_id', existingMemo.google_event_id);
+      if (sourceCalendarId) {
+        staleEventDelete = staleEventDelete.eq('calendar_id', sourceCalendarId);
+      }
+      await staleEventDelete
     }
 
     const { data: item, error: updateError } = await supabase

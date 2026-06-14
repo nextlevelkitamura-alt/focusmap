@@ -38,6 +38,7 @@ export async function POST(
       .select('calendar_id')
       .eq('user_id', user.id)
       .eq('google_event_id', googleEventId)
+      .limit(1)
       .maybeSingle()
 
     const { data: userCalendars } = await supabase
@@ -57,6 +58,7 @@ export async function POST(
 
     const { calendar } = await getCalendarClient(user.id)
     let deletedFromGoogle = false
+    let deletedCalendarId: string | null = null
     try {
       for (const calendarId of calendarIds) {
         try {
@@ -65,6 +67,7 @@ export async function POST(
             eventId: googleEventId,
           })
           deletedFromGoogle = true
+          deletedCalendarId = calendarId
           break
         } catch (error) {
           if (!isMissingCalendarEventError(error)) throw error
@@ -79,11 +82,15 @@ export async function POST(
       console.warn('[wishlist/unschedule] Google Calendar event was not found:', googleEventId)
     }
 
-    await supabase
+    let eventDeleteQuery = supabase
       .from('calendar_events')
       .delete()
       .eq('user_id', user.id)
       .eq('google_event_id', googleEventId)
+    if (deletedCalendarId) {
+      eventDeleteQuery = eventDeleteQuery.eq('calendar_id', deletedCalendarId)
+    }
+    await eventDeleteQuery
   }
 
   const { data: item, error: updateError } = await supabase

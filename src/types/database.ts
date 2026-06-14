@@ -1645,7 +1645,7 @@ export interface Database {
                     background_color?: string | null
                     selected?: boolean
                     access_level?: string | null
-                    primary?: boolean
+                    is_primary?: boolean
                     google_created_at?: string | null
                     google_updated_at?: string | null
                     synced_at?: string
@@ -1664,7 +1664,7 @@ export interface Database {
                     background_color?: string | null
                     selected?: boolean
                     access_level?: string | null
-                    primary?: boolean
+                    is_primary?: boolean
                     google_created_at?: string | null
                     google_updated_at?: string | null
                     synced_at?: string
