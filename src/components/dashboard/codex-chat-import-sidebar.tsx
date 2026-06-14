@@ -153,7 +153,7 @@ function isGenericCodexPulseText(value: string) {
 }
 
 function visibleActivityMessages(messages: AiTaskActivityMessage[]) {
-  return messages.filter(message => !isGenericCodexPulseText(message.body))
+  return messages.filter(message => !isGenericCodexPulseText(message.body) && !isStatusActivityMessage(message))
 }
 
 function formatActivityTime(value: string | null | undefined) {
@@ -174,9 +174,6 @@ function formatActivityTime(value: string | null | undefined) {
 
 function activityLabel(message: AiTaskActivityMessage) {
   if (message.role === "user" || message.kind === "sent" || message.kind === "user_answer") return "送信内容"
-  if (message.kind === "question") return "Codexの質問"
-  if (message.kind === "approval") return "確認依頼"
-  if (message.role === "status") return "進行状況"
   return "Codexの返答"
 }
 
@@ -247,9 +244,7 @@ function isStatusActivityMessage(message: AiTaskActivityMessage) {
 
 function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) {
   const isUserMessage = isUserActivityMessage(message)
-  const isStatusMessage = isStatusActivityMessage(message)
   const timeLabel = formatActivityTime(message.created_at)
-  const showLabel = !isUserMessage && (isStatusMessage || message.kind === "question" || message.kind === "approval")
 
   return (
     <article className={cn("flex", isUserMessage && "justify-end")}>
@@ -257,12 +252,12 @@ function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) 
         "flex min-w-0 flex-col gap-1.5",
         isUserMessage ? "max-w-[82%] items-end" : "w-full",
       )}>
-        {(showLabel || timeLabel) && (
+        {(!isUserMessage || timeLabel) && (
           <div className={cn(
             "flex max-w-full items-center gap-2 text-[11px] text-zinc-500",
             isUserMessage && "justify-end",
           )}>
-            {showLabel && <span className="shrink-0 font-medium text-zinc-400">{activityLabel(message)}</span>}
+            {!isUserMessage && <span className="shrink-0 font-medium text-zinc-400">{activityLabel(message)}</span>}
             {timeLabel && <span className="truncate">{timeLabel}</span>}
           </div>
         )}
@@ -272,10 +267,7 @@ function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) 
             isUserMessage
               ? "rounded-2xl bg-white px-4 py-2.5 font-medium text-zinc-950 shadow-sm"
               : "px-0 py-0 text-zinc-100",
-            isStatusMessage && "rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-sm leading-6 text-zinc-300",
-            message.kind === "question" && "rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-sm leading-6 text-sky-100",
-            message.kind === "approval" && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
-            message.importance === "important" && !isUserMessage && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
+            message.kind === "failed" && !isUserMessage && "text-red-200",
           )}
         >
           {message.body}
@@ -706,34 +698,47 @@ export function CodexChatImportSidebar({
       {selectedChatItem ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="border-b border-[#303030] px-3 py-2">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center justify-between gap-3">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="-ml-1 h-8 shrink-0 gap-1.5 px-2 text-xs text-zinc-400 hover:bg-white/10 hover:text-white"
+                className="-ml-1 min-h-10 shrink-0 gap-1.5 rounded-full px-2.5 text-sm font-semibold text-zinc-200 hover:bg-white/10 hover:text-white"
                 onClick={() => setSelectedChatId(null)}
               >
                 <ArrowLeft className="h-4 w-4" />
                 <span>戻る</span>
               </Button>
-              <div className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100" title={selectedChatItem.title}>
-                {selectedChatItem.title}
+              <div className="min-w-0 flex-1" title={selectedChatItem.title}>
+                <div className="truncate text-base font-semibold text-zinc-100">AIチャット履歴</div>
+                <div className="mt-0.5 truncate text-xs font-medium text-zinc-400">{selectedChatItem.title}</div>
               </div>
               {selectedThreadHref && (
                 <a
                   href={selectedThreadHref}
-                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20"
-                  aria-label={`Codexチャットを開く ${selectedChatItem.title}`}
+                  className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                  aria-label={`Codexで開く ${selectedChatItem.title}`}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  Codexチャット
+                  Codexで開く
                 </a>
               )}
             </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5">
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              <span className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold", codexMonitorToneClass(selectedChatItem.status ?? "awaiting_approval"))}>
+                {getCodexMonitorUiStatus(selectedChatItem.status ?? "awaiting_approval") === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedChatItem.status ?? "awaiting_approval")}
+              </span>
+              {selectedChatItem.repoPath && (
+                <span className="inline-flex min-h-8 max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[11px] font-medium text-zinc-400">
+                  <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath)}</span>
+                </span>
+              )}
+            </div>
+
             {selectedDetail?.loading && selectedMessages.length === 0 && !selectedDetail.text ? (
               <div className="flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-3 py-2 text-xs text-zinc-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -898,10 +903,10 @@ export function CodexChatImportSidebar({
                         className="mt-1 inline-flex min-h-8 w-fit items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20"
                         onClick={event => event.stopPropagation()}
                         draggable={false}
-                        aria-label={`Codexチャットを開く ${item.title}`}
+                        aria-label={`Codexで開く ${item.title}`}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
-                        Codexチャット
+                        Codexで開く
                       </a>
                     )}
                   </div>

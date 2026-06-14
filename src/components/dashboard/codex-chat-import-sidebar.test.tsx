@@ -110,7 +110,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
-    expect(screen.getByRole("link", { name: /Codexチャットを開く Codexスレッド連携UI/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
       "href",
       "codex://threads/thread-abcdef123456",
     )
@@ -186,6 +186,17 @@ describe("CodexChatImportSidebar", () => {
               created_at: "2026-06-12T00:00:00.000Z",
             },
             {
+              id: "msg-status",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "status",
+              kind: "progress",
+              body: "プロジェクト更新完了",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:05:00.000Z",
+            },
+            {
               id: "msg-codex",
               task_id: "ai-task-1",
               user_id: "user-1",
@@ -217,9 +228,10 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByRole("button", { name: "Finderでリポフォルダを選択" })).not.toBeInTheDocument()
     expect(screen.queryByLabelText("チャットを検索")).not.toBeInTheDocument()
     expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
-    expect(screen.queryByText("Codexの返答")).not.toBeInTheDocument()
+    expect(screen.getByText("Codexの返答")).toBeInTheDocument()
+    expect(screen.queryByText("プロジェクト更新完了")).not.toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
-    expect(screen.getByRole("link", { name: /Codexチャットを開く Codexスレッド連携UI/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
       "href",
       "codex://threads/thread-abcdef123456",
     )
