@@ -12,13 +12,10 @@ import {
 } from "ai"
 import {
   Brain,
-  BriefcaseBusiness,
-  CalendarDays,
   ChevronDown,
   CheckCircle2,
   FileText,
   Image as ImageIcon,
-  ListTodo,
   Loader2,
   Menu,
   Mic,
@@ -41,7 +38,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
@@ -72,70 +68,37 @@ interface UnifiedChatProps {
   projectTitle?: string | null
   projects?: Project[]
   onSelectProject?: (id: string) => void
+  projectChatLaunchProjectId?: string | null
+  projectChatLaunchKey?: number
+  onProjectChatLaunchConsumed?: () => void
 }
 
-const AUTOMATION_SHORTCUTS = [
+const CHAT_STARTERS = [
   {
-    label: "予定を整理",
-    description: "カレンダーの確認・調整案",
-    prompt: "今日のカレンダーを確認して、不要な予定や調整したほうがいい予定を整理して",
-    icon: CalendarDays,
-  },
-  {
-    label: "空き時間を探す",
-    description: "予定追加の候補枠を確認",
-    prompt: "今日から7日間の空き時間を確認して、30分か60分で入れられる候補を出して。予定を作る前にどの枠にするか確認して",
-    icon: CalendarDays,
-  },
-  {
-    label: "マップ整理",
-    description: "ノード・進捗・メモ紐づき",
-    prompt: "現在のプロジェクトのマインドマップと未整理メモを確認して、ノードの重複・親子関係・進捗・メモ紐づきを整理して。変更前に候補を出し、低リスクな紐づきや移動は実行して",
+    label: "マインドマップを整理",
+    description: "配置・親子関係を相談",
+    prompt: "マインドマップを整理して。まずこのプロジェクトの概要・蓄積コンテキスト・マップ見出しを読んで、変更前に会話で整理案を出して。新規で追加したい項目や、他に移動したい候補があれば聞いてください。",
     icon: Workflow,
   },
   {
-    label: "ノート整理",
-    description: "見出しと冒頭30文字で分類",
-    prompt: "未整理メモの見出しと詳細冒頭30文字を確認して、マップ化・予定化・保留に分類して。必要なものだけ詳細を確認し、紐づけや予定化の候補を出して",
+    label: "AI実行を整理",
+    description: "実行中・確認待ちを配置",
+    prompt: "AI実行を整理して。まずこのプロジェクトの概要・マインドマップ・現在のAI実行状況を読んで、実行中/確認待ち/未送信の作業をどのノードに紐づけると自然か会話で整理して。新規で追加したい項目や、他に移動したい候補があれば聞いてください。",
+    icon: Terminal,
+  },
+  {
+    label: "メモから作成",
+    description: "未整理メモをノード化",
+    prompt: "メモから作成したい。まずこのプロジェクトの概要・マインドマップ・未整理メモの見出しを読んで、ノード化するとよさそうな候補を会話で整理して。勝手に追加せず、追加したい項目や移動候補を聞いてください。",
     icon: FileText,
   },
   {
-    label: "タスク化",
-    description: "会話やメモを実行項目へ",
-    prompt: "この内容をタスクに分解して、次にやる順番まで整理して",
-    icon: ListTodo,
-  },
-  {
-    label: "調査する",
-    description: "Web調査と要約",
-    prompt: "この件を調査して、要点と次のアクションをまとめて",
+    label: "リポジトリを読む",
+    description: "コード構成から整理案",
+    prompt: "リポジトリを読んで整理したい。まずこのプロジェクトの概要・repo_path・蓄積コンテキスト・マインドマップを確認して、リポジトリ構成から追加/整理するとよさそうなノード案を会話で出して。必要なファイルを読む前に、どこを見るかも短く説明してください。",
     icon: Search,
   },
-  {
-    label: "メモ化",
-    description: "内容をあとで使える形へ",
-    prompt: "この内容をメモとして整理して、重要な判断と未決事項を分けて",
-    icon: FileText,
-  },
-  {
-    label: "求人更新",
-    description: "仕事リポを見て求人を最新化",
-    prompt: "仕事リポを確認して、求人更新に必要な差分を洗い出し、更新できるところまで実行して",
-    icon: BriefcaseBusiness,
-  },
-  {
-    label: "求人立案",
-    description: "条件から求人案を作成",
-    prompt: "この内容で求人立案して。仕事リポの求人作成ルールと既存求人を確認して、掲載できる案に整えて",
-    icon: FileText,
-  },
-  {
-    label: "仕事リポ巡回",
-    description: "定期実行の予約",
-    prompt: "仕事リポを毎朝9時に巡回して、求人更新・求人立案・採用対応が必要なものを報告する定期実行を設定して",
-    icon: Workflow,
-  },
-]
+] as const
 
 const MAX_CHAT_ATTACHMENTS = 4
 const MAX_IMAGE_SIDE = 1600
@@ -240,6 +203,9 @@ export function UnifiedChat({
   projectTitle = null,
   projects = [],
   onSelectProject,
+  projectChatLaunchProjectId = null,
+  projectChatLaunchKey = 0,
+  onProjectChatLaunchConsumed,
 }: UnifiedChatProps) {
   void _projectId
   void projectTitle
@@ -268,10 +234,23 @@ export function UnifiedChat({
   const activeProjectChatIdForRequest = activeProjectChat?.id ?? null
   const chatMode: ChatMode = activeProjectChatIdForRequest ? "project" : "general"
   const chatScopeKey = activeProjectChatIdForRequest ? `project:${activeProjectChatIdForRequest}` : "general"
+  const pendingProjectChatLaunchRef = useRef<{ key: number; projectId: string } | null>(null)
+  const handledProjectChatLaunchKeysRef = useRef(new Set<number>())
 
   const sessions = useAgentChatSessions(chatScopeKey)
-  const messages = sessions.activeSession?.messages ?? []
-  const isBusy = sessions.activeSession?.status === "running"
+  const {
+    hydrated: sessionsHydrated,
+    loadedScopeKey: sessionsLoadedScopeKey,
+    sessions: chatSessions,
+    activeSessionId,
+    activeSession,
+    createSession,
+    selectSession,
+    deleteSession,
+    startRun,
+  } = sessions
+  const messages = activeSession?.messages ?? []
+  const isBusy = activeSession?.status === "running"
   const addToolApprovalResponse = useCallback<ApprovalHandler>(() => {
     setRuntimeNotice({ tone: "info", message: "このチャットは裏側で実行中です。確認が必要な操作は返信内で案内します。" })
   }, [])
@@ -279,13 +258,58 @@ export function UnifiedChat({
 
   // Restore the active session whenever the user switches between general and project chats.
   useEffect(() => {
-    if (!sessions.hydrated || sessions.loadedScopeKey !== chatScopeKey || restoredScopeRef.current === chatScopeKey) return
+    if (!sessionsHydrated || sessionsLoadedScopeKey !== chatScopeKey || restoredScopeRef.current === chatScopeKey) return
     restoredScopeRef.current = chatScopeKey
     setInput("")
     setAttachments([])
     setAttachmentError(null)
     setRuntimeNotice(null)
-  }, [chatScopeKey, sessions.hydrated, sessions.loadedScopeKey])
+  }, [chatScopeKey, sessionsHydrated, sessionsLoadedScopeKey])
+
+  useEffect(() => {
+    if (!projectChatLaunchKey || !projectChatLaunchProjectId) return
+    if (handledProjectChatLaunchKeysRef.current.has(projectChatLaunchKey)) return
+    const project = projects.find(candidate =>
+      candidate.id === projectChatLaunchProjectId &&
+      candidate.status !== "archived" &&
+      candidate.status !== "completed" &&
+      (!spaceId || candidate.space_id === spaceId),
+    )
+    if (!project) return
+
+    handledProjectChatLaunchKeysRef.current.add(projectChatLaunchKey)
+    pendingProjectChatLaunchRef.current = { key: projectChatLaunchKey, projectId: project.id }
+    setActiveProjectChatId(project.id)
+    onSelectProject?.(project.id)
+    setMobileHistoryOpen(false)
+    setInput("")
+    setAttachments([])
+    setAttachmentError(null)
+    setRuntimeNotice(null)
+  }, [onSelectProject, projectChatLaunchKey, projectChatLaunchProjectId, projects, spaceId])
+
+  useEffect(() => {
+    const pending = pendingProjectChatLaunchRef.current
+    if (!pending) return
+    if (activeProjectChatIdForRequest !== pending.projectId) return
+    if (!sessionsHydrated || sessionsLoadedScopeKey !== chatScopeKey) return
+
+    createSession({
+      chatMode: "project",
+      spaceId,
+      projectId: pending.projectId,
+    })
+    pendingProjectChatLaunchRef.current = null
+    onProjectChatLaunchConsumed?.()
+  }, [
+    activeProjectChatIdForRequest,
+    chatScopeKey,
+    createSession,
+    onProjectChatLaunchConsumed,
+    sessionsHydrated,
+    sessionsLoadedScopeKey,
+    spaceId,
+  ])
 
   useEffect(() => {
     if (!activeProjectChatId || activeProjectChat) return
@@ -370,7 +394,7 @@ export function UnifiedChat({
     if ((!trimmed && attachments.length === 0) || isBusy) return
     const files = attachments
     setRuntimeNotice(null)
-    void sessions.startRun({
+    void startRun({
       text: trimmed,
       files,
       spaceId,
@@ -385,13 +409,8 @@ export function UnifiedChat({
     setAttachmentError(null)
   }
 
-  const insertAutomationPrompt = useCallback((prompt: string) => {
-    setInput(prev => (prev.trim() ? `${prev.trim()}\n${prompt}` : prompt))
-    setTimeout(() => inputRef.current?.focus(), 0)
-  }, [])
-
   const handleNewSession = useCallback(() => {
-    sessions.createSession()
+    createSession()
     setInput("")
     setAttachments([])
     setAttachmentError(null)
@@ -400,15 +419,15 @@ export function UnifiedChat({
     if (isDesktopViewport()) {
       setTimeout(() => inputRef.current?.focus(), 0)
     }
-  }, [sessions])
+  }, [createSession])
 
   const handleSelectSession = (session: AgentChatSession) => {
-    sessions.selectSession(session.id)
+    selectSession(session.id)
     setMobileHistoryOpen(false)
   }
 
   const handleDeleteSession = (id: string) => {
-    sessions.deleteSession(id)
+    deleteSession(id)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -480,8 +499,8 @@ export function UnifiedChat({
     >
       {sidebarOpen && (
         <HistorySidebar
-          sessions={sessions.sessions}
-          activeSessionId={sessions.activeSessionId}
+          sessions={chatSessions}
+          activeSessionId={activeSessionId}
           onNew={handleNewSession}
           onSelect={handleSelectSession}
           onDelete={handleDeleteSession}
@@ -506,10 +525,14 @@ export function UnifiedChat({
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <span className="inline-flex min-h-8 items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 text-[11px] font-medium text-emerald-300">
-            {activeProjectChat ? "プロジェクトチャット" : "新しいチャット"}
-          </span>
-          <div className="min-w-0 flex-1" />
+          <div className="min-w-0 flex-1 text-center">
+            <div className="truncate text-[15px] font-semibold leading-5 text-zinc-100">
+              {activeProjectChat?.title ?? "Focusmap"}
+            </div>
+            <div className="truncate text-[11px] leading-4 text-zinc-500">
+              {activeProjectChat ? "プロジェクトチャット" : "新しいチャット"}
+            </div>
+          </div>
           <Button
             type="button"
             variant="ghost"
@@ -527,7 +550,11 @@ export function UnifiedChat({
             <ProjectChatHeader project={activeProjectChat} hasMessages={messages.length > 0} />
           )}
           {messages.length === 0 ? (
-            <EmptyChat />
+            <EmptyChat
+              project={activeProjectChat}
+              onSelectStarter={(prompt) => submit(prompt)}
+              disabled={isBusy}
+            />
           ) : (
             <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pb-6">
               {messages.map(message => (
@@ -614,7 +641,6 @@ export function UnifiedChat({
               <div className="mt-1 flex min-h-10 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <AutomationPromptMenu
-                    onSelect={insertAutomationPrompt}
                     onAttachImage={() => fileInputRef.current?.click()}
                     attachDisabled={isBusy}
                   />
@@ -672,8 +698,8 @@ export function UnifiedChat({
           <SheetTitle className="sr-only">チャット履歴</SheetTitle>
           <SheetDescription className="sr-only">チャット、プロジェクト、最近の履歴を選択します。</SheetDescription>
           <HistorySidebar
-            sessions={sessions.sessions}
-            activeSessionId={sessions.activeSessionId}
+            sessions={chatSessions}
+            activeSessionId={activeSessionId}
             onNew={handleNewSession}
             onSelect={handleSelectSession}
             onDelete={handleDeleteSession}
@@ -749,11 +775,9 @@ function ModelModeMenu({
 }
 
 function AutomationPromptMenu({
-  onSelect,
   onAttachImage,
   attachDisabled = false,
 }: {
-  onSelect: (prompt: string) => void
   onAttachImage: () => void
   attachDisabled?: boolean
 }) {
@@ -764,7 +788,7 @@ function AutomationPromptMenu({
           <Plus className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="w-64">
+      <DropdownMenuContent align="start" side="top" className="w-52">
         <DropdownMenuLabel className="text-xs text-muted-foreground">追加</DropdownMenuLabel>
         <DropdownMenuItem
           className="cursor-pointer gap-2 py-2"
@@ -774,24 +798,6 @@ function AutomationPromptMenu({
           <ImageIcon className="h-4 w-4" />
           <span className="text-sm font-medium">写真を添付</span>
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-xs text-muted-foreground">よく使う依頼</DropdownMenuLabel>
-        {AUTOMATION_SHORTCUTS.map(item => {
-          const Icon = item.icon
-          return (
-            <DropdownMenuItem
-              key={item.label}
-              className="cursor-pointer items-start gap-2 py-2"
-              onSelect={() => onSelect(item.prompt)}
-            >
-              <Icon className="mt-0.5 h-4 w-4" />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">{item.label}</span>
-                <span className="block truncate text-xs text-muted-foreground">{item.description}</span>
-              </span>
-            </DropdownMenuItem>
-          )
-        })}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -985,9 +991,66 @@ function ProjectChatHeader({ project, hasMessages }: { project: Project; hasMess
   )
 }
 
-function EmptyChat() {
+function EmptyChat({
+  project,
+  onSelectStarter,
+  disabled = false,
+}: {
+  project: Project | null
+  onSelectStarter: (prompt: string) => void
+  disabled?: boolean
+}) {
   return (
-    <div className="mx-auto min-h-full w-full max-w-[760px]" />
+    <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col items-center justify-center px-1 pb-10 pt-4">
+      <div className="w-full max-w-[620px] space-y-4">
+        <div className="text-center">
+          <h2 className="text-[22px] font-semibold tracking-normal text-zinc-100 md:text-2xl">何を整理しますか？</h2>
+          <p className="mx-auto mt-2 max-w-[520px] text-[13px] leading-6 text-zinc-400">
+            {project
+              ? "プロジェクト概要・マップ・メモ・AI実行を読んでから会話を始めます。"
+              : "プロジェクトを選ぶと、概要とマップを読んだ状態で会話できます。"}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+          {CHAT_STARTERS.map((starter) => {
+            const Icon = starter.icon
+            const primary = starter.label === "マインドマップを整理"
+            return (
+              <button
+                key={starter.label}
+                type="button"
+                disabled={disabled}
+                onClick={() => onSelectStarter(starter.prompt)}
+                className={cn(
+                  "group flex min-h-[112px] flex-col items-start justify-between rounded-xl border bg-[#17181b] p-3 text-left transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60",
+                  primary
+                    ? "border-blue-500/70 text-blue-100 shadow-[0_0_0_1px_rgba(59,130,246,0.18)]"
+                    : "border-white/10 text-zinc-100 hover:border-white/20 hover:bg-white/[0.05]",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-lg border",
+                    primary
+                      ? "border-blue-400/40 bg-blue-500/15 text-blue-300"
+                      : "border-white/10 bg-white/[0.04] text-zinc-300",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="space-y-1">
+                  <span className={cn("block text-[14px] font-semibold leading-5", primary ? "text-blue-300" : "text-zinc-100")}>
+                    {starter.label}
+                  </span>
+                  <span className="block text-[11px] leading-4 text-zinc-500">{starter.description}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
   )
 }
 

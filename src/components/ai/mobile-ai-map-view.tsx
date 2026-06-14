@@ -1,12 +1,10 @@
 "use client"
 
-import { useCallback, useState } from "react"
-import { Bot, Loader2, Sparkles } from "lucide-react"
+import { useState } from "react"
+import { Bot, MessageCircle } from "lucide-react"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
-import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { Button } from "@/components/ui/button"
-import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import type { Project, Space, Task } from "@/types/database"
 import type { Note } from "@/types/note"
 
@@ -33,6 +31,7 @@ interface MobileAiMapViewProps {
   onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
   onKanbanDeleteTask?: (taskId: string) => Promise<void>
   refreshFromServer: () => Promise<void>
+  onOpenProjectChat: () => void
 }
 
 export function getSelectableMindmapNotes({
@@ -86,53 +85,10 @@ export function MobileAiMapView({
   onKanbanUpdateTask,
   onKanbanDeleteTask,
   refreshFromServer,
+  onOpenProjectChat,
 }: MobileAiMapViewProps) {
-  const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
-  const [organizeMemoProjects, setOrganizeMemoProjects] = useState<Record<string, string | null>>({})
-  const [isLoadingOrganizeMemos, setIsLoadingOrganizeMemos] = useState(false)
-  const [organizeError, setOrganizeError] = useState<string | null>(null)
-  const [isMindmapDialogOpen, setIsMindmapDialogOpen] = useState(false)
   const [codexOpenSignal, setCodexOpenSignal] = useState(0)
-
-  const defaultProjectId = selectedProject?.id ?? null
-
-  const handleOpenMindmapDialog = useCallback(async () => {
-    if (!selectedProjectId || isLoadingOrganizeMemos) return
-
-    setIsLoadingOrganizeMemos(true)
-    setOrganizeError(null)
-    try {
-      const items = await fetchWishlistItems({
-        spaceId: selectedSpaceId,
-        projectId: selectedProjectId,
-        force: true,
-      })
-      const candidates = items
-        .filter(item =>
-          !item.is_completed &&
-          !item.google_event_id &&
-          (item.memo_status ?? "unsorted") === "unsorted",
-        )
-        .slice(0, 50)
-      setOrganizeMemoIds(candidates.map(item => item.id))
-      setOrganizeMemoProjects(
-        Object.fromEntries(candidates.map(item => [item.id, item.project_id ?? null])),
-      )
-      setIsMindmapDialogOpen(true)
-    } catch (error) {
-      setOrganizeError(error instanceof Error ? error.message : "メモの取得に失敗しました")
-    } finally {
-      setIsLoadingOrganizeMemos(false)
-    }
-  }, [isLoadingOrganizeMemos, selectedProjectId, selectedSpaceId])
-
-  const handleMindmapSuccess = useCallback(async (projectId: string) => {
-    onSelectProject(projectId)
-    setOrganizeMemoIds([])
-    setOrganizeMemoProjects({})
-    setIsMindmapDialogOpen(false)
-    await refreshFromServer()
-  }, [onSelectProject, refreshFromServer])
+  void refreshFromServer
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
@@ -167,30 +123,14 @@ export function MobileAiMapView({
             size="icon"
             variant="outline"
             className="h-11 w-11 shrink-0 rounded-md"
-            onClick={() => { void handleOpenMindmapDialog() }}
-            disabled={!selectedProjectId || isLoadingOrganizeMemos}
-            aria-label="メモからマップを作成"
-            title="メモからマップを作成"
+            onClick={onOpenProjectChat}
+            disabled={!selectedProjectId}
+            aria-label="プロジェクトチャットを開く"
+            title="プロジェクトチャット"
           >
-            {isLoadingOrganizeMemos ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-5 w-5" />
-            )}
+            <MessageCircle className="h-5 w-5" />
           </Button>
         </div>
-        {organizeError && (
-          <div className="mt-2 flex min-h-8 items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
-            <span className="min-w-0 flex-1 truncate">{organizeError}</span>
-            <button
-              type="button"
-              onClick={() => setOrganizeError(null)}
-              className="shrink-0 rounded px-2 py-1 hover:bg-destructive/10"
-            >
-              閉じる
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -222,19 +162,6 @@ export function MobileAiMapView({
         )}
       </div>
 
-      <MemoToMindmapDialog
-        open={isMindmapDialogOpen}
-        noteIds={organizeMemoIds}
-        noteProjects={organizeMemoProjects}
-        source="wishlist"
-        projects={projects.map(project => ({ id: project.id, title: project.title }))}
-        spaces={spaces.map(space => ({ id: space.id, title: space.title }))}
-        defaultSpaceId={selectedSpaceId}
-        defaultProjectId={defaultProjectId}
-        onClose={() => setIsMindmapDialogOpen(false)}
-        onSuccess={handleMindmapSuccess}
-        allowTextImport
-      />
     </div>
   )
 }

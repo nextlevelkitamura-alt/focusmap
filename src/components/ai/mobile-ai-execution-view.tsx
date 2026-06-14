@@ -9,6 +9,9 @@ interface MobileAiExecutionViewProps {
   selectedProjectTitle?: string | null
   projects?: Project[]
   onSelectProject?: (id: string) => void
+  projectChatLaunchProjectId?: string | null
+  projectChatLaunchKey?: number
+  onProjectChatLaunchConsumed?: () => void
   onMindmapUpdated: () => Promise<void>
   onCalendarEventCreated?: (eventData?: {
     id: string
@@ -25,6 +28,9 @@ export function MobileAiExecutionView({
   selectedProjectTitle = null,
   projects = [],
   onSelectProject,
+  projectChatLaunchProjectId = null,
+  projectChatLaunchKey = 0,
+  onProjectChatLaunchConsumed,
   onMindmapUpdated,
   onCalendarEventCreated,
 }: MobileAiExecutionViewProps) {
@@ -39,6 +45,9 @@ export function MobileAiExecutionView({
         projectTitle={selectedProjectTitle}
         projects={projects}
         onSelectProject={onSelectProject}
+        projectChatLaunchProjectId={projectChatLaunchProjectId}
+        projectChatLaunchKey={projectChatLaunchKey}
+        onProjectChatLaunchConsumed={onProjectChatLaunchConsumed}
       />
     </div>
   )

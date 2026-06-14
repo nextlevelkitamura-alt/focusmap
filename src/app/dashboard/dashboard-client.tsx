@@ -216,6 +216,20 @@ export function DashboardClient({
 
     // AI Chat open state (controlled from desktop panel FAB + mobile BottomNav)
     const [isAiChatOpen, setIsAiChatOpen] = useState(false)
+    const [projectChatLaunchRequest, setProjectChatLaunchRequest] = useState<{ projectId: string | null; key: number }>({
+        projectId: null,
+        key: 0,
+    })
+    const openSelectedProjectChat = useCallback(() => {
+        setProjectChatLaunchRequest(prev => ({
+            projectId: selectedProjectId,
+            key: prev.key + 1,
+        }))
+        setActiveView('ai')
+    }, [selectedProjectId, setActiveView])
+    const consumeProjectChatLaunchRequest = useCallback(() => {
+        setProjectChatLaunchRequest(prev => prev.key === 0 ? prev : { projectId: null, key: 0 })
+    }, [])
     // Scheduling panel open state
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
 
@@ -1384,6 +1398,7 @@ export function DashboardClient({
                             onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
                             onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                             refreshFromServer={refreshFromServer}
+                            onOpenProjectChat={openSelectedProjectChat}
                         />
                     </div>
                 )}
@@ -1398,6 +1413,9 @@ export function DashboardClient({
                             onSelectProject={setSelectedProjectId}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
+                            projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
+                            projectChatLaunchKey={projectChatLaunchRequest.key}
+                            onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
                         />
                     </div>
                 )}
@@ -1412,6 +1430,9 @@ export function DashboardClient({
                             onSelectProject={setSelectedProjectId}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
+                            projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
+                            projectChatLaunchKey={projectChatLaunchRequest.key}
+                            onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
                         />
                     </div>
                 )}
