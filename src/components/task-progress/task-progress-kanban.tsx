@@ -3,9 +3,7 @@
 import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
-  ArrowUp,
   ArrowLeft,
-  Brain,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -15,8 +13,6 @@ import {
   ExternalLink,
   FolderGit2,
   Loader2,
-  Mic,
-  Plus,
   RefreshCw,
   Trash2,
   Wifi,
@@ -1015,18 +1011,12 @@ function isMobileImportStatusMessage(message: AiTaskActivityMessage) {
 
 function mobileImportActivityLabel(message: AiTaskActivityMessage) {
   if (isMobileImportUserMessage(message)) return "送信した内容"
-  if (message.kind === "question") return "Codexから質問"
-  if (message.kind === "approval") return "確認依頼"
-  if (message.kind === "failed") return "接続失敗"
-  if (isMobileImportStatusMessage(message)) return "進行状況"
   return "Codexの返答"
 }
 
 function MobileImportActivityBubble({ message }: { message: AiTaskActivityMessage }) {
   const isUserMessage = isMobileImportUserMessage(message)
-  const isStatusMessage = isMobileImportStatusMessage(message)
   const timeLabel = formatTaskProgressDateTime(message.created_at)
-  const showLabel = !isUserMessage && (isStatusMessage || message.kind === "question" || message.kind === "approval" || message.kind === "failed")
 
   return (
     <article className={cn("flex", isUserMessage && "justify-end")}>
@@ -1034,12 +1024,12 @@ function MobileImportActivityBubble({ message }: { message: AiTaskActivityMessag
         "flex min-w-0 flex-col gap-1.5",
         isUserMessage ? "max-w-[82%] items-end" : "w-full",
       )}>
-        {(showLabel || timeLabel) && (
+        {(!isUserMessage || timeLabel) && (
           <div className={cn(
             "flex max-w-full items-center gap-2 text-[11px] text-zinc-500",
             isUserMessage && "justify-end",
           )}>
-            {showLabel && <span className="shrink-0 font-medium text-zinc-400">{mobileImportActivityLabel(message)}</span>}
+            {!isUserMessage && <span className="shrink-0 font-medium text-zinc-400">{mobileImportActivityLabel(message)}</span>}
             {timeLabel && <span className="truncate">{timeLabel}</span>}
           </div>
         )}
@@ -1049,45 +1039,13 @@ function MobileImportActivityBubble({ message }: { message: AiTaskActivityMessag
             isUserMessage
               ? "rounded-2xl bg-white px-4 py-2.5 font-medium text-zinc-950 shadow-sm"
               : "px-0 py-0 text-zinc-100",
-            isStatusMessage && "w-fit rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-sm font-medium leading-5 text-emerald-200",
-            message.kind === "question" && "rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-sm leading-6 text-sky-100",
-            message.kind === "approval" && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
-            message.kind === "failed" && "rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm leading-6 text-red-100",
-            message.importance === "important" && !isUserMessage && !isStatusMessage && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
+            message.kind === "failed" && !isUserMessage && "text-red-200",
           )}
         >
           {message.body}
         </div>
       </div>
     </article>
-  )
-}
-
-function MobileImportComposerMock() {
-  return (
-    <div className="rounded-[1.35rem] border border-[#3a3b40] bg-[#17181b] p-2.5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
-      <div className="min-h-16 px-1 py-1.5 text-[16px] leading-6 text-zinc-500">
-        質問してみましょう
-      </div>
-      <div className="mt-1 flex min-h-10 items-center justify-between gap-2">
-        <span className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-300" aria-hidden="true">
-          <Plus className="h-5 w-5" />
-        </span>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <span className="inline-flex h-10 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 text-xs font-semibold text-zinc-100" aria-hidden="true">
-            <Brain className="h-4 w-4" />
-            考える
-            <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
-          </span>
-          <span className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-300" aria-hidden="true">
-            <Mic className="h-4 w-4" />
-          </span>
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-700 text-zinc-500" aria-hidden="true">
-            <ArrowUp className="h-5 w-5 stroke-[2.75]" />
-          </span>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -1101,12 +1059,13 @@ function MobileImportChatDetail({
   const visualStatus = item.status ?? "awaiting_approval"
   const statusLabel = item.statusLabel ?? codexMonitorUiLabel(visualStatus)
   const messages = detail?.messages ?? []
+  const visibleMessages = messages.filter(message => !isMobileImportStatusMessage(message))
   const fallbackBody = item.snippet?.trim() || statusLabel
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#1f1f1f] text-zinc-100">
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
-        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pb-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5">
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold", codexMonitorToneClass(visualStatus))}>
               {getCodexMonitorUiStatus(visualStatus) === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -1132,9 +1091,9 @@ function MobileImportChatDetail({
             </div>
           )}
 
-          {messages.length > 0 ? (
+          {visibleMessages.length > 0 ? (
             <div className="space-y-5">
-              {messages.map(message => <MobileImportActivityBubble key={message.id} message={message} />)}
+              {visibleMessages.map(message => <MobileImportActivityBubble key={message.id} message={message} />)}
             </div>
           ) : !detail?.loading && !detail?.error ? (
             <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-zinc-100">
@@ -1142,10 +1101,6 @@ function MobileImportChatDetail({
             </div>
           ) : null}
         </div>
-      </div>
-
-      <div className="shrink-0 bg-[#1f1f1f]/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2 backdrop-blur">
-        <MobileImportComposerMock />
       </div>
     </div>
   )
@@ -1296,6 +1251,9 @@ export function TaskProgressKanban({
   }, [activeMobileImportDetailId, mobileImportItems])
   const activeMobileImportDetail = activeMobileImportDetailItem
     ? mobileImportDetailsById[activeMobileImportDetailItem.id] ?? null
+    : null
+  const activeMobileImportThreadHref = activeMobileImportDetailItem
+    ? codexThreadUrl(activeMobileImportDetailItem.threadId)
     : null
 
   const refreshAll = useCallback(async () => {
@@ -1604,11 +1562,31 @@ export function TaskProgressKanban({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
-                    <Bot className="h-3.5 w-3.5" />
-                    Codex
-                  </span>
-                  <RunnerChip state={runnerState} />
+                  {activeMobileImportDetailItem ? (
+                    activeMobileImportThreadHref ? (
+                      <a
+                        href={activeMobileImportThreadHref}
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                        aria-label="Codexで開く"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Codexで開く
+                      </a>
+                    ) : (
+                      <span className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-emerald-400/35 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200/80">
+                        <Bot className="h-3.5 w-3.5" />
+                        Codex
+                      </span>
+                    )
+                  ) : (
+                    <>
+                      <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                        <Bot className="h-3.5 w-3.5" />
+                        Codex
+                      </span>
+                      <RunnerChip state={runnerState} />
+                    </>
+                  )}
                 </div>
               </div>
               {activeMobileImportDetailItem ? null : activeMobileTab === "import" ? (

@@ -463,6 +463,17 @@ describe('TaskProgressKanban', () => {
               created_at: '2026-06-12T09:20:00.000Z',
             },
             {
+              id: 'msg-status',
+              task_id: 'ai-task-1',
+              user_id: 'user-1',
+              role: 'status',
+              kind: 'progress',
+              body: 'プロジェクト更新完了',
+              importance: 'normal',
+              metadata: {},
+              created_at: '2026-06-12T09:20:30.000Z',
+            },
+            {
               id: 'msg-codex',
               task_id: 'ai-task-1',
               user_id: 'user-1',
@@ -516,7 +527,12 @@ describe('TaskProgressKanban', () => {
     expect(onOpenTask).not.toHaveBeenCalled()
     expect(screen.queryByRole('tab', { name: /実行中 1件/ })).not.toBeInTheDocument()
     expect(screen.getByText('実行中チャットを見る')).toBeInTheDocument()
-    expect(screen.getByText('質問してみましょう')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Codexで開く' })).toHaveAttribute(
+      'href',
+      'codex://threads/thread-running123',
+    )
+    expect(screen.queryByText('質問してみましょう')).not.toBeInTheDocument()
+    expect(screen.queryByText('プロジェクト更新完了')).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(screen.getByText('Codexの返答をチャット形式で表示します')).toBeInTheDocument()
