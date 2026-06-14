@@ -662,9 +662,12 @@ describe('WishlistCardDetail', () => {
 
     expect(await screen.findByTestId('duration-wheel-popover')).toBeInTheDocument()
     const minuteColumn = screen.getByRole('listbox', { name: '分' })
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < 16; i += 1) {
       fireEvent.wheel(minuteColumn, { deltaY: 80 })
     }
+    await waitFor(() => {
+      expect(within(screen.getByTestId('duration-wheel-popover')).getByText('1時間20分')).toBeInTheDocument()
+    })
     fireEvent.click(screen.getByRole('button', { name: /反映/ }))
 
     await waitFor(() => {
