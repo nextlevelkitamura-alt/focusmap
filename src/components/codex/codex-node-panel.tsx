@@ -2043,6 +2043,12 @@ export function CodexNodePanel({
           マインドマップノードの見出し、メモ、所要時間、画像、Codex実行を編集します。
         </SheetDescription>
 
+        {isMobile && (
+          <div className="flex shrink-0 justify-center pb-0.5 pt-1.5" data-sheet-drag-handle="true">
+            <div className="h-1 w-11 rounded-full bg-white/25" />
+          </div>
+        )}
+
         {isScheduleCalendarOpen ? (
           <TaskInlineScheduler
             taskId={node.taskId}

@@ -1077,7 +1077,6 @@ export function WishlistCardDetail({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imagePasteTargetRef = useRef<HTMLDivElement>(null)
   const sheetScrollRef = useRef<HTMLDivElement>(null)
-  const sheetTouchStartYRef = useRef<number | null>(null)
   const previewTimePartsRef = useRef<{ hour: number; minute: number } | null>(null)
   const dateTriggerRef = useRef<HTMLButtonElement>(null)
   const timeTriggerRef = useRef<HTMLButtonElement>(null)
@@ -2073,23 +2072,6 @@ export function WishlistCardDetail({
     }
   }
 
-  const handleSheetTouchStart = (event: React.TouchEvent<HTMLElement>) => {
-    if (!isMobile) return
-    sheetTouchStartYRef.current = event.touches[0]?.clientY ?? null
-  }
-
-  const handleSheetTouchEnd = (event: React.TouchEvent<HTMLElement>) => {
-    if (!isMobile) return
-    const startY = sheetTouchStartYRef.current
-    sheetTouchStartYRef.current = null
-    if (startY == null) return
-    const endY = event.changedTouches[0]?.clientY ?? startY
-    const scrollTop = sheetScrollRef.current?.scrollTop ?? 0
-    if (endY - startY > 110 && scrollTop <= 2) {
-      void handleRequestClose()
-    }
-  }
-
   const organizationSection = (
     <div className={cn("min-w-0 space-y-2", isMobile ? "order-7 pt-1" : "order-5")}>
       <label className="block min-w-0 space-y-1">
@@ -2201,10 +2183,8 @@ export function WishlistCardDetail({
             event.preventDefault()
           }}
           onPaste={handleImagePaste}
-          onTouchStart={handleSheetTouchStart}
-          onTouchEnd={handleSheetTouchEnd}
         >
-          <div className="flex justify-center pt-1.5">
+          <div className="flex justify-center pt-1.5" data-sheet-drag-handle="true">
             <div className="h-1 w-11 rounded-full bg-white/28" />
           </div>
 
@@ -2503,11 +2483,9 @@ export function WishlistCardDetail({
           event.preventDefault()
         }}
         onPaste={handleImagePaste}
-        onTouchStart={handleSheetTouchStart}
-        onTouchEnd={handleSheetTouchEnd}
       >
         {isMobile && (
-          <div className="flex justify-center pb-0.5 pt-1.5">
+          <div className="flex justify-center pb-0.5 pt-1.5" data-sheet-drag-handle="true">
             <div className="h-1 w-10 rounded-full bg-white/20" />
           </div>
         )}

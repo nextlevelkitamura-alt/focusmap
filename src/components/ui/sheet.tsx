@@ -4,6 +4,7 @@ import * as React from "react"
 import * as SheetPrimitive from "@radix-ui/react-dialog"
 import { XIcon } from "lucide-react"
 
+import { useBottomSheetDrag } from "@/hooks/useBottomSheetDrag"
 import { cn } from "@/lib/utils"
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
@@ -44,20 +45,55 @@ function SheetOverlay({
   )
 }
 
-function SheetContent({
+function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null) {
+  if (!ref) return
+  if (typeof ref === "function") {
+    ref(value)
+    return
+  }
+  ref.current = value
+}
+
+type SheetContentProps = React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content> & {
+  side?: "top" | "right" | "bottom" | "left" | "center"
+}
+
+const SheetContent = React.forwardRef<
+  React.ElementRef<typeof SheetPrimitive.Content>,
+  SheetContentProps
+>(function SheetContent({
   className,
   children,
   side = "right",
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
+  onTouchCancel,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Content> & {
-  side?: "top" | "right" | "bottom" | "left" | "center"
-}) {
+}, forwardedRef) {
   const isCenter = side === "center"
+  const closeButtonRef = React.useRef<HTMLButtonElement | null>(null)
+  const sheetDrag = useBottomSheetDrag<React.ElementRef<typeof SheetPrimitive.Content>>({
+    enabled: side === "bottom",
+    onDismiss: () => closeButtonRef.current?.click(),
+  })
+  const {
+    setDragElement,
+    onTouchStart: onSheetDragTouchStart,
+    onTouchMove: onSheetDragTouchMove,
+    onTouchEnd: onSheetDragTouchEnd,
+    onTouchCancel: onSheetDragTouchCancel,
+  } = sheetDrag
+  const setContentRef = React.useCallback((node: React.ElementRef<typeof SheetPrimitive.Content> | null) => {
+    setDragElement(node)
+    assignRef(forwardedRef, node)
+  }, [forwardedRef, setDragElement])
 
   return (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
+        ref={setContentRef}
         data-slot="sheet-content"
         className={cn(
           "bg-background fixed z-50 flex flex-col gap-4 shadow-lg",
@@ -71,22 +107,38 @@ function SheetContent({
           side === "top" &&
             "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 h-auto border-b",
           side === "bottom" &&
-            "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t",
+            "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t will-change-transform",
           side === "center" &&
             "left-1/2 top-1/2 max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-xl border",
           className
         )}
+        onTouchStart={(event) => {
+          onSheetDragTouchStart(event)
+          onTouchStart?.(event)
+        }}
+        onTouchMove={(event) => {
+          onSheetDragTouchMove(event)
+          onTouchMove?.(event)
+        }}
+        onTouchEnd={(event) => {
+          onSheetDragTouchEnd()
+          onTouchEnd?.(event)
+        }}
+        onTouchCancel={(event) => {
+          onSheetDragTouchCancel()
+          onTouchCancel?.(event)
+        }}
         {...props}
       >
         {children}
-        <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
+        <SheetPrimitive.Close ref={closeButtonRef} className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
           <XIcon className="size-4" />
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>
       </SheetPrimitive.Content>
     </SheetPortal>
   )
-}
+})
 
 function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
