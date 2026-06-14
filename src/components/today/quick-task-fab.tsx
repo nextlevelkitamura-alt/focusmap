@@ -218,7 +218,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                 <button
                     onClick={handleFabClick}
                     className={cn(
-                        "h-16 w-16 rounded-2xl",
+                        "h-14 w-14 rounded-xl",
                         "bg-neutral-100 text-neutral-950",
                         "shadow-[0_14px_32px_rgba(255,255,255,0.14)] ring-1 ring-white/15",
                         "flex items-center justify-center pointer-events-auto",
@@ -227,7 +227,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                     )}
                     aria-label="タスクを追加"
                 >
-                    <Plus className="h-8 w-8" />
+                    <Plus className="h-7 w-7" />
                 </button>
             </div>
 
