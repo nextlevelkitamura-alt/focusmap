@@ -316,7 +316,7 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByRole('button', { name: '本文を音声入力' })).toBeInTheDocument()
     expect(screen.getByText('写真を選択')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Codexに送る/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Codexに送る/ })).not.toBeDisabled()
     expect(screen.queryByText('タグ')).not.toBeInTheDocument()
     expect(screen.queryByText('時間・予定')).not.toBeInTheDocument()
     expect(screen.queryByText('ライブラリ / 撮影')).not.toBeInTheDocument()

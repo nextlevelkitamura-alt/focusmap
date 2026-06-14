@@ -2125,7 +2125,57 @@ export function WishlistCardDetail({
       onOpenChange(false)
     }
     const selectedDurationLabel = item.duration_minutes ? formatDurationLabel(item.duration_minutes) : "未設定"
-    const mobileDurationOptions = QUICK_MINUTES
+    const mobileDurationOptions = [5, 15, 30, 60, 120]
+    const mobileCodexControlsAvailable = Boolean(onLaunchCodex || onCopyCodexPrompt || onLaunchCodexApp)
+    const mobileCodexLauncher = onLaunchCodex ?? onLaunchCodexApp ?? onCopyCodexPrompt
+    const mobileCodexProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
+    const mobileCodexActive = memoAiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(memoAiTask.status)
+    const mobileCodexNeedsRepo = !item.project_id || !mobileCodexProject?.repo_path
+    const mobileHasCodexDraft = !!(draftTitle.trim() || draftDescription.trim())
+    const mobileWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
+    const mobileCodexRunnerUnavailable = !codexRunnerStatus.ready
+    const mobileCodexRunnerMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
+      ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
+      : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"
+    const mobileCodexDisabled = !mobileHasCodexDraft ||
+      mobileCodexNeedsRepo ||
+      !!mobileCodexActive ||
+      mobileWaitingForImageSave ||
+      mobileCodexRunnerUnavailable
+    const mobileCodexLogEntries = buildMemoCodexLogEntries({ task: memoAiTask, launchStep, launchError })
+    const mobileCodexCurrentLog = mobileCodexLogEntries.find(entry => entry.active) ?? mobileCodexLogEntries[mobileCodexLogEntries.length - 1]
+    const mobileCodexTitle = mobileCodexNeedsRepo
+      ? "プロジェクトとリポジトリパスを設定すると送信できます。"
+      : mobileCodexActive
+        ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
+        : mobileWaitingForImageSave
+          ? "画像を保存中です。保存が終わるとCodexへ送れます。"
+          : mobileCodexRunnerUnavailable
+            ? mobileCodexRunnerMessage
+            : "見出しとメモ本文をCodexに送ります。"
+    const handleMobileCodexSend = async () => {
+      if (!mobileCodexLauncher || mobileCodexDisabled || isLaunchingCodex) return
+      const codexDraftItem = {
+        ...item,
+        title: draftTitle,
+        description: draftDescription || null,
+      } as IdealGoalWithItems
+      setLaunchError(null)
+      setLaunchStep("sending")
+      setIsLaunchingCodex(true)
+      try {
+        await mobileCodexLauncher(codexDraftItem)
+        setLaunchStep("sent")
+        if (codexCopyableImages.length > 0) {
+          setCodexImageCopyNotice("プロンプトを貼った後、画像コピーを押して同じCodex入力欄へ貼り付けてください。")
+        }
+      } catch (err) {
+        setLaunchError(err instanceof Error ? err.message : "起動失敗")
+        setLaunchStep(null)
+      } finally {
+        setIsLaunchingCodex(false)
+      }
+    }
 
     return (
       <Sheet
@@ -2142,7 +2192,7 @@ export function WishlistCardDetail({
           side="bottom"
           data-testid="memo-detail-sheet"
           className={cn(
-            "max-h-[84dvh] w-full max-w-full gap-0 overflow-hidden rounded-t-[28px] border-neutral-700/60 bg-[#202020]/95 px-0 pb-0 text-neutral-50 shadow-[0_-20px_56px_rgba(0,0,0,0.62)] backdrop-blur-xl",
+            "flex h-[92dvh] max-h-[calc(100dvh-12px)] w-full max-w-full flex-col gap-0 overflow-hidden rounded-t-[28px] border-neutral-700/60 bg-[#202020]/95 px-0 pb-0 text-neutral-50 shadow-[0_-20px_56px_rgba(0,0,0,0.62)] backdrop-blur-xl",
             "[&>button]:right-4 [&>button]:top-7 [&>button]:flex [&>button]:h-10 [&>button]:w-10 [&>button]:items-center [&>button]:justify-center",
             "[&>button]:rounded-full [&>button]:text-neutral-300 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-50 [&>button_svg]:h-5 [&>button_svg]:w-5",
           )}
@@ -2157,7 +2207,7 @@ export function WishlistCardDetail({
             <div className="h-1 w-12 rounded-full bg-white/28" />
           </div>
 
-          <div className="flex min-h-14 items-center justify-between gap-3 px-5 pb-2 pt-3">
+          <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 px-5 pb-1 pt-2">
             <SheetTitle className="text-left text-xl font-bold tracking-normal text-neutral-50">メモを追加</SheetTitle>
             <div className="relative mr-11">
               <select
@@ -2175,23 +2225,23 @@ export function WishlistCardDetail({
 
           <div
             ref={sheetScrollRef}
-            className="max-h-[calc(84dvh-82px)] overflow-y-auto px-5 pb-[calc(16px+env(safe-area-inset-bottom,0px))] [touch-action:pan-y]"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-[calc(10px+env(safe-area-inset-bottom,0px))] [touch-action:pan-y]"
           >
-            <div className="space-y-4">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-400">見出し</span>
+            <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-neutral-400">見出し</span>
                 <div className="relative">
                   <Input
                     value={draftTitle}
                     onChange={e => setDraftTitle(e.target.value)}
                     placeholder="メモの見出し"
-                    className="h-12 rounded-xl border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
+                    className="h-11 rounded-xl border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
                   />
                 </div>
               </label>
 
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-400">メモの内容</span>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-neutral-400">メモの内容</span>
                 <div className="relative overflow-hidden rounded-xl border border-white/10 bg-[#111111] focus-within:ring-2 focus-within:ring-white/15">
                   <textarea
                     value={draftDescription}
@@ -2204,9 +2254,9 @@ export function WishlistCardDetail({
                     }}
                     rows={3}
                     placeholder="本文を入力"
-                    className="min-h-[112px] w-full resize-none bg-transparent px-4 py-4 pb-24 pr-16 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500"
+                    className="h-[clamp(104px,19dvh,156px)] w-full resize-none bg-transparent px-4 py-3 pr-16 text-base leading-6 text-neutral-50 outline-none placeholder:text-neutral-500"
                   />
-                  <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
+                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 flex-col gap-2">
                     <button
                       type="button"
                       onClick={() => void handleGenerateTitle()}
@@ -2241,7 +2291,7 @@ export function WishlistCardDetail({
               </label>
 
               {(isMemoRecording || isMemoTranscribing || memoVoiceError) && (
-                <div className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-neutral-300">
+                <div className="flex min-h-8 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1 text-xs text-neutral-300">
                   {isMemoRecording && (
                     <>
                       <span className="shrink-0 font-medium text-red-300">録音中</span>
@@ -2258,12 +2308,34 @@ export function WishlistCardDetail({
                 </div>
               )}
 
-              <div className="space-y-3">
+              {mobileCodexControlsAvailable && (
+                <button
+                  type="button"
+                  onClick={() => void handleMobileCodexSend()}
+                  disabled={mobileCodexDisabled || isLaunchingCodex}
+                  title={mobileCodexTitle}
+                  className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-white/10 bg-[#171717] px-3 text-left text-sm font-semibold text-neutral-50 transition hover:bg-white/[0.08] disabled:opacity-45"
+                  aria-label="Codexに送る"
+                >
+                  {isLaunchingCodex ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <Send className="h-4 w-4 shrink-0" />}
+                  <span className="min-w-0 flex-1">Codexに送る</span>
+                  {mobileCodexCurrentLog && (
+                    <span className={cn(
+                      "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                      memoCodexLogTone(mobileCodexCurrentLog.state, mobileCodexCurrentLog.active),
+                    )}>
+                      {mobileCodexCurrentLog.label}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-neutral-400">所要時間</span>
-                  <span className="text-sm text-neutral-400">{selectedDurationLabel}</span>
+                  <span className="text-xs font-medium text-neutral-400">所要時間</span>
+                  <span className="text-xs text-neutral-400">{selectedDurationLabel}</span>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {mobileDurationOptions.map(minutes => (
                     <button
                       key={minutes}
@@ -2301,8 +2373,8 @@ export function WishlistCardDetail({
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <span className="text-sm font-medium text-neutral-400">画像</span>
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-neutral-400">画像</span>
                 {displayedImages.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
                     {displayedImages.map(image => {
@@ -2311,9 +2383,9 @@ export function WishlistCardDetail({
                         <div key={image.id} className={cn("relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.04]", isPending && "opacity-50")}>
                           {image.file_url ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={image.file_url} alt={image.file_name} className="h-24 w-full object-cover" />
+                            <img src={image.file_url} alt={image.file_name} className="h-16 w-full object-cover" />
                           ) : (
-                            <div className="flex h-24 items-center justify-center">
+                            <div className="flex h-16 items-center justify-center">
                               <ImagePlus className="h-6 w-6 text-neutral-500" />
                             </div>
                           )}
@@ -2343,7 +2415,7 @@ export function WishlistCardDetail({
                   type="button"
                   disabled={isUploadingImage || isPastingClipboardImage}
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex min-h-14 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-100 transition hover:bg-white/[0.08] disabled:opacity-60"
+                  className="flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-100 transition hover:bg-white/[0.08] disabled:opacity-60"
                 >
                   {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <FolderOpen className="h-6 w-6" />}
                   写真を選択
@@ -2381,7 +2453,7 @@ export function WishlistCardDetail({
                 type="button"
                 onClick={() => void handleMobileSave()}
                 disabled={isSavingMemo || isUploadingImage || isPastingClipboardImage}
-                className="h-14 w-full rounded-xl bg-[#19e85f] text-lg font-bold text-black shadow-[0_12px_28px_rgba(25,232,95,0.28)] hover:bg-[#22f06a] disabled:opacity-60"
+                className="mt-auto h-12 w-full rounded-xl bg-white text-lg font-bold text-black shadow-[0_12px_28px_rgba(255,255,255,0.16)] hover:bg-neutral-100 disabled:bg-neutral-700 disabled:text-neutral-400 disabled:opacity-70"
               >
                 {isSavingMemo ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
                 保存
