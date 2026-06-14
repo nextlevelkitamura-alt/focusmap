@@ -316,6 +316,13 @@ describe("mindmap geometry", () => {
         expect(estimateTaskNodeWidth("Task", false)).toBeLessThan(110);
     });
 
+    test("lets long mobile project names use more horizontal space", () => {
+        const width = estimateProjectNodeWidth("Focus map制作とモバイル表示改善プロジェクト", true);
+
+        expect(width).toBeGreaterThan(220);
+        expect(width).toBeLessThanOrEqual(320);
+    });
+
     test("increases node height when a long single line wraps", () => {
         const oneLine = estimateTaskNodeHeight("されているのはないかなどうするのがいいのかな", false, 160, false);
         const shortLine = estimateTaskNodeHeight("る", false, 160, false);

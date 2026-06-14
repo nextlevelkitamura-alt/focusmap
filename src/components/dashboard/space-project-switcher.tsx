@@ -296,7 +296,7 @@ export function SpaceProjectSwitcher({
             className={cn(
               "flex min-w-0 items-center rounded-md border border-border/50 transition-colors hover:bg-muted",
               compactMemoHeader
-                ? "h-8 max-w-[112px] gap-1 px-2 text-xs"
+                ? "h-8 max-w-[220px] gap-1 px-2 text-xs"
                 : "max-w-[220px] gap-1.5 px-2 py-1 text-sm",
             )}
             title="プロジェクトを切替"

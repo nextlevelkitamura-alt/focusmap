@@ -112,4 +112,20 @@ describe('SpaceProjectSwitcher', () => {
     expect(screen.queryByLabelText('仕事 を編集')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('仕事プロジェクト を編集')).not.toBeInTheDocument()
   })
+
+  test('コンパクトヘッダーでも長いプロジェクト名用の表示幅を残す', () => {
+    render(
+      <SpaceProjectSwitcher
+        spaces={spaces}
+        projects={[{ ...projects[0], title: 'Focus map制作とモバイル表示改善' }]}
+        selectedSpaceId="space-work"
+        selectedProjectId="project-work"
+        onSelectSpace={vi.fn()}
+        onSelectProject={vi.fn()}
+        variant="memoHeaderCompact"
+      />,
+    )
+
+    expect(screen.getByTitle('プロジェクトを切替').className).toContain('max-w-[220px]')
+  })
 })
