@@ -298,7 +298,7 @@ describe('WishlistCardDetail', () => {
     await screen.findByDisplayValue('Original title')
     expect(screen.getByRole('heading', { name: 'メモを追加' })).toBeInTheDocument()
     expect(screen.getByText('見出し')).toBeInTheDocument()
-    expect(screen.getByText('メモの内容')).toBeInTheDocument()
+    expect(screen.getByText('メモ詳細')).toBeInTheDocument()
     expect(screen.getByText('所要時間')).toBeInTheDocument()
     expect(screen.getByText('画像')).toBeInTheDocument()
     expect(screen.queryByText('見出し生成')).not.toBeInTheDocument()
@@ -316,11 +316,45 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByRole('button', { name: '本文を音声入力' })).toBeInTheDocument()
     expect(screen.getByText('写真を選択')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Codexに送る/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Codexに送る/ })).toBeInTheDocument()
+    const mobileScrollArea = screen.getByTestId('mobile-memo-detail-scroll')
+    expect(mobileScrollArea).toHaveClass('overflow-y-hidden')
+    expect(mobileScrollArea).not.toHaveClass('overflow-y-auto')
     expect(screen.queryByText('タグ')).not.toBeInTheDocument()
     expect(screen.queryByText('時間・予定')).not.toBeInTheDocument()
     expect(screen.queryByText('ライブラリ / 撮影')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /クリップボード画像を貼り付け/ })).not.toBeInTheDocument()
+  })
+
+  test('スマホ表示では保存済み画像がある時だけ編集シート本文をスクロール可能にする', async () => {
+    vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      attachments: [{
+        id: 'image-1',
+        file_name: 'shot.png',
+        file_url: 'https://example.com/shot.png',
+        file_type: 'image/png',
+        file_size: 1200,
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem()}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+      />,
+    )
+
+    const mobileScrollArea = await screen.findByTestId('mobile-memo-detail-scroll')
+    await screen.findByAltText('shot.png')
+    expect(mobileScrollArea).toHaveClass('overflow-y-auto')
+    expect(mobileScrollArea).not.toHaveClass('overflow-y-hidden')
   })
 
   test('スマホ保存に失敗したら編集画面を閉じず未同期下書きを残す', async () => {
