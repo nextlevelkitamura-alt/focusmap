@@ -7,6 +7,7 @@
 import { tool } from 'ai'
 import { z } from 'zod/v3'
 import { createClient } from '@/utils/supabase/server'
+import { upsertMemoTags } from '@/lib/memo-tags-server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
 import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
@@ -27,7 +28,9 @@ const TASK_STAGES = ['plan', 'scheduled', 'executing', 'done', 'archived'] as co
 const MEMO_LINK_ACTIONS = ['link', 'move', 'unlink'] as const
 const MEMO_SOURCE_TYPES = ['wishlist', 'note'] as const
 const NOTE_ORGANIZATION_RECORD_TYPES = ['wishlist', 'memo_item'] as const
+const BULK_MEMO_STATUSES = ['unsorted', 'time_candidates', 'organized', 'scheduled'] as const
 const TOKYO_TIME_ZONE = 'Asia/Tokyo'
+const MAX_BULK_MEMO_ITEMS = 20
 
 type MindmapTaskRow = {
   id: string
@@ -108,8 +111,35 @@ function compactPreview(value: string | null | undefined, limit = 120): string |
   return chars.length > limit ? `${chars.slice(0, limit).join('')}...` : text
 }
 
+function cleanNullableText(value: string | null | undefined, limit = 4000): string | null {
+  const text = (value ?? '').trim()
+  if (!text) return null
+  return Array.from(text).slice(0, limit).join('')
+}
+
 function normalizedTextLength(value: string | null | undefined): number {
   return Array.from((value ?? '').replace(/\s+/g, ' ').trim()).length
+}
+
+function normalizeDurationMinutes(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.max(1, Math.min(720, Math.round(value)))
+}
+
+function normalizeMemoTags(tags: string[] | undefined): string[] {
+  const normalized = (tags || [])
+    .map(tag => tag.trim())
+    .filter(Boolean)
+  return Array.from(new Set(normalized)).slice(0, 8)
+}
+
+function normalizeMemoCategory(value: string | null | undefined): string | null {
+  const text = cleanNullableText(value, 40)
+  return text || null
+}
+
+function memoKey(title: string, body: string | null, projectId: string | null) {
+  return [projectId ?? '', title.replace(/\s+/g, ' ').trim().toLowerCase(), (body ?? '').replace(/\s+/g, ' ').trim().toLowerCase()].join('\n')
 }
 
 function pushLinkId(map: Map<string, Set<string>>, key: string | null | undefined, taskId: string | null | undefined) {
@@ -776,6 +806,228 @@ async function cleanupDeletedCalendarEventState(params: {
 }
 
 // ━━━ タスク関連 ━━━
+
+export const bulkAddMemos = tool({
+  description:
+    'チャットの壁打ち、マインドマップ/ノート確認、AIの提案から、複数のメモを一括で追加する。各メモは見出し、内容、所要時間、タグ、プロジェクト紐づきを持てる。AIが新しく発案した複数案は、原則として候補を提示してユーザー承認後に使う。',
+  inputSchema: z.object({
+    projectId: z.string().optional().describe('紐づけるプロジェクトID。プロジェクトチャットでは原則このIDを指定する。未指定なら未分類メモに追加する。'),
+    sourceContext: z.string().optional().describe('追加元の短い説明。例: チャット壁打ち、マインドマップ確認、未整理メモ整理。'),
+    items: z.array(z.object({
+      title: z.string().describe('メモの見出し。短く具体的にする。'),
+      body: z.string().optional().describe('メモの内容。背景、理由、判断、次の検討点など。'),
+      durationMinutes: z.number().optional().describe('所要時間の目安（分）。5, 15, 30, 60など。未定なら省略する。'),
+      scheduledAt: z.string().optional().describe('予定候補日時（ISO 8601）。カレンダー登録はせず、メモの予定候補として保存する。'),
+      category: z.string().optional().describe('カテゴリ。例: アイデア、調査、改善、保留。'),
+      tags: z.array(z.string()).optional().describe('タグ。最大8個程度。'),
+      memoStatus: z.enum(BULK_MEMO_STATUSES).optional().describe('保存後のメモ状態。通常はunsorted、日時候補つきならtime_candidates。'),
+      subtaskSuggestions: z.array(z.object({
+        title: z.string().describe('メモ配下の小タスク見出し'),
+        estimatedMinutes: z.number().optional().describe('小タスクの所要時間（分）'),
+        reason: z.string().optional().describe('小タスクの補足'),
+      })).max(8).optional().describe('メモ内に残す小タスク案。必要な場合だけ使う。'),
+    })).min(1).max(MAX_BULK_MEMO_ITEMS).describe(`追加するメモ一覧。最大${MAX_BULK_MEMO_ITEMS}件。`),
+  }),
+  execute: async ({ projectId, sourceContext, items }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const targetProjectId = projectId || null
+    if (targetProjectId) {
+      const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .select('id, title')
+        .eq('id', targetProjectId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (projectError) return { success: false, error: projectError.message }
+      if (!project) return { success: false, error: 'プロジェクトが見つかりません' }
+    }
+
+    const normalizedItems = items.map((item, index) => {
+      const title = cleanNullableText(item.title, 120)
+      const body = cleanNullableText(item.body, 4000)
+      const durationMinutes = normalizeDurationMinutes(item.durationMinutes)
+      const category = normalizeMemoCategory(item.category)
+      const tags = normalizeMemoTags(item.tags)
+      const scheduledAt = cleanNullableText(item.scheduledAt, 80)
+      const memoStatus = item.memoStatus ?? (scheduledAt ? 'time_candidates' : 'unsorted')
+      const subtaskSuggestions = (item.subtaskSuggestions || [])
+        .map((subtask, subIndex) => ({
+          title: cleanNullableText(subtask.title, 160),
+          estimatedMinutes: normalizeDurationMinutes(subtask.estimatedMinutes),
+          reason: cleanNullableText(subtask.reason, 1000),
+          displayOrder: subIndex,
+        }))
+        .filter((subtask): subtask is {
+          title: string
+          estimatedMinutes: number | null
+          reason: string | null
+          displayOrder: number
+        } => !!subtask.title)
+
+      return {
+        index,
+        id: crypto.randomUUID(),
+        title,
+        body,
+        durationMinutes,
+        category,
+        tags,
+        scheduledAt,
+        memoStatus,
+        subtaskSuggestions,
+      }
+    })
+
+    const invalidTitle = normalizedItems.find(item => !item.title)
+    if (invalidTitle) {
+      return { success: false, error: `${invalidTitle.index + 1}件目のtitleが空です` }
+    }
+
+    const invalidSchedule = normalizedItems.find(item =>
+      item.scheduledAt && Number.isNaN(new Date(item.scheduledAt).getTime()),
+    )
+    if (invalidSchedule) {
+      return { success: false, error: `${invalidSchedule.index + 1}件目のscheduledAtが有効なISO 8601日時ではありません` }
+    }
+
+    const seen = new Set<string>()
+    const uniqueItems = normalizedItems.filter(item => {
+      const key = memoKey(item.title!, item.body, targetProjectId)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    const reusedItems: Array<{ id: string; title: string; project_id: string | null }> = []
+    const newItems: typeof uniqueItems = []
+    for (const item of uniqueItems) {
+      let existingQuery = supabase
+        .from('ideal_goals')
+        .select('id, title, description, project_id')
+        .eq('user_id', user.id)
+        .in('status', ['wishlist', 'memo'])
+        .eq('title', item.title!)
+        .limit(10)
+
+      existingQuery = targetProjectId
+        ? existingQuery.eq('project_id', targetProjectId)
+        : existingQuery.is('project_id', null)
+
+      const { data: existingRows, error: existingError } = await existingQuery
+      if (existingError) return { success: false, error: existingError.message }
+      const existing = (existingRows || []).find(row => memoKey(row.title, row.description ?? null, row.project_id ?? null) === memoKey(item.title!, item.body, targetProjectId))
+      if (existing) {
+        reusedItems.push({ id: existing.id, title: existing.title, project_id: existing.project_id ?? null })
+      } else {
+        newItems.push(item)
+      }
+    }
+
+    const { count } = await supabase
+      .from('ideal_goals')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .in('status', ['wishlist', 'memo'])
+    const baseDisplayOrder = count ?? 0
+    const now = new Date().toISOString()
+
+    const insertRows = newItems.map((item, insertIndex) => ({
+      id: item.id,
+      user_id: user.id,
+      title: item.title!,
+      project_id: targetProjectId,
+      description: item.body,
+      category: item.category,
+      scheduled_at: item.scheduledAt,
+      duration_minutes: item.durationMinutes,
+      tags: item.tags,
+      memo_status: item.memoStatus,
+      ai_source_payload: {
+        source: 'agent_chat',
+        tool: 'bulkAddMemos',
+        source_context: cleanNullableText(sourceContext, 200),
+        bulk_index: item.index,
+        created_at: now,
+      },
+      status: 'memo',
+      color: '#6366f1',
+      display_order: baseDisplayOrder + insertIndex + 1,
+      total_daily_minutes: 0,
+      is_completed: false,
+      is_today: false,
+    }))
+
+    const createdItems: Array<{
+      id: string
+      title: string
+      project_id: string | null
+      duration_minutes: number | null
+      memo_status: string | null
+    }> = []
+    if (insertRows.length > 0) {
+      const { data, error } = await supabase
+        .from('ideal_goals')
+        .insert(insertRows)
+        .select('id, title, project_id, duration_minutes, memo_status')
+      if (error) return { success: false, error: error.message }
+      createdItems.push(...(data || []).map(item => ({
+        id: item.id,
+        title: item.title,
+        project_id: item.project_id ?? null,
+        duration_minutes: item.duration_minutes ?? null,
+        memo_status: item.memo_status ?? null,
+      })))
+
+      const subtaskRows = newItems.flatMap(item =>
+        item.subtaskSuggestions.map(subtask => ({
+          ideal_id: item.id,
+          user_id: user.id,
+          title: subtask.title,
+          item_type: 'task',
+          frequency_type: 'once',
+          frequency_value: 1,
+          session_minutes: subtask.estimatedMinutes ?? 0,
+          daily_minutes: 0,
+          description: subtask.reason,
+          display_order: subtask.displayOrder,
+        })),
+      )
+      if (subtaskRows.length > 0) {
+        const { error: subtaskError } = await supabase.from('ideal_items').insert(subtaskRows)
+        if (subtaskError) {
+          return {
+            success: true,
+            warning: `メモは追加しましたが、小タスク案の保存に失敗しました: ${subtaskError.message}`,
+            created_count: createdItems.length,
+            reused_count: reusedItems.length,
+            items: [...createdItems, ...reusedItems],
+            message: `${createdItems.length}件のメモを追加しました`,
+          }
+        }
+      }
+
+      for (const item of newItems) {
+        await upsertMemoTags(supabase, user.id, item.category, item.tags)
+      }
+    }
+
+    const totalTouched = createdItems.length + reusedItems.length
+    return {
+      success: true,
+      created_count: createdItems.length,
+      reused_count: reusedItems.length,
+      skipped_duplicate_count: normalizedItems.length - uniqueItems.length,
+      project_id: targetProjectId,
+      items: [...createdItems, ...reusedItems],
+      message: createdItems.length > 0
+        ? `${createdItems.length}件のメモを追加しました${reusedItems.length > 0 ? `（既存${reusedItems.length}件は再利用）` : ''}`
+        : `${totalTouched}件は既存メモとして確認済みです`,
+    }
+  },
+})
 
 export const addTask = tool({
   description: 'マインドマップにタスクを追加する。ユーザーが「〜をやりたい」「〜を追加して」と言った時に使う。',
@@ -2966,14 +3218,14 @@ export function getToolsForSkill(skillId: string) {
     case 'scheduling':
       return { addCalendarEvent }
     case 'task':
-      return { addTask, addMindmapGroup, addMindmapTask }
+      return { addTask, bulkAddMemos, addMindmapGroup, addMindmapTask }
     case 'project-consultation':
-      return { addTask, addCalendarEvent, addMindmapGroup, addMindmapTask, deleteMindmapNode }
+      return { addTask, bulkAddMemos, addCalendarEvent, addMindmapGroup, addMindmapTask, deleteMindmapNode }
     case 'brainstorm':
-      return { addTask, addMindmapGroup, addMindmapTask }
+      return { addTask, bulkAddMemos, addMindmapGroup, addMindmapTask }
     case 'counseling':
       return {}  // カウンセリングはツール不要（対話のみ）
     default:
-      return { addTask, addCalendarEvent, addMindmapGroup, addMindmapTask }
+      return { addTask, bulkAddMemos, addCalendarEvent, addMindmapGroup, addMindmapTask }
   }
 }
