@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, FolderOpen, ImagePlus, Loader2, Mic, Network, Plus, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, FolderOpen, ImagePlus, Loader2, Mic, Network, Plus, Save, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -2125,7 +2125,52 @@ export function WishlistCardDetail({
       onOpenChange(false)
     }
     const selectedDurationLabel = item.duration_minutes ? formatDurationLabel(item.duration_minutes) : "未設定"
-    const mobileDurationOptions = QUICK_MINUTES
+    const mobileDurationOptions = [5, 15, 30, 60, 120]
+    const codexLaunchAction = onLaunchCodex ?? onLaunchCodexApp ?? onCopyCodexPrompt
+    const showMobileCodexAction = Boolean(codexLaunchAction)
+    const mobileCodexProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
+    const mobileCodexRepoConfigured = !!mobileCodexProject?.repo_path
+    const mobileCodexActiveTask = memoAiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(memoAiTask.status)
+    const mobileCodexNeedsRepoConfig = !item.project_id || !mobileCodexRepoConfigured
+    const mobileCodexHasPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
+    const mobileCodexWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
+    const mobileCodexNeedsRunner = Boolean(onLaunchCodex || onLaunchCodexApp)
+    const mobileCodexRunnerUnavailable = mobileCodexNeedsRunner && !codexRunnerStatus.ready
+    const mobileCodexRunnerMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
+      ? "Macの通信状態を確認中です。"
+      : "Focusmap Macを起動するとCodexへ送れます。"
+    const mobileCodexDraftItem = {
+      ...item,
+      title: draftTitle,
+      description: draftDescription || null,
+    } as IdealGoalWithItems
+    const mobileCodexDisabled = (
+      !codexLaunchAction ||
+      !mobileCodexHasPromptDraft ||
+      mobileCodexNeedsRepoConfig ||
+      !!mobileCodexActiveTask ||
+      mobileCodexWaitingForImageSave ||
+      mobileCodexRunnerUnavailable
+    )
+
+    const handleMobileCodexLaunch = async () => {
+      if (!codexLaunchAction || mobileCodexDisabled) return
+      setLaunchError(null)
+      setLaunchStep("sending")
+      setIsLaunchingCodex(true)
+      try {
+        await codexLaunchAction(mobileCodexDraftItem)
+        setLaunchStep("sent")
+        if (codexCopyableImages.length > 0) {
+          setCodexImageCopyNotice("プロンプトを貼った後、画像コピーを押して同じCodex入力欄へ貼り付けてください。")
+        }
+      } catch (e) {
+        setLaunchError(e instanceof Error ? e.message : "起動失敗")
+        setLaunchStep(null)
+      } finally {
+        setIsLaunchingCodex(false)
+      }
+    }
 
     return (
       <Sheet
@@ -2142,8 +2187,8 @@ export function WishlistCardDetail({
           side="bottom"
           data-testid="memo-detail-sheet"
           className={cn(
-            "max-h-[84dvh] w-full max-w-full gap-0 overflow-hidden rounded-t-[28px] border-neutral-700/60 bg-[#202020]/95 px-0 pb-0 text-neutral-50 shadow-[0_-20px_56px_rgba(0,0,0,0.62)] backdrop-blur-xl",
-            "[&>button]:right-4 [&>button]:top-7 [&>button]:flex [&>button]:h-10 [&>button]:w-10 [&>button]:items-center [&>button]:justify-center",
+            "flex h-[88dvh] max-h-[88dvh] w-full max-w-full flex-col gap-0 overflow-hidden rounded-t-[28px] border-neutral-700/60 bg-[#202020]/95 px-0 pb-0 text-neutral-50 shadow-[0_-20px_56px_rgba(0,0,0,0.62)] backdrop-blur-xl",
+            "[&>button]:right-4 [&>button]:top-4 [&>button]:flex [&>button]:h-10 [&>button]:w-10 [&>button]:items-center [&>button]:justify-center",
             "[&>button]:rounded-full [&>button]:text-neutral-300 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-50 [&>button_svg]:h-5 [&>button_svg]:w-5",
           )}
           onOpenAutoFocus={event => {
@@ -2157,13 +2202,22 @@ export function WishlistCardDetail({
             <div className="h-1 w-12 rounded-full bg-white/28" />
           </div>
 
-          <div className="flex min-h-14 items-center justify-between gap-3 px-5 pb-2 pt-3">
-            <SheetTitle className="text-left text-xl font-bold tracking-normal text-neutral-50">メモを追加</SheetTitle>
-            <div className="relative mr-11">
+          <SheetTitle className="sr-only">メモを追加</SheetTitle>
+
+          <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-5 pb-2 pr-[4.25rem] pt-3">
+            <label className="sr-only" htmlFor="mobile-memo-title-input">見出し</label>
+            <Input
+              id="mobile-memo-title-input"
+              value={draftTitle}
+              onChange={e => setDraftTitle(e.target.value)}
+              placeholder="見出し"
+              className="h-11 min-w-0 rounded-xl border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
+            />
+            <div className="relative min-w-[5.75rem] shrink-0">
               <select
                 value={selectedMemoDestination}
                 onChange={event => { void handleMemoDestinationChange(event.target.value as MemoDestination) }}
-                className="h-10 appearance-none rounded-full border border-white/10 bg-white/[0.08] pl-5 pr-9 text-sm font-medium text-neutral-100 outline-none focus:ring-2 focus:ring-white/15"
+                className="h-11 w-full appearance-none rounded-xl border border-white/10 bg-white/[0.08] pl-4 pr-8 text-sm font-semibold text-neutral-100 outline-none [color-scheme:dark] focus:ring-2 focus:ring-white/15"
                 aria-label="追加先"
               >
                 <option value="memo">メモ</option>
@@ -2175,23 +2229,14 @@ export function WishlistCardDetail({
 
           <div
             ref={sheetScrollRef}
-            className="max-h-[calc(84dvh-82px)] overflow-y-auto px-5 pb-[calc(16px+env(safe-area-inset-bottom,0px))] [touch-action:pan-y]"
+            className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 [touch-action:pan-y]"
           >
-            <div className="space-y-4">
+            <div className="space-y-3">
               <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-400">見出し</span>
-                <div className="relative">
-                  <Input
-                    value={draftTitle}
-                    onChange={e => setDraftTitle(e.target.value)}
-                    placeholder="メモの見出し"
-                    className="h-12 rounded-xl border-white/10 bg-[#171717] px-4 text-base font-medium text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/15"
-                  />
+                <div className="flex min-h-5 items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-neutral-400">メモ詳細</span>
+                  {memoDraftStatusLabel && <span className={cn("text-xs", memoDraftStatusTone)}>{memoDraftStatusLabel}</span>}
                 </div>
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-400">メモの内容</span>
                 <div className="relative overflow-hidden rounded-xl border border-white/10 bg-[#111111] focus-within:ring-2 focus-within:ring-white/15">
                   <textarea
                     value={draftDescription}
@@ -2202,16 +2247,16 @@ export function WishlistCardDetail({
                         void flushMemoDraft()
                       }
                     }}
-                    rows={3}
+                    rows={5}
                     placeholder="本文を入力"
-                    className="min-h-[112px] w-full resize-none bg-transparent px-4 py-4 pb-24 pr-16 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500"
+                    className="min-h-[200px] w-full resize-none bg-transparent px-4 py-4 pb-24 pr-16 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500"
                   />
                   <div className="absolute bottom-2 right-2 flex flex-col gap-1.5">
                     <button
                       type="button"
                       onClick={() => void handleGenerateTitle()}
                       disabled={isGeneratingTitle || !draftDescription.trim()}
-                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-35"
+                      className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-35"
                       aria-label="本文から見出し生成"
                       title="本文から見出し生成"
                     >
@@ -2222,8 +2267,8 @@ export function WishlistCardDetail({
                       onClick={() => void handleMemoVoiceToggle()}
                       disabled={isMemoTranscribing}
                       className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-50",
-                        isMemoRecording && "border-red-400/40 bg-red-500/20 text-red-100",
+                        "flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-[#202020] text-neutral-100 transition hover:bg-white/10 disabled:opacity-50",
+                        isMemoRecording && "border-white/40 bg-white/15 text-neutral-50",
                       )}
                       aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
                       title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
@@ -2258,12 +2303,12 @@ export function WishlistCardDetail({
                 </div>
               )}
 
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-sm font-medium text-neutral-400">所要時間</span>
                   <span className="text-sm text-neutral-400">{selectedDurationLabel}</span>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {mobileDurationOptions.map(minutes => (
                     <button
                       key={minutes}
@@ -2300,6 +2345,36 @@ export function WishlistCardDetail({
                   />
                 </div>
               </div>
+
+              {showMobileCodexAction && (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleMobileCodexLaunch()}
+                    disabled={mobileCodexDisabled || isLaunchingCodex}
+                    title={mobileCodexRunnerUnavailable ? mobileCodexRunnerMessage : undefined}
+                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-white/25 bg-transparent px-4 text-base font-semibold text-neutral-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {isLaunchingCodex ? <Loader2 className="h-5 w-5 animate-spin" /> : <Bot className="h-5 w-5" />}
+                    Codexに送る
+                  </button>
+                  {(mobileCodexNeedsRepoConfig || mobileCodexActiveTask || mobileCodexWaitingForImageSave || mobileCodexRunnerUnavailable || launchError || codexImageCopyNotice) && (
+                    <p className="px-1 text-xs leading-5 text-neutral-400">
+                      {launchError
+                        ? launchError
+                        : mobileCodexNeedsRepoConfig
+                          ? "プロジェクトとリポジトリパスを設定すると送れます。"
+                          : mobileCodexActiveTask
+                            ? "Codexの実行ログを更新しています。"
+                            : mobileCodexWaitingForImageSave
+                              ? "画像の保存が終わると送れます。"
+                              : mobileCodexRunnerUnavailable
+                                ? mobileCodexRunnerMessage
+                                : codexImageCopyNotice}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <span className="text-sm font-medium text-neutral-400">画像</span>
@@ -2367,26 +2442,19 @@ export function WishlistCardDetail({
                 </div>
               )}
 
-              {memoDraftStatusLabel && (
-                <div className={cn(
-                  "flex min-h-8 items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs",
-                  memoDraftStatusTone,
-                )}>
-                  <span>{memoDraftStatusLabel}</span>
-                  {(isSavingMemo || memoDraftSyncStatus === "syncing") && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                </div>
-              )}
-
-              <Button
-                type="button"
-                onClick={() => void handleMobileSave()}
-                disabled={isSavingMemo || isUploadingImage || isPastingClipboardImage}
-                className="h-14 w-full rounded-xl bg-[#19e85f] text-lg font-bold text-black shadow-[0_12px_28px_rgba(25,232,95,0.28)] hover:bg-[#22f06a] disabled:opacity-60"
-              >
-                {isSavingMemo ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
-                保存
-              </Button>
             </div>
+          </div>
+
+          <div className="shrink-0 border-t border-white/10 bg-[#202020]/95 px-5 pb-[calc(14px+env(safe-area-inset-bottom,0px))] pt-3">
+            <Button
+              type="button"
+              onClick={() => void handleMobileSave()}
+              disabled={isSavingMemo || isUploadingImage || isPastingClipboardImage}
+              className="h-14 w-full rounded-xl bg-neutral-50 text-lg font-bold text-neutral-950 shadow-[0_12px_28px_rgba(0,0,0,0.35)] hover:bg-white disabled:opacity-60"
+            >
+              {isSavingMemo ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Save className="mr-2 h-5 w-5" />}
+              保存
+            </Button>
           </div>
         </SheetContent>
       </Sheet>
