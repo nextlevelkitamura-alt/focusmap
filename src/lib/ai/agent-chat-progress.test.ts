@@ -30,6 +30,25 @@ describe('agent-chat-progress', () => {
     expect(message.parts).toEqual([{ type: 'text', text: '予定確認中' }])
   })
 
+  test('labels calendar deletion progress', () => {
+    const message = createAgentProgressMessage({
+      id: 'progress-delete',
+      state: 'done',
+      label: agentToolLabel('deleteCalendarEvent'),
+      toolName: 'deleteCalendarEvent',
+      startedAt: '2026-06-15T12:59:00.000Z',
+      completedAt: '2026-06-15T12:59:01.000Z',
+    })
+
+    const metadata = getAgentProgressMetadata(message)
+    expect(metadata).toMatchObject({
+      state: 'done',
+      label: '予定削除',
+      toolName: 'deleteCalendarEvent',
+    })
+    expect(metadata && agentProgressText(metadata)).toBe('予定削除完了')
+  })
+
   test('filters progress messages out of model replay history', () => {
     const userMessage: UIMessage = { id: 'u1', role: 'user', parts: [{ type: 'text', text: '予定を見て' }] }
     const progressMessage = createAgentProgressMessage({

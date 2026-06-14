@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { FileUIPart, UIMessage } from "ai"
 import { createClient as createBrowserSupabaseClient } from "@/utils/supabase/client"
 import type { AgentModelMode } from "@/lib/ai/agent-model-mode"
+import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 
 export type AgentChatStatus = "idle" | "running" | "completed" | "failed"
 export type AgentChatMode = "general" | "project"
@@ -49,6 +50,7 @@ interface AgentChatSessionRow {
 const STORAGE_KEY = "focusmap:agent-chat:sessions"
 const MAX_SESSIONS = 50
 const POLL_MS = 3000
+const CALENDAR_MUTATION_TOOLS = new Set(["addCalendarEvent", "updateCalendarEvent", "deleteCalendarEvent"])
 
 function newId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID()
@@ -132,6 +134,18 @@ function normalizeRealtimeSession(value: unknown): AgentChatSession | null {
   }
 }
 
+function sessionHasCompletedCalendarMutation(session: AgentChatSession): boolean {
+  return session.messages.some(message => {
+    const metadata = message.metadata
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+    const record = metadata as Record<string, unknown>
+    return record.focusmapAgentProgress === true &&
+      record.state === "done" &&
+      typeof record.toolName === "string" &&
+      CALENDAR_MUTATION_TOOLS.has(record.toolName)
+  })
+}
+
 function createUserMessage(text: string, files: FileUIPart[]): UIMessage {
   const parts: UIMessage["parts"] = []
   if (text.trim()) parts.push({ type: "text", text: text.trim() })
@@ -166,13 +180,24 @@ export function useAgentChatSessions(scopeKey = "general") {
   const [hydrated, setHydrated] = useState(false)
   const [loadedScopeKey, setLoadedScopeKey] = useState(scopeKey)
   const stateRef = useRef(state)
+  const calendarMutationNotifiedRef = useRef(new Set<string>())
 
   useEffect(() => {
     stateRef.current = state
   }, [state])
 
+  const notifyCalendarMutationIfNeeded = useCallback((session: AgentChatSession) => {
+    if (!sessionHasCompletedCalendarMutation(session)) return
+    const key = `${session.id}:${session.runCompletedAt ?? session.updatedAt}`
+    if (calendarMutationNotifiedRef.current.has(key)) return
+    calendarMutationNotifiedRef.current.add(key)
+    invalidateCalendarCache()
+    broadcastCalendarSync()
+  }, [])
+
   const refresh = useCallback(async () => {
     const remoteSessions = await fetchSessions(scopeKey)
+    remoteSessions.forEach(notifyCalendarMutationIfNeeded)
     setState(prev => {
       const activeSessionId = prev.activeSessionId && remoteSessions.some(session => session.id === prev.activeSessionId)
         ? prev.activeSessionId
@@ -180,7 +205,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       return { sessions: remoteSessions, activeSessionId }
     })
     return remoteSessions
-  }, [scopeKey])
+  }, [notifyCalendarMutationIfNeeded, scopeKey])
 
   useEffect(() => {
     let cancelled = false
@@ -194,6 +219,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       void fetchSessions(scopeKey)
         .then(remoteSessions => {
           if (cancelled) return
+          remoteSessions.forEach(notifyCalendarMutationIfNeeded)
           setState(prev => ({
             sessions: remoteSessions,
             activeSessionId: prev.activeSessionId && remoteSessions.some(session => session.id === prev.activeSessionId)
@@ -208,7 +234,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     return () => {
       cancelled = true
     }
-  }, [scopeKey, storageKey])
+  }, [notifyCalendarMutationIfNeeded, scopeKey, storageKey])
 
   useEffect(() => {
     if (!hydrated || loadedScopeKey !== scopeKey) return
@@ -242,6 +268,7 @@ export function useAgentChatSessions(scopeKey = "general") {
 
           const session = normalizeRealtimeSession(payload.new)
           if (!session) return
+          notifyCalendarMutationIfNeeded(session)
           setState(prev => ({
             sessions: upsertSession(prev.sessions, session),
             activeSessionId: prev.activeSessionId ?? session.id,
@@ -253,7 +280,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [hydrated, loadedScopeKey, scopeKey])
+  }, [hydrated, loadedScopeKey, notifyCalendarMutationIfNeeded, scopeKey])
 
   const hasRunningSession = state.sessions.some(session => session.status === "running")
   useEffect(() => {
@@ -388,6 +415,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       const data = await response.json() as { session?: unknown }
       const remoteSession = normalizeRemoteSession(data.session)
       if (remoteSession) {
+        notifyCalendarMutationIfNeeded(remoteSession)
         setState(prev => ({
           sessions: upsertSession(prev.sessions, remoteSession),
           activeSessionId: remoteSession.id,
@@ -413,7 +441,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       })
       throw new Error(message)
     }
-  }, [scopeKey])
+  }, [notifyCalendarMutationIfNeeded, scopeKey])
 
   const activeSession = useMemo(
     () => state.sessions.find(session => session.id === state.activeSessionId) ?? null,

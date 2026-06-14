@@ -74,6 +74,13 @@ function isWritableCalendar(accessLevel: string | null | undefined): boolean {
   return accessLevel === 'owner' || accessLevel === 'writer'
 }
 
+function isMissingCalendarEventError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const status = 'status' in error ? (error as { status?: unknown }).status : undefined
+  const code = 'code' in error ? (error as { code?: unknown }).code : undefined
+  return status === 404 || code === 404
+}
+
 function eventTextMatches(
   event: { title?: string | null; description?: string | null; location?: string | null },
   query: string | undefined,
@@ -627,6 +634,145 @@ async function findCalendarContainingGoogleEvent(
     }
   }
   return null
+}
+
+async function getCachedCalendarEventForDeletion(
+  supabase: SupabaseServerClient,
+  userId: string,
+  googleEventId: string,
+  calendarId?: string,
+) {
+  let query = supabase
+    .from('calendar_events')
+    .select('calendar_id, google_event_id, recurring_event_id, title, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('google_event_id', googleEventId)
+    .limit(1)
+
+  if (calendarId) query = query.eq('calendar_id', calendarId)
+
+  const { data, error } = await query.maybeSingle()
+  if (error) throw error
+  return data
+}
+
+async function collectCalendarEventIdsForDeletion(
+  supabase: SupabaseServerClient,
+  userId: string,
+  calendarId: string,
+  googleEventId: string,
+  targetGoogleEventId: string,
+  deleteScope: 'this' | 'series',
+): Promise<string[]> {
+  const ids = new Set<string>([googleEventId])
+  if (deleteScope !== 'series') return [...ids]
+
+  ids.add(targetGoogleEventId)
+  const { data, error } = await supabase
+    .from('calendar_events')
+    .select('google_event_id')
+    .eq('user_id', userId)
+    .eq('calendar_id', calendarId)
+    .eq('recurring_event_id', targetGoogleEventId)
+
+  if (error) throw error
+  for (const row of data || []) {
+    if (row.google_event_id) ids.add(row.google_event_id)
+  }
+  return [...ids]
+}
+
+async function cleanupDeletedCalendarEventState(params: {
+  supabase: SupabaseServerClient
+  userId: string
+  calendarId: string
+  googleEventIds: string[]
+  targetGoogleEventId: string
+  deleteScope: 'this' | 'series'
+}) {
+  const { supabase, userId, calendarId, googleEventIds, targetGoogleEventId, deleteScope } = params
+  const now = new Date().toISOString()
+  const ids = googleEventIds.filter(Boolean)
+  if (ids.length === 0) return { importedTaskCount: 0, manualTaskCount: 0 }
+
+  const { error: cacheDeleteError } = await supabase
+    .from('calendar_events')
+    .delete()
+    .eq('user_id', userId)
+    .eq('calendar_id', calendarId)
+    .in('google_event_id', ids)
+  if (cacheDeleteError) throw cacheDeleteError
+
+  if (deleteScope === 'series') {
+    const { error: seriesCacheDeleteError } = await supabase
+      .from('calendar_events')
+      .delete()
+      .eq('user_id', userId)
+      .eq('calendar_id', calendarId)
+      .eq('recurring_event_id', targetGoogleEventId)
+    if (seriesCacheDeleteError) throw seriesCacheDeleteError
+  }
+
+  const { data: relatedTasks, error: relatedTasksError } = await supabase
+    .from('tasks')
+    .select('id, source')
+    .eq('user_id', userId)
+    .eq('calendar_id', calendarId)
+    .in('google_event_id', ids)
+    .is('deleted_at', null)
+  if (relatedTasksError) throw relatedTasksError
+
+  const importedTaskIds = (relatedTasks || [])
+    .filter(task => task.source === 'google_event')
+    .map(task => task.id)
+  const manualTaskIds = (relatedTasks || [])
+    .filter(task => task.source !== 'google_event')
+    .map(task => task.id)
+
+  if (importedTaskIds.length > 0) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({
+        deleted_at: now,
+        is_timer_running: false,
+        last_started_at: null,
+        updated_at: now,
+      })
+      .eq('user_id', userId)
+      .in('id', importedTaskIds)
+    if (error) throw error
+  }
+
+  if (manualTaskIds.length > 0) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({
+        google_event_id: null,
+        calendar_id: null,
+        updated_at: now,
+      })
+      .eq('user_id', userId)
+      .in('id', manualTaskIds)
+    if (error) throw error
+  }
+
+  const { error: memoResetError } = await supabase
+    .from('ideal_goals')
+    .update({
+      scheduled_at: null,
+      google_event_id: null,
+      memo_status: 'unsorted',
+      is_today: false,
+      updated_at: now,
+    })
+    .eq('user_id', userId)
+    .in('google_event_id', ids)
+  if (memoResetError) throw memoResetError
+
+  return {
+    importedTaskCount: importedTaskIds.length,
+    manualTaskCount: manualTaskIds.length,
+  }
 }
 
 // ━━━ タスク関連 ━━━
@@ -1999,6 +2145,7 @@ export const listCalendarEvents = tool({
         .map(event => ({
           id: event.google_event_id,
           google_event_id: event.google_event_id,
+          recurring_event_id: event.recurring_event_id ?? null,
           calendar_id: event.calendar_id,
           calendar_name: calendarNameById.get(event.calendar_id) ?? null,
           title: event.title,
@@ -2412,6 +2559,126 @@ export const updateCalendarEvent = tool({
       }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : '予定更新に失敗しました' }
+    }
+  },
+})
+
+export const deleteCalendarEvent = tool({
+  description:
+    '既存のGoogleカレンダー予定を削除する。ユーザーが削除を明示し、先にlistCalendarEventsで対象のgoogle_event_idとcalendar_idを確認してから使う。候補が複数ある場合は実行前にユーザーへ確認する。',
+  inputSchema: z.object({
+    googleEventId: z.string().describe('削除するGoogle CalendarのイベントID。listCalendarEventsのgoogle_event_idを使う。'),
+    calendarId: z.string().optional().describe('予定が入っている現在のカレンダーID。listCalendarEventsのcalendar_idを渡す。'),
+    title: z.string().optional().describe('削除対象の見出し。確認・完了メッセージ用。'),
+    startTime: z.string().optional().describe('削除対象の開始日時（ISO 8601）。確認・完了メッセージ用。'),
+    endTime: z.string().optional().describe('削除対象の終了日時（ISO 8601）。確認・完了メッセージ用。'),
+    deleteScope: z.enum(['this', 'series']).optional().describe('繰り返し予定の削除範囲。通常はthis。全体削除はseries。'),
+    recurringEventId: z.string().optional().describe('繰り返し予定全体を削除する場合のrecurring_event_id。'),
+  }),
+  execute: async ({ googleEventId, calendarId, title, startTime, endTime, deleteScope, recurringEventId }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const eventId = googleEventId.trim()
+    const requestedCalendarId = calendarId?.trim()
+    const requestedScope = deleteScope === 'series' ? 'series' : 'this'
+    if (!eventId) return { success: false, error: 'googleEventId が必要です' }
+
+    try {
+      const calendars = await listUserCalendarSummaries(supabase, user.id)
+      const candidateCalendarIds = Array.from(new Set([
+        requestedCalendarId,
+        ...calendars.filter(calendar => calendar.selected).map(calendar => calendar.calendar_id),
+        calendars.find(calendar => calendar.is_primary)?.calendar_id,
+        'primary',
+        ...calendars.map(calendar => calendar.calendar_id),
+      ].filter((id): id is string => typeof id === 'string' && id.trim().length > 0)))
+
+      const cachedEvent = await getCachedCalendarEventForDeletion(supabase, user.id, eventId, requestedCalendarId)
+      const found = await findCalendarContainingGoogleEvent(user.id, eventId, candidateCalendarIds)
+      const resolvedCalendarId = found?.calendarId || requestedCalendarId || cachedEvent?.calendar_id
+      if (!resolvedCalendarId) return { success: false, error: '削除対象のカレンダーを特定できません' }
+
+      const writable = await findWritableCalendar(supabase, user.id, resolvedCalendarId)
+      if (!writable && resolvedCalendarId !== 'primary') {
+        return { success: false, error: '選択したカレンダーは利用できません' }
+      }
+      if (writable && !isWritableCalendar(writable.access_level)) {
+        return { success: false, error: 'このカレンダーは閲覧専用のため削除できません' }
+      }
+
+      const eventTitle = title
+        || found?.event.summary
+        || cachedEvent?.title
+        || '予定'
+      const eventStart = startTime
+        || found?.event.start?.dateTime
+        || found?.event.start?.date
+        || cachedEvent?.start_time
+        || null
+      const eventEnd = endTime
+        || found?.event.end?.dateTime
+        || found?.event.end?.date
+        || cachedEvent?.end_time
+        || null
+      const targetGoogleEventId = requestedScope === 'series'
+        ? (recurringEventId?.trim() || found?.event.recurringEventId || cachedEvent?.recurring_event_id || eventId)
+        : eventId
+
+      const scopedGoogleEventIds = await collectCalendarEventIdsForDeletion(
+        supabase,
+        user.id,
+        resolvedCalendarId,
+        eventId,
+        targetGoogleEventId,
+        requestedScope,
+      )
+
+      let deletedFromGoogle = false
+      if (found) {
+        const { getCalendarClient } = await import('@/lib/google-calendar')
+        const { calendar } = await getCalendarClient(user.id)
+        try {
+          await calendar.events.delete({
+            calendarId: resolvedCalendarId,
+            eventId: targetGoogleEventId,
+          })
+          deletedFromGoogle = true
+        } catch (error) {
+          if (!isMissingCalendarEventError(error)) throw error
+        }
+      }
+
+      const cleanup = await cleanupDeletedCalendarEventState({
+        supabase,
+        userId: user.id,
+        calendarId: resolvedCalendarId,
+        googleEventIds: scopedGoogleEventIds,
+        targetGoogleEventId,
+        deleteScope: requestedScope,
+      })
+
+      return {
+        success: true,
+        googleEventId: eventId,
+        targetGoogleEventId,
+        calendarId: resolvedCalendarId,
+        title: eventTitle,
+        startTime: eventStart,
+        endTime: eventEnd,
+        deleteScope: requestedScope,
+        deleted: true,
+        deletedFromGoogle,
+        notFoundOnGoogle: !deletedFromGoogle,
+        affectedGoogleEventIds: scopedGoogleEventIds,
+        ...cleanup,
+        message: deletedFromGoogle
+          ? `予定「${eventTitle}」を削除しました`
+          : `予定「${eventTitle}」はGoogleカレンダー上に見つかりませんでした。Focusmap側の同期情報を整理しました`,
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '予定削除に失敗しました' }
     }
   },
 })

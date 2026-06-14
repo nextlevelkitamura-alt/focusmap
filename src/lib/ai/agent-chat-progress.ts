@@ -55,6 +55,7 @@ const TOOL_LABELS: Record<string, string> = {
   checkCalendarAvailability: '空き時間確認',
   addCalendarEvent: '予定登録',
   updateCalendarEvent: '予定更新',
+  deleteCalendarEvent: '予定削除',
   addMindmapGroup: 'グループ追加',
   addMindmapTask: 'タスク追加',
   deleteMindmapNode: 'ノード削除',
