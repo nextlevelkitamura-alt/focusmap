@@ -49,6 +49,25 @@ describe('agent-chat-progress', () => {
     expect(metadata && agentProgressText(metadata)).toBe('予定削除完了')
   })
 
+  test('labels bulk memo creation progress', () => {
+    const message = createAgentProgressMessage({
+      id: 'progress-bulk-memo',
+      state: 'done',
+      label: agentToolLabel('bulkAddMemos'),
+      toolName: 'bulkAddMemos',
+      startedAt: '2026-06-14T12:00:00.000Z',
+      completedAt: '2026-06-14T12:00:01.000Z',
+    })
+
+    const metadata = getAgentProgressMetadata(message)
+    expect(metadata).toMatchObject({
+      state: 'done',
+      label: 'メモ一括追加',
+      toolName: 'bulkAddMemos',
+    })
+    expect(metadata && agentProgressText(metadata)).toBe('メモ一括追加完了')
+  })
+
   test('filters progress messages out of model replay history', () => {
     const userMessage: UIMessage = { id: 'u1', role: 'user', parts: [{ type: 'text', text: '予定を見て' }] }
     const progressMessage = createAgentProgressMessage({

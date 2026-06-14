@@ -50,6 +50,7 @@ const TOOL_LABELS: Record<string, string> = {
   moveMindmapNode: 'ノード移動',
   updateMindmapMemoLink: 'メモ紐づき変更',
   addTask: 'タスク追加',
+  bulkAddMemos: 'メモ一括追加',
   listCalendarEvents: '予定確認',
   findCalendarOpenSlots: '空き枠検索',
   checkCalendarAvailability: '空き時間確認',
