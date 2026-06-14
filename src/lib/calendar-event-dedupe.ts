@@ -14,6 +14,10 @@ function eventSignature(event: CalendarEvent): string {
   ].join("|")
 }
 
+function googleEventKey(event: CalendarEvent): string {
+  return `${event.calendar_id}::${event.google_event_id}`
+}
+
 function eventTimeValue(value?: string): number {
   if (!value) return 0
   const time = new Date(value).getTime()
@@ -36,7 +40,7 @@ function preferCalendarEvent(candidate: CalendarEvent, current: CalendarEvent): 
 export function dedupeCalendarEventsForDisplay(events: CalendarEvent[]): CalendarEvent[] {
   if (events.length < 2) return events
 
-  const byGoogleEventId = new Map<string, CalendarEvent>()
+  const byGoogleEventKey = new Map<string, CalendarEvent>()
   const withoutGoogleEventId: CalendarEvent[] = []
 
   for (const event of events) {
@@ -45,11 +49,12 @@ export function dedupeCalendarEventsForDisplay(events: CalendarEvent[]): Calenda
       continue
     }
 
-    const current = byGoogleEventId.get(event.google_event_id)
-    byGoogleEventId.set(event.google_event_id, current ? preferCalendarEvent(event, current) : event)
+    const key = googleEventKey(event)
+    const current = byGoogleEventKey.get(key)
+    byGoogleEventKey.set(key, current ? preferCalendarEvent(event, current) : event)
   }
 
-  const deduped: CalendarEvent[] = [...byGoogleEventId.values()]
+  const deduped: CalendarEvent[] = [...byGoogleEventKey.values()]
   const signatureToIndex = new Map<string, number>()
 
   for (const [index, event] of deduped.entries()) {

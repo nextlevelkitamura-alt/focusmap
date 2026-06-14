@@ -144,8 +144,10 @@ export function TodayBoard({
 
     // カレンダーイベント（タスクと紐づいていないもの）
     const uniqueIds = new Set(unique.map(t => t.id))
-    const taskGoogleEventIds = new Set(
-      allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
+    const taskGoogleEventKeys = new Set(
+      allTasks
+        .filter(t => t.google_event_id && t.calendar_id)
+        .map(t => `${t.calendar_id}::${t.google_event_id}`)
     )
     const eventLikeTaskKeys = new Set(
       unique
@@ -158,7 +160,7 @@ export function TodayBoard({
     const events = logic.calendarEvents
       .filter(e => {
         if (e.task_id && uniqueIds.has(e.task_id)) return false
-        if (taskGoogleEventIds.has(e.google_event_id)) return false
+        if (taskGoogleEventKeys.has(`${e.calendar_id}::${e.google_event_id}`)) return false
         if (e.is_all_day) return false
         const start = new Date(e.start_time)
         const eventKey = `${e.calendar_id || ''}|${e.title.trim().toLowerCase()}|${Math.floor(start.getTime() / 60000)}`

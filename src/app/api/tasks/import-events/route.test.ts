@@ -139,6 +139,32 @@ describe('POST /api/tasks/import-events', () => {
     expect(json.result.inserted).toBe(1)
   })
 
+  test('同じgoogle_event_idでも別カレンダーなら別タスクとしてINSERTする', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({ data: [], error: null })
+    setUpsertResult({ data: [{ id: 'task-work' }, { id: 'task-personal' }], error: null })
+
+    const res = await POST(postReq({
+      events: [
+        createEventPayload({
+          google_event_id: 'shared-google-id',
+          calendar_id: 'work',
+          fingerprint: 'Shared|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|work',
+        }),
+        createEventPayload({
+          google_event_id: 'shared-google-id',
+          calendar_id: 'personal',
+          fingerprint: 'Shared|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|personal',
+        }),
+      ],
+    }))
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.inserted).toBe(2)
+  })
+
   test('既存タスクの fingerprint が一致する場合はスキップする', async () => {
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
     // 同じ fingerprint を持つ既存タスク
@@ -146,6 +172,7 @@ describe('POST /api/tasks/import-events', () => {
       data: [{
         id: 'task-existing',
         google_event_id: 'gevt-1',
+        calendar_id: 'cal-1',
         google_event_fingerprint: 'Test Event|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
         updated_at: '2026-02-20T08:00:00Z', // 5分以上前
       }],
@@ -198,6 +225,7 @@ describe('POST /api/tasks/import-events', () => {
       data: [{
         id: 'task-existing',
         google_event_id: 'gevt-1',
+        calendar_id: 'cal-1',
         google_event_fingerprint: 'Old Title|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
         updated_at: '2026-02-20T08:00:00Z',
       }],
@@ -223,6 +251,7 @@ describe('POST /api/tasks/import-events', () => {
       data: [{
         id: 'task-existing',
         google_event_id: 'gevt-1',
+        calendar_id: 'cal-1',
         google_event_fingerprint: 'Old Title|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
         updated_at: recentTime,
       }],

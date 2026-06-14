@@ -1,6 +1,7 @@
 type GoogleEventTaskLike = {
   id: string
   google_event_id?: string | null
+  calendar_id?: string | null
   source?: string | null
   status?: string | null
   deleted_at?: string | null
@@ -10,6 +11,11 @@ type GoogleEventTaskLike = {
 
 function isGoogleLinkedTask(task: GoogleEventTaskLike): boolean {
   return !!task.google_event_id
+}
+
+export function getGoogleEventTaskKey(task: GoogleEventTaskLike): string | null {
+  if (!task.google_event_id) return null
+  return `${task.calendar_id || "unknown"}::${task.google_event_id}`
 }
 
 function sourceRank(source?: string | null): number {
@@ -57,19 +63,21 @@ export function pickPreferredGoogleEventTask<T extends GoogleEventTaskLike>(task
 }
 
 export function dedupeGoogleEventTasks<T extends GoogleEventTaskLike>(tasks: T[]): T[] {
-  const preferredByGoogleEventId = new Map<string, T>()
+  const preferredByGoogleEventKey = new Map<string, T>()
 
   for (const task of tasks) {
     if (task.deleted_at || !isGoogleLinkedTask(task) || !task.google_event_id) continue
-    const current = preferredByGoogleEventId.get(task.google_event_id)
+    const eventKey = getGoogleEventTaskKey(task)
+    if (!eventKey) continue
+    const current = preferredByGoogleEventKey.get(eventKey)
     if (!current || isPreferredGoogleEventTask(task, current)) {
-      preferredByGoogleEventId.set(task.google_event_id, task)
+      preferredByGoogleEventKey.set(eventKey, task)
     }
   }
 
-  if (preferredByGoogleEventId.size === 0) return tasks
+  if (preferredByGoogleEventKey.size === 0) return tasks
 
-  const preferredIds = new Set([...preferredByGoogleEventId.values()].map(task => task.id))
+  const preferredIds = new Set([...preferredByGoogleEventKey.values()].map(task => task.id))
   return tasks.filter(task => {
     if (task.deleted_at || !isGoogleLinkedTask(task) || !task.google_event_id) return true
     return preferredIds.has(task.id)

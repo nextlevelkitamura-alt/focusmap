@@ -2497,6 +2497,7 @@ export const updateCalendarEvent = tool({
         .from('calendar_events')
         .select('id')
         .eq('user_id', user.id)
+        .eq('calendar_id', resolvedDestinationCalendarId)
         .eq('google_event_id', googleEventId)
         .maybeSingle()
       if (existingCachedEvent?.id) {
@@ -2508,7 +2509,7 @@ export const updateCalendarEvent = tool({
       } else {
         await supabase
           .from('calendar_events')
-          .upsert(eventPayload, { onConflict: 'user_id,google_event_id', ignoreDuplicates: false })
+          .upsert(eventPayload, { onConflict: 'user_id,calendar_id,google_event_id', ignoreDuplicates: false })
       }
 
       const taskUpdates: Record<string, unknown> = {
@@ -2527,6 +2528,7 @@ export const updateCalendarEvent = tool({
         .update(taskUpdates)
         .eq('user_id', user.id)
         .eq('google_event_id', googleEventId)
+        .in('calendar_id', Array.from(new Set([found.calendarId, resolvedDestinationCalendarId])))
 
       await supabase
         .from('ideal_goals')

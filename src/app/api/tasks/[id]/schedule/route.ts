@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { syncTaskToCalendar, deleteTaskFromCalendar } from '@/lib/google-calendar';
 
+type ScheduledCalendarEventResponse = {
+  id: string;
+  googleEventId: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 /**
  * タスクをカレンダーにスケジュール
  * POST /api/tasks/:id/schedule
@@ -71,7 +83,7 @@ export async function POST(
       );
     }
 
-    let eventData: any = null;
+    let eventData: ScheduledCalendarEventResponse | null = null;
 
     // カレンダーイベントを作成
     if (createCalendarEvent && task.estimated_time > 0) {
@@ -128,7 +140,7 @@ export async function POST(
               endTime: calendarEvent.end_time
             };
           }
-        } catch (syncError: any) {
+        } catch (syncError: unknown) {
           console.error('[schedule] Sync error:', syncError);
           // 同期エラーでもタスク自体は更新済みなので続行
         }
@@ -147,10 +159,10 @@ export async function POST(
       task: updatedTask,
       event: eventData
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[schedule] Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to schedule task' },
+      { error: getErrorMessage(error, 'Failed to schedule task') },
       { status: 500 }
     );
   }
@@ -200,8 +212,8 @@ export async function DELETE(
     // カレンダーイベントを削除
     if (deleteCalendarEvent && task.google_event_id) {
       try {
-        await deleteTaskFromCalendar(user.id, taskId, task.google_event_id);
-      } catch (deleteError: any) {
+        await deleteTaskFromCalendar(user.id, taskId, task.google_event_id, task.calendar_id || undefined);
+      } catch (deleteError: unknown) {
         console.error('[unschedule] Delete calendar error:', deleteError);
         // 削除エラーがあってもタスクのスケジュール解除は続行
       }
@@ -212,6 +224,13 @@ export async function DELETE(
           .from('calendar_events')
           .delete()
           .eq('id', task.calendar_event_id);
+      } else if (task.calendar_id) {
+        await supabase
+          .from('calendar_events')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('calendar_id', task.calendar_id)
+          .eq('google_event_id', task.google_event_id);
       }
     }
 
@@ -246,10 +265,10 @@ export async function DELETE(
       success: true,
       task: updatedTask
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[unschedule] Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to unschedule task' },
+      { error: getErrorMessage(error, 'Failed to unschedule task') },
       { status: 500 }
     );
   }

@@ -48,9 +48,9 @@ export interface UserCalendar {
   timezone: string;
   color?: string;
   background_color?: string;
-  is_visible: boolean;
+  selected: boolean;
   is_primary: boolean;
-  access_role?: 'owner' | 'writer' | 'reader';
+  access_level?: 'owner' | 'writer' | 'reader' | 'freeBusyReader';
   google_created_at?: string;
   google_updated_at?: string;
   synced_at: string;

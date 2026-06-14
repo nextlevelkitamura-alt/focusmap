@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { createClient } from '@/utils/supabase/server'
-import { pickPreferredGoogleEventTask } from '@/lib/google-event-task-dedupe'
+import { getGoogleEventTaskKey, pickPreferredGoogleEventTask } from '@/lib/google-event-task-dedupe'
 
 interface EventPayload {
   google_event_id: string
@@ -48,9 +48,13 @@ function isImportedGoogleEventTask(task: { source?: string | null }): boolean {
   return !task.source || task.source === 'google_event'
 }
 
-function createStableGoogleEventTaskId(userId: string, googleEventId: string): string {
+function getEventPayloadKey(event: Pick<EventPayload, 'calendar_id' | 'google_event_id'>): string {
+  return `${event.calendar_id || 'unknown'}::${event.google_event_id}`
+}
+
+function createStableGoogleEventTaskId(userId: string, calendarId: string, googleEventId: string): string {
   const chars = createHash('sha256')
-    .update(`${userId}:${googleEventId}`)
+    .update(`${userId}:${calendarId}:${googleEventId}`)
     .digest('hex')
     .slice(0, 32)
     .split('')
@@ -94,8 +98,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       )
     }
 
-    const dedupedEvents = [...new Map(events.map(event => [event.google_event_id, event])).values()]
-    const incomingIds = new Set(dedupedEvents.map(e => e.google_event_id))
+    const dedupedEvents = [...new Map(events.map(event => [getEventPayloadKey(event), event])).values()]
+    const incomingEventKeys = new Set(dedupedEvents.map(getEventPayloadKey))
+    const incomingGoogleEventIds = new Set(dedupedEvents.map(e => e.google_event_id))
     const incomingCalendarIds = new Set(dedupedEvents.map(e => e.calendar_id).filter(Boolean))
     const incomingStartTimes = dedupedEvents
       .map(e => new Date(e.start_time).getTime())
@@ -141,20 +146,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
     }
 
     const activeTasksToReconcile = activeTasks.filter(task =>
-      incomingIds.has(task.google_event_id || '') || (isImportedGoogleEventTask(task) && isInImportScope(task))
+      incomingEventKeys.has(getGoogleEventTaskKey(task) || '') || (isImportedGoogleEventTask(task) && isInImportScope(task))
     )
 
-    const activeTasksByGoogleEventId = new Map<string, ExistingGoogleEventTaskRow[]>()
+    const activeTasksByGoogleEventKey = new Map<string, ExistingGoogleEventTaskRow[]>()
     for (const task of activeTasksToReconcile) {
-      if (!task.google_event_id) continue
-      const tasksForEvent = activeTasksByGoogleEventId.get(task.google_event_id) ?? []
+      const eventKey = getGoogleEventTaskKey(task)
+      if (!eventKey) continue
+      const tasksForEvent = activeTasksByGoogleEventKey.get(eventKey) ?? []
       tasksForEvent.push(task)
-      activeTasksByGoogleEventId.set(task.google_event_id, tasksForEvent)
+      activeTasksByGoogleEventKey.set(eventKey, tasksForEvent)
     }
 
     const canonicalActiveTasks: ExistingGoogleEventTaskRow[] = []
     const duplicateActiveTaskIds: string[] = []
-    for (const tasksForEvent of activeTasksByGoogleEventId.values()) {
+    for (const tasksForEvent of activeTasksByGoogleEventKey.values()) {
       const preferred = pickPreferredGoogleEventTask(tasksForEvent)
       if (!preferred) continue
       canonicalActiveTasks.push(preferred)
@@ -164,22 +170,25 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
     }
 
     // 削除済みタスク（復活候補）
-    const deletedTasksByGoogleEventId = new Map<string, ExistingGoogleEventTaskRow[]>()
+    const deletedTasksByGoogleEventKey = new Map<string, ExistingGoogleEventTaskRow[]>()
     for (const task of existingTasks.filter(t => isImportedGoogleEventTask(t) && t.deleted_at && t.google_event_id)) {
-      if (!task.google_event_id) continue
-      const tasksForEvent = deletedTasksByGoogleEventId.get(task.google_event_id) ?? []
+      const eventKey = getGoogleEventTaskKey(task)
+      if (!eventKey) continue
+      const tasksForEvent = deletedTasksByGoogleEventKey.get(eventKey) ?? []
       tasksForEvent.push(task)
-      deletedTasksByGoogleEventId.set(task.google_event_id, tasksForEvent)
+      deletedTasksByGoogleEventKey.set(eventKey, tasksForEvent)
     }
-    const deletedTaskMap = new Map(
-      [...deletedTasksByGoogleEventId.entries()]
-        .map(([googleEventId, tasksForEvent]) => [googleEventId, pickPreferredGoogleEventTask(tasksForEvent)])
-        .filter((entry): entry is [string, NonNullable<(typeof activeTasks)[number]>] => !!entry[1])
-    )
+    const deletedTaskMap = new Map<string, ExistingGoogleEventTaskRow>()
+    for (const [eventKey, tasksForEvent] of deletedTasksByGoogleEventKey.entries()) {
+      const preferred = pickPreferredGoogleEventTask(tasksForEvent)
+      if (preferred) deletedTaskMap.set(eventKey, preferred)
+    }
 
-    const existingMap = new Map(
-      canonicalActiveTasks.map(t => [t.google_event_id, t])
-    )
+    const existingMap = new Map<string, ExistingGoogleEventTaskRow>()
+    for (const task of canonicalActiveTasks) {
+      const eventKey = getGoogleEventTaskKey(task)
+      if (eventKey) existingMap.set(eventKey, task)
+    }
 
     let inserted = 0
     let updated = 0
@@ -190,7 +199,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
     const toUpsert: Array<Record<string, unknown>> = []
 
     for (const event of dedupedEvents) {
-      const existing = existingMap.get(event.google_event_id)
+      const eventKey = getEventPayloadKey(event)
+      const existing = existingMap.get(eventKey)
 
       if (existing) {
         // updated_at が5分以内ならスキップ（ユーザー操作中保護）
@@ -226,7 +236,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         updated++
       } else {
         // 削除済みタスクが存在する場合は復活させる（重複作成防止）
-        const deletedTask = deletedTaskMap.get(event.google_event_id)
+        const deletedTask = deletedTaskMap.get(eventKey)
         if (deletedTask) {
           toUpsert.push({
             id: deletedTask.id,
@@ -247,7 +257,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         } else {
           // 完全新規 → INSERT（同時 import でも同じ予定は同じ id に収束させる）
           toUpsert.push({
-            id: createStableGoogleEventTaskId(user.id, event.google_event_id),
+            id: createStableGoogleEventTaskId(user.id, event.calendar_id, event.google_event_id),
             user_id: user.id,
             title: event.title,
             google_event_id: event.google_event_id,
@@ -291,7 +301,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
 
     // 3. ソフトデリート: アクティブなタスクのうち incoming にないもの + 重複行
     const orphanIds = activeTasksToReconcile
-      .filter(t => isImportedGoogleEventTask(t) && isInImportScope(t) && !incomingIds.has(t.google_event_id || ''))
+      .filter(t => isImportedGoogleEventTask(t) && isInImportScope(t) && !incomingEventKeys.has(getGoogleEventTaskKey(t) || ''))
       .map(t => t.id)
     const softDeleteIds = new Set([...orphanIds, ...duplicateActiveTaskIds])
 
@@ -301,7 +311,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       .select('id, google_event_id, google_event_fingerprint, status, source, calendar_id, scheduled_at, updated_at, created_at, deleted_at')
       .eq('user_id', user.id)
       .eq('source', 'google_event')
-      .in('google_event_id', [...incomingIds])
+      .in('google_event_id', [...incomingGoogleEventIds])
       .is('deleted_at', null)
 
     if (postUpsertSelectError) {
@@ -312,15 +322,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       )
     }
 
-    const postUpsertTasksByGoogleEventId = new Map<string, typeof activeTasks>()
+    const postUpsertTasksByGoogleEventKey = new Map<string, typeof activeTasks>()
     for (const task of postUpsertActiveTasks || []) {
-      if (!task.google_event_id) continue
-      const tasksForEvent = postUpsertTasksByGoogleEventId.get(task.google_event_id) ?? []
+      const eventKey = getGoogleEventTaskKey(task)
+      if (!eventKey) continue
+      const tasksForEvent = postUpsertTasksByGoogleEventKey.get(eventKey) ?? []
       tasksForEvent.push(task)
-      postUpsertTasksByGoogleEventId.set(task.google_event_id, tasksForEvent)
+      postUpsertTasksByGoogleEventKey.set(eventKey, tasksForEvent)
     }
 
-    for (const tasksForEvent of postUpsertTasksByGoogleEventId.values()) {
+    for (const tasksForEvent of postUpsertTasksByGoogleEventKey.values()) {
       if (tasksForEvent.length < 2) continue
       const preferred = pickPreferredGoogleEventTask(tasksForEvent)
       if (!preferred) continue

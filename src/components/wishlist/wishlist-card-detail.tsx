@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, FolderOpen, ImagePlus, Loader2, Mic, Network, Plus, Save, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
+import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, FolderOpen, ImagePlus, Loader2, Mic, Network, Plus, Save, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -2108,52 +2108,61 @@ export function WishlistCardDetail({
     }
     const selectedDurationLabel = item.duration_minutes ? formatDurationLabel(item.duration_minutes) : "未設定"
     const mobileDurationOptions = [5, 15, 30, 60, 120]
-    const codexLaunchAction = onLaunchCodex ?? onLaunchCodexApp ?? onCopyCodexPrompt
-    const showMobileCodexAction = Boolean(codexLaunchAction)
+    const mobileCodexLauncher = onLaunchCodex ?? onLaunchCodexApp ?? onCopyCodexPrompt
+    const mobileCodexControlsAvailable = Boolean(mobileCodexLauncher)
     const mobileCodexProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
-    const mobileCodexRepoConfigured = !!mobileCodexProject?.repo_path
-    const mobileCodexActiveTask = memoAiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(memoAiTask.status)
-    const mobileCodexNeedsRepoConfig = !item.project_id || !mobileCodexRepoConfigured
-    const mobileCodexHasPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
-    const mobileCodexWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
+    const mobileCodexActive = memoAiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(memoAiTask.status)
+    const mobileCodexNeedsRepo = !item.project_id || !mobileCodexProject?.repo_path
+    const mobileHasCodexDraft = !!(draftTitle.trim() || draftDescription.trim())
+    const mobileWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
     const mobileCodexNeedsRunner = Boolean(onLaunchCodex || onLaunchCodexApp)
     const mobileCodexRunnerUnavailable = mobileCodexNeedsRunner && !codexRunnerStatus.ready
     const mobileCodexRunnerMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
-      ? "Macの通信状態を確認中です。"
-      : "Focusmap Macを起動するとCodexへ送れます。"
+      ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
+      : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"
     const mobileSheetAllowsScroll = (
       displayedImages.length > 0 ||
       Boolean(saveError || launchError || codexImageCopyNotice || memoVoiceError) ||
       isMemoRecording ||
       isMemoTranscribing
     )
-    const mobileCodexDraftItem = {
-      ...item,
-      title: draftTitle,
-      description: draftDescription || null,
-    } as IdealGoalWithItems
     const mobileCodexDisabled = (
-      !codexLaunchAction ||
-      !mobileCodexHasPromptDraft ||
-      mobileCodexNeedsRepoConfig ||
-      !!mobileCodexActiveTask ||
-      mobileCodexWaitingForImageSave ||
+      !mobileCodexLauncher ||
+      !mobileHasCodexDraft ||
+      mobileCodexNeedsRepo ||
+      !!mobileCodexActive ||
+      mobileWaitingForImageSave ||
       mobileCodexRunnerUnavailable
     )
-
-    const handleMobileCodexLaunch = async () => {
-      if (!codexLaunchAction || mobileCodexDisabled) return
+    const mobileCodexLogEntries = buildMemoCodexLogEntries({ task: memoAiTask, launchStep, launchError })
+    const mobileCodexCurrentLog = mobileCodexLogEntries.find(entry => entry.active) ?? mobileCodexLogEntries[mobileCodexLogEntries.length - 1]
+    const mobileCodexTitle = mobileCodexNeedsRepo
+      ? "プロジェクトとリポジトリパスを設定すると送信できます。"
+      : mobileCodexActive
+        ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
+        : mobileWaitingForImageSave
+          ? "画像を保存中です。保存が終わるとCodexへ送れます。"
+          : mobileCodexRunnerUnavailable
+            ? mobileCodexRunnerMessage
+            : "見出しとメモ本文をCodexに送ります。"
+    const handleMobileCodexSend = async () => {
+      if (!mobileCodexLauncher || mobileCodexDisabled || isLaunchingCodex) return
+      const codexDraftItem = {
+        ...item,
+        title: draftTitle,
+        description: draftDescription || null,
+      } as IdealGoalWithItems
       setLaunchError(null)
       setLaunchStep("sending")
       setIsLaunchingCodex(true)
       try {
-        await codexLaunchAction(mobileCodexDraftItem)
+        await mobileCodexLauncher(codexDraftItem)
         setLaunchStep("sent")
         if (codexCopyableImages.length > 0) {
           setCodexImageCopyNotice("プロンプトを貼った後、画像コピーを押して同じCodex入力欄へ貼り付けてください。")
         }
-      } catch (e) {
-        setLaunchError(e instanceof Error ? e.message : "起動失敗")
+      } catch (err) {
+        setLaunchError(err instanceof Error ? err.message : "起動失敗")
         setLaunchStep(null)
       } finally {
         setIsLaunchingCodex(false)
@@ -2276,7 +2285,7 @@ export function WishlistCardDetail({
               </label>
 
               {(isMemoRecording || isMemoTranscribing || memoVoiceError) && (
-                <div className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-neutral-300">
+                <div className="flex min-h-8 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1 text-xs text-neutral-300">
                   {isMemoRecording && (
                     <>
                       <span className="shrink-0 font-medium text-red-300">録音中</span>
@@ -2336,27 +2345,36 @@ export function WishlistCardDetail({
                 </div>
               </div>
 
-              {showMobileCodexAction && (
+              {mobileCodexControlsAvailable && (
                 <div className="space-y-2">
                   <button
                     type="button"
-                    onClick={() => void handleMobileCodexLaunch()}
+                    onClick={() => void handleMobileCodexSend()}
                     disabled={mobileCodexDisabled || isLaunchingCodex}
-                    title={mobileCodexRunnerUnavailable ? mobileCodexRunnerMessage : undefined}
+                    title={mobileCodexTitle}
                     className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/25 bg-transparent px-4 text-sm font-semibold text-neutral-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                    aria-label="Codexに送る"
                   >
-                    {isLaunchingCodex ? <Loader2 className="h-5 w-5 animate-spin" /> : <Bot className="h-5 w-5" />}
-                    Codexに送る
+                    {isLaunchingCodex ? <Loader2 className="h-5 w-5 shrink-0 animate-spin" /> : <Send className="h-5 w-5 shrink-0" />}
+                    <span>Codexに送る</span>
+                    {mobileCodexCurrentLog && (
+                      <span className={cn(
+                        "ml-1 shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        memoCodexLogTone(mobileCodexCurrentLog.state, mobileCodexCurrentLog.active),
+                      )}>
+                        {mobileCodexCurrentLog.label}
+                      </span>
+                    )}
                   </button>
-                  {(mobileCodexNeedsRepoConfig || mobileCodexActiveTask || mobileCodexWaitingForImageSave || mobileCodexRunnerUnavailable || launchError || codexImageCopyNotice) && (
+                  {(mobileCodexNeedsRepo || mobileCodexActive || mobileWaitingForImageSave || mobileCodexRunnerUnavailable || launchError || codexImageCopyNotice) && (
                     <p className="px-1 text-xs leading-5 text-neutral-400">
                       {launchError
                         ? launchError
-                        : mobileCodexNeedsRepoConfig
+                        : mobileCodexNeedsRepo
                           ? "プロジェクトとリポジトリパスを設定すると送れます。"
-                          : mobileCodexActiveTask
+                          : mobileCodexActive
                             ? "Codexの実行ログを更新しています。"
-                            : mobileCodexWaitingForImageSave
+                            : mobileWaitingForImageSave
                               ? "画像の保存が終わると送れます。"
                               : mobileCodexRunnerUnavailable
                                 ? mobileCodexRunnerMessage
@@ -2376,9 +2394,9 @@ export function WishlistCardDetail({
                         <div key={image.id} className={cn("relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.04]", isPending && "opacity-50")}>
                           {image.file_url ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={image.file_url} alt={image.file_name} className="h-24 w-full object-cover" />
+                            <img src={image.file_url} alt={image.file_name} className="h-16 w-full object-cover" />
                           ) : (
-                            <div className="flex h-24 items-center justify-center">
+                            <div className="flex h-16 items-center justify-center">
                               <ImagePlus className="h-6 w-6 text-neutral-500" />
                             </div>
                           )}
@@ -2431,7 +2449,6 @@ export function WishlistCardDetail({
                   {saveError}
                 </div>
               )}
-
             </div>
           </div>
 

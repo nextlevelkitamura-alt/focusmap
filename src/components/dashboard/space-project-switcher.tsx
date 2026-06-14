@@ -186,7 +186,7 @@ export function SpaceProjectSwitcher({
   return (
     <div className={cn(
       compactMemoHeader
-        ? "flex min-w-0 items-center gap-1 p-0"
+        ? "flex w-full min-w-0 items-center gap-1 p-0"
         : "flex shrink-0 items-center gap-1.5 px-2 py-1",
       className,
     )}>
@@ -197,7 +197,7 @@ export function SpaceProjectSwitcher({
             className={cn(
               "flex min-w-0 items-center rounded-md border border-border/50 transition-colors hover:bg-muted",
               compactMemoHeader
-                ? "h-8 max-w-[62px] gap-1 px-2 text-xs"
+                ? "h-8 max-w-[72px] shrink-0 gap-1 px-2 text-xs"
                 : "max-w-[180px] gap-1.5 px-2 py-1 text-sm",
             )}
             title="スペースを切替"
@@ -296,7 +296,7 @@ export function SpaceProjectSwitcher({
             className={cn(
               "flex min-w-0 items-center rounded-md border border-border/50 transition-colors hover:bg-muted",
               compactMemoHeader
-                ? "h-8 max-w-[112px] gap-1 px-2 text-xs"
+                ? "h-8 w-fit max-w-[220px] gap-1 px-2 text-xs"
                 : "max-w-[220px] gap-1.5 px-2 py-1 text-sm",
             )}
             title="プロジェクトを切替"

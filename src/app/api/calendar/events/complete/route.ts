@@ -61,10 +61,9 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 
-  // メモ由来の予定は ideal_goals 側に calendar_id を保持していないため、
-  // クライアントが送った calendar_id が現在の保存先とずれることがある。
-  // その場合も google_event_id を正として実レコードを更新する。
-  if (calendar_id && (!updatedRows || updatedRows.length === 0)) {
+  // Legacy callers might omit calendar_id. Only then fall back to google_event_id
+  // alone; when a calendar_id is supplied, keep completion scoped to that calendar.
+  if (!calendar_id && (!updatedRows || updatedRows.length === 0)) {
     const retry = await supabase
       .from('calendar_events')
       .update({ is_completed })
@@ -96,7 +95,7 @@ export async function PATCH(request: NextRequest) {
         calendar_id: completionCalendarId,
         completed_date: normalizedCompletedDate,
       }, {
-        onConflict: 'user_id,google_event_id,completed_date',
+        onConflict: 'user_id,calendar_id,google_event_id,completed_date',
       });
 
     if (completionError) {

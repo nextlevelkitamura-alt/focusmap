@@ -657,6 +657,22 @@ export async function fetchMultipleCalendarEvents(
     timeMax: Date;
   }
 ): Promise<Omit<CalendarEvent, 'id' | 'created_at' | 'updated_at' | 'synced_at'>[]> {
+  const result = await fetchMultipleCalendarEventsWithStatus(userId, calendarIds, options);
+  return result.events;
+}
+
+export async function fetchMultipleCalendarEventsWithStatus(
+  userId: string,
+  calendarIds: string[],
+  options: {
+    timeMin: Date;
+    timeMax: Date;
+  }
+): Promise<{
+  events: Omit<CalendarEvent, 'id' | 'created_at' | 'updated_at' | 'synced_at'>[];
+  successfulCalendarIds: string[];
+  failedCalendarIds: string[];
+}> {
   // 並列で各カレンダーのイベントを取得
   const eventsPromises = calendarIds.map(calendarId =>
     fetchCalendarEvents(userId, {
@@ -668,8 +684,12 @@ export async function fetchMultipleCalendarEvents(
 
   const settledEvents = await Promise.allSettled(eventsPromises);
   const failedCalendars: string[] = [];
+  const successfulCalendars: string[] = [];
   const allEvents = settledEvents.flatMap((result, index) => {
-    if (result.status === 'fulfilled') return result.value;
+    if (result.status === 'fulfilled') {
+      successfulCalendars.push(calendarIds[index]);
+      return result.value;
+    }
     failedCalendars.push(calendarIds[index]);
     console.warn('[fetchMultipleCalendarEvents] Failed to fetch one calendar:', {
       calendarId: calendarIds[index],
@@ -683,5 +703,9 @@ export async function fetchMultipleCalendarEvents(
   }
 
   // 全てのイベントをフラットに結合
-  return allEvents;
+  return {
+    events: allEvents,
+    successfulCalendarIds: successfulCalendars,
+    failedCalendarIds: failedCalendars,
+  };
 }

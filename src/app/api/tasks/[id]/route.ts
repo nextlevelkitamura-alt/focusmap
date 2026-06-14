@@ -330,7 +330,7 @@ async function syncGoogleEventCompletionForTask(
     return;
   }
 
-  if (task.calendar_id && (!updatedRows || updatedRows.length === 0)) {
+  if (!task.calendar_id && (!updatedRows || updatedRows.length === 0)) {
     const retry = await supabase
       .from('calendar_events')
       .update({ is_completed: isCompleted })
@@ -365,7 +365,7 @@ async function syncGoogleEventCompletionForTask(
         calendar_id: calendarId,
         completed_date: completedDate,
       }, {
-        onConflict: 'user_id,google_event_id,completed_date',
+        onConflict: 'user_id,calendar_id,google_event_id,completed_date',
       });
 
     if (error) {
@@ -374,12 +374,18 @@ async function syncGoogleEventCompletionForTask(
     return;
   }
 
-  const { error } = await supabase
+  let completionDeleteQuery = supabase
     .from('event_completions')
     .delete()
     .eq('user_id', userId)
     .eq('google_event_id', task.google_event_id)
     .eq('completed_date', completedDate);
+
+  if (calendarId) {
+    completionDeleteQuery = completionDeleteQuery.eq('calendar_id', calendarId);
+  }
+
+  const { error } = await completionDeleteQuery;
 
   if (error) {
     console.error('[tasks/[id] PATCH] Failed to delete event completion sidecar:', error);
@@ -615,13 +621,16 @@ export async function PATCH(
     let updateError;
 
     if (body.status !== undefined && task.source === 'google_event' && task.google_event_id) {
-      const result = await supabase
+      let updateQuery = supabase
         .from('tasks')
         .update(updatePayload)
         .eq('user_id', user.id)
         .eq('google_event_id', task.google_event_id)
-        .is('deleted_at', null)
-        .select();
+        .is('deleted_at', null);
+      if (task.calendar_id) {
+        updateQuery = updateQuery.eq('calendar_id', task.calendar_id);
+      }
+      const result = await updateQuery.select();
 
       updateError = result.error;
       updatedTask = result.data?.find(row => row.id === taskId) ?? result.data?.[0] ?? null;

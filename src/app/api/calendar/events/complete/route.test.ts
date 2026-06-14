@@ -101,7 +101,7 @@ describe('PATCH /api/calendar/events/complete', () => {
       calendar_id: 'work',
       completed_date: '2026-05-18',
     }, {
-      onConflict: 'user_id,google_event_id,completed_date',
+      onConflict: 'user_id,calendar_id,google_event_id,completed_date',
     });
   });
 
@@ -123,7 +123,7 @@ describe('PATCH /api/calendar/events/complete', () => {
       calendar_id: 'work',
       completed_date: '2026-05-18',
     }, {
-      onConflict: 'user_id,google_event_id,completed_date',
+      onConflict: 'user_id,calendar_id,google_event_id,completed_date',
     });
   });
 

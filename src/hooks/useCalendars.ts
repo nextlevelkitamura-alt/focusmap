@@ -87,6 +87,7 @@ let cachedSelectedCalendarIds = cachedCalendars
   : readStoredSelectedCalendarIds();
 let cacheTimestamp = storedCalendarList?.cachedAt ?? 0;
 let inflight: Promise<UserCalendar[]> | null = null;
+let inflightForceSync = false;
 
 function notifyListeners(calendars: UserCalendar[]) {
   listeners.forEach(fn => fn(calendars));
@@ -99,7 +100,8 @@ async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]>
   }
 
   // Deduplicate in-flight requests
-  if (inflight && !forceSync) return inflight;
+  if (inflight && (!forceSync || inflightForceSync)) return inflight;
+  inflightForceSync = forceSync;
 
   inflight = (async () => {
     try {
@@ -137,10 +139,28 @@ async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]>
       return calendars;
     } finally {
       inflight = null;
+      inflightForceSync = false;
     }
   })();
 
   return inflight;
+}
+
+export function invalidateCalendarsCache() {
+  cachedCalendars = null;
+  cachedSelectedCalendarIds = [];
+  cacheTimestamp = 0;
+  inflight = null;
+  inflightForceSync = false;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(CALENDAR_LIST_STORAGE_KEY);
+      localStorage.removeItem(CALENDAR_SELECTION_STORAGE_KEY);
+    } catch {
+      // Ignore localStorage errors.
+    }
+  }
+  notifyListeners([]);
 }
 
 /**
@@ -178,6 +198,23 @@ export function useCalendars() {
   useEffect(() => {
     fetchCalendars();
   }, [fetchCalendars]);
+
+  // Startup cache is only for first paint. Revalidate against Google in the
+  // background so removed/hidden calendars do not linger for the full TTL.
+  useEffect(() => {
+    if (!cachedCalendars || cachedCalendars.length === 0) return;
+    let cancelled = false;
+    fetchCalendarsShared(true)
+      .then(result => {
+        if (!cancelled) setCalendars(result);
+      })
+      .catch(err => {
+        if (!cancelled) setError(err as Error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // カレンダーの表示/非表示を切り替え
   const toggleCalendar = useCallback(async (id: string, selected: boolean) => {
