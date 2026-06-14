@@ -443,8 +443,41 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByText('実行中チャット')).toBeInTheDocument()
   })
 
-  test('スマホ取り込みカードから全画面のCodex詳細へ遷移できる', async () => {
+  test('スマホ取り込みカードからチャット詳細を開き戻るでAIチャット履歴一覧へ復帰できる', async () => {
     const onOpenTask = vi.fn()
+    fetchWithSupabaseAuthMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url === '/api/codex/sync-node') return jsonResponse({ success: true, task_id: 'ai-task-1' })
+      if (url === '/api/ai-tasks/ai-task-1/activity') {
+        return jsonResponse({
+          messages: [
+            {
+              id: 'msg-user',
+              task_id: 'ai-task-1',
+              user_id: 'user-1',
+              role: 'user',
+              kind: 'sent',
+              body: 'スマホでもチャット詳細を全画面で開く',
+              importance: 'normal',
+              metadata: {},
+              created_at: '2026-06-12T09:20:00.000Z',
+            },
+            {
+              id: 'msg-codex',
+              task_id: 'ai-task-1',
+              user_id: 'user-1',
+              role: 'codex',
+              kind: 'progress',
+              body: 'Codexの返答をチャット形式で表示します',
+              importance: 'normal',
+              metadata: {},
+              created_at: '2026-06-12T09:21:00.000Z',
+            },
+          ],
+        })
+      }
+      return jsonResponse({ source: 'turso', heartbeats: [] })
+    })
     const importItem = {
       id: 'chat-node-1',
       aiTaskId: 'ai-task-1',
@@ -480,15 +513,19 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByRole('tab', { name: /実行中 1件/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '履歴を見る' }))
 
-    expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'ai-task-1',
-      title: '実行中チャットを見る',
-      status: 'running',
-      executor: 'codex_app',
-      codex_thread_id: 'thread-running123',
-      source_type: 'mindmap',
-      source_id: 'chat-node-1',
-    }))
+    expect(onOpenTask).not.toHaveBeenCalled()
+    expect(screen.queryByRole('tab', { name: /実行中 1件/ })).not.toBeInTheDocument()
+    expect(screen.getByText('実行中チャットを見る')).toBeInTheDocument()
+    expect(screen.getByText('質問してみましょう')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByText('Codexの返答をチャット形式で表示します')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '戻る' }))
+
+    expect(screen.getByRole('tab', { name: /実行中 1件/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '履歴を見る' })).toBeInTheDocument()
   })
 
   test('スマホCodexシートで取り込みリポを選択・解除・監視できる', async () => {

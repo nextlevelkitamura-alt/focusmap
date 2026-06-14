@@ -3,7 +3,9 @@
 import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
+  ArrowUp,
   ArrowLeft,
+  Brain,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -13,6 +15,8 @@ import {
   ExternalLink,
   FolderGit2,
   Loader2,
+  Mic,
+  Plus,
   RefreshCw,
   Trash2,
   Wifi,
@@ -42,6 +46,7 @@ import {
   isSameLocalDate,
 } from "@/lib/task-progress-ui"
 import { cn } from "@/lib/utils"
+import type { AiTaskActivityMessage } from "@/types/ai-task"
 import type { Project, Space, Task } from "@/types/database"
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
 
@@ -114,6 +119,12 @@ export type TaskProgressMobileImportRepoControl = {
   onSelectRepoPath?: (repoPath: string | null) => void | Promise<void>
   onToggleImport?: () => void | Promise<void>
   onRefreshRepos?: () => void | Promise<void>
+}
+
+type MobileImportDetailState = {
+  loading: boolean
+  messages: AiTaskActivityMessage[]
+  error: string | null
 }
 
 type TaskProgressKanbanProps = {
@@ -246,22 +257,6 @@ function CodexMonitorRunningOutline() {
       </svg>
     </span>
   )
-}
-
-function taskProgressStatusFromVisualStatus(status: TaskProgressStatus | string | null | undefined): TaskProgressStatus {
-  switch (getCodexMonitorUiStatus(status)) {
-    case "running":
-      return "running"
-    case "connection_failed":
-      return "failed"
-    case "unsent":
-      return "pending"
-    case "done":
-      return "completed"
-    case "review":
-    default:
-      return "awaiting_approval"
-  }
 }
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
@@ -980,6 +975,182 @@ function MobileImportRepoControls({
   )
 }
 
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+}
+
+function normalizeActivityMessages(value: unknown): AiTaskActivityMessage[] {
+  const messages = (value as { messages?: unknown } | null)?.messages
+  if (!Array.isArray(messages)) return []
+  return messages.flatMap((message, index): AiTaskActivityMessage[] => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return []
+    const record = message as Partial<AiTaskActivityMessage> & Record<string, unknown>
+    const body = typeof record.body === "string" ? record.body.trim() : ""
+    if (!body || isGenericCodexPulseText(body)) return []
+    return [{
+      id: typeof record.id === "string" ? record.id : `mobile-import-activity-${index}`,
+      task_id: typeof record.task_id === "string" ? record.task_id : "",
+      user_id: typeof record.user_id === "string" ? record.user_id : "",
+      role: record.role === "user" || record.role === "codex" || record.role === "system" || record.role === "status"
+        ? record.role
+        : "codex",
+      kind: typeof record.kind === "string" ? record.kind as AiTaskActivityMessage["kind"] : "progress",
+      body,
+      importance: record.importance === "important" ? "important" : "normal",
+      metadata: record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
+        ? record.metadata as Record<string, unknown>
+        : {},
+      created_at: typeof record.created_at === "string" ? record.created_at : "",
+    }]
+  })
+}
+
+function isMobileImportUserMessage(message: AiTaskActivityMessage) {
+  return message.role === "user" || message.kind === "sent" || message.kind === "user_answer"
+}
+
+function isMobileImportStatusMessage(message: AiTaskActivityMessage) {
+  return message.role === "status" || message.role === "system"
+}
+
+function mobileImportActivityLabel(message: AiTaskActivityMessage) {
+  if (isMobileImportUserMessage(message)) return "送信した内容"
+  if (message.kind === "question") return "Codexから質問"
+  if (message.kind === "approval") return "確認依頼"
+  if (message.kind === "failed") return "接続失敗"
+  if (isMobileImportStatusMessage(message)) return "進行状況"
+  return "Codexの返答"
+}
+
+function MobileImportActivityBubble({ message }: { message: AiTaskActivityMessage }) {
+  const isUserMessage = isMobileImportUserMessage(message)
+  const isStatusMessage = isMobileImportStatusMessage(message)
+  const timeLabel = formatTaskProgressDateTime(message.created_at)
+  const showLabel = !isUserMessage && (isStatusMessage || message.kind === "question" || message.kind === "approval" || message.kind === "failed")
+
+  return (
+    <article className={cn("flex", isUserMessage && "justify-end")}>
+      <div className={cn(
+        "flex min-w-0 flex-col gap-1.5",
+        isUserMessage ? "max-w-[82%] items-end" : "w-full",
+      )}>
+        {(showLabel || timeLabel) && (
+          <div className={cn(
+            "flex max-w-full items-center gap-2 text-[11px] text-zinc-500",
+            isUserMessage && "justify-end",
+          )}>
+            {showLabel && <span className="shrink-0 font-medium text-zinc-400">{mobileImportActivityLabel(message)}</span>}
+            {timeLabel && <span className="truncate">{timeLabel}</span>}
+          </div>
+        )}
+        <div
+          className={cn(
+            "whitespace-pre-wrap break-words text-[15px] leading-7",
+            isUserMessage
+              ? "rounded-2xl bg-white px-4 py-2.5 font-medium text-zinc-950 shadow-sm"
+              : "px-0 py-0 text-zinc-100",
+            isStatusMessage && "w-fit rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-sm font-medium leading-5 text-emerald-200",
+            message.kind === "question" && "rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-sm leading-6 text-sky-100",
+            message.kind === "approval" && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
+            message.kind === "failed" && "rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm leading-6 text-red-100",
+            message.importance === "important" && !isUserMessage && !isStatusMessage && "rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-100",
+          )}
+        >
+          {message.body}
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function MobileImportComposerMock() {
+  return (
+    <div className="rounded-[1.35rem] border border-[#3a3b40] bg-[#17181b] p-2.5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+      <div className="min-h-16 px-1 py-1.5 text-[16px] leading-6 text-zinc-500">
+        質問してみましょう
+      </div>
+      <div className="mt-1 flex min-h-10 items-center justify-between gap-2">
+        <span className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-300" aria-hidden="true">
+          <Plus className="h-5 w-5" />
+        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="inline-flex h-10 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 text-xs font-semibold text-zinc-100" aria-hidden="true">
+            <Brain className="h-4 w-4" />
+            考える
+            <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+          </span>
+          <span className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-300" aria-hidden="true">
+            <Mic className="h-4 w-4" />
+          </span>
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-700 text-zinc-500" aria-hidden="true">
+            <ArrowUp className="h-5 w-5 stroke-[2.75]" />
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MobileImportChatDetail({
+  item,
+  detail,
+}: {
+  item: TaskProgressImportItem
+  detail: MobileImportDetailState | null | undefined
+}) {
+  const visualStatus = item.status ?? "awaiting_approval"
+  const statusLabel = item.statusLabel ?? codexMonitorUiLabel(visualStatus)
+  const messages = detail?.messages ?? []
+  const fallbackBody = item.snippet?.trim() || statusLabel
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#1f1f1f] text-zinc-100">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pb-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold", codexMonitorToneClass(visualStatus))}>
+              {getCodexMonitorUiStatus(visualStatus) === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {statusLabel}
+            </span>
+            {item.repoPath && (
+              <span className="inline-flex min-h-8 max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[11px] font-medium text-zinc-400">
+                <span className="truncate">{repoNameFromPath(item.repoPath)}</span>
+              </span>
+            )}
+          </div>
+
+          {detail?.loading && messages.length === 0 && (
+            <div className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-zinc-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              チャット内容を取得中
+            </div>
+          )}
+
+          {detail?.error && (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+              {detail.error}
+            </div>
+          )}
+
+          {messages.length > 0 ? (
+            <div className="space-y-5">
+              {messages.map(message => <MobileImportActivityBubble key={message.id} message={message} />)}
+            </div>
+          ) : !detail?.loading && !detail?.error ? (
+            <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-zinc-100">
+              {fallbackBody}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="shrink-0 bg-[#1f1f1f]/95 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2 backdrop-blur">
+        <MobileImportComposerMock />
+      </div>
+    </div>
+  )
+}
+
 export function TaskProgressKanban({
   tasks,
   sourceTasksById,
@@ -1010,6 +1181,8 @@ export function TaskProgressKanban({
   const [activeMobileTab, setActiveMobileTab] = useState<MobileCodexSheetTab>("board")
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [activeMobileImportFilter, setActiveMobileImportFilter] = useState<MobileImportHistoryFilterId>("review")
+  const [activeMobileImportDetailId, setActiveMobileImportDetailId] = useState<string | null>(null)
+  const [mobileImportDetailsById, setMobileImportDetailsById] = useState<Record<string, MobileImportDetailState>>({})
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [desktopBodyHeightPx, setDesktopBodyHeightPx] = useState(readStoredDesktopBoardHeight)
   const [sourceTaskStatusOverrides, setSourceTaskStatusOverrides] = useState<Map<string, string>>(new Map())
@@ -1117,6 +1290,13 @@ export function TaskProgressKanban({
     if (activeMobileImportFilter === "all") return mobileImportItems
     return mobileImportItems.filter(item => getCodexMonitorUiStatus(item.status ?? "awaiting_approval") === activeMobileImportFilter)
   }, [activeMobileImportFilter, mobileImportItems])
+  const activeMobileImportDetailItem = useMemo(() => {
+    if (!activeMobileImportDetailId) return null
+    return mobileImportItems.find(item => item.id === activeMobileImportDetailId) ?? null
+  }, [activeMobileImportDetailId, mobileImportItems])
+  const activeMobileImportDetail = activeMobileImportDetailItem
+    ? mobileImportDetailsById[activeMobileImportDetailItem.id] ?? null
+    : null
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -1124,6 +1304,77 @@ export function TaskProgressKanban({
       runnerState.refresh(),
     ])
   }, [onRefresh, runnerState])
+
+  useEffect(() => {
+    if (!activeMobileImportDetailId) return
+    if (mobileImportItems.some(item => item.id === activeMobileImportDetailId)) return
+    setActiveMobileImportDetailId(null)
+  }, [activeMobileImportDetailId, mobileImportItems])
+
+  useEffect(() => {
+    if (!activeMobileImportDetailItem) return
+    let cancelled = false
+    const item = activeMobileImportDetailItem
+    const aiTaskId = item.aiTaskId?.trim()
+    setMobileImportDetailsById(previous => ({
+      ...previous,
+      [item.id]: {
+        loading: true,
+        messages: previous[item.id]?.messages ?? [],
+        error: null,
+      },
+    }))
+
+    void (async () => {
+      try {
+        if (aiTaskId) {
+          await fetchWithSupabaseAuth("/api/codex/sync-node", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ai_task_id: aiTaskId, include_visible_activity: true }),
+          }).catch(() => undefined)
+        }
+
+        if (!aiTaskId) {
+          if (cancelled) return
+          setMobileImportDetailsById(previous => ({
+            ...previous,
+            [item.id]: { loading: false, messages: [], error: null },
+          }))
+          return
+        }
+
+        const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`, { cache: "no-store" })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          const message = typeof (data as { error?: unknown }).error === "string"
+            ? (data as { error: string }).error
+            : "チャット内容を取得できません"
+          throw new Error(message)
+        }
+        const messages = normalizeActivityMessages(data)
+        if (cancelled) return
+        setMobileImportDetailsById(previous => ({
+          ...previous,
+          [item.id]: { loading: false, messages, error: null },
+        }))
+      } catch (error) {
+        if (cancelled) return
+        setMobileImportDetailsById(previous => ({
+          ...previous,
+          [item.id]: {
+            loading: false,
+            messages: previous[item.id]?.messages ?? [],
+            error: error instanceof Error ? error.message : "チャット内容を取得できません",
+          },
+        }))
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeMobileImportDetailItem])
 
   const handleToggleSourceTaskComplete = useCallback(async (taskId: string, done: boolean) => {
     if (!onToggleSourceTaskComplete) return
@@ -1166,6 +1417,7 @@ export function TaskProgressKanban({
   const openMobileKanban = useCallback((tab?: MobileCodexSheetTab) => {
     const nextTab = tab ?? (mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
     setActiveMobileTab(nextTab)
+    setActiveMobileImportDetailId(null)
     if (nextTab === "import") {
       setActiveMobileImportFilter(
         mobileImportFilterCounts.review > 0
@@ -1197,27 +1449,16 @@ export function TaskProgressKanban({
 
   const handlePlaceImportItem = useCallback((taskId: string) => {
     onPlaceImportItem?.(taskId)
+    setActiveMobileImportDetailId(null)
     setMobileOpen(false)
   }, [onPlaceImportItem])
 
   const handleOpenImportItem = useCallback((item: TaskProgressImportItem) => {
     const aiTaskId = item.aiTaskId?.trim()
     if (!aiTaskId) return
-    onOpenTask({
-      id: aiTaskId,
-      title: item.title,
-      status: taskProgressStatusFromVisualStatus(item.status),
-      executor: "codex_app",
-      codex_thread_id: item.threadId?.trim() || null,
-      current_step: item.statusLabel,
-      progress_percent: null,
-      summary: item.snippet,
-      updated_at: item.updatedAtIso || new Date().toISOString(),
-      source_type: "mindmap",
-      source_id: item.id,
-    })
-    setMobileOpen(false)
-  }, [onOpenTask])
+    setActiveMobileTab("import")
+    setActiveMobileImportDetailId(item.id)
+  }, [])
 
   const handleMobileLanePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse") return
@@ -1300,25 +1541,63 @@ export function TaskProgressKanban({
             {total > 0 && <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{total}</span>}
           </button>
         )}
-        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="bottom" className="flex max-h-[84dvh] flex-col gap-0 rounded-t-xl p-0 [&>button:last-child]:hidden">
-            <SheetHeader className="border-b px-3 py-2 text-left">
+        <Sheet
+          open={mobileOpen}
+          onOpenChange={(nextOpen) => {
+            setMobileOpen(nextOpen)
+            if (!nextOpen) setActiveMobileImportDetailId(null)
+          }}
+        >
+          <SheetContent
+            side="bottom"
+            className={cn(
+              "flex flex-col gap-0 p-0 [&>button:last-child]:hidden",
+              activeMobileImportDetailItem
+                ? "h-dvh max-h-dvh rounded-none border-[#303030] bg-[#1f1f1f] text-zinc-100"
+                : activeMobileTab === "import"
+                  ? "max-h-[84dvh] rounded-t-xl border-[#303030] bg-[#1f1f1f] text-zinc-100"
+                  : "max-h-[84dvh] rounded-t-xl",
+            )}
+          >
+            <SheetHeader className={cn(
+              "border-b px-3 py-2 text-left",
+              (activeMobileTab === "import" || activeMobileImportDetailItem) && "border-[#303030] bg-[#1f1f1f]",
+            )}>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <button
                     type="button"
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
-                    onClick={() => setMobileOpen(false)}
-                    aria-label="AIチャット履歴を閉じて戻る"
+                    className={cn(
+                      "inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring",
+                      activeMobileTab === "import" || activeMobileImportDetailItem
+                        ? "text-zinc-200 hover:bg-white/10 hover:text-white"
+                        : "text-foreground hover:bg-muted/60",
+                    )}
+                    onClick={() => {
+                      if (activeMobileImportDetailItem) {
+                        setActiveMobileImportDetailId(null)
+                        return
+                      }
+                      setMobileOpen(false)
+                    }}
+                    aria-label="戻る"
                   >
-                    <ArrowLeft className="h-5 w-5" />
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>戻る</span>
                   </button>
                   <div className="min-w-0">
-                    <SheetTitle className="truncate text-base">
-                      {activeMobileTab === "import" ? "AIチャット履歴" : "Codex看板"}
+                    <SheetTitle className={cn("truncate text-base", (activeMobileTab === "import" || activeMobileImportDetailItem) && "text-zinc-100")}>
+                      {activeMobileImportDetailItem ? "AIチャット履歴" : activeMobileTab === "import" ? "AIチャット履歴" : "Codex看板"}
                     </SheetTitle>
+                    {activeMobileImportDetailItem && (
+                      <div className="mt-0.5 line-clamp-1 text-xs font-medium text-zinc-400">
+                        {activeMobileImportDetailItem.title}
+                      </div>
+                    )}
                     <SheetDescription className="sr-only">
-                      {activeMobileTab === "import"
+                      {activeMobileImportDetailItem
+                        ? "選択したCodexチャット履歴を会話形式で確認する"
+                        : activeMobileTab === "import"
                         ? "Codex画面から開いたAIチャット履歴をステータス別に確認する"
                         : "Codexの実行状況を確認する"}
                     </SheetDescription>
@@ -1332,7 +1611,7 @@ export function TaskProgressKanban({
                   <RunnerChip state={runnerState} />
                 </div>
               </div>
-              {activeMobileTab === "import" ? (
+              {activeMobileImportDetailItem ? null : activeMobileTab === "import" ? (
                 <div className="-mx-1 overflow-x-auto pt-2">
                   <div className="flex w-max gap-1.5 px-1" role="tablist" aria-label="AIチャット履歴ステータス">
                     {MOBILE_IMPORT_HISTORY_FILTERS.map(filter => {
@@ -1400,13 +1679,20 @@ export function TaskProgressKanban({
                 </div>
               )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
-              {error && (
+            <div className={cn(
+              "min-h-0 flex-1",
+              activeMobileImportDetailItem
+                ? "flex flex-col overflow-hidden"
+                : "overflow-y-auto px-2.5 py-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]",
+            )}>
+              {activeMobileImportDetailItem ? (
+                <MobileImportChatDetail item={activeMobileImportDetailItem} detail={activeMobileImportDetail} />
+              ) : error && (
                 <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
                   {error}
                 </div>
               )}
-              {activeMobileTab === "import" ? (
+              {!activeMobileImportDetailItem && activeMobileTab === "import" ? (
                 <div id="codex-import-history-list" className="space-y-2" role="tabpanel" aria-labelledby={`codex-import-history-filter-${activeMobileImportFilter}`}>
                   {mobileImportRepoControl && (
                     <MobileImportRepoControls control={mobileImportRepoControl} runnerState={runnerState} />
@@ -1506,7 +1792,7 @@ export function TaskProgressKanban({
                     )
                   })}
                 </div>
-              ) : (
+              ) : !activeMobileImportDetailItem ? (
                 <div
                   onPointerDown={handleMobileLanePointerDown}
                   onPointerUp={handleMobileLanePointerEnd}
@@ -1530,7 +1816,7 @@ export function TaskProgressKanban({
                     />
                   )}
                 </div>
-              )}
+              ) : null}
             </div>
           </SheetContent>
         </Sheet>

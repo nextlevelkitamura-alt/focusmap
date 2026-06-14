@@ -427,11 +427,12 @@ export function TaskProgressDetailPanel({
               {isMobile && (
                 <button
                   type="button"
-                  className="mt-[-0.375rem] flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="mt-[-0.25rem] inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring"
                   onClick={() => onOpenChange(false)}
-                  aria-label="AIチャット履歴を閉じて戻る"
+                  aria-label="戻る"
                 >
-                  <ArrowLeft className="h-5 w-5" />
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>戻る</span>
                 </button>
               )}
               <div className="min-w-0">
