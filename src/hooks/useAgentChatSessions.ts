@@ -37,6 +37,12 @@ interface StartRunInput {
   modelMode: AgentModelMode
 }
 
+interface CreateSessionInput {
+  chatMode?: AgentChatMode
+  spaceId?: string | null
+  projectId?: string | null
+}
+
 interface AgentChatSessionRow {
   id: string
   title?: string | null
@@ -321,7 +327,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     return () => window.clearInterval(timer)
   }, [hasRunningSession, hydrated, loadedScopeKey, refresh, scopeKey])
 
-  const createSession = useCallback((): string => {
+  const createSession = useCallback((input: CreateSessionInput = {}): string => {
     const id = newId()
     const now = Date.now()
     const session: AgentChatSession = {
@@ -343,8 +349,28 @@ export function useAgentChatSessions(scopeKey = "general") {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ id, scopeKey }),
-    }).catch(() => {})
+      body: JSON.stringify({
+        id,
+        scopeKey,
+        chatMode: input.chatMode ?? "general",
+        spaceId: input.spaceId ?? null,
+        projectId: input.projectId ?? null,
+      }),
+    })
+      .then(async response => {
+        if (!response.ok) return null
+        const data = await response.json().catch(() => null)
+        return data as { session?: unknown } | null
+      })
+      .then(data => {
+        const remoteSession = normalizeRemoteSession(data?.session)
+        if (!remoteSession) return
+        setState(prev => ({
+          sessions: upsertSession(prev.sessions, remoteSession),
+          activeSessionId: remoteSession.id,
+        }))
+      })
+      .catch(() => {})
     return id
   }, [scopeKey])
 
