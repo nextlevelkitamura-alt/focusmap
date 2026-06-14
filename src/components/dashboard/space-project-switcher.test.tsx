@@ -113,14 +113,14 @@ describe('SpaceProjectSwitcher', () => {
     expect(screen.queryByLabelText('仕事プロジェクト を編集')).not.toBeInTheDocument()
   })
 
-  test('コンパクト表示ではプロジェクト名の表示幅を広く取れる', () => {
+  test('コンパクトヘッダーでも長いプロジェクト名用の表示幅を残す', () => {
     render(
       <SpaceProjectSwitcher
         spaces={spaces}
         projects={[
           {
             ...projects[0],
-            title: 'ラットレース脱出計画をスマホでも確認する',
+            title: 'Focus map制作とモバイル表示改善',
           },
         ]}
         selectedSpaceId="space-work"
