@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   activityMessages,
+  codexStateDbPath,
   codexThreadGeneratedTitle,
   hasPendingArchiveRequest,
   isFocusmapManualHandoffThread,
@@ -51,6 +55,48 @@ function task(overrides: Record<string, unknown> = {}) {
 }
 
 describe('codex-thread-monitor state detection', () => {
+  test('prefers the current Codex sqlite state DB path over the legacy root path', () => {
+    const originalConfiguredPath = process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
+    delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
+    const home = mkdtempSync(join(tmpdir(), 'focusmap-codex-state-'));
+    try {
+      const legacyDir = join(home, '.codex');
+      const sqliteDir = join(legacyDir, 'sqlite');
+      mkdirSync(sqliteDir, { recursive: true });
+      const legacyPath = join(legacyDir, 'state_5.sqlite');
+      const sqlitePath = join(sqliteDir, 'state_5.sqlite');
+      writeFileSync(legacyPath, '');
+      writeFileSync(sqlitePath, '');
+
+      expect(codexStateDbPath(home)).toBe(sqlitePath);
+    } finally {
+      if (originalConfiguredPath === undefined) delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
+      else process.env.FOCUSMAP_CODEX_STATE_DB_PATH = originalConfiguredPath;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('uses FOCUSMAP_CODEX_STATE_DB_PATH before default Codex state paths', () => {
+    const originalConfiguredPath = process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
+    const home = mkdtempSync(join(tmpdir(), 'focusmap-codex-state-'));
+    try {
+      const legacyDir = join(home, '.codex');
+      const sqliteDir = join(legacyDir, 'sqlite');
+      mkdirSync(sqliteDir, { recursive: true });
+      const configuredPath = join(home, 'custom-state.sqlite');
+      const sqlitePath = join(sqliteDir, 'state_5.sqlite');
+      writeFileSync(configuredPath, '');
+      writeFileSync(sqlitePath, '');
+      process.env.FOCUSMAP_CODEX_STATE_DB_PATH = configuredPath;
+
+      expect(codexStateDbPath(home)).toBe(configuredPath);
+    } finally {
+      if (originalConfiguredPath === undefined) delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
+      else process.env.FOCUSMAP_CODEX_STATE_DB_PATH = originalConfiguredPath;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('normalizes generated Codex thread titles and ignores raw prompt titles', () => {
     expect(codexThreadGeneratedTitle({ title: '  Codex   thread title  ' })).toBe('Codex thread title');
     expect(codexThreadGeneratedTitle({ title: '# AGENTS.md instructions\n<environment_context>' })).toBeNull();

@@ -67,6 +67,17 @@ function canUseLocalSync(req: NextRequest): boolean {
   })
 }
 
+function resolveCodexStateDbPath() {
+  const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim()
+  const candidates = [
+    configured,
+    path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
+    path.join(os.homedir(), '.codex', 'state_5.sqlite'),
+  ].filter((value): value is string => Boolean(value))
+
+  return candidates.find(candidate => fs.existsSync(candidate)) ?? null
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -796,9 +807,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Codex.app の状態同期は macOS でのみ利用できます' }, { status: 400 })
   }
 
-  const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
-  if (!fs.existsSync(dbPath)) {
-    return NextResponse.json({ error: '~/.codex/state_5.sqlite が見つかりません' }, { status: 404 })
+  const dbPath = resolveCodexStateDbPath()
+  if (!dbPath) {
+    return NextResponse.json({ error: 'Codex state DB が見つかりません' }, { status: 404 })
   }
 
   const body = await req.json().catch(() => ({})) as SyncNodeBody

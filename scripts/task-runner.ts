@@ -76,6 +76,17 @@ loadEnvFile(envPath)
 const monitoringEnvPath = path.resolve(__dirname, '../.env.monitoring.local')
 loadEnvFile(monitoringEnvPath)
 
+function resolveCodexStateDbPath(): string | null {
+  const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim()
+  const candidates = [
+    configured,
+    path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
+    path.join(os.homedir(), '.codex', 'state_5.sqlite'),
+  ].filter((value): value is string => !!value)
+
+  return candidates.find(candidate => fs.existsSync(candidate)) ?? null
+}
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10分
@@ -1317,7 +1328,7 @@ async function pushCodexStep(
 // ─────────────────────────────────────────────────────────────────────────
 // Codex CLI 起動（codex --remote 経由で app-server に接続）
 //   - codex app-server (launchd 常駐) に WebSocket 接続して thread を作成
-//   - 結果として ~/.codex/state_5.sqlite に thread が追加され、
+//   - 結果として Codex state DB に thread が追加され、
 //     ペアリング済 Codex.app / ChatGPT mobile app の laptop アイコンで見える
 //   - tmux detached で常駐させ、stdout を pipe-pane で捕捉
 //   - 旧 launchCodexExec はモバイル可視性が無かったため置き換え
@@ -1403,7 +1414,7 @@ async function launchCodexRemote(opts: {
 }
 
 /**
- * ~/.codex/state_5.sqlite と rollout JSONL を読み、Codex系タスクの状態とログを同期する。
+ * Codex state DB と rollout JSONL を読み、Codex系タスクの状態とログを同期する。
  * launchd の StartInterval=15 に合わせ、UI はこの result.live_log を追う。
  */
 type CodexBridgeObservation = {
@@ -1814,8 +1825,8 @@ async function syncCompletedFocusmapNodesToCodexArchive(
   supabase: SupabaseClient,
   scope: RunnerMonitorScope,
 ): Promise<void> {
-  const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
-  if (!fs.existsSync(dbPath)) return
+  const dbPath = resolveCodexStateDbPath()
+  if (!dbPath) return
 
   let query = supabase
     .from('ai_tasks')
@@ -2091,8 +2102,8 @@ async function syncCodexAppThreads(
   supabase: SupabaseClient,
   scope: RunnerMonitorScope,
 ): Promise<CodexSyncStats> {
-  const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
-  if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
+  const dbPath = resolveCodexStateDbPath()
+  if (!dbPath) return { monitored: 0, fastFollow: false }
 
   const nowMs = Date.now()
   const nowIso = new Date(nowMs).toISOString()
@@ -3635,7 +3646,7 @@ async function main() {
       // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
       await syncCodexLiveLogs(supabase, monitorScope)
 
-      // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
+      // ─── 0.2. Codex.app スレッド進捗を Codex state DB から同期 ─
       const codexSyncStats = await syncCodexAppThreads(supabase, monitorScope)
       if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
         await syncCompletedFocusmapNodesToCodexArchive(supabase, monitorScope)

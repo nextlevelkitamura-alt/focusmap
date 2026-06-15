@@ -69,6 +69,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+export function codexStateDbPath(homeDir = homedir()): string | null {
+  const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim();
+  const candidates = [
+    configured,
+    join(homeDir, '.codex', 'sqlite', 'state_5.sqlite'),
+    join(homeDir, '.codex', 'state_5.sqlite'),
+  ].filter((value): value is string => !!value);
+
+  return candidates.find(candidate => existsSync(candidate)) ?? null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -897,11 +908,14 @@ export function startCodexThreadMonitorLoop(
   let nextTargetRefreshAt = 0;
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
-  const dbPath = join(homedir(), '.codex', 'state_5.sqlite');
+  let dbPath: string | null = null;
 
   const tick = async () => {
     if (running) return;
-    if (!existsSync(dbPath)) return;
+    dbPath = codexStateDbPath();
+    if (!dbPath || !existsSync(dbPath)) {
+      return;
+    }
 
     running = true;
     try {
