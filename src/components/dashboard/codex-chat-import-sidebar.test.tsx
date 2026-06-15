@@ -211,6 +211,17 @@ describe("CodexChatImportSidebar", () => {
               created_at: minutesAgo(1),
             },
             {
+              id: "msg-codex-long",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "一覧生成は未配置だけに変え、配置処理では保存反映前から対象カードを隠し、失敗時だけ戻すようにしました",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(6),
+            },
+            {
               id: "msg-codex",
               task_id: "ai-task-1",
               user_id: "user-1",
@@ -236,7 +247,8 @@ describe("CodexChatImportSidebar", () => {
     await waitFor(() => {
       expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(1)
     })
-    expect(screen.getByRole("button", { name: "戻る" }).className).toContain("hover:bg-white/10")
+    expect(screen.queryByRole("button", { name: "戻る" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "一覧へ戻る" }).className).toContain("hover:bg-white")
     expect(screen.queryByRole("switch", { name: "リポ監視" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /既存リポ選択/ })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Finderでリポフォルダを選択" })).not.toBeInTheDocument()
@@ -247,12 +259,24 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getAllByText("5分前").length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
     expect(screen.getByRole("region", { name: "AI要約" })).toBeInTheDocument()
-    expect(screen.getByText("やったこと")).toBeInTheDocument()
-    expect(screen.getByText("変更・判断")).toBeInTheDocument()
-    expect(screen.getByText("次に見ること")).toBeInTheDocument()
+    expect(screen.getByText("AI要約")).toBeInTheDocument()
+    expect(screen.queryByText("やったこと")).not.toBeInTheDocument()
+    expect(screen.queryByText("変更・判断")).not.toBeInTheDocument()
+    expect(screen.queryByText("次に見ること")).not.toBeInTheDocument()
+    const summaryText = screen.getByText(/対応内容は/)
+    expect(summaryText).toBeInTheDocument()
+    expect(summaryText.textContent).toContain("一覧生成は未配置だけに変え、配置処理では保存反映前から対象カードを隠し、失敗時だけ戻すようにしました")
+    expect(summaryText.textContent).not.toContain("…")
+    expect(summaryText.closest("section")?.className).toContain("border-t")
+    expect(summaryText.className).not.toContain("line-clamp-2")
+    fireEvent.click(screen.getByRole("button", { name: "AI要約を折りたたむ" }))
+    expect(summaryText.className).toContain("line-clamp-1")
+    fireEvent.click(screen.getByRole("button", { name: "AI要約を展開" }))
+    expect(summaryText.className).not.toContain("line-clamp-1")
+    expect(screen.getByRole("button", { name: "AI要約を折りたたむ" })).toBeInTheDocument()
     expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
-    expect(screen.getByText("Codexの返答")).toBeInTheDocument()
+    expect(screen.getAllByText("Codexの返答").length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText("プロジェクト更新完了")).not.toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
@@ -264,7 +288,7 @@ describe("CodexChatImportSidebar", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
     expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
 
-    fireEvent.click(screen.getByRole("button", { name: "戻る" }))
+    fireEvent.click(screen.getByRole("button", { name: "一覧へ戻る" }))
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
   })
 
@@ -320,7 +344,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByRole("button", { name: "ノードへ配置" })).not.toBeInTheDocument()
     expect(screen.getByText("配置済みのチャット履歴")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "戻る" }))
+    fireEvent.click(screen.getByRole("button", { name: "一覧へ戻る" }))
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
     expect(screen.queryByText("配置済みCodex作業")).not.toBeInTheDocument()
   })
