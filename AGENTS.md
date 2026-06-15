@@ -27,22 +27,21 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 
 ### 基本方針
 - **小さな修正・UI調整・ドキュメント変更は `main` に直接コミットしてよい**
-- 小さな修正・UI調整・ドキュメント変更を始める時に現在ブランチが `main` 以外なら、そのまま進めず、まず `main` へ移る。未コミット差分で移動できない場合は `origin/main` から一時 worktree を作って作業し、`origin/main` へ push する。ユーザーが明示的にブランチ作業を求めた場合だけ現在ブランチで続ける
-- Codex は毎回ブランチを切らない。基本は `main` で小さく作業し、検証後にコミットして `origin/main` へ push する
-- Git worktree は、未コミット差分の保護や並行作業のための隔離場所としてだけ使う。完了条件は「作業コミットが `origin/main` に入っていること」であり、worktreeやfeatureブランチにだけコミットが残っている状態は未完了として扱う
-- worktreeで作業した場合も、最後は必ず最新 `origin/main` に統合して `git push origin main` し、`git merge-base --is-ancestor <作業コミット> origin/main` などで反映確認してから完了報告する。ユーザーが明示的にブランチ保持やPR化を求めた場合だけ例外にする
+- 作業開始時に `git fetch --prune origin` を実行してから `git status --short --branch` と `git worktree list` を確認し、`main` が `origin/main` より先行・遅延している場合は報告する
+- Codex.app ではチャットごとに worktree が作られることがある。小さな修正で現在地が `main` 以外なら、まず既存の `main` worktree を探し、あればそこを使う。`main` が別 worktree で使用中なら、同じ用途の worktree を二重に作らない
+- 既存の `main` worktree が無い、または未コミット差分で使えない場合だけ、`origin/main` から一時 worktree を作る。ユーザーが明示的にブランチ作業を求めた場合だけ現在ブランチで続ける
+- Codex は毎回ブランチを切らない。基本は `main` で小さく作業し、検証後にコミットする
+- Git worktree は、未コミット差分の保護や並行作業のための隔離場所として使う。作業完了時は、コミットが `local main` / `origin/main` / 本番デプロイのどこまで反映済みかを分けて報告する
 - ブランチを切るのは、ユーザーが明示した場合、大きな機能、数日またぐ作業、破壊的変更、DBマイグレーション、本番にすぐ出したくない変更に限る
-- Codex がブランチを切る必要があると判断した場合は、作成前にブランチ名・理由・mainへ戻す条件をユーザーへ明示する。ユーザーの明示なしに新規ブランチを作らない
 - 複数スレッドで同じリポジトリを触る場合も、最終的な正はGit履歴。Codexのスレッド分離だけで変更の整合性が保証されるとは考えない
-- 作業開始時に `git fetch --prune origin` を実行してから `git status --short --branch` を確認し、`main` が `origin/main` より先行・遅延している場合は報告する
 
 ### コミットルール
 - **こまめにコミットする**（1機能完成まで待たない）
 - **Codex は作業完了時に必ずコミットする**。コード変更・設定変更・ドキュメント変更を行ったら、検証後にその作業分をコミットしてから完了報告する
 - フックで自動コミットできない環境でも、Codex は `git status --short` で差分を確認し、自分が触ったファイルだけを `git add` してコミットする
 - 既存の未コミット変更がある場合は、勝手に混ぜない。ユーザーが明示した場合を除き、自分の作業範囲だけをコミットし、残っている差分を報告する
-- 通常作業では、検証してコミットできる状態になったら同じ流れで `git push origin main` まで行う。pushしない場合は、理由と未pushコミットを完了報告で明示する
-- 明示的に作成した feature/fix ブランチは、ユーザーが求めた場合を除き、直接pushや本番反映をしない。mainへ取り込んでから `origin/main` を正にする
+- push はユーザーが明示的に依頼したときだけ行う
+- worktree / feature / fix ブランチにだけ作業コミットが残っている場合は、main未統合として報告する。mainへ取り込むか捨てるかは、ユーザーの判断を待つ
 - 動く状態でコミット。壊れた状態でコミットしない
 - コミットメッセージは日本語OK
 - 例: `ダッシュボード: スキルカードコンポーネント追加`
@@ -50,11 +49,11 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 
 ### 開発の進め方
 1. `git fetch --prune origin` でリモート追跡情報を更新
-2. `git status --short --branch` で現在地と未コミット差分を確認
-3. 小さな修正なら `main` で作る。現在地が `main` 以外の場合は、ブランチ名と理由を報告し、`main` へ移るか `origin/main` の一時 worktree で作る
-4. worktree / 一時ブランチで作った場合は、検証後に最新 `origin/main` へ統合し、最終コミットが `main` 上にある状態へ戻す
-5. 動作確認後、自分が触ったファイルだけを `git add` してコミット
-6. 通常作業はそのまま `git push origin main` まで行い、Cloud Run は `origin/main` から自動デプロイされる前提で扱う。push後は対象コミットが `origin/main` に入っていることを確認する
+2. `git status --short --branch` と `git worktree list` で現在地、未コミット差分、既存 `main` worktree を確認
+3. 小さな修正なら `main` で作る。現在地が `main` 以外の場合は、既存の `main` worktree へ移るか、必要な場合だけ `origin/main` の一時 worktree を作る
+4. 動作確認後、自分が触ったファイルだけを `git add` してコミット
+5. worktree / 一時ブランチで作った場合は、完了報告で `worktree path`、`branch`、`commit hash`、`local main` への統合有無、`origin/main` へのpush有無、本番デプロイ有無を分けて書く
+6. `origin/main` に取り込み済みで `git status --short` が clean な worktree / local branch は整理対象にしてよい
 7. 大きい/危険/本番保留の作業だけ、事前にユーザーへ伝えてから `feat/*` / `fix/*` を作る
 8. **迷ったらブランチではなく、小さくコミットして戻せる状態にする**
 
@@ -62,6 +61,9 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は `task-router` Skill を使う
 - 詳細な判断基準・worktree安全策・プロンプト雛形は `task-router` の workflows を正とする
 - 並列化は時間だけで判断しない。編集範囲、共通契約、衝突コスト、危険操作、統合条件を見て提案する
+- 複数Codexで実装する場合は、原則 `1チャット = 1 worktree = 1 branch` にする
+- 並列実装では、各チャットの担当範囲・触ってよいファイル・触らないファイル・検証コマンドを先に決める。同じファイルを触りそうなら、先に共通仕様を決めるか直列にする
+- 競合は後で解消してよいが、履歴を壊さないため `rebase` / `push --force` / `reset --hard` は明示承認なしに使わない
 
 ### Task Router Board
 - 現在のタスクボードは [docs/ai/task-board.md](docs/ai/task-board.md) を正とする
