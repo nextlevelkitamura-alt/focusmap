@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, RefreshCw, Search, Trash2 } from "lucide-react"
+import { ArrowLeft, Check, ExternalLink, FolderGit2, FolderOpen, GitBranch, ListChecks, ListTodo, Loader2, RefreshCw, Scale, Search, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -68,6 +68,12 @@ type ChatDetailState = {
   messages: AiTaskActivityMessage[]
   text: string | null
   error: string | null
+}
+
+type CodexChatSummaryColumn = {
+  id: "done" | "decision" | "next"
+  title: string
+  items: string[]
 }
 
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
@@ -240,6 +246,137 @@ function isUserActivityMessage(message: AiTaskActivityMessage) {
 
 function isStatusActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "status" || message.role === "system"
+}
+
+function compactSummaryText(value: string, maxLength = 34) {
+  const compacted = value
+    .replace(/[`*_#>\-[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (compacted.length <= maxLength) return compacted
+  return `${compacted.slice(0, maxLength - 1).trim()}…`
+}
+
+function summarySentences(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/[\n。！？!?]+/u)
+    .map(line => compactSummaryText(line))
+    .filter(line => line.length >= 3)
+}
+
+function pushSummaryItem(items: string[], value: string | null | undefined, maxItems = 3) {
+  if (items.length >= maxItems) return
+  const text = compactSummaryText(value ?? "")
+  if (!text || items.includes(text)) return
+  items.push(text)
+}
+
+function collectSummaryItems(
+  sources: string[],
+  matcher: RegExp,
+  maxItems = 3,
+) {
+  const items: string[] = []
+  for (const source of sources) {
+    for (const sentence of summarySentences(source)) {
+      if (!matcher.test(sentence)) continue
+      pushSummaryItem(items, sentence, maxItems)
+      if (items.length >= maxItems) return items
+    }
+  }
+  return items
+}
+
+function buildCodexChatSummaryColumns(
+  item: CodexChatImportItem,
+  messages: AiTaskActivityMessage[],
+  detailText: string | null | undefined,
+): CodexChatSummaryColumn[] {
+  const visibleMessages = visibleActivityMessages(messages)
+  const codexTexts = visibleMessages
+    .filter(message => !isUserActivityMessage(message))
+    .map(message => message.body)
+  const userTexts = visibleMessages
+    .filter(isUserActivityMessage)
+    .map(message => message.body)
+  const allTexts = [...codexTexts, detailText ?? "", item.snippet ?? "", item.title].filter(Boolean)
+  const statusLabel = item.statusLabel ?? codexMonitorUiLabel(item.status ?? "awaiting_approval")
+  const uiStatus = getCodexMonitorUiStatus(item.status ?? "awaiting_approval")
+
+  const done = collectSummaryItems(
+    allTexts,
+    /確認|整理|修正|追加|実装|反映|保存|更新|通り|完了|削除|戻し|テスト|lint|型チェック|ステージ|コミット|デプロイ/u,
+  )
+  if (done.length === 0 && userTexts.length > 0) pushSummaryItem(done, userTexts[0])
+  if (done.length === 0) pushSummaryItem(done, `${statusLabel}まで進行`)
+
+  const decision = collectSummaryItems(
+    allTexts,
+    /方針|判断|仕様|変更|差分|原因|対象|状態|確認待ち|配置|表示|維持|戻す|優先/u,
+  )
+  pushSummaryItem(decision, item.placementLabel)
+  if (decision.length === 0) pushSummaryItem(decision, `状態は${statusLabel}`)
+
+  const next = collectSummaryItems(
+    [...codexTexts].reverse(),
+    /次|確認|再確認|残|必要|TODO|レビュー|判断|ノード|配置|コミット|デプロイ|API|差分/u,
+  )
+  if (!item.placed) pushSummaryItem(next, "ノード化するか判断")
+  if (uiStatus === "review") pushSummaryItem(next, "確認待ちの内容を確認")
+  if (uiStatus === "running") pushSummaryItem(next, "完了後の差分を確認")
+  if (next.length === 0) pushSummaryItem(next, "必要なら原文ログを確認")
+
+  return [
+    { id: "done", title: "やったこと", items: done },
+    { id: "decision", title: "変更・判断", items: decision },
+    { id: "next", title: "次に見ること", items: next },
+  ]
+}
+
+function SummaryColumnIcon({ id }: { id: CodexChatSummaryColumn["id"] }) {
+  if (id === "done") return <ListChecks className="h-3.5 w-3.5 text-emerald-300" />
+  if (id === "decision") return <Scale className="h-3.5 w-3.5 text-sky-300" />
+  return <ListTodo className="h-3.5 w-3.5 text-violet-300" />
+}
+
+function CodexChatAiSummaryBoard({
+  columns,
+  loading,
+}: {
+  columns: CodexChatSummaryColumn[]
+  loading?: boolean
+}) {
+  return (
+    <section aria-label="AI要約" className="rounded-xl border border-[#303030] bg-[#111111] p-2">
+      <div className="mb-2 flex items-center justify-between gap-2 px-1">
+        <div className="text-[11px] font-semibold text-zinc-300">AI要約</div>
+        {loading && (
+          <div className="inline-flex items-center gap-1 text-[10px] font-medium text-zinc-500">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            更新中
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {columns.map(column => (
+          <div key={column.id} className="min-w-0 rounded-lg border border-white/10 bg-white/[0.035] p-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <SummaryColumnIcon id={column.id} />
+              <div className="min-w-0 truncate text-[11px] font-semibold text-zinc-200">{column.title}</div>
+            </div>
+            <ul className="mt-2 space-y-1.5">
+              {column.items.map((summaryItem, index) => (
+                <li key={`${column.id}-${index}`} className="flex min-w-0 gap-1.5 text-[11px] leading-snug text-zinc-300">
+                  <span className="mt-[0.35em] h-1 w-1 shrink-0 rounded-full bg-zinc-500" />
+                  <span className="line-clamp-2 min-w-0 break-words">{summaryItem}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
 }
 
 function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) {
@@ -545,6 +682,9 @@ export function CodexChatImportSidebar({
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
+  const selectedSummaryColumns = selectedChatItem
+    ? buildCodexChatSummaryColumns(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
+    : []
   const finishChatDrag = React.useCallback(() => {
     setDraggingChatId(null)
     onChatDragStateChange?.(null)
@@ -697,7 +837,7 @@ export function CodexChatImportSidebar({
 
       {selectedChatItem ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b border-[#303030] px-3 py-2">
+          <div className="border-b border-[#303030] px-3 py-3">
             <div className="flex min-w-0 items-start gap-3">
               <Button
                 type="button"
@@ -709,24 +849,36 @@ export function CodexChatImportSidebar({
                 <ArrowLeft className="h-4 w-4" />
                 <span>戻る</span>
               </Button>
-              <div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-                <div className="flex min-w-[4.5rem] shrink-0 flex-col items-start gap-1 pt-0.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="min-w-0 flex-1" title={selectedChatItem.title}>
+                    <div className="line-clamp-2 break-words text-base font-semibold leading-snug text-zinc-100">{selectedChatItem.title}</div>
+                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className={cn(
+                        "rounded-full px-2 py-1 text-[11px] font-medium leading-none",
+                        selectedChatItem.placed ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300",
+                      )}>
+                        {selectedChatItem.placementLabel}
+                      </span>
+                      {(selectedChatItem.repoPath || selectedChatItem.projectTitle) && (
+                        <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
+                          <span className="truncate">{selectedChatItem.repoPath ? repoNameFromPath(selectedChatItem.repoPath) : selectedChatItem.projectTitle}</span>
+                        </span>
+                      )}
+                      {selectedChatItem.updatedLabel && (
+                        <span className="text-xs font-medium text-zinc-500">{selectedChatItem.updatedLabel}</span>
+                      )}
+                    </div>
+                  </div>
                   <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(selectedChatItem.status ?? "awaiting_approval"))}>
                     {getCodexMonitorUiStatus(selectedChatItem.status ?? "awaiting_approval") === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
                     <span className="truncate">{selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedChatItem.status ?? "awaiting_approval")}</span>
                   </span>
-                  {(selectedChatItem.repoPath || selectedChatItem.projectTitle) && (
-                    <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
-                      <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath) || selectedChatItem.projectTitle}</span>
-                    </span>
-                  )}
                 </div>
-                <div className="min-w-0" title={selectedChatItem.title}>
-                  <div className="line-clamp-2 break-words text-base font-semibold leading-snug text-zinc-100">{selectedChatItem.title}</div>
-                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-                    {selectedChatItem.updatedLabel && (
-                      <span className="text-xs font-medium text-zinc-500">{selectedChatItem.updatedLabel}</span>
-                    )}
+
+                <div className="mt-3 space-y-2">
+                  <div className="flex min-w-0 items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-zinc-400">チャット概要</div>
                     {selectedThreadHref && (
                       <a
                         href={selectedThreadHref}
@@ -738,6 +890,10 @@ export function CodexChatImportSidebar({
                       </a>
                     )}
                   </div>
+                  <CodexChatAiSummaryBoard
+                    columns={selectedSummaryColumns}
+                    loading={selectedDetail?.loading}
+                  />
                 </div>
               </div>
             </div>
