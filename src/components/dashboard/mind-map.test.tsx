@@ -107,7 +107,7 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
     collapsedTaskIds: Set<string>
     onToggleCollapse: (nodeId: string) => void
     onGenerateHeadingFromLongNode?: (nodeId: string) => void
-    onDropImportedChatNode?: (payload: { taskId: string; targetId: string; position: "as-child" }) => void
+    onDropImportedChatNode?: (payload: { taskId: string; targetId: string; position: "above" | "below" | "as-child" }) => void
     onRunCodex?: (taskId: string) => void
   }) => (
     <>
@@ -131,6 +131,12 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
         onClick={() => onDropImportedChatNode?.({ taskId: "chat-node-1", targetId: "root-1", position: "as-child" })}
       >
         取り込みチャットを配置
+      </button>
+      <button
+        type="button"
+        onClick={() => onDropImportedChatNode?.({ taskId: "chat-node-1", targetId: "root-1", position: "below" })}
+      >
+        取り込みチャットを下に配置
       </button>
       <button type="button" onClick={() => onRunCodex?.("chat-node-placed")}>
         配置済みCodexノード詳細
@@ -330,6 +336,55 @@ describe("MindMap controls", () => {
       expect(onKanbanUpdateTask).toHaveBeenCalledWith("chat-node-1", {
         parent_task_id: null,
         project_id: "project-1",
+      })
+    })
+  })
+
+  test("places an imported Codex chat as a sibling below the target node", async () => {
+    const onKanbanUpdateTask = vi.fn().mockResolvedValue(undefined)
+    const otherProject = {
+      id: "project-2",
+      title: "仕事",
+      repo_path: "/Users/me/focusmap",
+      codex_thread_import_enabled: true,
+    } as Project
+    const inboxGroup = {
+      ...task,
+      id: "inbox-1",
+      title: "Codex Inbox",
+      project_id: "project-2",
+      source: "codex_inbox",
+    } as Task
+    const importedChat = {
+      ...task,
+      id: "chat-node-1",
+      title: "SNS運用の相談",
+      project_id: "project-2",
+      parent_task_id: "inbox-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      deleted_at: null,
+      updated_at: "2026-06-11T00:00:00.000Z",
+    } as Task
+
+    render(
+      <MindMap
+        project={project}
+        projects={[project, otherProject]}
+        groups={[task]}
+        tasks={[]}
+        allTasks={[task, inboxGroup, importedChat]}
+        onKanbanUpdateTask={onKanbanUpdateTask}
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "取り込みチャットを下に配置" }))
+
+    await waitFor(() => {
+      expect(onKanbanUpdateTask).toHaveBeenCalledWith("chat-node-1", {
+        parent_task_id: null,
+        project_id: "project-1",
+        order_index: 1,
       })
     })
   })

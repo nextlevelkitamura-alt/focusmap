@@ -1848,13 +1848,47 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         const importedTask = repoScopedTasksById.get(taskId) ?? getTaskById(taskId);
         if (!importedTask) return;
         if (taskId === targetId) return;
-        if (targetId !== 'project-root' && !getTaskById(targetId)) return;
+        const targetTask = targetId === 'project-root' ? null : getTaskById(targetId);
+        if (targetId !== 'project-root' && !targetTask) return;
 
-        const parentTaskId = targetId === 'project-root' ? null : targetId;
+        const parentTaskId = targetId === 'project-root'
+            ? null
+            : position === 'as-child'
+                ? targetId
+                : targetTask?.parent_task_id ?? null;
         const updates: Partial<Task> = {
             parent_task_id: parentTaskId,
             project_id: project.id,
         };
+
+        const siblingOrderUpdates = (() => {
+            if (!targetTask || position === 'as-child') return [] as Array<{ id: string; order_index: number }>;
+            const candidates = new Map<string, Task>();
+            for (const task of [...groups, ...tasks]) {
+                if (task?.id) candidates.set(task.id, task);
+            }
+            const siblings = Array.from(candidates.values())
+                .filter(task => task.id !== taskId && (task.parent_task_id ?? null) === parentTaskId)
+                .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            const targetIndex = siblings.findIndex(task => task.id === targetTask.id);
+            if (targetIndex < 0) return [] as Array<{ id: string; order_index: number }>;
+            const insertAt = position === 'above' ? targetIndex : targetIndex + 1;
+            const reordered = [
+                ...siblings.slice(0, insertAt),
+                { ...importedTask, parent_task_id: parentTaskId },
+                ...siblings.slice(insertAt),
+            ];
+            return reordered.flatMap((task, index) => {
+                if (task.id === taskId || (task.order_index ?? 0) !== index) {
+                    return [{ id: task.id, order_index: index }];
+                }
+                return [];
+            });
+        })();
+        const importedOrderUpdate = siblingOrderUpdates.find(update => update.id === taskId);
+        if (importedOrderUpdate) {
+            updates.order_index = importedOrderUpdate.order_index;
+        }
 
         setHiddenCodexChatImportIds(prev => {
             const next = new Set(prev);
@@ -1866,10 +1900,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 setTaskCollapsed(parentTaskId, false);
             }
             await updateTaskForCodexScope(taskId, updates);
-            if (position === 'as-child') {
-                applySelection(new Set([taskId]), taskId);
-                focusNodeWithPollingV2(taskId, 300, false);
+            for (const orderUpdate of siblingOrderUpdates) {
+                if (orderUpdate.id === taskId) continue;
+                await updateTaskForCodexScope(orderUpdate.id, { order_index: orderUpdate.order_index });
             }
+            applySelection(new Set([taskId]), taskId);
+            focusNodeWithPollingV2(taskId, 300, false);
         } catch (error) {
             setHiddenCodexChatImportIds(prev => {
                 const next = new Set(prev);
@@ -1882,9 +1918,11 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         applySelection,
         focusNodeWithPollingV2,
         getTaskById,
+        groups,
         project?.id,
         repoScopedTasksById,
         setTaskCollapsed,
+        tasks,
         updateTaskForCodexScope,
     ]);
 

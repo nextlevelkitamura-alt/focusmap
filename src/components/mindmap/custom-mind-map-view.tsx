@@ -244,6 +244,12 @@ function canShowHeadingActionForCodexState(
     return codexIsUnsent && progressIsUnsent;
 }
 
+function importDropLabel(position: CustomDropPosition | null | undefined) {
+    if (position === "above") return "上に並べる";
+    if (position === "below") return "下に並べる";
+    return "子ノードにする";
+}
+
 type WebKitGestureEvent = Event & {
     scale: number;
     clientX?: number;
@@ -901,14 +907,20 @@ function CustomTaskNode({
                         : "border-sky-300/40 text-sky-600 dark:text-sky-300"
                 )}>
                     <Bot className="h-3 w-3" />
-                    {importDropActive ? "親ノード候補" : "ここに入れる"}
+                    {importDropActive ? importDropLabel(dropPosition) : "ここに入れる"}
                 </div>
             )}
             {dropPosition === "above" && !dragging && (
-                <div className="absolute -top-1.5 left-0 right-0 h-1 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
+                <div className={cn(
+                    "absolute -top-1.5 left-0 right-0 h-1 rounded-full shadow-[0_0_10px_rgba(56,189,248,0.9)]",
+                    importDropActive ? "bg-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.9)]" : "bg-sky-400"
+                )} />
             )}
             {dropPosition === "below" && !dragging && (
-                <div className="absolute -bottom-1.5 left-0 right-0 h-1 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
+                <div className={cn(
+                    "absolute -bottom-1.5 left-0 right-0 h-1 rounded-full shadow-[0_0_10px_rgba(56,189,248,0.9)]",
+                    importDropActive ? "bg-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.9)]" : "bg-sky-400"
+                )} />
             )}
             {isMemoNode && (
                 <div className={cn("absolute -left-0.5 top-1 bottom-1 w-1 rounded-full", node.isDone ? "bg-muted-foreground/35" : "bg-amber-400")} />
@@ -1419,7 +1431,7 @@ function CustomProjectNode({
                         : "border-sky-300/40 text-sky-600 dark:text-sky-300"
                 )}>
                     <Bot className="h-3 w-3" />
-                    {importDropActive ? "親ノード候補" : "ここに入れる"}
+                    {importDropActive ? "新しい枝にする" : "ここに入れる"}
                 </div>
             )}
             {dropPosition === "as-child" && (
@@ -2008,7 +2020,7 @@ export function CustomMindMapView({
         const point = getStagePoint(clientX, clientY);
         if (!point) return null;
 
-        let best: { node: MindMapModelNode; distance: number } | null = null;
+        let best: { node: MindMapModelNode; distance: number; position: CustomDropPosition } | null = null;
         for (const candidate of positionedNodes) {
             if (candidate.kind !== "project" && candidate.kind !== "task") continue;
 
@@ -2016,14 +2028,31 @@ export function CustomMindMapView({
             const top = candidate.y;
             const right = candidate.x + candidate.width;
             const bottom = candidate.y + candidate.height;
+            const centerX = candidate.x + candidate.width / 2;
             const clampedX = Math.max(left, Math.min(point.x, right));
             const clampedY = Math.max(top, Math.min(point.y, bottom));
             const distance = Math.hypot(clampedX - point.x, clampedY - point.y);
             if (distance > DROP_TARGET_MAX_DISTANCE) continue;
-            if (!best || distance < best.distance) best = { node: candidate, distance };
+
+            let position: CustomDropPosition = "as-child";
+            if (candidate.kind === "task") {
+                const relativeY = point.y - top;
+                const relativeX = point.x - centerX;
+                if (relativeX > -candidate.width * 0.1) {
+                    if (relativeY < candidate.height * 0.3) {
+                        position = "above";
+                    } else if (relativeY > candidate.height * 0.7) {
+                        position = "below";
+                    }
+                } else {
+                    position = relativeY < candidate.height * 0.5 ? "above" : "below";
+                }
+            }
+
+            if (!best || distance < best.distance) best = { node: candidate, distance, position };
         }
 
-        return best ? { nodeId: best.node.id, position: "as-child" } : null;
+        return best ? { nodeId: best.node.id, position: best.position } : null;
     }, [getStagePoint, positionedNodes]);
 
     const handleSelectTaskNode = useCallback((nodeId: string, options?: { additive: boolean }) => {
@@ -3236,6 +3265,19 @@ export function CustomMindMapView({
         }, 160);
     }, [getExternalImportDropTarget]);
 
+    const dropExternalImportAtPoint = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+        const payload = readCodexChatImportDragPayload(event.dataTransfer);
+        if (!payload) return;
+        const target = getExternalImportDropTarget(event.clientX, event.clientY) ?? externalImportDropTargetRef.current ?? externalImportDropTarget;
+        void Promise.resolve(onDropImportedChatNode?.({
+            taskId: payload.taskId,
+            targetId: target?.nodeId ?? "project-root",
+            position: target?.position ?? "as-child",
+        })).catch(error => {
+            console.error("[CustomMindMap] Failed to drop imported Codex chat:", error);
+        });
+    }, [externalImportDropTarget, getExternalImportDropTarget, onDropImportedChatNode]);
+
     const handleExternalImportDragLeaveCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
         const nextTarget = event.relatedTarget;
@@ -3245,25 +3287,19 @@ export function CustomMindMapView({
 
     const handleExternalImportDropCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        dropExternalImportAtPoint(event);
         clearExternalImportDragOverMap();
-    }, [clearExternalImportDragOverMap]);
+    }, [clearExternalImportDragOverMap, dropExternalImportAtPoint]);
 
     const handleExternalImportDropOnViewport = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
         event.preventDefault();
         event.stopPropagation();
-        const target = getExternalImportDropTarget(event.clientX, event.clientY) ?? externalImportDropTargetRef.current ?? externalImportDropTarget;
+        dropExternalImportAtPoint(event);
         clearExternalImportDragOverMap();
-        const payload = readCodexChatImportDragPayload(event.dataTransfer);
-        if (!payload) return;
-        void Promise.resolve(onDropImportedChatNode?.({
-            taskId: payload.taskId,
-            targetId: target?.nodeId ?? "project-root",
-            position: target?.position ?? "as-child",
-        })).catch(error => {
-            console.error("[CustomMindMap] Failed to drop imported Codex chat:", error);
-        });
-    }, [clearExternalImportDragOverMap, externalImportDropTarget, getExternalImportDropTarget, onDropImportedChatNode]);
+    }, [clearExternalImportDragOverMap, dropExternalImportAtPoint]);
 
     useEffect(() => () => {
         if (externalImportDragResetTimerRef.current !== null) {
@@ -3487,8 +3523,12 @@ export function CustomMindMapView({
                                 y: dragState.nodeStarts[node.id].y + dragState.deltaY,
                             }
                             : node;
-                        const dropPosition = dragState?.target?.nodeId === node.id ? dragState.target.position : null;
                         const importDropActive = externalImportDropTarget?.nodeId === node.id;
+                        const dropPosition = dragState?.target?.nodeId === node.id
+                            ? dragState.target.position
+                            : importDropActive
+                                ? externalImportDropTarget.position
+                                : null;
                         if (node.kind === "project") {
                             return (
                                 <CustomProjectNode
@@ -3598,7 +3638,7 @@ export function CustomMindMapView({
                             </span>
                             <span className="min-w-0 flex-1">
                                 <span className="block truncate font-semibold text-foreground">{importedChatDragTitle?.trim() || "Codexチャット"}</span>
-                                <span className="block truncate text-[11px] text-muted-foreground">ノードに重ねると子ノード、空白で新しい枝</span>
+                                <span className="block truncate text-[11px] text-muted-foreground">上/下端で隣、中央で子ノード、空白で新しい枝</span>
                             </span>
                         </div>
                     </>

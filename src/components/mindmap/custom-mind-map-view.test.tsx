@@ -245,6 +245,22 @@ const dispatchCodexImportDragEvent = (
   return fireEvent(element, event)
 }
 
+const getNodeClientPoint = (node: HTMLElement, yRatio = 0.5) => {
+  const left = parseFloat(node.style.left)
+  const top = parseFloat(node.style.top)
+  const width = parseFloat(node.style.width)
+  const height = parseFloat(node.style.height)
+  const stage = screen.getByTestId("custom-mind-map-stage")
+  const transformMatch = stage.style.transform.match(/translate3d\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px, 0(?:px)?\) scale\((\d+(?:\.\d+)?)\)/)
+  const panX = transformMatch ? Number(transformMatch[1]) : 0
+  const panY = transformMatch ? Number(transformMatch[2]) : 0
+  const scale = transformMatch ? Number(transformMatch[3]) : 0.9
+  return {
+    clientX: panX + (left + width / 2) * scale,
+    clientY: panY + (top + height * yRatio) * scale,
+  }
+}
+
 beforeEach(() => {
   window.localStorage.clear()
 })
@@ -329,6 +345,7 @@ describe("CustomMindMapView keyboard operations", () => {
     const onDropImportedChatNode = vi.fn()
     renderMap({ onDropImportedChatNode })
 
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
     const node = getNode("Root task", "root-1")
     const dataTransfer = {
       types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
@@ -339,9 +356,13 @@ describe("CustomMindMapView keyboard operations", () => {
           : ""
       )),
     }
+    const eventInit = {
+      dataTransfer,
+      ...getNodeClientPoint(node),
+    }
 
-    fireEvent.dragOver(node, { dataTransfer })
-    fireEvent.drop(node, { dataTransfer })
+    dispatchCodexImportDragEvent(viewport, "dragOver", eventInit)
+    dispatchCodexImportDragEvent(viewport, "drop", eventInit)
 
     expect(onDropImportedChatNode).toHaveBeenCalledWith({
       taskId: "chat-node-1",
@@ -383,15 +404,6 @@ describe("CustomMindMapView keyboard operations", () => {
 
     const viewport = screen.getByTestId("custom-mind-map-viewport")
     const node = getNode("Root task", "root-1")
-    const left = parseFloat(node.style.left)
-    const top = parseFloat(node.style.top)
-    const width = parseFloat(node.style.width)
-    const height = parseFloat(node.style.height)
-    const stage = screen.getByTestId("custom-mind-map-stage")
-    const transformMatch = stage.style.transform.match(/translate3d\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px, 0(?:px)?\) scale\((\d+(?:\.\d+)?)\)/)
-    const panX = transformMatch ? Number(transformMatch[1]) : 0
-    const panY = transformMatch ? Number(transformMatch[2]) : 0
-    const scale = transformMatch ? Number(transformMatch[3]) : 0.9
     const dataTransfer = {
       types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
       dropEffect: "copy",
@@ -403,13 +415,12 @@ describe("CustomMindMapView keyboard operations", () => {
     }
     const eventInit = {
       dataTransfer,
-      clientX: panX + (left + width / 2) * scale,
-      clientY: panY + (top + height / 2) * scale,
+      ...getNodeClientPoint(node),
     }
 
     dispatchCodexImportDragEvent(viewport, "dragOver", eventInit)
 
-    expect(screen.getByText("親ノード候補")).toBeInTheDocument()
+    expect(screen.getByText("子ノードにする")).toBeInTheDocument()
     expect(screen.getByTestId("codex-chat-import-drop-badge")).toHaveTextContent("ここに紐づく")
     expect(screen.getByTestId("codex-chat-import-ghost-node")).toHaveTextContent("取り込みたいチャット")
 
@@ -420,6 +431,39 @@ describe("CustomMindMapView keyboard operations", () => {
       taskId: "chat-node-1",
       targetId: "root-1",
       position: "as-child",
+    })
+  })
+
+  test("drops an imported Codex chat below a node as a sibling", () => {
+    const onDropImportedChatNode = vi.fn()
+    renderMap({ importedChatDragTitle: "取り込みたいチャット", onDropImportedChatNode })
+
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
+    const node = getNode("Root task", "root-1")
+    const dataTransfer = {
+      types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: vi.fn((type: string) => (
+        type === CODEX_CHAT_IMPORT_DRAG_TYPE
+          ? encodeCodexChatImportDragPayload({ taskId: "chat-node-1", title: "取り込みたいチャット" })
+          : ""
+      )),
+    }
+    const eventInit = {
+      dataTransfer,
+      ...getNodeClientPoint(node, 0.92),
+    }
+
+    dispatchCodexImportDragEvent(viewport, "dragOver", eventInit)
+
+    expect(screen.getByText("下に並べる")).toBeInTheDocument()
+
+    dispatchCodexImportDragEvent(viewport, "drop", eventInit)
+
+    expect(onDropImportedChatNode).toHaveBeenCalledWith({
+      taskId: "chat-node-1",
+      targetId: "root-1",
+      position: "below",
     })
   })
 
