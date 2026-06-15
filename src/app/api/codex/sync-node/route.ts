@@ -937,7 +937,6 @@ export async function POST(req: NextRequest) {
   const resumedFromApproval = wasAwaitingApproval && detectCodexResumeAfterApproval(
     parsed,
     current.awaiting_approval_at,
-    row,
   )
   const visibleCodexOutput = hasVisibleCodexOutput(row, parsed, task)
   const threadMoved = threadMovedSinceLastSync(current, row)

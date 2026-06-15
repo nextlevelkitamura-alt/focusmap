@@ -328,7 +328,6 @@ export function parseCodexRollout(
 export function detectCodexResumeAfterApproval(
   summary: Pick<CodexRolloutSummary, "latestUserMessageAt" | "latestTaskStartedAt">,
   awaitingApprovalAt: unknown,
-  snapshot?: Pick<CodexThreadSnapshot, "updated_at_ms"> | null,
 ): boolean {
   const approvalMs = parseTimeMsForResume(awaitingApprovalAt)
   if (approvalMs == null) return false
@@ -339,8 +338,7 @@ export function detectCodexResumeAfterApproval(
   const taskStartedMs = parseTimeMsForResume(summary.latestTaskStartedAt)
   if (taskStartedMs != null && taskStartedMs > approvalMs) return true
 
-  const updatedAtMs = parseTimeMsForResume(snapshot?.updated_at_ms)
-  return updatedAtMs != null && updatedAtMs > approvalMs
+  return false
 }
 
 function parseTimeMsForResume(value: unknown): number | null {

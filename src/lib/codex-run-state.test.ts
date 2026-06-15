@@ -141,17 +141,18 @@ describe("detectCodexResumeAfterApproval", () => {
     expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:02:30.000Z")).toBe(true)
   })
 
-  test("detects a later task_started or thread timestamp", () => {
+  test("detects a later task_started but ignores thread timestamp alone", () => {
     const parsed = parseCodexRollout([
       row({ type: "task_started" }, "2026-05-30T08:04:00.000Z"),
     ].join("\n"))
 
     expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:03:59.000Z")).toBe(true)
-    expect(detectCodexResumeAfterApproval(
-      { latestUserMessageAt: null, latestTaskStartedAt: null },
-      "2026-05-30T08:03:59.000Z",
-      { updated_at_ms: Date.parse("2026-05-30T08:04:01.000Z") },
-    )).toBe(true)
+    expect(
+      detectCodexResumeAfterApproval(
+        { latestUserMessageAt: null, latestTaskStartedAt: null },
+        "2026-05-30T08:03:59.000Z",
+      ),
+    ).toBe(false)
   })
 
   test("does not resume from older internal activity", () => {

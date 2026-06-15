@@ -2273,7 +2273,6 @@ async function syncCodexAppThreads(
       const resumedFromApproval = wasAwaitingApproval && detectCodexResumeAfterApproval(
         parsed,
         current.awaiting_approval_at,
-        row,
       )
       if (resumedFromApproval) {
         codexState = 'running'
