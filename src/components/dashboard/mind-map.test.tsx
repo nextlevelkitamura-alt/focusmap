@@ -17,16 +17,29 @@ vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
 vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
   CodexChatImportSidebar: ({
     chatItems,
+    detailItems,
+    initialSelectedChatId,
     onClose,
     onDeleteChatItem,
     onPlaceChatItem,
   }: {
     chatItems?: Array<{ id: string; title: string; placementLabel?: string }>
+    detailItems?: Array<{ id: string; title: string; placementLabel?: string; placed?: boolean }>
+    initialSelectedChatId?: string | null
     onClose: () => void
     onDeleteChatItem?: (taskId: string) => void
     onPlaceChatItem?: (taskId: string) => void
   }) => (
     <aside aria-label="チャット取り込み">
+      {initialSelectedChatId && (() => {
+        const selected = detailItems?.find(item => item.id === initialSelectedChatId)
+        return (
+          <div data-testid="selected-codex-chat-detail">
+            <span>{selected?.title ?? "missing"}</span>
+            {selected?.placementLabel && <span>{selected.placementLabel}</span>}
+          </div>
+        )
+      })()}
       {chatItems?.map(item => (
         <div key={item.id}>
           <span>{item.title}</span>
@@ -79,6 +92,7 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
     onToggleCollapse,
     onGenerateHeadingFromLongNode,
     onDropImportedChatNode,
+    onRunCodex,
   }: {
     groups: Array<{ id: string; title: string }>
     tasks: Array<{ id: string; title: string }>
@@ -87,6 +101,7 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
     onToggleCollapse: (nodeId: string) => void
     onGenerateHeadingFromLongNode?: (nodeId: string) => void
     onDropImportedChatNode?: (payload: { taskId: string; targetId: string; position: "as-child" }) => void
+    onRunCodex?: (taskId: string) => void
   }) => (
     <>
       <div
@@ -109,6 +124,9 @@ vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
         onClick={() => onDropImportedChatNode?.({ taskId: "chat-node-1", targetId: "root-1", position: "as-child" })}
       >
         取り込みチャットを配置
+      </button>
+      <button type="button" onClick={() => onRunCodex?.("chat-node-placed")}>
+        配置済みCodexノード詳細
       </button>
     </>
   ),
@@ -348,6 +366,36 @@ describe("MindMap controls", () => {
     expect(mapProps.dataset.groups).not.toContain("Codex Inbox")
     expect(mapProps.dataset.tasks).not.toContain("未配置のCodexチャット")
     expect(mapProps.dataset.tasks).toContain("配置済みCodexチャット")
+  })
+
+  test("opens the chat history detail from a placed Codex node action", () => {
+    const placedChat = {
+      ...task,
+      id: "chat-node-placed",
+      title: "配置済みCodexチャット",
+      parent_task_id: "root-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      codex_thread_id: "thread-placed",
+      codex_status: "awaiting_approval",
+      deleted_at: null,
+    } as Task
+
+    render(
+      <MindMap
+        project={project}
+        projects={[project]}
+        groups={[task]}
+        tasks={[placedChat]}
+        allTasks={[task, placedChat]}
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "配置済みCodexノード詳細" }))
+
+    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    expect(screen.getByTestId("selected-codex-chat-detail")).toHaveTextContent("配置済みCodexチャット")
+    expect(screen.getByText("配置済み: Root task")).toBeInTheDocument()
   })
 
   test("turns a long node title into memo detail and saves the generated heading", async () => {

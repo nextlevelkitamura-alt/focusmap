@@ -46,7 +46,7 @@ const chatItems: CodexChatImportItem[] = [
     projectTitle: "仕事",
     placementLabel: "未配置",
     statusLabel: "確認待ち",
-    updatedLabel: "3時間",
+    updatedLabel: "3時間前",
     placed: false,
   },
 ]
@@ -58,8 +58,15 @@ function jsonResponse(data: unknown, ok = true) {
   }
 }
 
+function minutesAgo(minutes: number) {
+  return new Date(Date.now() - minutes * 60 * 1000).toISOString()
+}
+
 function renderSidebar(options: {
   chatItems?: CodexChatImportItem[]
+  detailItems?: CodexChatImportItem[]
+  initialSelectedChatId?: string | null
+  onInitialSelectedChatClear?: ReturnType<typeof vi.fn>
   onPlaceChatItem?: ReturnType<typeof vi.fn>
   onChatDragStateChange?: ReturnType<typeof vi.fn>
 } = {}) {
@@ -76,6 +83,9 @@ function renderSidebar(options: {
       importEnabled
       importOwnerLabel="仕事"
       chatItems={options.chatItems ?? chatItems}
+      detailItems={options.detailItems}
+      initialSelectedChatId={options.initialSelectedChatId}
+      onInitialSelectedChatClear={options.onInitialSelectedChatClear}
       onClose={onClose}
       onSelectRepoPath={onSelectRepoPath}
       onToggleImport={onToggleImport}
@@ -187,7 +197,7 @@ describe("CodexChatImportSidebar", () => {
               body: "右側サイドバーにチャット一覧を表示する",
               importance: "normal",
               metadata: {},
-              created_at: "2026-06-12T00:00:00.000Z",
+              created_at: minutesAgo(9),
             },
             {
               id: "msg-status",
@@ -198,7 +208,7 @@ describe("CodexChatImportSidebar", () => {
               body: "プロジェクト更新完了",
               importance: "normal",
               metadata: {},
-              created_at: "2026-06-12T00:05:00.000Z",
+              created_at: minutesAgo(1),
             },
             {
               id: "msg-codex",
@@ -209,7 +219,7 @@ describe("CodexChatImportSidebar", () => {
               body: "DBに保存してから表示します",
               importance: "normal",
               metadata: {},
-              created_at: "2026-06-12T00:10:00.000Z",
+              created_at: minutesAgo(5),
             },
           ],
         })
@@ -234,7 +244,8 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("AIチャット履歴")).not.toBeInTheDocument()
     expect(screen.getByText("確認待ち")).toBeInTheDocument()
     expect(screen.getByText("focusmap")).toBeInTheDocument()
-    expect(screen.getByText("3時間")).toBeInTheDocument()
+    expect(screen.getAllByText("5分前").length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
     expect(screen.getByRole("region", { name: "AI要約" })).toBeInTheDocument()
     expect(screen.getByText("やったこと")).toBeInTheDocument()
     expect(screen.getByText("変更・判断")).toBeInTheDocument()
@@ -257,9 +268,98 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
   })
 
+  test("opens a placed chat detail selected by the parent without adding it to the import list", async () => {
+    const placedChat: CodexChatImportItem = {
+      ...chatItems[0],
+      id: "placed-chat-node",
+      aiTaskId: "ai-task-placed",
+      title: "配置済みCodex作業",
+      placementLabel: "配置済み: プロジェクト直下",
+      placed: true,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          ai_task_id: "ai-task-placed",
+          include_visible_activity: true,
+        })
+        return jsonResponse({ success: true, task_id: "ai-task-placed" })
+      }
+      if (url === "/api/ai-tasks/ai-task-placed/activity") {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-placed",
+              task_id: "ai-task-placed",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "配置済みノードの履歴を表示します",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:10:00.000Z",
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderSidebar({
+      detailItems: [placedChat],
+      initialSelectedChatId: "placed-chat-node",
+    })
+
+    await waitFor(() => {
+      expect(screen.getAllByText("配置済みノードの履歴を表示します").length).toBeGreaterThan(0)
+    })
+    expect(screen.getAllByText("配置済みCodex作業").length).toBeGreaterThan(0)
+    expect(screen.getByText("配置済み: プロジェクト直下")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "ノードへ配置" })).not.toBeInTheDocument()
+    expect(screen.getByText("配置済みのチャット履歴")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }))
+    expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
+    expect(screen.queryByText("配置済みCodex作業")).not.toBeInTheDocument()
+  })
+
   test("saves visible Codex activity in the background when Mac is online", async () => {
     runnerStatusMock.ready = true
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ success: true, task_id: "ai-task-1" }))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
+      if (url === "/api/ai-tasks/ai-task-1/activity") {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-status-newer",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "status",
+              kind: "progress",
+              body: "Codex セッションは確認待ちです",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(1),
+            },
+            {
+              id: "msg-codex-latest",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "一覧の時刻を最新メッセージに寄せます",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(5),
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
     vi.stubGlobal("fetch", fetchMock)
 
     renderSidebar()
@@ -272,6 +372,11 @@ describe("CodexChatImportSidebar", () => {
       ai_task_id: "ai-task-1",
       include_visible_activity: true,
     })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
+      expect(screen.getByText("5分前")).toBeInTheDocument()
+    })
+    expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
   })
 
   test("places the selected chat from the detail footer", async () => {

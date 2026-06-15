@@ -21,6 +21,7 @@ import {
 } from "@/lib/mindmap-viewport";
 import type { CodexTaskUiStateName } from "@/lib/codex-run-state";
 import {
+    getCodexMonitorUiStatus,
     codexMonitorToneClass,
     codexMonitorUiLabel,
 } from "@/lib/task-progress-ui";
@@ -508,6 +509,10 @@ function CustomTaskNode({
             title: "Codex 完了済み",
         }
         : baseNodeCodexBadge;
+    const opensCodexChatDetail = Boolean(
+        (taskProgress && getCodexMonitorUiStatus(taskProgress.status) !== "unsent") ||
+        (codexState && codexState.state !== "prompt_waiting")
+    );
     const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(codexState, taskProgress);
     const showLongNodeHeadingAction =
         !isEditing &&
@@ -1056,8 +1061,8 @@ function CustomTaskNode({
                         )}
                         onPointerDown={(event) => event.stopPropagation()}
                         onClick={handleOpenNodeDetail}
-                        title="ノード詳細"
-                        aria-label="ノード詳細を開く"
+                        title={opensCodexChatDetail ? "Codexチャット履歴" : "ノード詳細"}
+                        aria-label={opensCodexChatDetail ? "Codexチャット履歴を開く" : "ノード詳細を開く"}
                     >
                         <MoreVertical className="h-3.5 w-3.5" />
                     </button>
