@@ -649,18 +649,22 @@ export function MobileMindMap({
 
     const codexChatImportItems = useMemo<TaskProgressImportItem[]>(() => {
         if (!selectedCodexImportRepoPath) return []
-        if (codexInboxGroupIds.size === 0) return []
 
         return repoScopedCodexTaskNodes
             .filter(task => task.source === "codex_app_thread" && task.deleted_at == null)
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
-            .filter(task => !!task.parent_task_id && codexInboxGroupIds.has(task.parent_task_id))
             .filter(task => normalizeRepoPath(task.codex_work_dir) === selectedCodexImportRepoPath)
             .flatMap(task => {
+                const placedTask = applyOptimisticCodexPlacement(task)
                 const progressTask = taskProgressByNodeId[task.id]
                 const codexRun = codexRunByNodeId[task.id]
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === "unsent") return []
                 if (codexRun?.state === "prompt_waiting") return []
+                const parentTask = placedTask.parent_task_id ? repoScopedTasksById.get(placedTask.parent_task_id) ?? taskMap.get(placedTask.parent_task_id) ?? null : null
+                const placed = !placedTask.parent_task_id || !codexInboxGroupIds.has(placedTask.parent_task_id)
+                const placementLabel = placed
+                    ? `配置済み: ${parentTask?.title?.trim() || "プロジェクト直下"}`
+                    : "未配置"
                 return [{
                     id: task.id,
                     aiTaskId: progressTask?.id ?? codexRun?.taskId ?? null,
@@ -670,6 +674,8 @@ export function MobileMindMap({
                     threadId: task.codex_thread_id?.trim() || null,
                     status: progressTask?.status ?? codexRun?.state ?? null,
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
+                    placementLabel,
+                    placed,
                     updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
                     updatedAtIso: task.updated_at ?? task.created_at,
                 }]
@@ -682,10 +688,12 @@ export function MobileMindMap({
     }, [
         codexInboxGroupIds,
         codexRunByNodeId,
+        applyOptimisticCodexPlacement,
         hiddenCodexChatImportIds,
         repoScopedCodexTaskNodes,
         repoScopedTasksById,
         selectedCodexImportRepoPath,
+        taskMap,
         taskProgressByNodeId,
     ])
 
@@ -821,11 +829,6 @@ export function MobileMindMap({
         if (taskId === targetId) return
         if (isDescendant(taskId, targetId)) return
 
-        setHiddenCodexChatImportIds(prev => {
-            const next = new Set(prev)
-            next.add(taskId)
-            return next
-        })
         setPlacingCodexImportTaskId(null)
         setTaskCollapsed(targetId, false)
         setOptimisticCodexPlacements(prev => ({
@@ -844,11 +847,6 @@ export function MobileMindMap({
             setSelectedNodeId(taskId)
             setSelectedNodeIds(new Set([taskId]))
         } catch (error) {
-            setHiddenCodexChatImportIds(prev => {
-                const next = new Set(prev)
-                next.delete(taskId)
-                return next
-            })
             setOptimisticCodexPlacements(prev => {
                 if (!prev[taskId]) return prev
                 const next = { ...prev }

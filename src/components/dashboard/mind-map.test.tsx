@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 
 vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
@@ -19,15 +19,21 @@ vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
     chatItems,
     onClose,
     onDeleteChatItem,
+    onPlaceChatItem,
   }: {
-    chatItems?: Array<{ id: string; title: string }>
+    chatItems?: Array<{ id: string; title: string; placementLabel?: string }>
     onClose: () => void
     onDeleteChatItem?: (taskId: string) => void
+    onPlaceChatItem?: (taskId: string) => void
   }) => (
     <aside aria-label="チャット取り込み">
       {chatItems?.map(item => (
         <div key={item.id}>
           <span>{item.title}</span>
+          {item.placementLabel && <span>{item.placementLabel}</span>}
+          <button type="button" onClick={() => onPlaceChatItem?.(item.id)}>
+            取り込みチャットを配置
+          </button>
           <button type="button" onClick={() => onDeleteChatItem?.(item.id)}>
             delete {item.title}
           </button>
@@ -255,6 +261,24 @@ describe("MindMap controls", () => {
       deleted_at: null,
       updated_at: "2026-06-11T00:00:00.000Z",
     } as Task
+    const placedParent = {
+      ...task,
+      id: "placed-parent-1",
+      title: "既存の親",
+      project_id: "project-2",
+      source: "manual",
+    } as Task
+    const placedChat = {
+      ...task,
+      id: "chat-node-placed",
+      title: "配置済みの相談",
+      project_id: "project-2",
+      parent_task_id: "placed-parent-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      deleted_at: null,
+      updated_at: "2026-06-12T00:00:00.000Z",
+    } as Task
 
     render(
       <MindMap
@@ -262,19 +286,24 @@ describe("MindMap controls", () => {
         projects={[project, otherProject]}
         groups={[task]}
         tasks={[]}
-        allTasks={[task, inboxGroup, importedChat]}
+        allTasks={[task, inboxGroup, importedChat, placedParent, placedChat]}
         onKanbanUpdateTask={onKanbanUpdateTask}
       />
     )
 
     fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
     expect(screen.getByText("SNS運用の相談")).toBeInTheDocument()
+    expect(screen.getByText("未配置")).toBeInTheDocument()
+    expect(screen.getByText("配置済みの相談")).toBeInTheDocument()
+    expect(screen.getByText("配置済み: 既存の親")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "取り込みチャットを配置" }))
+    const unplacedRow = screen.getByText("SNS運用の相談").closest("div")
+    expect(unplacedRow).not.toBeNull()
+    fireEvent.click(within(unplacedRow as HTMLElement).getByRole("button", { name: "取り込みチャットを配置" }))
 
     await waitFor(() => {
       expect(onKanbanUpdateTask).toHaveBeenCalledWith("chat-node-1", {
-        parent_task_id: "root-1",
+        parent_task_id: null,
         project_id: "project-1",
       })
     })

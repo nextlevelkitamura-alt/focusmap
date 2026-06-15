@@ -601,12 +601,16 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             .filter(task => task.source === 'codex_app_thread' && task.deleted_at == null)
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
             .filter(task => !selectedCodexImportRepoPath || (task.codex_work_dir ?? '').trim() === selectedCodexImportRepoPath)
-            .filter(task => !!task.parent_task_id && codexInboxGroupIds.has(task.parent_task_id))
             .flatMap(task => {
                 const progressTask = taskProgressByNodeId[task.id];
                 const codexRun = codexRunByNodeId[task.id];
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
                 if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
+                const parentTask = task.parent_task_id ? repoScopedTasksById.get(task.parent_task_id) ?? null : null;
+                const placed = !task.parent_task_id || !codexInboxGroupIds.has(task.parent_task_id);
+                const placementLabel = placed
+                    ? `配置済み: ${parentTask?.title?.trim() || 'プロジェクト直下'}`
+                    : '未配置';
                 return [{
                     id: task.id,
                     aiTaskId: progressTask?.id ?? codexRun?.taskId ?? null,
@@ -616,10 +620,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     threadId: task.codex_thread_id?.trim() || null,
                     status: progressTask?.status ?? codexRun?.state ?? null,
                     projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
-                    placementLabel: '未配置',
+                    placementLabel,
                     statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
                     updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
-                    placed: false,
+                    placed,
                 }];
             })
             .sort((a, b) => {
@@ -1742,12 +1746,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             project_id: project.id,
         };
 
-        setHiddenCodexChatImportIds(prev => {
-            const next = new Set(prev);
-            next.add(taskId);
-            return next;
-        });
-
         try {
             if (parentTaskId) {
                 setTaskCollapsed(parentTaskId, false);
@@ -1758,11 +1756,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 focusNodeWithPollingV2(taskId, 300, false);
             }
         } catch (error) {
-            setHiddenCodexChatImportIds(prev => {
-                const next = new Set(prev);
-                next.delete(taskId);
-                return next;
-            });
             console.error('[MindMap] Failed to place imported Codex chat:', error);
         }
     }, [

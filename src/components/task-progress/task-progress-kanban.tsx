@@ -92,6 +92,8 @@ export type TaskProgressImportItem = {
   threadId?: string | null
   status?: TaskProgressStatus | string | null
   statusLabel: string | null
+  placementLabel?: string | null
+  placed?: boolean
   updatedLabel: string
   updatedAtIso?: string | null
 }
@@ -1774,6 +1776,14 @@ export function TaskProgressKanban({
                           )}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                          {item.placementLabel && (
+                            <span className={cn(
+                              "rounded-full px-1.5 py-0.5 font-medium",
+                              item.placed ? "bg-emerald-400/10 text-emerald-700 dark:text-emerald-300" : "bg-sky-400/10 text-sky-700 dark:text-sky-300",
+                            )}>
+                              {item.placementLabel}
+                            </span>
+                          )}
                           {item.repoPath && (
                             <span className="rounded-full bg-muted px-1.5 py-0.5" title={item.repoPath}>
                               {repoNameFromPath(item.repoPath)}
