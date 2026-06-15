@@ -134,6 +134,11 @@ export function promptFromImportedThread(thread: ImportedCodexThread) {
     ?? `Codex thread ${thread.id}`
 }
 
+export function isDirectCodexThreadImportable(thread: ImportedCodexThread) {
+  const firstUserMessage = compactString(thread.first_user_message, MAX_PROMPT_CHARS)
+  return !!firstUserMessage && !isInternalCodexUserMessage(firstUserMessage)
+}
+
 export function memoFromImportedThread(thread: ImportedCodexThread) {
   const lines = [
     `# ${titleFromImportedThread(thread)}`,
@@ -562,9 +567,8 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const generatedTitle = codexGeneratedTitleFromImportedThread(thread)
-    if (!generatedTitle) {
-      return NextResponse.json({ imported: false, reason: 'codex_generated_title_unavailable' })
+    if (!isDirectCodexThreadImportable(thread)) {
+      return NextResponse.json({ imported: false, reason: 'first_user_message_unavailable' })
     }
 
     const { project, reason } = await findEnabledImportProject(supabase, token, thread)

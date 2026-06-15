@@ -283,12 +283,12 @@ describe('codex-thread-monitor state detection', () => {
     expect(isOrphanThreadImportCandidate({
       ...base,
       title: null,
-    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
     expect(isOrphanThreadImportCandidate({
       ...base,
       title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
       first_user_message: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
-    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
   });
 
   test('does not import Focusmap manual handoff threads as orphan repo chats', () => {

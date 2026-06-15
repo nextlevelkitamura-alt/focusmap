@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   codexGeneratedTitleFromImportedThread,
   importedThreadResult,
+  isDirectCodexThreadImportable,
   isImportedThreadMatchingManualHandoff,
   isThreadWithinProjectImportScope,
   linkedManualHandoffThreadResult,
@@ -59,17 +60,45 @@ describe('codex orphan thread import helpers', () => {
   })
 
   test('does not use first user message for display title but keeps it as prompt', () => {
-    expect(titleFromImportedThread({
+    const untitledThread = {
       ...thread,
       title: null,
       first_user_message: '\n未分類のCodex依頼\n本文',
-    })).toBe('Codex thread 019ea7d8')
+    }
+
+    expect(titleFromImportedThread(untitledThread)).toBe('Codex thread 019ea7d8')
+    expect(isDirectCodexThreadImportable(untitledThread)).toBe(true)
 
     expect(promptFromImportedThread({
       ...thread,
       first_user_message: null,
       preview: 'preview body',
     })).toBe('preview body')
+  })
+
+  test('can import direct Codex threads before a generated title is available', () => {
+    const firstUserMessage = 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。'
+
+    expect(isDirectCodexThreadImportable({
+      ...thread,
+      title: null,
+      first_user_message: firstUserMessage,
+    })).toBe(true)
+    expect(isDirectCodexThreadImportable({
+      ...thread,
+      title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
+      first_user_message: firstUserMessage,
+    })).toBe(true)
+    expect(isDirectCodexThreadImportable({
+      ...thread,
+      title: null,
+      first_user_message: '# AGENTS.md instructions\n<environment_context>',
+    })).toBe(false)
+    expect(isDirectCodexThreadImportable({
+      ...thread,
+      title: null,
+      first_user_message: null,
+    })).toBe(false)
   })
 
   test('stores imported thread state with codex thread id and source task id', () => {

@@ -99,6 +99,17 @@ describe('shouldApplyCodexThreadTitleToSourceTask', () => {
     })).toBe(true)
   })
 
+  test('updates fallback short-id titles once Codex generates a title', () => {
+    expect(shouldApplyCodexThreadTitleToSourceTask({
+      currentTitle: 'Codex thread 019ea7d8',
+      nextTitle: 'リポ監視の安定化',
+      prompt: 'リポ監視が安定しないので直して',
+      previousResult: {
+        codex_thread_id: '019ea7d8-8e53-7413-a548-739b19820e6c',
+      },
+    })).toBe(true)
+  })
+
   test('does not overwrite a custom source task title', () => {
     expect(shouldApplyCodexThreadTitleToSourceTask({
       currentTitle: '自分で付けた見出し',

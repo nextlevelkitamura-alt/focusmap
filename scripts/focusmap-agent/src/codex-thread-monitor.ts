@@ -443,7 +443,6 @@ export function isOrphanThreadImportCandidate(
   if (!matchingScope.enabled_since && nowMs - updatedMs > windowMs) return false;
   const firstUserMessage = compactText(row.first_user_message ?? '', 400);
   if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
-  if (!codexThreadGeneratedTitle(row)) return false;
   return true;
 }
 
