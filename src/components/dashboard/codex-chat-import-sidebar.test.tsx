@@ -101,6 +101,12 @@ function renderSidebar(options: {
   return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onPlaceChatItem, onReturnPlacedChatItem, onClose }
 }
 
+function buttonContainingText(text: string | RegExp) {
+  const button = screen.getByText(text).closest("button")
+  if (!button) throw new Error(`button not found for text: ${String(text)}`)
+  return button
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   runnerStatusMock.ready = false
@@ -116,23 +122,47 @@ describe("CodexChatImportSidebar", () => {
     renderSidebar()
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
-    expect(screen.getByRole("switch", { name: "リポ監視" })).toBeChecked()
-    expect(screen.getByRole("button", { name: /既存リポ選択/ })).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "対象リポを選択 focusmap" })).not.toBeInTheDocument()
+    expect(screen.getByLabelText("リポ監視")).toBeChecked()
+    expect(buttonContainingText("既存リポ選択")).toBeInTheDocument()
+    expect(screen.queryByLabelText("対象リポを選択 focusmap")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
-    expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
-    expect(screen.getByText("未配置")).toBeInTheDocument()
-    expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
     const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
+    expect(within(row).getByText("Codexスレッド連携UI")).toBeInTheDocument()
+    expect(within(row).getByText("未配置")).toBeInTheDocument()
+    expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
     expect(within(row).getByText("focusmap")).toBeInTheDocument()
     expect(within(row).queryByText("仕事")).not.toBeInTheDocument()
-    expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
+    expect(within(row).getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
       "href",
       "codex://threads/thread-abcdef123456",
     )
     expect(screen.getByRole("button", { name: "チャットを削除 Codexスレッド連携UI" })).toBeVisible()
-    expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
+    expect(buttonContainingText("閉じる")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
+  })
+
+  test("renders running chats as green large history cards with a fallback status pill", () => {
+    renderSidebar({
+      chatItems: [
+        {
+          ...chatItems[0],
+          id: "chat-running",
+          title: "AI要約の横幅を拡張",
+          status: "running",
+          statusLabel: null,
+          placementLabel: "配置済み: アプリの修正",
+          placed: true,
+          updatedLabel: "7分",
+        },
+      ],
+    })
+
+    const row = screen.getByTestId("codex-chat-import-row-chat-running")
+    expect(row.className).toContain("rounded-[18px]")
+    expect(row.className).toContain("border-emerald-400/75")
+    expect(within(row).getByLabelText("Codex 実行中")).toHaveClass("codex-monitor-running-orbit")
+    expect(within(row).getByText("実行中")).toBeInTheDocument()
+    expect(within(row).getByRole("link", { name: /Codexで開く AI要約の横幅を拡張/ }).className).toContain("min-h-12")
   })
 
   test("marks a chat card as grabbed and writes the drag payload", () => {
@@ -170,8 +200,8 @@ describe("CodexChatImportSidebar", () => {
   test("selects a repo from Focusmap agent repo candidates", async () => {
     const { onSelectRepoPath } = renderSidebar()
 
-    fireEvent.click(screen.getByRole("button", { name: /既存リポ選択/ }))
-    fireEvent.click(screen.getByRole("button", { name: "対象リポを選択 focusmap" }))
+    fireEvent.click(buttonContainingText("既存リポ選択"))
+    fireEvent.click(screen.getByLabelText("対象リポを選択 focusmap"))
 
     await waitFor(() => {
       expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/focusmap")

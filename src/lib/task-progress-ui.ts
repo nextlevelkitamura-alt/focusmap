@@ -41,7 +41,7 @@ export function codexMonitorUiLabel(status: TaskProgressStatus | string | null |
 export function codexMonitorToneClass(status: TaskProgressStatus | string | null | undefined) {
   switch (getCodexMonitorUiStatus(status)) {
     case "running":
-      return "border-emerald-400/45 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-200/85"
+      return "border-emerald-400/65 bg-emerald-500/[0.12] text-emerald-700 dark:text-emerald-100"
     case "connection_failed":
       return "border-red-400/70 bg-red-500/10 text-red-700 dark:text-red-200"
     case "unsent":
@@ -57,7 +57,7 @@ export function codexMonitorToneClass(status: TaskProgressStatus | string | null
 export function codexMonitorCardClass(status: TaskProgressStatus | string | null | undefined) {
   switch (getCodexMonitorUiStatus(status)) {
     case "running":
-      return "border-emerald-400/55 bg-emerald-500/[0.07] shadow-[0_0_14px_rgba(16,185,129,0.15)]"
+      return "border-emerald-400/75 bg-emerald-500/[0.11] shadow-[0_0_22px_rgba(16,185,129,0.2)]"
     case "connection_failed":
       return "border-red-400/70 bg-red-500/[0.08] shadow-[0_0_16px_rgba(248,113,113,0.16)]"
     case "unsent":
