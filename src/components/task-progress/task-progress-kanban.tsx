@@ -135,6 +135,8 @@ type TaskProgressKanbanProps = {
   onSelectSpace?: (id: string | null) => void
   onSelectProject?: (id: string | null) => void
   closeSignal?: number
+  desktopOpenSignal?: number
+  desktopTriggerVisible?: boolean
   isMobile?: boolean
   mobileOpenSignal?: number
   mobileTriggerVisible?: boolean
@@ -1137,6 +1139,8 @@ export function TaskProgressKanban({
   onSelectSpace,
   onSelectProject,
   closeSignal = 0,
+  desktopOpenSignal,
+  desktopTriggerVisible = true,
   isMobile = false,
   mobileOpenSignal,
   mobileTriggerVisible = true,
@@ -1164,6 +1168,7 @@ export function TaskProgressKanban({
   const [sourceTaskStatusOverrides, setSourceTaskStatusOverrides] = useState<Map<string, string>>(new Map())
   const [hiddenSourceTaskIds, setHiddenSourceTaskIds] = useState<Set<string>>(new Set())
   const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const lastDesktopOpenSignalRef = useRef<number | undefined>(desktopOpenSignal)
   const lastMobileOpenSignalRef = useRef<number | undefined>(mobileOpenSignal)
   const desktopResizeCleanupRef = useRef<(() => void) | null>(null)
   const runnerState = useRunnerConnection()
@@ -1205,6 +1210,14 @@ export function TaskProgressKanban({
       }
     })
   }, [closeSignal])
+
+  useEffect(() => {
+    if (desktopOpenSignal == null) return
+    if (lastDesktopOpenSignalRef.current === desktopOpenSignal) return
+    lastDesktopOpenSignalRef.current = desktopOpenSignal
+    if (isMobile) return
+    setDesktopExpanded(true)
+  }, [desktopOpenSignal, isMobile, setDesktopExpanded])
 
   const effectiveSourceTasksById = useMemo(() => {
     if (sourceTaskStatusOverrides.size === 0 && hiddenSourceTaskIds.size === 0) return sourceTasksById
@@ -1852,6 +1865,8 @@ export function TaskProgressKanban({
       </>
     )
   }
+
+  if (!expanded && !desktopTriggerVisible) return null
 
   return (
     <section className="relative shrink-0 border-t bg-background/95 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur">

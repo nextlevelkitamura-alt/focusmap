@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, RefreshCw, Search, Trash2 } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, PanelBottomOpen, RefreshCw, Search, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -55,6 +55,7 @@ type CodexChatImportSidebarProps = {
   onPlaceChatItem?: (taskId: string) => Promise<void> | void
   onReturnPlacedChatItem?: (taskId: string) => Promise<void> | void
   onChatDragStateChange?: (state: { itemId: string; title: string } | null) => void
+  onOpenBoard?: () => void
 }
 
 type DesktopFolderPickerResult = {
@@ -476,6 +477,7 @@ export function CodexChatImportSidebar({
   onPlaceChatItem,
   onReturnPlacedChatItem,
   onChatDragStateChange,
+  onOpenBoard,
 }: CodexChatImportSidebarProps) {
   const [pickerPending, setPickerPending] = React.useState(false)
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false)
@@ -965,6 +967,19 @@ export function CodexChatImportSidebar({
               </div>
             )}
           </div>
+
+          {onOpenBoard && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 w-full justify-start border-[#303030] bg-[#111111] px-2.5 text-zinc-200 hover:bg-white/10 hover:text-white"
+              onClick={onOpenBoard}
+            >
+              <PanelBottomOpen className="h-3.5 w-3.5" />
+              <span className="ml-1.5 text-xs font-semibold">Codex看板を開く</span>
+            </Button>
+          )}
 
           {(repoError || reposError) && (
             <p className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">

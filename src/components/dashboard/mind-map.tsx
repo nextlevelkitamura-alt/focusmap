@@ -210,6 +210,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     // MindMap Display Settings
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
     const [kanbanCloseSignal, setKanbanCloseSignal] = useState(0);
+    const [kanbanOpenSignal, setKanbanOpenSignal] = useState(0);
     const [codexRepoPathOverride, setCodexRepoPathOverride] = useState<string | null | undefined>(undefined);
     const [codexImportRepoPathOverride, setCodexImportRepoPathOverride] = useState<string | null | undefined>(undefined);
     const [codexThreadImportOverride, setCodexThreadImportOverride] = useState<boolean | null>(null);
@@ -240,6 +241,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const visibleMapTasks = useMemo(
         () => tasks.filter(task => !hiddenCodexInboxTaskIds.has(task.id)),
         [hiddenCodexInboxTaskIds, tasks]
+    );
+    const visibleMapNodes = useMemo(
+        () => [...visibleMapGroups, ...visibleMapTasks],
+        [visibleMapGroups, visibleMapTasks]
     );
     const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects]);
     const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project?.space_id ?? null);
@@ -355,10 +360,13 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         kanbanProjects.find(candidate => candidate.id === kanbanProjectId) ?? project
     ), [kanbanProjectId, kanbanProjects, project]);
     const kanbanTaskNodes = useMemo(() => {
-        if (!kanbanProject?.id) return mindMapTaskNodes;
-        if (kanbanProject.id === project.id) return mindMapTaskNodes;
-        return allTasks.filter(task => task.project_id === kanbanProject.id && task.deleted_at === null);
-    }, [allTasks, kanbanProject?.id, mindMapTaskNodes, project.id]);
+        if (!kanbanProject?.id) return visibleMapNodes;
+        if (kanbanProject.id === project.id) return visibleMapNodes;
+
+        const projectTasks = allTasks.filter(task => task.project_id === kanbanProject.id && task.deleted_at === null);
+        const hiddenInboxIds = getHiddenCodexInboxTaskIds(projectTasks);
+        return projectTasks.filter(task => !hiddenInboxIds.has(task.id));
+    }, [allTasks, kanbanProject?.id, project.id, visibleMapNodes]);
     const knownCodexTaskNodes = useMemo(() => {
         const map = new Map<string, Task>();
         for (const task of mindMapTaskNodes) map.set(task.id, task);
@@ -1630,6 +1638,11 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const closeKanbanFromMapInteraction = useCallback(() => {
         setKanbanCloseSignal(signal => signal + 1);
     }, []);
+    const openKanbanFromCodexSidebar = useCallback(() => {
+        setIsCodexChatImportSidebarOpen(false);
+        setSelectedCodexChatDetailId(null);
+        setKanbanOpenSignal(signal => signal + 1);
+    }, []);
 
     const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
         if (getIsTypingTarget(event.target)) return;
@@ -2223,6 +2236,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 onPlaceChatItem={(taskId) => handleDropImportedChatNode({ taskId, targetId: 'project-root', position: 'as-child' })}
                                 onReturnPlacedChatItem={handleReturnCodexChatToHistory}
                                 onChatDragStateChange={setActiveCodexChatDrag}
+                                onOpenBoard={openKanbanFromCodexSidebar}
                             />
                         </div>
                     )}
@@ -2237,6 +2251,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     onSelectSpace={setKanbanSpaceId}
                     onSelectProject={setKanbanProjectId}
                     closeSignal={kanbanCloseSignal}
+                    desktopOpenSignal={kanbanOpenSignal}
+                    desktopTriggerVisible={false}
                     isMobile={isNarrow}
                     isLoading={isTaskProgressSnapshotLoading}
                     isRefreshing={isRefreshingTaskProgressSnapshot}
