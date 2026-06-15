@@ -294,8 +294,8 @@ describe("MindMap controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
     expect(screen.getByText("SNS運用の相談")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
-    expect(screen.getByText("配置済みの相談")).toBeInTheDocument()
-    expect(screen.getByText("配置済み: 既存の親")).toBeInTheDocument()
+    expect(screen.queryByText("配置済みの相談")).not.toBeInTheDocument()
+    expect(screen.queryByText("配置済み: 既存の親")).not.toBeInTheDocument()
 
     const unplacedRow = screen.getByText("SNS運用の相談").closest("div")
     expect(unplacedRow).not.toBeNull()

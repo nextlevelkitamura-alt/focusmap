@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { CODEX_CHAT_IMPORT_DRAG_TYPE, readCodexChatImportDragPayload } from "@/lib/codex-chat-import-dnd"
 import { CodexChatImportSidebar, type CodexChatImportItem } from "./codex-chat-import-sidebar"
@@ -110,10 +110,14 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
+    const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
+    expect(within(row).getByText("focusmap")).toBeInTheDocument()
+    expect(within(row).queryByText("仕事")).not.toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
       "href",
       "codex://threads/thread-abcdef123456",
     )
+    expect(screen.getByRole("button", { name: "チャットを削除 Codexスレッド連携UI" })).toBeVisible()
     expect(screen.getByRole("button", { name: "閉じる" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
   })
@@ -368,6 +372,21 @@ describe("CodexChatImportSidebar", () => {
 
     await waitFor(() => {
       expect(onDeleteChatItem).toHaveBeenCalledWith("chat-node-1")
+    })
+  })
+
+  test("opens the exact Codex thread through the Focusmap Mac bridge", async () => {
+    const openExternal = vi.fn().mockResolvedValue(true)
+    Object.defineProperty(window, "focusmapDesktop", {
+      configurable: true,
+      value: { openExternal },
+    })
+    renderSidebar()
+
+    fireEvent.click(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ }))
+
+    await waitFor(() => {
+      expect(openExternal).toHaveBeenCalledWith("codex://threads/thread-abcdef123456")
     })
   })
 })

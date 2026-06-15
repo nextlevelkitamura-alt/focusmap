@@ -61,6 +61,7 @@ type DesktopFolderPickerResult = {
 
 type FocusmapDesktopFolderBridge = {
   chooseFolder?: () => Promise<DesktopFolderPickerResult>
+  openExternal?: (url: string) => Promise<unknown>
 }
 
 type ChatDetailState = {
@@ -685,6 +686,16 @@ export function CodexChatImportSidebar({
   const selectedSummaryColumns = selectedChatItem
     ? buildCodexChatSummaryColumns(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
     : []
+  const openCodexThread = React.useCallback((event: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    event.stopPropagation()
+    const bridge = focusmapDesktopFolderBridge()
+    if (!bridge?.openExternal) return
+    event.preventDefault()
+    void bridge.openExternal(href).catch(error => {
+      console.error("[CodexChatImportSidebar] Failed to open Codex thread via desktop bridge:", error)
+      if (typeof window !== "undefined") window.location.href = href
+    })
+  }, [])
   const finishChatDrag = React.useCallback(() => {
     setDraggingChatId(null)
     onChatDragStateChange?.(null)
@@ -860,9 +871,9 @@ export function CodexChatImportSidebar({
                       )}>
                         {selectedChatItem.placementLabel}
                       </span>
-                      {(selectedChatItem.repoPath || selectedChatItem.projectTitle) && (
+                      {selectedChatItem.repoPath && (
                         <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
-                          <span className="truncate">{selectedChatItem.repoPath ? repoNameFromPath(selectedChatItem.repoPath) : selectedChatItem.projectTitle}</span>
+                          <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath)}</span>
                         </span>
                       )}
                       {selectedChatItem.updatedLabel && (
@@ -884,6 +895,7 @@ export function CodexChatImportSidebar({
                         href={selectedThreadHref}
                         className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                         aria-label={`Codexで開く ${selectedChatItem.title}`}
+                        onClick={event => openCodexThread(event, selectedThreadHref)}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                         Codexで開く
@@ -1009,25 +1021,7 @@ export function CodexChatImportSidebar({
                         <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", isDragging && "text-sky-300")} />
                         <div className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {item.updatedLabel && <span className="text-[10px] text-zinc-500">{item.updatedLabel}</span>}
-                        {onDeleteChatItem && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="hidden h-8 w-8 text-zinc-500 hover:bg-red-500/10 hover:text-red-300 group-hover:inline-flex"
-                            aria-label={`チャットを削除 ${item.title}`}
-                            onClick={event => {
-                              event.preventDefault()
-                              event.stopPropagation()
-                              void onDeleteChatItem(item.id)
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </div>
+                      {item.updatedLabel && <span className="shrink-0 text-[10px] text-zinc-500">{item.updatedLabel}</span>}
                     </div>
                     {item.snippet && (
                       <div className="line-clamp-2 text-xs leading-5 text-zinc-500">
@@ -1052,23 +1046,38 @@ export function CodexChatImportSidebar({
                           {repoNameFromPath(item.repoPath)}
                         </span>
                       )}
-                      {item.projectTitle && (
-                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
-                          {item.projectTitle}
-                        </span>
-                      )}
                     </div>
-                    {threadHref && (
-                      <a
-                        href={threadHref}
-                        className="mt-1 inline-flex min-h-8 w-fit items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20"
-                        onClick={event => event.stopPropagation()}
-                        draggable={false}
-                        aria-label={`Codexで開く ${item.title}`}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Codexで開く
-                      </a>
+                    {(threadHref || onDeleteChatItem) && (
+                      <div className="mt-1 flex min-h-8 items-end gap-2">
+                        {threadHref && (
+                          <a
+                            href={threadHref}
+                            className="inline-flex min-h-8 w-fit items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                            onClick={event => openCodexThread(event, threadHref)}
+                            draggable={false}
+                            aria-label={`Codexで開く ${item.title}`}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            Codexで開く
+                          </a>
+                        )}
+                        {onDeleteChatItem && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="ml-auto h-8 w-8 shrink-0 text-zinc-500 hover:bg-red-500/10 hover:text-red-300 focus-visible:ring-red-300"
+                            aria-label={`チャットを削除 ${item.title}`}
+                            onClick={event => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              void onDeleteChatItem(item.id)
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                   )
