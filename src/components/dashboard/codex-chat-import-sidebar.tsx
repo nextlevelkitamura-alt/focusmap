@@ -34,6 +34,7 @@ export type CodexChatImportItem = {
   placementLabel: string
   statusLabel: string | null
   updatedLabel: string | null
+  sortAt?: string | null
   placed: boolean
 }
 

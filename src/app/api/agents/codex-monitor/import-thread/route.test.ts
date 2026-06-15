@@ -30,18 +30,18 @@ describe('codex orphan thread import helpers', () => {
     })).toBe('Codex thread from app')
   })
 
-  test('does not use the first prompt line when Codex title is a raw long prompt', () => {
+  test('uses the Codex sidebar first line when title contains raw multiline prompt text', () => {
     const rawPromptThread = {
       ...thread,
-      title: 'これは長すぎるプロンプトの見出しです。Codex Desktopのsidebar titleではなく、ユーザーが入力した本文全体がそのまま入ってしまっているケースを想定します。さらに長くします。',
+      title: 'AI要約が見づらいんだけど\nどうするのがいいのかな\nその辺を考えたい\n[$grill-me]',
       first_user_message: '短い要約タイトル\n本文です',
     }
 
-    expect(codexGeneratedTitleFromImportedThread(rawPromptThread)).toBeNull()
-    expect(titleFromImportedThread(rawPromptThread)).toBe('Codex thread 019ea7d8')
+    expect(codexGeneratedTitleFromImportedThread(rawPromptThread)).toBe('AI要約が見づらいんだけど')
+    expect(titleFromImportedThread(rawPromptThread)).toBe('AI要約が見づらいんだけど')
   })
 
-  test('does not treat a truncated prompt prefix as a generated Codex title', () => {
+  test('uses a truncated prompt prefix when it is the Codex sidebar title', () => {
     const firstUserMessage = 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。'
     const promptPrefixThread = {
       ...thread,
@@ -49,8 +49,8 @@ describe('codex orphan thread import helpers', () => {
       first_user_message: firstUserMessage,
     }
 
-    expect(codexGeneratedTitleFromImportedThread(promptPrefixThread)).toBeNull()
-    expect(titleFromImportedThread(promptPrefixThread)).toBe('Codex thread 019ea7d8')
+    expect(codexGeneratedTitleFromImportedThread(promptPrefixThread)).toBe('このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう')
+    expect(titleFromImportedThread(promptPrefixThread)).toBe('このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう')
 
     expect(codexGeneratedTitleFromImportedThread({
       ...thread,

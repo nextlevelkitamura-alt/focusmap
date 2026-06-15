@@ -108,39 +108,17 @@ function compactStep(value: string, maxChars = 240): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
 }
 
-function normalizedInlineText(value: unknown, maxChars = 2_000): string | null {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const text = value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
-  return text || null;
-}
-
 function oneLineTitle(value: unknown, maxChars = 80): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   const text = value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
   return text || null;
 }
 
-function looksLikeRawPromptTitle(value: string): boolean {
-  const text = value.trim();
-  if (!text) return false;
-  if (text.includes('\n')) return true;
-  if (text.length > 90) return true;
-  return text.startsWith('# AGENTS.md instructions') || text.includes('<environment_context>');
-}
-
-function looksLikePromptPrefixTitle(title: string, firstUserMessage: unknown): boolean {
-  const normalizedTitle = normalizedInlineText(title, 240);
-  const normalizedPrompt = normalizedInlineText(firstUserMessage, 8_000);
-  if (!normalizedTitle || !normalizedPrompt) return false;
-  if (normalizedTitle.length < 24) return false;
-  return normalizedPrompt.length >= normalizedTitle.length + 12 &&
-    normalizedPrompt.startsWith(normalizedTitle);
-}
-
 export function codexThreadGeneratedTitle(row: { title?: string | null; first_user_message?: string | null }): string | null {
-  const title = oneLineTitle(row.title);
-  if (!title || looksLikeRawPromptTitle(String(row.title ?? '')) || looksLikePromptPrefixTitle(String(row.title ?? ''), row.first_user_message)) return null;
-  return title;
+  const title = compactText(row.title ?? '', 8_000);
+  if (!title || isInternalUserMessage(title)) return null;
+  const firstLine = title.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+  return oneLineTitle(firstLine);
 }
 
 function textFingerprint(value: string): string {

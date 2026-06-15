@@ -120,6 +120,19 @@ function formatChatImportUpdatedLabel(value: string | null | undefined) {
     return new Date(ms).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
 }
 
+function chatImportTimeMs(value: string | null | undefined) {
+    if (!value) return 0;
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+function compareCodexChatImportItems(a: CodexChatImportItem, b: CodexChatImportItem) {
+    const aRunning = getCodexMonitorUiStatus(a.status ?? null) === 'running' ? 0 : 1;
+    const bRunning = getCodexMonitorUiStatus(b.status ?? null) === 'running' ? 0 : 1;
+    if (aRunning !== bRunning) return aRunning - bRunning;
+    return chatImportTimeMs(b.sortAt) - chatImportTimeMs(a.sortAt);
+}
+
 type MindMapClipboardNode = {
     title: string;
     status: string;
@@ -363,7 +376,20 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         return map;
     }, [knownCodexTaskNodes, repoScopedCodexTaskNodes]);
     const kanbanSourceTasksById = useMemo(() => new Map(kanbanTaskNodes.map(task => [task.id, task])), [kanbanTaskNodes]);
-    const codexSourceTaskIds = useMemo(() => knownCodexTaskNodes.map(task => task.id).filter(Boolean), [knownCodexTaskNodes]);
+    const codexSourceTaskIds = useMemo(() => {
+        const ids = new Set<string>();
+        for (const task of knownCodexTaskNodes) ids.add(task.id);
+        for (const task of repoScopedCodexTaskNodes) {
+            if (
+                task.source === 'codex_app_thread' ||
+                task.codex_thread_id ||
+                task.codex_status
+            ) {
+                ids.add(task.id);
+            }
+        }
+        return Array.from(ids).filter(Boolean);
+    }, [knownCodexTaskNodes, repoScopedCodexTaskNodes]);
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture());
     const {
         bySourceId: aiTasksBySourceId,
@@ -608,38 +634,56 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             .flatMap(task => {
                 const progressTask = taskProgressByNodeId[task.id];
                 const codexRun = codexRunByNodeId[task.id];
+                const aiTask = aiTasksBySourceId.get(task.id) ?? null;
+                const aiResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
+                    ? aiTask.result as Record<string, unknown>
+                    : {};
+                const resultString = (key: string) => {
+                    const value = aiResult[key];
+                    return typeof value === 'string' && value.trim() ? value.trim() : null;
+                };
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
                 if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
                 const placed = !task.parent_task_id || !codexInboxGroupIds.has(task.parent_task_id);
                 if (placed) return [];
                 const placementLabel = '未配置';
+                const visualStatus = progressTask?.status ??
+                    codexRun?.state ??
+                    task.codex_status ??
+                    aiTask?.status ??
+                    null;
+                const updatedAt = resultString('last_activity_at') ||
+                    codexRun?.updatedAt ||
+                    progressTask?.updated_at ||
+                    aiTask?.completed_at ||
+                    aiTask?.started_at ||
+                    aiTask?.created_at ||
+                    task.updated_at ||
+                    task.created_at;
                 return [{
                     id: task.id,
-                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? null,
+                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
                     title: task.title,
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
-                    status: progressTask?.status ?? codexRun?.state ?? null,
+                    status: visualStatus,
                     projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
                     placementLabel,
-                    statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
-                    updatedLabel: formatChatImportUpdatedLabel(codexRun?.updatedAt ?? task.updated_at ?? task.created_at),
+                    statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? codexMonitorUiLabel(visualStatus),
+                    updatedLabel: formatChatImportUpdatedLabel(updatedAt),
+                    sortAt: updatedAt,
                     placed,
                 }];
             })
-            .sort((a, b) => {
-                const updatedA = repoScopedTasksById.get(a.id)?.updated_at ?? '';
-                const updatedB = repoScopedTasksById.get(b.id)?.updated_at ?? '';
-                return updatedB.localeCompare(updatedA);
-            });
+            .sort(compareCodexChatImportItems);
     }, [
+        aiTasksBySourceId,
         codexInboxGroupIds,
         codexRunByNodeId,
         hiddenCodexChatImportIds,
         projectTitleById,
         repoScopedCodexTaskNodes,
-        repoScopedTasksById,
         selectedCodexImportRepoPath,
         taskProgressByNodeId,
     ]);
@@ -716,15 +760,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 placementLabel,
                 statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? codexMonitorUiLabel(visualStatus),
                 updatedLabel: formatChatImportUpdatedLabel(updatedAt),
+                sortAt: updatedAt,
                 placed,
             });
         }
 
-        return Array.from(items.values()).sort((a, b) => {
-            const updatedA = repoScopedTasksById.get(a.id)?.updated_at ?? '';
-            const updatedB = repoScopedTasksById.get(b.id)?.updated_at ?? '';
-            return updatedB.localeCompare(updatedA);
-        });
+        return Array.from(items.values()).sort(compareCodexChatImportItems);
     }, [
         aiTasksBySourceId,
         codexInboxGroupIds,

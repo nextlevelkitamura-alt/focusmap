@@ -91,39 +91,20 @@ function parseThread(input: unknown): ImportedCodexThread | null {
   }
 }
 
-function normalizedInlineText(value: unknown, max = 2_000) {
-  return typeof value === 'string' && value.trim()
-    ? value.replace(/\s+/g, ' ').trim().slice(0, max)
-    : null
-}
-
-function looksLikePromptPrefixTitle(title: string, firstUserMessage: unknown) {
-  const normalizedTitle = normalizedInlineText(title, 240)
-  const normalizedPrompt = normalizedInlineText(firstUserMessage, MAX_PROMPT_CHARS)
-  if (!normalizedTitle || !normalizedPrompt) return false
-  if (normalizedTitle.length < 24) return false
-  return normalizedPrompt.length >= normalizedTitle.length + 12 &&
-    normalizedPrompt.startsWith(normalizedTitle)
+function codexSidebarTitleLine(value: unknown) {
+  const text = compactString(value, MAX_PROMPT_CHARS)
+  if (!text || isInternalCodexUserMessage(text)) return null
+  const firstLine = text.split(/\r?\n/).map(line => line.trim()).find(Boolean)
+  return oneLineTitle(firstLine)
 }
 
 export function codexGeneratedTitleFromImportedThread(thread: ImportedCodexThread) {
-  const threadTitle = compactString(thread.title, 240)
-  if (threadTitle && !looksLikeRawPromptTitle(threadTitle) && !looksLikePromptPrefixTitle(threadTitle, thread.first_user_message)) {
-    const normalizedTitle = oneLineTitle(threadTitle)
-    if (normalizedTitle) return normalizedTitle
-  }
-
-  return null
+  return codexSidebarTitleLine(thread.title)
 }
 
 export function titleFromImportedThread(thread: ImportedCodexThread) {
   const generatedTitle = codexGeneratedTitleFromImportedThread(thread)
   if (generatedTitle) return generatedTitle
-  const threadTitle = compactString(thread.title, 240)
-  const fallbackTitle = oneLineTitle(threadTitle)
-  if (fallbackTitle && !looksLikeRawPromptTitle(threadTitle ?? fallbackTitle) && !looksLikePromptPrefixTitle(threadTitle ?? fallbackTitle, thread.first_user_message)) {
-    return fallbackTitle
-  }
   return `Codex thread ${thread.id.slice(0, 8)}`
 }
 
@@ -231,14 +212,6 @@ function oneLineTitle(value: unknown, max = 80) {
   const text = compactString(value, 240)
   if (!text) return null
   return text.replace(/\s+/g, ' ').slice(0, max)
-}
-
-function looksLikeRawPromptTitle(value: string) {
-  const text = value.trim()
-  if (!text) return false
-  if (text.includes('\n')) return true
-  if (text.length > 90) return true
-  return text.startsWith('# AGENTS.md instructions') || text.includes('<environment_context>')
 }
 
 function timeMs(value: unknown): number | null {

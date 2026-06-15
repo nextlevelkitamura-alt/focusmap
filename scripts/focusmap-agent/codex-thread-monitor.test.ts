@@ -102,14 +102,14 @@ describe('codex-thread-monitor state detection', () => {
     }
   });
 
-  test('normalizes generated Codex thread titles and ignores raw prompt titles', () => {
+  test('normalizes Codex sidebar titles and keeps the first visible line', () => {
     expect(codexThreadGeneratedTitle({ title: '  Codex   thread title  ' })).toBe('Codex thread title');
     expect(codexThreadGeneratedTitle({ title: '# AGENTS.md instructions\n<environment_context>' })).toBeNull();
-    expect(codexThreadGeneratedTitle({ title: 'x'.repeat(91) })).toBeNull();
+    expect(codexThreadGeneratedTitle({ title: 'AI要約が見づらいんだけど\nどうするのがいいのかな' })).toBe('AI要約が見づらいんだけど');
     expect(codexThreadGeneratedTitle({
       title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
       first_user_message: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
-    })).toBeNull();
+    })).toBe('このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう');
   });
 
   test('only treats completed tasks with pending archive request as archive candidates', () => {
