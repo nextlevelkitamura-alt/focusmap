@@ -346,7 +346,7 @@ function CodexChatAiSummaryRow({
       </div>
       <p className={cn(
         "min-w-0 flex-1 break-words text-[12px] leading-relaxed text-zinc-300",
-        collapsed ? "line-clamp-1" : "line-clamp-2",
+        collapsed && "line-clamp-1",
       )}>
         {summary}
       </p>
