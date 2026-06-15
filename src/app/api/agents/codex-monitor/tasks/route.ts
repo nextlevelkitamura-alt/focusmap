@@ -63,6 +63,18 @@ export function hasPendingCodexArchiveRequest(row: Record<string, unknown>) {
     result.codex_source_task_completion_suppressed !== true
 }
 
+export function shouldKeepCodexMonitorTaskForSourceTask(
+  row: Record<string, unknown>,
+  sourceTask: { status: string | null; stage: string | null } | null | undefined,
+) {
+  const pendingArchiveRequest = hasPendingCodexArchiveRequest(row)
+  if (!sourceTask) return pendingArchiveRequest
+  if (pendingArchiveRequest && sourceTask.status !== 'done' && sourceTask.stage !== 'done') {
+    return false
+  }
+  return true
+}
+
 function parseLimit(value: unknown) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.max(1, Math.min(200, Math.floor(parsed))) : 80
@@ -187,10 +199,7 @@ export async function POST(request: NextRequest) {
         const sourceIdealGoalId = stringValue(record.source_ideal_goal_id)
         if (sourceTaskId) {
           const sourceTask = activeTasks.get(sourceTaskId)
-          if (!sourceTask) return false
-          if (hasPendingCodexArchiveRequest(record) && sourceTask.status !== 'done' && sourceTask.stage !== 'done') {
-            return false
-          }
+          if (!shouldKeepCodexMonitorTaskForSourceTask(record, sourceTask)) return false
         }
         if (sourceNoteId && !activeNotes.has(sourceNoteId)) return false
         if (sourceIdealGoalId && !activeIdealGoals.has(sourceIdealGoalId)) return false

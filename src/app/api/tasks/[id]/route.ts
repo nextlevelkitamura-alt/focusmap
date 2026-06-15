@@ -26,6 +26,72 @@ type DeletedTaskMemoRepairSnapshot = {
   memo_items: MemoItemRow[];
   wishlist_items: WishlistMemoSnapshot[];
 };
+type CodexArchiveAiTaskRow = {
+  id: string;
+  status: string | null;
+  executor: string | null;
+  source_task_id: string | null;
+  codex_thread_id: string | null;
+  completed_at: string | null;
+  result: unknown;
+};
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function codexThreadIdFromTask(task: CodexArchiveAiTaskRow) {
+  const result = objectValue(task.result);
+  return task.codex_thread_id || stringValue(result.codex_thread_id);
+}
+
+function shouldSkipCodexArchiveRequest(task: CodexArchiveAiTaskRow) {
+  const result = objectValue(task.result);
+  return result.codex_archive_completed_at != null ||
+    result.codex_archive_request_state === 'completed' ||
+    result.codex_review_reason === 'archived';
+}
+
+function buildCodexArchiveRequestResultForDeletedNode(
+  task: CodexArchiveAiTaskRow,
+  nowIso: string,
+) {
+  const current = objectValue(task.result);
+  const threadId = codexThreadIdFromTask(task);
+  const sourceTaskId = task.source_task_id || stringValue(current.codex_source_task_id);
+  const currentStep = 'Focusmapノード削除に合わせてCodex threadのアーカイブを依頼しました';
+  const message = 'マインドマップ上のCodexノードが削除されたため、Mac agentへCodex threadアーカイブを依頼しました。';
+
+  return {
+    ...current,
+    executor: task.executor === 'codex' ? 'codex' : 'codex_app',
+    codex_run_state: 'awaiting_approval',
+    codex_review_reason: stringValue(current.codex_review_reason) ?? 'completed',
+    codex_thread_id: threadId,
+    codex_thread_url: threadId ? `codex://threads/${threadId}` : undefined,
+    codex_source_task_completed: true,
+    codex_source_task_id: sourceTaskId,
+    codex_source_task_completion_reason: 'node_deleted',
+    codex_source_task_completion_suppressed: false,
+    codex_archive_request_state: 'pending',
+    codex_archive_requested_at: nowIso,
+    codex_archive_request_reason: 'node_deleted',
+    codex_archive_request_cancelled_at: null,
+    codex_archive_completed_at: null,
+    codex_last_checked_at: nowIso,
+    last_activity_at: nowIso,
+    current_step: currentStep,
+    message,
+    session_health: 'stopped',
+    awaiting_approval_at: stringValue(current.awaiting_approval_at) ?? nowIso,
+  };
+}
 
 function hasMindmapTaskLink(payload: unknown, taskId: string): boolean {
   return readMindmapLinks(payload).some(link => link.task_id === taskId);
@@ -231,6 +297,54 @@ async function cleanupDeletedTaskMemoState(
   }));
 
   return snapshot;
+}
+
+async function requestCodexThreadArchiveForDeletedTasks(
+  supabase: SupabaseServerClient,
+  userId: string,
+  deletedTaskIds: string[],
+) {
+  if (deletedTaskIds.length === 0) return 0;
+
+  const { data, error } = await supabase
+    .from('ai_tasks')
+    .select('id, status, executor, source_task_id, codex_thread_id, completed_at, result')
+    .eq('user_id', userId)
+    .in('executor', ['codex', 'codex_app'])
+    .in('source_task_id', deletedTaskIds);
+
+  if (error) {
+    console.error('[tasks/[id] DELETE] Failed to load Codex tasks for archive request:', error);
+    return 0;
+  }
+
+  const nowIso = new Date().toISOString();
+  let requestedCount = 0;
+  for (const task of (data ?? []) as CodexArchiveAiTaskRow[]) {
+    const threadId = codexThreadIdFromTask(task);
+    if (!threadId || shouldSkipCodexArchiveRequest(task)) continue;
+
+    const result = buildCodexArchiveRequestResultForDeletedNode(task, nowIso);
+    const { error: updateError } = await supabase
+      .from('ai_tasks')
+      .update({
+        status: 'completed',
+        completed_at: task.completed_at ?? nowIso,
+        codex_thread_id: threadId,
+        result,
+      })
+      .eq('id', task.id)
+      .eq('user_id', userId);
+
+    if (updateError) {
+      console.error('[tasks/[id] DELETE] Failed to request Codex thread archive:', updateError);
+      continue;
+    }
+
+    requestedCount += 1;
+  }
+
+  return requestedCount;
 }
 
 async function restoreDeletedTaskMemoStateSnapshot(
@@ -520,6 +634,11 @@ export async function DELETE(
     }
 
     const deletedTaskIds = await getDeletedTaskIds(supabase, user.id, taskId);
+    const codexArchiveRequestCount = await requestCodexThreadArchiveForDeletedTasks(
+      supabase,
+      user.id,
+      deletedTaskIds,
+    );
     const memoRepairSnapshot = await cleanupDeletedTaskMemoState(supabase, user.id, deletedTaskIds);
 
     // タスクを削除
@@ -550,6 +669,7 @@ export async function DELETE(
       success: true,
       message: 'Task deleted successfully',
       memo_repair: memoRepairSnapshot,
+      codex_archive_requests: codexArchiveRequestCount,
     });
   } catch (error: unknown) {
     console.error('[tasks/[id] DELETE] Error:', error);

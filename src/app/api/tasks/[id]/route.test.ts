@@ -8,18 +8,23 @@ const {
   mockCalendarEventsUpdate,
   mockEventCompletionsUpsert,
   mockEventCompletionsDelete,
+  mockAiTasksUpdate,
   getSelectResult,
   getUpdateResult,
   getDeleteResult,
   getCalendarEventsUpdateResult,
   getEventCompletionsUpsertResult,
   getEventCompletionsDeleteResult,
+  getAiTasksSelectResult,
+  getAiTasksUpdateResult,
   setSelectResult,
   setUpdateResult,
   setDeleteResult,
   setCalendarEventsUpdateResult,
   setEventCompletionsUpsertResult,
   setEventCompletionsDeleteResult,
+  setAiTasksSelectResult,
+  setAiTasksUpdateResult,
 } = vi.hoisted(() => {
   let _selectResult: { data: unknown; error: unknown } = { data: null, error: null }
   let _updateResult: { data: unknown; error: unknown } = { data: null, error: null }
@@ -27,6 +32,8 @@ const {
   let _calendarEventsUpdateResult: { data: unknown; error: unknown } = { data: [], error: null }
   let _eventCompletionsUpsertResult: { error: unknown } = { error: null }
   let _eventCompletionsDeleteResult: { error: unknown } = { error: null }
+  let _aiTasksSelectResult: { data: unknown; error: unknown } = { data: [], error: null }
+  let _aiTasksUpdateResult: { error: unknown } = { error: null }
 
   return {
     mockGetUser: vi.fn(),
@@ -35,18 +42,23 @@ const {
     mockCalendarEventsUpdate: vi.fn(),
     mockEventCompletionsUpsert: vi.fn(),
     mockEventCompletionsDelete: vi.fn(),
+    mockAiTasksUpdate: vi.fn(),
     getSelectResult: () => _selectResult,
     getUpdateResult: () => _updateResult,
     getDeleteResult: () => _deleteResult,
     getCalendarEventsUpdateResult: () => _calendarEventsUpdateResult,
     getEventCompletionsUpsertResult: () => _eventCompletionsUpsertResult,
     getEventCompletionsDeleteResult: () => _eventCompletionsDeleteResult,
+    getAiTasksSelectResult: () => _aiTasksSelectResult,
+    getAiTasksUpdateResult: () => _aiTasksUpdateResult,
     setSelectResult: (v: typeof _selectResult) => { _selectResult = v },
     setUpdateResult: (v: typeof _updateResult) => { _updateResult = v },
     setDeleteResult: (v: typeof _deleteResult) => { _deleteResult = v },
     setCalendarEventsUpdateResult: (v: typeof _calendarEventsUpdateResult) => { _calendarEventsUpdateResult = v },
     setEventCompletionsUpsertResult: (v: typeof _eventCompletionsUpsertResult) => { _eventCompletionsUpsertResult = v },
     setEventCompletionsDeleteResult: (v: typeof _eventCompletionsDeleteResult) => { _eventCompletionsDeleteResult = v },
+    setAiTasksSelectResult: (v: typeof _aiTasksSelectResult) => { _aiTasksSelectResult = v },
+    setAiTasksUpdateResult: (v: typeof _aiTasksUpdateResult) => { _aiTasksUpdateResult = v },
   }
 })
 
@@ -115,6 +127,29 @@ vi.mock('@/utils/supabase/server', () => ({
                 resolve: (value: ReturnType<typeof getEventCompletionsDeleteResult>) => unknown,
                 reject?: (reason: unknown) => unknown
               ) => Promise.resolve(getEventCompletionsDeleteResult()).then(resolve, reject)
+              return builder
+            }),
+          }
+        }
+        if (table === 'ai_tasks') {
+          return {
+            select: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.in = () => builder
+              builder.then = (
+                resolve: (value: ReturnType<typeof getAiTasksSelectResult>) => unknown,
+                reject?: (reason: unknown) => unknown
+              ) => Promise.resolve(getAiTasksSelectResult()).then(resolve, reject)
+              return builder
+            },
+            update: mockAiTasksUpdate.mockImplementation(() => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.then = (
+                resolve: (value: ReturnType<typeof getAiTasksUpdateResult>) => unknown,
+                reject?: (reason: unknown) => unknown
+              ) => Promise.resolve(getAiTasksUpdateResult()).then(resolve, reject)
               return builder
             }),
           }
@@ -222,6 +257,8 @@ beforeEach(() => {
   setCalendarEventsUpdateResult({ data: [{ id: 'event-row-1', calendar_id: 'cal@gmail.com' }], error: null })
   setEventCompletionsUpsertResult({ error: null })
   setEventCompletionsDeleteResult({ error: null })
+  setAiTasksSelectResult({ data: [], error: null })
+  setAiTasksUpdateResult({ error: null })
   mockDeleteFromCalendar.mockResolvedValue(undefined)
   mockSyncToCalendar.mockResolvedValue({ googleEventId: 'gevt-updated' })
 })
@@ -321,6 +358,43 @@ describe('DELETE /api/tasks/[id]', () => {
       // カレンダーエラーを無視してタスク削除成功
       expect(res.status).toBe(200)
       expect(json.success).toBe(true)
+    })
+
+    test('Codex由来ノード削除では紐づくthreadのアーカイブを依頼する', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setAiTasksSelectResult({
+        data: [{
+          id: 'ai-task-1',
+          status: 'awaiting_approval',
+          executor: 'codex_app',
+          source_task_id: 'task-1',
+          codex_thread_id: 'thread-1',
+          completed_at: null,
+          result: {
+            codex_thread_id: 'thread-1',
+            codex_run_state: 'awaiting_approval',
+          },
+        }],
+        error: null,
+      })
+
+      const res = await DELETE(makeRequest('DELETE', 'task-1'), mockParams('task-1'))
+      const json = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(json.codex_archive_requests).toBe(1)
+      expect(mockAiTasksUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'completed',
+        codex_thread_id: 'thread-1',
+        result: expect.objectContaining({
+          codex_thread_id: 'thread-1',
+          codex_source_task_id: 'task-1',
+          codex_source_task_completed: true,
+          codex_archive_request_state: 'pending',
+          codex_archive_request_reason: 'node_deleted',
+        }),
+      }))
     })
   })
 

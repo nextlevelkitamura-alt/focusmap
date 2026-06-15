@@ -1857,16 +1857,14 @@ async function syncCompletedFocusmapNodesToCodexArchive(
     return
   }
 
-  const doneSourceIds = new Set(
+  const sourceTasksById = new Map(
     ((sourceTasks ?? []) as Array<{ id: string; status: string | null; stage: string | null }>)
-      .filter(task => task.status === 'done' || task.stage === 'done')
-      .map(task => task.id),
+      .map(task => [task.id, task]),
   )
-  if (doneSourceIds.size === 0) return
 
   const archiveCandidates: MonitoredCodexTask[] = []
   for (const task of monitored) {
-    if (!task.source_task_id || !task.codex_thread_id || !doneSourceIds.has(task.source_task_id)) continue
+    if (!task.source_task_id || !task.codex_thread_id) continue
 
     const result = (task.result ?? {}) as Record<string, unknown>
     const reason = typeof result.codex_review_reason === 'string' ? result.codex_review_reason : ''
@@ -1881,6 +1879,9 @@ async function syncCompletedFocusmapNodesToCodexArchive(
       result.codex_source_task_completed === true &&
       result.codex_source_task_completion_suppressed !== true
     if (!archiveRequestPending) continue
+
+    const sourceTask = sourceTasksById.get(task.source_task_id)
+    if (sourceTask && sourceTask.status !== 'done' && sourceTask.stage !== 'done') continue
 
     try {
       const stateOut = execSync(

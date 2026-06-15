@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
-import { hasPendingCodexArchiveRequest, shouldReturnCodexMonitorTask } from './route'
+import {
+  hasPendingCodexArchiveRequest,
+  shouldKeepCodexMonitorTaskForSourceTask,
+  shouldReturnCodexMonitorTask,
+} from './route'
 
 describe('shouldReturnCodexMonitorTask', () => {
   test('returns tasks that already have a Codex thread id', () => {
@@ -107,5 +111,30 @@ describe('shouldReturnCodexMonitorTask', () => {
         codex_archive_request_cancelled_at: '2026-06-10T00:00:03.000Z',
       },
     })).toBe(false)
+  })
+
+  test('keeps pending archive requests even after the source node was deleted', () => {
+    const pendingRequest = {
+      status: 'completed',
+      executor: 'codex_app',
+      source_task_id: 'task-1',
+      codex_thread_id: 'thread-1',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+        codex_archive_request_reason: 'node_deleted',
+      },
+    }
+
+    expect(shouldKeepCodexMonitorTaskForSourceTask(pendingRequest, null)).toBe(true)
+    expect(shouldKeepCodexMonitorTaskForSourceTask(pendingRequest, {
+      status: 'todo',
+      stage: 'plan',
+    })).toBe(false)
+    expect(shouldKeepCodexMonitorTaskForSourceTask(pendingRequest, {
+      status: 'done',
+      stage: 'done',
+    })).toBe(true)
   })
 })
