@@ -306,11 +306,17 @@ function collectSummaryItems(
   return items
 }
 
-function buildCodexChatSummaryText(
+type CodexChatAiSummary = {
+  done: string
+  next: string
+  change: string
+}
+
+function buildCodexChatSummary(
   item: CodexChatImportItem,
   messages: AiTaskActivityMessage[],
   detailText: string | null | undefined,
-): string {
+): CodexChatAiSummary {
   const visibleMessages = visibleActivityMessages(messages)
   const codexTexts = visibleMessages
     .filter(message => !isUserActivityMessage(message))
@@ -319,7 +325,6 @@ function buildCodexChatSummaryText(
     .filter(isUserActivityMessage)
     .map(message => message.body)
   const allTexts = [...codexTexts, detailText ?? "", item.snippet ?? "", item.title].filter(Boolean)
-  const statusLabel = item.statusLabel ?? codexMonitorUiLabel(item.status ?? "awaiting_approval")
   const uiStatus = getCodexMonitorUiStatus(item.status ?? "awaiting_approval")
 
   const doneItems = collectSummaryItems(
@@ -349,7 +354,7 @@ function buildCodexChatSummaryText(
   const done = doneItems[0] ?? "チャット内容を確認"
   const change = changeItems[0] ?? "表示と配置を整理"
   const next = nextItems[0] ?? "原文ログ"
-  return `対応内容は「${done}」。変更点は「${change}」。現在は${statusLabel}なので、「${next}」を確認してください。`
+  return { done, next, change }
 }
 
 function CodexChatAiSummaryRow({
@@ -358,11 +363,19 @@ function CodexChatAiSummaryRow({
   onToggleCollapsed,
   loading,
 }: {
-  summary: string
+  summary: CodexChatAiSummary | null
   collapsed: boolean
   onToggleCollapsed: () => void
   loading?: boolean
 }) {
+  if (!summary) return null
+
+  const rows = [
+    { label: "ここで何をやったのか", value: summary.done },
+    { label: "次に確認すること", value: summary.next },
+    { label: "変更", value: summary.change },
+  ]
+
   return (
     <section aria-label="AI要約" className="min-w-0 border-t border-[#303030]/80 pt-3">
       <div className="mb-1.5 flex min-w-0 items-center justify-between gap-2">
@@ -387,12 +400,25 @@ function CodexChatAiSummaryRow({
           {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
         </button>
       </div>
-      <p className={cn(
-        "min-w-0 break-words text-[12px] leading-relaxed text-zinc-300",
-        collapsed && "line-clamp-1",
-      )}>
-        {summary}
-      </p>
+      {collapsed ? (
+        <p className="min-w-0 break-words text-[12px] leading-relaxed text-zinc-300 line-clamp-1">
+          <span className="mr-2 font-semibold text-zinc-500">次に確認すること</span>
+          {summary.next}
+        </p>
+      ) : (
+        <dl className="min-w-0 divide-y divide-[#303030]/80">
+          {rows.map(row => (
+            <div key={row.label} className="grid min-w-0 grid-cols-[7.75rem_minmax(0,1fr)] gap-3 py-2 first:pt-1.5">
+              <dt className="min-w-0 text-[11px] font-semibold leading-relaxed text-zinc-500">
+                {row.label}
+              </dt>
+              <dd className="min-w-0 break-words text-[12px] leading-relaxed text-zinc-300">
+                {row.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </section>
   )
 }
@@ -765,9 +791,9 @@ export function CodexChatImportSidebar({
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
   const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
-  const selectedSummaryText = selectedChatItem
-    ? buildCodexChatSummaryText(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
-    : ""
+  const selectedSummary = selectedChatItem
+    ? buildCodexChatSummary(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
+    : null
   const selectedSummaryCollapsed = selectedChatItem ? collapsedSummaryChatIds.has(selectedChatItem.id) : false
   const toggleSelectedSummaryCollapsed = React.useCallback(() => {
     if (!selectedChatItem) return
@@ -997,7 +1023,7 @@ export function CodexChatImportSidebar({
               </div>
             </div>
             <CodexChatAiSummaryRow
-              summary={selectedSummaryText}
+              summary={selectedSummary}
               collapsed={selectedSummaryCollapsed}
               onToggleCollapsed={toggleSelectedSummaryCollapsed}
               loading={selectedDetail?.loading}
