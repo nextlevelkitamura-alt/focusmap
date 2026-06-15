@@ -698,7 +698,7 @@ export function CodexChatImportSidebar({
       {selectedChatItem ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="border-b border-[#303030] px-3 py-2">
-            <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
               <Button
                 type="button"
                 variant="ghost"
@@ -709,36 +709,41 @@ export function CodexChatImportSidebar({
                 <ArrowLeft className="h-4 w-4" />
                 <span>戻る</span>
               </Button>
-              <div className="min-w-0 flex-1" title={selectedChatItem.title}>
-                <div className="truncate text-base font-semibold text-zinc-100">AIチャット履歴</div>
-                <div className="mt-0.5 truncate text-xs font-medium text-zinc-400">{selectedChatItem.title}</div>
+              <div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
+                <div className="flex min-w-[4.5rem] shrink-0 flex-col items-start gap-1 pt-0.5">
+                  <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(selectedChatItem.status ?? "awaiting_approval"))}>
+                    {getCodexMonitorUiStatus(selectedChatItem.status ?? "awaiting_approval") === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                    <span className="truncate">{selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedChatItem.status ?? "awaiting_approval")}</span>
+                  </span>
+                  {(selectedChatItem.repoPath || selectedChatItem.projectTitle) && (
+                    <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
+                      <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath) || selectedChatItem.projectTitle}</span>
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0" title={selectedChatItem.title}>
+                  <div className="line-clamp-2 break-words text-base font-semibold leading-snug text-zinc-100">{selectedChatItem.title}</div>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                    {selectedChatItem.updatedLabel && (
+                      <span className="text-xs font-medium text-zinc-500">{selectedChatItem.updatedLabel}</span>
+                    )}
+                    {selectedThreadHref && (
+                      <a
+                        href={selectedThreadHref}
+                        className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                        aria-label={`Codexで開く ${selectedChatItem.title}`}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Codexで開く
+                      </a>
+                    )}
+                  </div>
+                </div>
               </div>
-              {selectedThreadHref && (
-                <a
-                  href={selectedThreadHref}
-                  className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/45 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                  aria-label={`Codexで開く ${selectedChatItem.title}`}
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Codexで開く
-                </a>
-              )}
             </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5">
-            <div className="mb-5 flex flex-wrap items-center gap-2">
-              <span className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold", codexMonitorToneClass(selectedChatItem.status ?? "awaiting_approval"))}>
-                {getCodexMonitorUiStatus(selectedChatItem.status ?? "awaiting_approval") === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedChatItem.status ?? "awaiting_approval")}
-              </span>
-              {selectedChatItem.repoPath && (
-                <span className="inline-flex min-h-8 max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2.5 text-[11px] font-medium text-zinc-400">
-                  <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath)}</span>
-                </span>
-              )}
-            </div>
-
             {selectedDetail?.loading && selectedMessages.length === 0 && !selectedDetail.text ? (
               <div className="flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-3 py-2 text-xs text-zinc-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

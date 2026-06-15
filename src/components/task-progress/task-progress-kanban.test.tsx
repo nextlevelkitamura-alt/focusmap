@@ -527,6 +527,10 @@ describe('TaskProgressKanban', () => {
     expect(onOpenTask).not.toHaveBeenCalled()
     expect(screen.queryByRole('tab', { name: /実行中 1件/ })).not.toBeInTheDocument()
     expect(screen.getByText('実行中チャットを見る')).toBeInTheDocument()
+    expect(screen.queryByText('AIチャット履歴')).not.toBeInTheDocument()
+    expect(screen.getByText('実行中')).toBeInTheDocument()
+    expect(screen.getByText('focusmap')).toBeInTheDocument()
+    expect(screen.getByText('最終 6/12 09:20')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Codexで開く' })).toHaveAttribute(
       'href',
       'codex://threads/thread-running123',
