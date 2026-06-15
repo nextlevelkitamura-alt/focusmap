@@ -14,6 +14,7 @@ const MAX_CURRENT_STEP_CHARS = 600
 const MAX_SUMMARY_CHARS = 1_200
 const MAX_SOURCE_TASK_TITLE_CHARS = 120
 const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12
+const MAX_ACTIVITY_BODY_CHARS = 8_000
 
 const VALID_ACTIVITY_ROLES = new Set<AiTaskActivityRole>(['system', 'codex', 'user', 'status'])
 const VALID_ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
@@ -174,7 +175,7 @@ function compactActivityMessages(value: unknown) {
     const kind = typeof item.kind === 'string' && VALID_ACTIVITY_KINDS.has(item.kind as AiTaskActivityKind)
       ? item.kind as AiTaskActivityKind
       : null
-    const body = compactString(item.body, 2_000)
+    const body = compactString(item.body, MAX_ACTIVITY_BODY_CHARS)
     if (!role || !kind || !body) return []
 
     const importance = typeof item.importance === 'string' && VALID_ACTIVITY_IMPORTANCE.has(item.importance as AiTaskActivityImportance)

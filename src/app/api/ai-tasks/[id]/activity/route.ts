@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 import { isTursoConfigured } from '@/lib/turso/client'
-import { getTursoTaskForAuth, listTaskEvents, listTaskProgress } from '@/lib/turso/codex-monitoring'
+import { getTursoTaskForAuth, listTaskEvents, listTaskProgressPage } from '@/lib/turso/codex-monitoring'
+
+const MAX_ACTIVITY_BODY_CHARS = 8_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -10,6 +12,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function parseLimit(value: string | null) {
+  const parsed = Number.parseInt(value || '100', 10)
+  return Math.min(Math.max(Number.isFinite(parsed) ? parsed : 100, 1), 200)
+}
+
+function parseBefore(req: NextRequest) {
+  const createdAt = req.nextUrl.searchParams.get('before_created_at')?.trim()
+  if (!createdAt || Number.isNaN(Date.parse(createdAt))) return null
+  const rawId = req.nextUrl.searchParams.get('before_id')?.trim() || ''
+  return {
+    createdAt: new Date(createdAt).toISOString(),
+    id: /^[A-Za-z0-9:_-]+$/.test(rawId) ? rawId : null,
+  }
 }
 
 function isMissingOptionalActivityTable(error: unknown) {
@@ -65,7 +82,7 @@ function activityImportance(value: unknown) {
   return value === 'important' ? 'important' : 'normal'
 }
 
-function progressMessageFromTurso(item: Awaited<ReturnType<typeof listTaskProgress>>[number]) {
+function progressMessageFromTurso(item: Awaited<ReturnType<typeof listTaskProgressPage>>[number]) {
   const progressJson = isRecord(item.progress_json) ? item.progress_json : {}
   const mirroredActivity = progressJson.source === 'activity_message'
   const metadata = isRecord(progressJson.metadata) ? progressJson.metadata : progressJson
@@ -129,7 +146,7 @@ function fallbackMessagesFromTask(task: {
     user_id: task.user_id,
     role: kind === 'prompt_waiting' ? 'status' : 'codex',
     kind,
-    body: body.slice(-2_000),
+    body: body.slice(-MAX_ACTIVITY_BODY_CHARS),
     importance: kind === 'progress' ? 'normal' : 'important',
     metadata: { source: 'ai_tasks.result' },
     created_at: createdAt,
@@ -226,6 +243,8 @@ export async function GET(
   const auth = await authenticateSupabaseRequest(req, supabase)
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { user } = auth
+  const limit = parseLimit(req.nextUrl.searchParams.get('limit'))
+  const before = parseBefore(req)
 
   if (isTursoConfigured()) {
     try {
@@ -235,8 +254,8 @@ export async function GET(
       })
       if (task) {
         const [progress, events] = await Promise.all([
-          listTaskProgress(task.id, task.user_id, 50),
-          listTaskEvents(task.id, task.user_id, 50),
+          listTaskProgressPage(task.id, task.user_id, { limit, before }),
+          before ? Promise.resolve([]) : listTaskEvents(task.id, task.user_id, 50),
         ])
         const progressMessages = progress.map(progressMessageFromTurso)
         const eventMessages = events
@@ -254,15 +273,24 @@ export async function GET(
             metadata: item.payload_json ?? {},
             created_at: item.created_at,
           }))
-        const promptMessage = taskPromptMessage(task)
+        const promptMessage = before ? null : taskPromptMessage(task)
         const messages = visibleActivityMessages([
           ...(promptMessage && !hasUserSentMessage([...progressMessages, ...eventMessages]) ? [promptMessage] : []),
           ...progressMessages,
           ...eventMessages,
-        ]).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).slice(-50)
+        ]).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        const oldestProgress = progress.at(-1)
+        const nextCursor = progress.length >= limit && oldestProgress
+          ? { created_at: oldestProgress.created_at, id: oldestProgress.id }
+          : null
 
-        if (messages.some(message => !String(message.id).startsWith('prompt:'))) {
-          return NextResponse.json({ source: 'turso', messages })
+        if (before || messages.some(message => !String(message.id).startsWith('prompt:'))) {
+          return NextResponse.json({
+            source: 'turso',
+            messages,
+            has_more: Boolean(nextCursor),
+            next_cursor: nextCursor,
+          })
         }
       }
     } catch (tursoError) {
@@ -279,33 +307,52 @@ export async function GET(
 
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { data, error } = await supabase
+  let activityQuery = supabase
     .from('ai_task_activity_messages')
     .select('id, task_id, user_id, role, kind, body, importance, metadata, created_at')
     .eq('task_id', id)
     .eq('user_id', user.id)
+
+  if (before?.id) {
+    activityQuery = activityQuery.or(`created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`)
+  } else if (before) {
+    activityQuery = activityQuery.lt('created_at', before.createdAt)
+  }
+
+  const { data, error } = await activityQuery
     .order('created_at', { ascending: false })
-    .limit(50)
+    .order('id', { ascending: false })
+    .limit(limit)
 
   if (error) {
     if (isMissingOptionalActivityTable(error)) {
       return NextResponse.json({
         source: 'ai_tasks.result',
-        messages: fallbackMessagesFromTask(task),
+        messages: before ? [] : fallbackMessagesFromTask(task),
+        has_more: false,
+        next_cursor: null,
       })
     }
     console.error('[ai-tasks/activity]', error.message)
     return NextResponse.json({ error: 'Activity query failed' }, { status: 500 })
   }
 
-  const promptMessage = taskPromptMessage(task)
+  const promptMessage = before ? null : taskPromptMessage(task)
   const activityMessages = [...(data ?? [])].reverse()
   const resultFallbackMessages = fallbackMessagesFromTask(task)
     .filter(message => !String(message.id).startsWith('prompt:'))
   const messages = visibleActivityMessages([
     ...(promptMessage && !hasUserSentMessage(activityMessages) ? [promptMessage] : []),
     ...activityMessages,
-    ...(activityMessages.length === 0 ? resultFallbackMessages : []),
+    ...(!before && activityMessages.length === 0 ? resultFallbackMessages : []),
   ])
-  return NextResponse.json({ messages })
+  const oldestActivity = data?.at(-1) as { id?: string; created_at?: string } | undefined
+  const nextCursor = (data?.length ?? 0) >= limit && oldestActivity?.created_at
+    ? { created_at: oldestActivity.created_at, id: oldestActivity.id ?? null }
+    : null
+  return NextResponse.json({
+    messages,
+    has_more: Boolean(nextCursor),
+    next_cursor: nextCursor,
+  })
 }

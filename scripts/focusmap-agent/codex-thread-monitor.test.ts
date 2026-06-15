@@ -249,6 +249,29 @@ describe('codex-thread-monitor state detection', () => {
     ]);
   });
 
+  test('sends visible Codex messages from the oldest unsynced item in bounded batches', () => {
+    const raw = Array.from({ length: 15 }, (_, index) => (
+      line(`2026-06-08T15:49:${String(index).padStart(2, '0')}.000Z`, {
+        type: 'agent_message',
+        message: `進捗 ${index}`,
+      })
+    )).join('\n');
+    const summary = parseRollout(raw, threadRow);
+
+    const firstBatch = activityMessages(task(), 'thread-1', summary, false);
+    expect(firstBatch.map(message => message.body)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `進捗 ${index}`),
+    );
+
+    const nextBatch = activityMessages(task({
+      result: {
+        codex_run_state: 'running',
+        codex_activity_synced_sequence: 12,
+      },
+    }), 'thread-1', summary, false);
+    expect(nextBatch.map(message => message.body)).toEqual(['進捗 12', '進捗 13', '進捗 14']);
+  });
+
   test('builds known thread ids from column and result before orphan import', () => {
     const ids = knownCodexThreadIds([
       task({ codex_thread_id: 'thread-column' }),

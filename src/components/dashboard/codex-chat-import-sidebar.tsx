@@ -77,6 +77,9 @@ type ChatDetailState = {
   error: string | null
 }
 
+const ACTIVITY_DETAIL_PAGE_LIMIT = 100
+const ACTIVITY_DETAIL_MAX_PAGES = 50
+
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
 const ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
   "prompt_waiting",
@@ -152,6 +155,30 @@ function readActivityMessages(data: unknown): AiTaskActivityMessage[] {
       metadata,
       created_at: typeof rawMessage.created_at === "string" ? rawMessage.created_at : "",
     }]
+  })
+}
+
+function readActivityNextCursor(data: unknown) {
+  if (!isRecord(data) || data.has_more !== true || !isRecord(data.next_cursor)) return null
+  const createdAt = typeof data.next_cursor.created_at === "string" ? data.next_cursor.created_at : ""
+  if (!createdAt) return null
+  return {
+    created_at: createdAt,
+    id: typeof data.next_cursor.id === "string" ? data.next_cursor.id : null,
+  }
+}
+
+function dedupeActivityMessages(messages: AiTaskActivityMessage[]) {
+  const byId = new Map<string, AiTaskActivityMessage>()
+  for (const message of messages) {
+    const key = message.id || `${message.created_at}:${message.role}:${message.kind}:${message.body}`
+    byId.set(key, message)
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const aTime = new Date(a.created_at).getTime()
+    const bTime = new Date(b.created_at).getTime()
+    if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime
+    return a.id.localeCompare(b.id)
   })
 }
 
@@ -552,12 +579,38 @@ export function CodexChatImportSidebar({
     })
     return latestAt
   }, [])
-  const fetchChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
-    const activityRes = await fetch(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`, { cache: "no-store" })
+  const fetchChatActivityPage = React.useCallback(async (
+    aiTaskId: string,
+    cursor: { created_at: string; id: string | null } | null = null,
+  ) => {
+    const params = new URLSearchParams({ limit: String(ACTIVITY_DETAIL_PAGE_LIMIT) })
+    if (cursor) {
+      params.set("before_created_at", cursor.created_at)
+      if (cursor.id) params.set("before_id", cursor.id)
+    }
+    const activityRes = await fetch(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity?${params}`, { cache: "no-store" })
     const activityData = await activityRes.json().catch(() => ({}))
-    if (!activityRes.ok) return []
-    return readActivityMessages(activityData)
+    if (!activityRes.ok) return { messages: [] as AiTaskActivityMessage[], nextCursor: null }
+    return {
+      messages: readActivityMessages(activityData),
+      nextCursor: readActivityNextCursor(activityData),
+    }
   }, [])
+  const fetchLatestChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
+    const page = await fetchChatActivityPage(aiTaskId)
+    return dedupeActivityMessages(page.messages)
+  }, [fetchChatActivityPage])
+  const fetchChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
+    const messages: AiTaskActivityMessage[] = []
+    let cursor: { created_at: string; id: string | null } | null = null
+    for (let page = 0; page < ACTIVITY_DETAIL_MAX_PAGES; page += 1) {
+      const activityPage = await fetchChatActivityPage(aiTaskId, cursor)
+      messages.push(...activityPage.messages)
+      if (!activityPage.nextCursor) break
+      cursor = activityPage.nextCursor
+    }
+    return dedupeActivityMessages(messages)
+  }, [fetchChatActivityPage])
 
   const selectRepoPath = React.useCallback(async (nextRepoPath: string | null) => {
     const normalized = nextRepoPath ? normalizeRepoPath(nextRepoPath) : ""
@@ -669,9 +722,9 @@ export function CodexChatImportSidebar({
   const refreshChatActivityTime = React.useCallback(async (item: CodexChatImportItem) => {
     const aiTaskId = await syncChatActivity(item)
     if (!aiTaskId) return
-    const messages = await fetchChatActivityMessages(aiTaskId)
+    const messages = await fetchLatestChatActivityMessages(aiTaskId)
     rememberLatestChatActivityAt(item.id, messages)
-  }, [fetchChatActivityMessages, rememberLatestChatActivityAt, syncChatActivity])
+  }, [fetchLatestChatActivityMessages, rememberLatestChatActivityAt, syncChatActivity])
 
   const loadChatDetail = React.useCallback(async (item: CodexChatImportItem) => {
     setChatDetailsById(prev => ({

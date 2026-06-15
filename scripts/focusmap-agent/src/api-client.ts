@@ -245,15 +245,23 @@ export class AgentApiClient {
     runnerId: string,
     taskId: string,
     status: AiTask['status'],
-    payload: { result?: TaskResultJson; error?: string; activity_messages?: AgentActivityMessage[]; source_task_title?: string | null } = {},
+    payload: {
+      result?: TaskResultJson;
+      error?: string;
+      activity_messages?: AgentActivityMessage[];
+      source_task_title?: string | null;
+      send_progress_snapshot?: boolean;
+    } = {},
   ): Promise<void> {
     const result = this.stateResult(payload.result);
     const activityMessages = payload.activity_messages ?? payload.result?.activity_messages;
     const eventType = this.eventTypeForStatus(status);
-    const progress = this.sendTaskProgressSnapshot(runnerId, taskId, status, { result, error: payload.error }, {
-      force: true,
-      eventType,
-    }).catch(() => undefined);
+    const progress = payload.send_progress_snapshot === false
+      ? Promise.resolve(false)
+      : this.sendTaskProgressSnapshot(runnerId, taskId, status, { result, error: payload.error }, {
+          force: true,
+          eventType,
+        }).catch(() => undefined);
     await this.request(`/agents/tasks/${taskId}/state`, {
       runner_id: runnerId,
       status,

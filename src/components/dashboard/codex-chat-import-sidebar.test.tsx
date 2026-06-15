@@ -268,7 +268,7 @@ describe("CodexChatImportSidebar", () => {
         })
         return jsonResponse({ success: true, task_id: "ai-task-1" })
       }
-      if (url === "/api/ai-tasks/ai-task-1/activity") {
+      if (url.startsWith("/api/ai-tasks/ai-task-1/activity")) {
         return jsonResponse({
           messages: [
             {
@@ -372,10 +372,72 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getAllByText("右側サイドバーにチャット一覧を表示する").some(element => element.className.includes("bg-white"))).toBe(true)
 
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
-    expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=100"),
+      { cache: "no-store" },
+    )
 
     fireEvent.click(screen.getByRole("button", { name: "一覧へ戻る" }))
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
+  })
+
+  test("loads older Codex activity pages when the detail view has a cursor", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
+      if (url.includes("before_created_at=")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-older",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "最初の古い履歴も取得します",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:00:00.000Z",
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })
+      }
+      if (url === "/api/ai-tasks/ai-task-1/activity?limit=100") {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-newer",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "最新ページの履歴です",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-12T00:10:00.000Z",
+            },
+          ],
+          has_more: true,
+          next_cursor: { created_at: "2026-06-12T00:05:00.000Z", id: "progress-100" },
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
+
+    await waitFor(() => {
+      expect(screen.getByText("最初の古い履歴も取得します")).toBeInTheDocument()
+    })
+    expect(screen.getByText("最新ページの履歴です")).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("before_id=progress-100"),
+      { cache: "no-store" },
+    )
   })
 
   test("opens a placed chat detail selected by the parent without adding it to the import list", async () => {
@@ -396,7 +458,7 @@ describe("CodexChatImportSidebar", () => {
         })
         return jsonResponse({ success: true, task_id: "ai-task-placed" })
       }
-      if (url === "/api/ai-tasks/ai-task-placed/activity") {
+      if (url.startsWith("/api/ai-tasks/ai-task-placed/activity")) {
         return jsonResponse({
           messages: [
             {
@@ -440,7 +502,7 @@ describe("CodexChatImportSidebar", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
-      if (url === "/api/ai-tasks/ai-task-1/activity") {
+      if (url.startsWith("/api/ai-tasks/ai-task-1/activity")) {
         return jsonResponse({
           messages: [
             {
@@ -483,7 +545,10 @@ describe("CodexChatImportSidebar", () => {
       include_visible_activity: true,
     })
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=100"),
+        { cache: "no-store" },
+      )
       expect(screen.getByText("5分前")).toBeInTheDocument()
     })
     expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
@@ -494,7 +559,7 @@ describe("CodexChatImportSidebar", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
-      if (url === "/api/ai-tasks/ai-task-1/activity") {
+      if (url.startsWith("/api/ai-tasks/ai-task-1/activity")) {
         return jsonResponse({
           messages: [
             {
@@ -531,7 +596,7 @@ describe("CodexChatImportSidebar", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-placed" })
-      if (url === "/api/ai-tasks/ai-task-placed/activity") return jsonResponse({ messages: [] })
+      if (url.startsWith("/api/ai-tasks/ai-task-placed/activity")) return jsonResponse({ messages: [] })
       if (url === "/api/tasks/chat-node-placed") {
         return jsonResponse({ task: { title: "配置済みの相談", memo: "詳細" } })
       }

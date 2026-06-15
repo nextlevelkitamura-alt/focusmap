@@ -63,7 +63,7 @@ export function defaultAiTaskActivityImportance(kind: AiTaskActivityKind): AiTas
   return AI_TASK_ACTIVITY_PROTECTED_KINDS.has(kind) ? 'important' : 'normal'
 }
 
-export function normalizeAiTaskActivityBody(body: string, maxChars = 2_000): string {
+export function normalizeAiTaskActivityBody(body: string, maxChars = 8_000): string {
   return body.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').trim().slice(0, maxChars)
 }
 

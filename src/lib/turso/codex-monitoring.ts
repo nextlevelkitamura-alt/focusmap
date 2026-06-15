@@ -454,6 +454,38 @@ export async function listTaskProgress(taskId: string, userId: string, limit = 5
   return result.rows.map(row => asProgress(row as Row))
 }
 
+export async function listTaskProgressPage(
+  taskId: string,
+  userId: string,
+  options: {
+    limit?: number
+    before?: { createdAt: string; id?: string | null } | null
+  } = {},
+) {
+  const clauses = ['task_id = ?', 'user_id = ?']
+  const args: Array<string | number> = [taskId, userId]
+  if (options.before?.createdAt) {
+    if (options.before.id) {
+      clauses.push('(created_at < ? OR (created_at = ? AND id < ?))')
+      args.push(options.before.createdAt, options.before.createdAt, options.before.id)
+    } else {
+      clauses.push('created_at < ?')
+      args.push(options.before.createdAt)
+    }
+  }
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 200)
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT * FROM ai_task_progress
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `,
+    args: [...args, limit],
+  })
+  return result.rows.map(row => asProgress(row as Row))
+}
+
 export async function listTaskEvents(taskId: string, userId: string, limit = 50) {
   const result = await getTursoClient().execute({
     sql: `
@@ -465,6 +497,17 @@ export async function listTaskEvents(taskId: string, userId: string, limit = 50)
     args: [taskId, userId, limit],
   })
   return result.rows.map(row => asEvent(row as Row))
+}
+
+export async function deleteTursoAiTasksForUser(taskIds: string[], userId: string) {
+  const uniqueIds = Array.from(new Set(taskIds.map(id => id.trim()).filter(Boolean)))
+  if (uniqueIds.length === 0) return { deleted: 0 }
+  const placeholders = uniqueIds.map(() => '?').join(', ')
+  const result = await getTursoClient().execute({
+    sql: `DELETE FROM ai_tasks WHERE user_id = ? AND id IN (${placeholders})`,
+    args: [userId, ...uniqueIds],
+  })
+  return { deleted: result.rowsAffected ?? 0 }
 }
 
 export async function listTursoAiTaskSnapshots(options: {

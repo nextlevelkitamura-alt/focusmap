@@ -26,9 +26,7 @@ import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events";
-import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useMindMapCollapsedTaskIds } from "@/hooks/useMindMapCollapsedTaskIds";
-import { createClient } from "@/utils/supabase/client";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
@@ -219,7 +217,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [isCodexChatImportSidebarOpen, setIsCodexChatImportSidebarOpen] = useState(false);
     const [selectedCodexChatDetailId, setSelectedCodexChatDetailId] = useState<string | null>(null);
     const [activeCodexChatDrag, setActiveCodexChatDrag] = useState<{ itemId: string; title: string } | null>(null);
-    const { pushAction: pushUndoableAction } = useUndoRedo();
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -2091,37 +2088,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             return;
         }
 
-        pushUndoableAction({
-            description: `「${capturedTask.title}」を削除`,
-            toast: {
-                message: 'チャットを削除しました。',
-                actionLabel: '元に戻す',
-                duration: 5000,
-            },
-            undo: async () => {
-                setHiddenCodexChatImportIds(prev => {
-                    const next = new Set(prev);
-                    for (const task of capturedTasks) next.delete(task.id);
-                    return next;
-                });
-                const restoredTasks = capturedTasks.map(task => ({ ...task, google_event_id: null }));
-                const supabase = createClient();
-                const { error } = await supabase.from('tasks').upsert(restoredTasks);
-                if (error) throw error;
-            },
-            redo: async () => {
-                setHiddenCodexChatImportIds(prev => {
-                    const next = new Set(prev);
-                    for (const task of capturedTasks) next.add(task.id);
-                    return next;
-                });
-                const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
-                if (!response.ok && response.status !== 404) {
-                    throw new Error(`DELETE /api/tasks/${taskId} failed: ${response.status}`);
-                }
-            },
-        });
-    }, [pushUndoableAction, repoScopedTasksById]);
+    }, [repoScopedTasksById]);
 
     const handleCustomDuplicateTasks = useCallback(async ({
         taskIds,

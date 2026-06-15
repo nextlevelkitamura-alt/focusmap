@@ -12,7 +12,8 @@ import { debug, error as logError, info } from './logger.js';
 const execFileAsync = promisify(execFile);
 const SQLITE_BIN = '/usr/bin/sqlite3';
 const MONITOR_LIMIT = 80;
-const MAX_VISIBLE_MESSAGES = 8;
+const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
+const MAX_ACTIVITY_BODY_CHARS = 8_000;
 const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
@@ -46,6 +47,7 @@ type CodexThreadRow = {
 };
 
 type VisibleMessage = {
+  sequence: number;
   role: 'user' | 'codex';
   kind: AgentActivityMessage['kind'];
   body: string;
@@ -209,13 +211,12 @@ async function readThread(dbPath: string, threadId: string): Promise<CodexThread
   return rows[0] ?? null;
 }
 
-function appendVisibleMessage(messages: VisibleMessage[], input: VisibleMessage): void {
-  const body = compactText(input.body, 2_000);
+function appendVisibleMessage(messages: VisibleMessage[], input: Omit<VisibleMessage, 'body'> & { body: string }): void {
+  const body = compactText(input.body, MAX_ACTIVITY_BODY_CHARS);
   if (!body) return;
   const key = `${input.role}:${input.kind}:${textFingerprint(body)}`;
   if (messages.some(message => `${message.role}:${message.kind}:${textFingerprint(message.body)}` === key)) return;
   messages.push({ ...input, body });
-  while (messages.length > 40) messages.shift();
 }
 
 export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
@@ -229,7 +230,9 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
   let latestTaskCompleteAt: string | null = null;
   let latestAgentMessage: string | null = null;
 
+  let sequence = 0;
   for (const line of rawJsonl.split('\n')) {
+    sequence += 1;
     if (!line.trim()) continue;
     let parsed: unknown;
     try {
@@ -264,6 +267,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       if (text) {
         latestAgentMessage = compactText(text, 2_000);
         appendVisibleMessage(visibleMessages, {
+          sequence,
           role: 'codex',
           kind: looksLikeQuestion(text) ? 'question' : 'completed',
           body: text,
@@ -288,6 +292,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         latestAgentMessage = compactText(text, 2_000);
         currentStep = compactStep(text);
         appendVisibleMessage(visibleMessages, {
+          sequence,
           role: 'codex',
           kind: looksLikeQuestion(text) ? 'question' : 'progress',
           body: text,
@@ -303,6 +308,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       if (text && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
         appendVisibleMessage(visibleMessages, {
+          sequence,
           role: 'user',
           kind: 'user_answer',
           body: text,
@@ -321,6 +327,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         latestAgentMessage = compactText(text, 2_000);
         currentStep = compactStep(text);
         appendVisibleMessage(visibleMessages, {
+          sequence,
           role: 'codex',
           kind: looksLikeQuestion(text) ? 'question' : 'progress',
           body: text,
@@ -330,6 +337,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       } else if (role === 'user' && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
         appendVisibleMessage(visibleMessages, {
+          sequence,
           role: 'user',
           kind: 'user_answer',
           body: text,
@@ -571,8 +579,30 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary) {
   return { status: summary.state === 'awaiting_approval' ? 'awaiting_approval' as const : 'running' as const, resumed: false };
 }
 
-export function activityMessages(task: AiTask, threadId: string, summary: RolloutSummary, resumed: boolean): AgentActivityMessage[] {
-  const checkpoint = shouldBackfillImportedThreadMessages(task) ? 0 : checkpointMs(task) ?? 0;
+type ActivitySyncBatch = {
+  messages: AgentActivityMessage[];
+  syncedSequence: number | null;
+  syncedAt: string | null;
+  complete: boolean;
+}
+
+function activitySyncedSequence(task: AiTask): number | null {
+  const result = taskResult(task);
+  const value = result.codex_activity_synced_sequence;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function activityFallbackCheckpointMs(task: AiTask): number {
+  const result = taskResult(task);
+  if (activitySyncedSequence(task) !== null) return 0;
+  if (result.codex_activity_backfill_complete === true) return checkpointMs(task) ?? 0;
+  if (shouldBackfillImportedThreadMessages(task)) return 0;
+  return 0;
+}
+
+function activitySyncBatch(task: AiTask, threadId: string, summary: RolloutSummary, resumed: boolean): ActivitySyncBatch {
+  const syncedSequence = activitySyncedSequence(task);
+  const fallbackCheckpoint = activityFallbackCheckpointMs(task);
   const messages: AgentActivityMessage[] = [];
   if (resumed) {
     messages.push({
@@ -580,13 +610,19 @@ export function activityMessages(task: AiTask, threadId: string, summary: Rollou
       kind: 'resumed',
       body: '確認待ち後の追加プロンプトを検知しました。Codex実行を再開します。',
       importance: 'important',
-      dedupe_key: `thread:${threadId}:resumed:${checkpoint}`,
+      dedupe_key: `thread:${threadId}:resumed:${syncedSequence ?? fallbackCheckpoint}`,
     });
   }
 
-  for (const message of summary.visibleMessages.slice(-MAX_VISIBLE_MESSAGES)) {
+  const room = Math.max(0, MAX_ACTIVITY_MESSAGES_PER_UPDATE - messages.length);
+  const candidates = summary.visibleMessages.filter(message => {
+    if (syncedSequence !== null) return message.sequence > syncedSequence;
     const messageMs = timeMs(message.createdAt) ?? 0;
-    if (!resumed && messageMs <= checkpoint) continue;
+    return messageMs > fallbackCheckpoint;
+  });
+  const selected = candidates.slice(0, room);
+
+  for (const message of selected) {
     messages.push({
       role: message.role,
       kind: message.kind,
@@ -598,7 +634,17 @@ export function activityMessages(task: AiTask, threadId: string, summary: Rollou
     });
   }
 
-  return messages.slice(-12);
+  const lastSelected = selected.at(-1);
+  return {
+    messages,
+    syncedSequence: lastSelected?.sequence ?? syncedSequence,
+    syncedAt: lastSelected?.createdAt ?? null,
+    complete: selected.length >= candidates.length,
+  };
+}
+
+export function activityMessages(task: AiTask, threadId: string, summary: RolloutSummary, resumed: boolean): AgentActivityMessage[] {
+  return activitySyncBatch(task, threadId, summary, resumed).messages;
 }
 
 function resultSnapshot(
@@ -608,12 +654,19 @@ function resultSnapshot(
   summary: RolloutSummary,
   status: AiTask['status'],
   resumed: boolean,
+  activityBatch: ActivitySyncBatch,
 ): TaskResultJson {
   const result = taskResult(task);
   const nowIso = new Date().toISOString();
   const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? nowIso;
   const codexExternalOrigin = typeof result.codex_external_origin === 'string' ? result.codex_external_origin : undefined;
   const sourceTaskTitleSuggestion = importedThreadSourceTitleSuggestion(task, row);
+  const previousSyncedSequence = typeof result.codex_activity_synced_sequence === 'number'
+    ? result.codex_activity_synced_sequence
+    : null;
+  const previousSyncedAt = typeof result.codex_activity_synced_at === 'string'
+    ? result.codex_activity_synced_at
+    : null;
   return {
     executor: task.executor === 'codex' ? 'codex' : 'codex_app',
     steps: Array.isArray(result.steps) ? result.steps as TaskResultJson['steps'] : [],
@@ -634,7 +687,11 @@ function resultSnapshot(
     awaiting_approval_at: status === 'awaiting_approval'
       ? (typeof result.awaiting_approval_at === 'string' ? result.awaiting_approval_at : nowIso)
       : undefined,
-    codex_visible_messages: activityMessages(task, threadId, summary, resumed),
+    codex_visible_messages: activityBatch.messages.slice(-MAX_ACTIVITY_MESSAGES_PER_UPDATE),
+    codex_activity_synced_sequence: activityBatch.syncedSequence ?? previousSyncedSequence,
+    codex_activity_synced_at: activityBatch.syncedAt ?? previousSyncedAt,
+    codex_activity_visible_count: summary.visibleMessages.length,
+    codex_activity_backfill_complete: activityBatch.complete,
     meta: {
       monitor: 'focusmap-agent',
       thread_title: row.title ?? null,
@@ -834,6 +891,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   const rolloutRaw = await readRollout(row);
   const summary = parseRollout(rolloutRaw, row);
   const { status, resumed } = taskStateForSummary(task, summary);
+  const activityBatch = activitySyncBatch(task, threadId, summary, resumed);
   const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? '';
   const sourceTaskTitleSuggestion = importedThreadSourceTitleSuggestion(task, row);
   const cacheKey = [
@@ -843,25 +901,37 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     summary.currentStep,
     summary.latestUserMessageAt ?? '',
     summary.latestTaskCompleteAt ?? '',
+    activityBatch.syncedSequence ?? activitySyncedSequence(task) ?? '',
+    summary.visibleMessages.length,
     sourceTaskTitleSuggestion ?? '',
   ].join('\u001f');
 
   const previousResult = taskResult(task);
   const previousState = typeof previousResult.codex_run_state === 'string' ? previousResult.codex_run_state : '';
+  const previousActivitySyncedSequence = activitySyncedSequence(task);
+  const hasNewActivityMessages = activityBatch.syncedSequence !== previousActivitySyncedSequence;
   const shouldSync =
     syncCache.get(task.id) !== cacheKey ||
     task.status !== status ||
     (status === 'running' && previousState !== 'running') ||
-    (resumed && task.status !== 'running');
+    (resumed && task.status !== 'running') ||
+    hasNewActivityMessages;
 
   if (!shouldSync) return 'unchanged';
   syncCache.set(task.id, cacheKey);
 
-  const nextResult = resultSnapshot(task, threadId, row, summary, status, resumed);
+  const nextResult = resultSnapshot(task, threadId, row, summary, status, resumed, activityBatch);
+  const stateSignalChanged =
+    task.status !== status ||
+    previousState !== nextResult.codex_run_state ||
+    previousResult.current_step !== nextResult.current_step ||
+    previousResult.last_activity_at !== nextResult.last_activity_at ||
+    previousResult.codex_review_reason !== nextResult.codex_review_reason;
   await api.updateTaskState(runnerId, task.id, status, {
     result: nextResult,
-    activity_messages: activityMessages(task, threadId, summary, resumed),
+    activity_messages: activityBatch.messages,
     source_task_title: sourceTaskTitleSuggestion,
+    send_progress_snapshot: stateSignalChanged || activityBatch.messages.length === 0,
   });
   task.status = status;
   task.result = nextResult as unknown as Record<string, unknown>;

@@ -113,6 +113,10 @@ export interface TaskResultJson {
   last_activity_at?: string;
   awaiting_approval_at?: string;
   codex_visible_messages?: AgentActivityMessage[];
+  codex_activity_synced_sequence?: number | null;
+  codex_activity_synced_at?: string | null;
+  codex_activity_visible_count?: number;
+  codex_activity_backfill_complete?: boolean;
   activity_messages?: AgentActivityMessage[];
   usage?: {
     input_tokens: number;

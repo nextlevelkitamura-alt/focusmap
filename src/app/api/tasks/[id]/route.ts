@@ -7,6 +7,8 @@ import {
   removeMindmapLinksForTaskIds,
   shouldPreserveMemoColumn,
 } from '@/lib/mindmap-memo-links';
+import { isTursoConfigured } from '@/lib/turso/client';
+import { deleteTursoAiTasksForUser } from '@/lib/turso/codex-monitoring';
 import type { Database } from '@/types/database';
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -347,6 +349,89 @@ async function requestCodexThreadArchiveForDeletedTasks(
   return requestedCount;
 }
 
+async function getDeletedCodexImportedTaskIds(
+  supabase: SupabaseServerClient,
+  userId: string,
+  deletedTaskIds: string[],
+) {
+  if (deletedTaskIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id, source')
+    .eq('user_id', userId)
+    .in('id', deletedTaskIds);
+
+  if (error) {
+    console.error('[tasks/[id] DELETE] Failed to load Codex imported task sources:', error);
+    return [];
+  }
+
+  return (data ?? [])
+    .filter(task => task.source === 'codex_app_thread')
+    .map(task => task.id)
+    .filter((taskId): taskId is string => typeof taskId === 'string' && taskId.length > 0);
+}
+
+async function getCodexImportedAiTaskIdsForDeletedTasks(
+  supabase: SupabaseServerClient,
+  userId: string,
+  sourceTaskIds: string[],
+) {
+  if (sourceTaskIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('ai_tasks')
+    .select('id')
+    .eq('user_id', userId)
+    .in('executor', ['codex', 'codex_app'])
+    .in('source_task_id', sourceTaskIds);
+
+  if (error) {
+    console.error('[tasks/[id] DELETE] Failed to load Codex ai_tasks for deletion:', error);
+    return [];
+  }
+
+  return (data ?? [])
+    .map(row => row.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+}
+
+async function deleteCodexImportedDataForDeletedAiTasks(
+  supabase: SupabaseServerClient,
+  userId: string,
+  aiTaskIds: string[],
+) {
+  if (aiTaskIds.length === 0) return { ai_tasks_deleted: 0, turso_tasks_deleted: 0 };
+
+  const { error: deleteError } = await supabase
+    .from('ai_tasks')
+    .delete()
+    .eq('user_id', userId)
+    .in('id', aiTaskIds);
+
+  if (deleteError) {
+    console.error('[tasks/[id] DELETE] Failed to delete Codex ai_tasks:', deleteError);
+    return { ai_tasks_deleted: 0, turso_tasks_deleted: 0, error: deleteError.message };
+  }
+
+  let tursoTasksDeleted = 0;
+  if (isTursoConfigured()) {
+    try {
+      const result = await deleteTursoAiTasksForUser(aiTaskIds, userId);
+      tursoTasksDeleted = result.deleted;
+    } catch (tursoError) {
+      console.error('[tasks/[id] DELETE] Failed to delete Turso Codex ai_tasks:', tursoError);
+      return {
+        ai_tasks_deleted: aiTaskIds.length,
+        turso_tasks_deleted: tursoTasksDeleted,
+        error: tursoError instanceof Error ? tursoError.message : 'Turso delete failed',
+      };
+    }
+  }
+
+  return { ai_tasks_deleted: aiTaskIds.length, turso_tasks_deleted: tursoTasksDeleted };
+}
+
 async function restoreDeletedTaskMemoStateSnapshot(
   supabase: SupabaseServerClient,
   userId: string,
@@ -634,10 +719,17 @@ export async function DELETE(
     }
 
     const deletedTaskIds = await getDeletedTaskIds(supabase, user.id, taskId);
+    const codexImportedDeletedTaskIds = await getDeletedCodexImportedTaskIds(supabase, user.id, deletedTaskIds);
+    const codexImportedAiTaskIds = await getCodexImportedAiTaskIdsForDeletedTasks(
+      supabase,
+      user.id,
+      codexImportedDeletedTaskIds,
+    );
+    const codexImportedDeletedTaskIdSet = new Set(codexImportedDeletedTaskIds);
     const codexArchiveRequestCount = await requestCodexThreadArchiveForDeletedTasks(
       supabase,
       user.id,
-      deletedTaskIds,
+      deletedTaskIds.filter(deletedTaskId => !codexImportedDeletedTaskIdSet.has(deletedTaskId)),
     );
     const memoRepairSnapshot = await cleanupDeletedTaskMemoState(supabase, user.id, deletedTaskIds);
 
@@ -664,12 +756,18 @@ export async function DELETE(
     }
 
     console.log('[tasks/[id] DELETE] Task deleted successfully');
+    const codexDataDeletion = await deleteCodexImportedDataForDeletedAiTasks(
+      supabase,
+      user.id,
+      codexImportedAiTaskIds,
+    );
 
     return NextResponse.json({
       success: true,
       message: 'Task deleted successfully',
       memo_repair: memoRepairSnapshot,
       codex_archive_requests: codexArchiveRequestCount,
+      codex_data_deletion: codexDataDeletion,
     });
   } catch (error: unknown) {
     console.error('[tasks/[id] DELETE] Error:', error);
