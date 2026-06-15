@@ -434,6 +434,38 @@ describe("CustomMindMapView keyboard operations", () => {
     })
   })
 
+  test("clears stale node import badges after dropping an imported Codex chat", async () => {
+    const onDropImportedChatNode = vi.fn()
+    renderMap({ importedChatDragTitle: "取り込みたいチャット", onDropImportedChatNode })
+
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
+    const node = getNode("Root task", "root-1")
+    const dataTransfer = {
+      types: [CODEX_CHAT_IMPORT_DRAG_TYPE],
+      dropEffect: "copy",
+      getData: vi.fn((type: string) => (
+        type === CODEX_CHAT_IMPORT_DRAG_TYPE
+          ? encodeCodexChatImportDragPayload({ taskId: "chat-node-1", title: "取り込みたいチャット" })
+          : ""
+      )),
+    }
+
+    fireEvent.dragOver(node, { dataTransfer })
+
+    expect(screen.getByText("ここに入れる")).toBeInTheDocument()
+
+    fireEvent.drop(viewport, { dataTransfer })
+
+    await waitFor(() => {
+      expect(screen.queryByText("ここに入れる")).not.toBeInTheDocument()
+    })
+    expect(onDropImportedChatNode).toHaveBeenCalledWith({
+      taskId: "chat-node-1",
+      targetId: "project-root",
+      position: "as-child",
+    })
+  })
+
   test("drops an imported Codex chat below a node as a sibling", () => {
     const onDropImportedChatNode = vi.fn()
     renderMap({ importedChatDragTitle: "取り込みたいチャット", onDropImportedChatNode })

@@ -465,6 +465,7 @@ function CustomTaskNode({
     onRequestEdit,
     onPreviewTitleChange,
     onDropImportedChatNode,
+    externalImportResetKey,
     mobilePlacementMode,
 }: {
     node: MindMapModelNode;
@@ -502,6 +503,7 @@ function CustomTaskNode({
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
     onPreviewTitleChange?: (taskId: string, title: string | null) => void;
     onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
+    externalImportResetKey: number;
     mobilePlacementMode?: boolean;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
@@ -528,6 +530,10 @@ function CustomTaskNode({
         (codexState && codexState.state !== "prompt_waiting")
     );
     const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(codexState, taskProgress);
+
+    useEffect(() => {
+        setExternalDropActive(false);
+    }, [externalImportResetKey]);
     const showLongNodeHeadingAction =
         !isEditing &&
         !floatingEditing &&
@@ -1132,6 +1138,7 @@ function CustomProjectNode({
     onRegisterEditController,
     onRequestEdit,
     onDropImportedChatNode,
+    externalImportResetKey,
     mobilePlacementMode,
 }: {
     node: MindMapModelNode;
@@ -1149,6 +1156,7 @@ function CustomProjectNode({
     onRegisterEditController?: (nodeId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
     onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
+    externalImportResetKey: number;
     mobilePlacementMode?: boolean;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
@@ -1160,6 +1168,10 @@ function CustomProjectNode({
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(node.title);
     const [externalDropActive, setExternalDropActive] = useState(false);
+
+    useEffect(() => {
+        setExternalDropActive(false);
+    }, [externalImportResetKey]);
 
     useLayoutEffect(() => {
         if (!primarySelected || isEditing) return;
@@ -1516,6 +1528,7 @@ export function CustomMindMapView({
     const [mobileKeyboardAccessoryPinned, setMobileKeyboardAccessoryPinned] = useState(false);
     const [externalImportDragOverMap, setExternalImportDragOverMap] = useState(false);
     const [externalImportDropTarget, setExternalImportDropTarget] = useState<CustomDropTarget | null>(null);
+    const [externalImportResetKey, setExternalImportResetKey] = useState(0);
     const externalImportDropTargetRef = useRef<CustomDropTarget | null>(null);
     const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight();
     const codexRunnerStatus = useCodexRunnerStatus(Boolean(onToggleCodexThreadImport));
@@ -3244,6 +3257,7 @@ export function CustomMindMapView({
         setExternalImportDragOverMap(false);
         externalImportDropTargetRef.current = null;
         setExternalImportDropTarget(null);
+        setExternalImportResetKey(key => key + 1);
     }, []);
 
     const handleExternalImportDragOverCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -3548,6 +3562,7 @@ export function CustomMindMapView({
                                     onRegisterEditController={handleRegisterEditController}
                                     onRequestEdit={startFloatingEdit}
                                     onDropImportedChatNode={onDropImportedChatNode}
+                                    externalImportResetKey={externalImportResetKey}
                                     mobilePlacementMode={mobilePlacementMode}
                                 />
                             );
@@ -3590,6 +3605,7 @@ export function CustomMindMapView({
                                 onRequestEdit={startFloatingEdit}
                                 onPreviewTitleChange={handlePreviewTitleChange}
                                 onDropImportedChatNode={onDropImportedChatNode}
+                                externalImportResetKey={externalImportResetKey}
                                 mobilePlacementMode={mobilePlacementMode}
                         />
                         );

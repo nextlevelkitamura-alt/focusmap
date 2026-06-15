@@ -1894,6 +1894,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         targetId: string;
         position: 'above' | 'below' | 'as-child';
     }) => {
+        setActiveCodexChatDrag(null);
         if (!project?.id) return;
         const importedTask = repoScopedTasksById.get(taskId) ?? getTaskById(taskId);
         if (!importedTask) return;

@@ -823,6 +823,12 @@ export function CodexChatImportSidebar({
     onChatDragStateChange?.(null)
   }, [onChatDragStateChange])
 
+  React.useEffect(() => {
+    if (!draggingChatId) return
+    if (chatItems.some(item => item.id === draggingChatId)) return
+    finishChatDrag()
+  }, [chatItems, draggingChatId, finishChatDrag])
+
   return (
     <aside
       className="flex h-full w-[min(460px,calc(100vw-1.5rem))] flex-col overflow-hidden border border-y-0 border-r-0 border-[#303030] bg-[#171717] text-zinc-100 shadow-2xl shadow-black/40"

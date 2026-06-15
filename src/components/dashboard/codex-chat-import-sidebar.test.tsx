@@ -78,7 +78,7 @@ function renderSidebar(options: {
   const onReturnPlacedChatItem = options.onReturnPlacedChatItem ?? vi.fn().mockResolvedValue(undefined)
   const onClose = vi.fn()
 
-  render(
+  const view = render(
     <CodexChatImportSidebar
       projectTitle="仕事"
       selectedRepoPath="/Users/me/focusmap"
@@ -98,7 +98,29 @@ function renderSidebar(options: {
     />,
   )
 
-  return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onPlaceChatItem, onReturnPlacedChatItem, onClose }
+  const rerenderSidebar = (nextOptions: Partial<typeof options> = {}) => {
+    view.rerender(
+      <CodexChatImportSidebar
+        projectTitle="仕事"
+        selectedRepoPath="/Users/me/focusmap"
+        importEnabled
+        importOwnerLabel="仕事"
+        chatItems={nextOptions.chatItems ?? options.chatItems ?? chatItems}
+        detailItems={nextOptions.detailItems ?? options.detailItems}
+        initialSelectedChatId={nextOptions.initialSelectedChatId ?? options.initialSelectedChatId}
+        onInitialSelectedChatClear={nextOptions.onInitialSelectedChatClear ?? options.onInitialSelectedChatClear}
+        onClose={onClose}
+        onSelectRepoPath={onSelectRepoPath}
+        onToggleImport={onToggleImport}
+        onDeleteChatItem={onDeleteChatItem}
+        onPlaceChatItem={onPlaceChatItem}
+        onReturnPlacedChatItem={onReturnPlacedChatItem}
+        onChatDragStateChange={nextOptions.onChatDragStateChange ?? options.onChatDragStateChange}
+      />,
+    )
+  }
+
+  return { ...view, rerenderSidebar, onSelectRepoPath, onToggleImport, onDeleteChatItem, onPlaceChatItem, onReturnPlacedChatItem, onClose }
 }
 
 function buttonContainingText(text: string | RegExp) {
@@ -196,6 +218,33 @@ describe("CodexChatImportSidebar", () => {
 
     fireEvent.dragEnd(row, { dataTransfer })
     expect(onChatDragStateChange).toHaveBeenLastCalledWith(null)
+  })
+
+  test("clears drag state when the dragged chat is hidden after placement", async () => {
+    const onChatDragStateChange = vi.fn()
+    const { rerenderSidebar } = renderSidebar({ onChatDragStateChange })
+
+    const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
+    const dragData = new Map<string, string>()
+    const dataTransfer = {
+      effectAllowed: "copy",
+      setData: vi.fn((type: string, value: string) => {
+        dragData.set(type, value)
+      }),
+      getData: vi.fn((type: string) => dragData.get(type) ?? ""),
+      setDragImage: vi.fn(),
+    }
+
+    fireEvent.dragStart(row, { dataTransfer })
+
+    expect(screen.getByText("マップ外で離すとカードに戻ります")).toBeInTheDocument()
+
+    rerenderSidebar({ chatItems: [] })
+
+    await waitFor(() => {
+      expect(onChatDragStateChange).toHaveBeenLastCalledWith(null)
+    })
+    expect(screen.getByText("ドラッグしてノードへ配置")).toBeInTheDocument()
   })
 
   test("selects a repo from Focusmap agent repo candidates", async () => {
