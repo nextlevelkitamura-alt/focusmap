@@ -6,6 +6,7 @@ export interface MindmapOrganizationNodeInput {
   status: string | null
   stage: string | null
   order_index: number | null
+  source?: string | null
 }
 
 export interface OrderedMindmapOrganizationNode extends MindmapOrganizationNodeInput {
@@ -231,16 +232,19 @@ export function suggestMindmapOrganizationCandidates(
 export function buildMindmapOrganizationHarness(): MindmapOrganizationHarness {
   return {
     rules: [
+      '整理案を出す前に、Codexから未配置/未取り込みのチャット・作業も含めるか、現在マインドマップ上にあるノードだけにするかを必ず確認する。ユーザーが対象範囲を明示済みの場合だけ、その範囲で進める。',
       '最初は見出しだけで全体を眺め、本文やメモ詳細を無差別に読まない。',
       'まとめ候補は提案に留め、ユーザー承認前に addMindmapGroup / moveMindmapNode / updateMindmapNode を実行しない。',
       '判断に迷う候補だけ getMindmapNodeDetail や getNoteOrganizationDetail で詳細を読む。',
       '削除は提案しない。まず新規まとめノード作成、既存ノード配下への移動、必要なら名称変更案だけに絞る。',
+      '提案では、新しいノードを作って紐づける案と、既存ノード配下へ入れる案の両方を検討して示す。片方が不要な場合は理由を短く添える。',
     ],
     response_format: [
-      '1. 読んだ前提: プロジェクト概要、現在の見出し数、見出しの大枠を短く共有する。',
-      '2. 整理提案: まとめノード名、移動するノード、理由、実行操作をカード風に出す。',
-      '3. 図: ```text``` のツリーで「現在 → 提案後」を見せる。',
-      '4. 確認: 「この案で実行してよいですか？」と聞き、承認後だけDB変更ツールを呼ぶ。',
+      '1. 範囲確認: Codex未配置/未取り込みも含めるか、マップ上のノードだけにするかを聞く。回答済みなら採用した範囲を明記する。',
+      '2. 読んだ前提: プロジェクト概要、現在の見出し数、見出しの大枠を短く共有する。',
+      '3. 整理提案: 新規ノード作成案、既存ノードへ入れる案、移動するノード、理由、実行操作をカード風に出す。',
+      '4. 図: ```text``` のツリーで「現在 → 提案後」を見せる。',
+      '5. 確認: 「この案で実行してよいですか？」と聞き、承認後だけDB変更ツールを呼ぶ。',
     ],
     apply_after_approval: [
       '新規まとめノードが必要なら addMindmapGroup を使う。parentId がある場合は指定する。',

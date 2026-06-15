@@ -75,6 +75,9 @@ describe('mindmap organization harness', () => {
   test('返答ハーネスは承認前のDB変更を禁止する', () => {
     const harness = buildMindmapOrganizationHarness()
 
+    expect(harness.rules.join('\n')).toContain('未配置/未取り込み')
+    expect(harness.response_format.join('\n')).toContain('範囲確認')
+    expect(harness.response_format.join('\n')).toContain('既存ノードへ入れる案')
     expect(harness.rules.join('\n')).toContain('ユーザー承認前')
     expect(harness.apply_after_approval.join('\n')).toContain('addMindmapGroup')
     expect(harness.diagram_template).toContain('```text')

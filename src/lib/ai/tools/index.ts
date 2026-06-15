@@ -10,6 +10,7 @@ import { createClient } from '@/utils/supabase/server'
 import { upsertMemoTags } from '@/lib/memo-tags-server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { readMindmapLinks, readPayloadRecord } from '@/lib/mindmap-memo-links'
+import { getHiddenCodexInboxTaskIds } from '@/lib/codex-inbox-visibility'
 import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
 import { parseAgentCalendarPreferences } from '@/lib/ai/agent-preferences'
 import { matchProjectSearch } from '@/lib/ai/project-search'
@@ -47,6 +48,7 @@ type MindmapTaskRow = {
   calendar_id: string | null
   google_event_id: string | null
   memo: string | null
+  source?: string | null
   mindmap_collapsed?: boolean | null
   created_at?: string
   updated_at?: string
@@ -1822,15 +1824,17 @@ export const getMindmapOverview = tool({
 
 export const proposeMindmapOrganization = tool({
   description:
-    'マインドマップを整理・統合・まとめ直したい時に最初に使う読み取り専用ハーネス。プロジェクト概要、蓄積コンテキスト、ノード/ノート見出しだけを読み、まとめ候補と図解用テンプレートを返す。DBは変更しない。返答では提案と図を出し、ユーザー承認後だけ addMindmapGroup / moveMindmapNode / updateMindmapNode を使う。',
+    'マインドマップを整理・統合・まとめ直したい時に、整理対象範囲をユーザーへ確認した後で使う読み取り専用ハーネス。プロジェクト概要、蓄積コンテキスト、ノード/ノート見出しだけを読み、まとめ候補と図解用テンプレートを返す。DBは変更しない。返答では新規ノード作成案と既存ノード配下へ入れる案を検討し、ユーザー承認後だけ addMindmapGroup / moveMindmapNode / updateMindmapNode を使う。',
   inputSchema: z.object({
     projectId: z.string().describe('整理提案するプロジェクトID'),
     focus: z.string().optional().describe('整理したい観点。例: チャット文脈、ノート整理、未分類ノードなど。'),
     maxNodes: z.number().optional().describe('見出しとして返す最大ノード数。通常120、最大240。'),
     maxNoteHeadings: z.number().optional().describe('返すノート/メモ見出し数。通常30、最大80。'),
     maxCandidates: z.number().optional().describe('機械的に拾うまとめ候補数。通常6、最大12。'),
+    includeCodexInbox: z.boolean().optional().describe('Codex Inbox配下の未配置/未取り込み扱いのCodexチャット・作業も整理対象に含めるか。ユーザーに確認済みの場合だけtrue。未指定/falseなら現在マインドマップ上にある通常ノードだけを見る。'),
+    includeNoteHeadings: z.boolean().optional().describe('ノート/メモ見出しも整理候補として含めるか。ユーザーが「マインドマップ上だけ」と答えた場合はfalse。未指定なら従来通りtrue。'),
   }),
-  execute: async ({ projectId, focus, maxNodes, maxNoteHeadings, maxCandidates }) => {
+  execute: async ({ projectId, focus, maxNodes, maxNoteHeadings, maxCandidates, includeCodexInbox, includeNoteHeadings }) => {
     const supabase = await createClient()
     const user = await requireAuthedUser(supabase)
     if (!user) return { success: false, error: '認証エラー' }
@@ -1838,6 +1842,7 @@ export const proposeMindmapOrganization = tool({
     const nodeLimit = normalizeLimit(maxNodes, 120, 240)
     const noteLimit = normalizeLimit(maxNoteHeadings, 30, 80)
     const candidateLimit = normalizeLimit(maxCandidates, 6, 12)
+    const shouldIncludeNoteHeadings = includeNoteHeadings !== false
 
     const [{ data: project, error: projectError }, { data: context }] = await Promise.all([
       supabase
@@ -1859,7 +1864,7 @@ export const proposeMindmapOrganization = tool({
     const [{ data: taskRows, error: taskError }, { data: wishlistRows }, { data: memoRows }] = await Promise.all([
       supabase
         .from('tasks')
-        .select('id, title, parent_task_id, is_group, status, stage, order_index')
+        .select('id, title, parent_task_id, is_group, status, stage, order_index, source')
         .eq('project_id', projectId)
         .eq('user_id', user.id)
         .is('deleted_at', null)
@@ -1883,10 +1888,19 @@ export const proposeMindmapOrganization = tool({
     ])
     if (taskError) return { success: false, error: taskError.message }
 
-    const rawNodes = (taskRows || []) as MindmapOrganizationNodeInput[]
+    const allNodes = (taskRows || []) as MindmapOrganizationNodeInput[]
+    const hiddenCodexIds = getHiddenCodexInboxTaskIds(allNodes.map(node => ({
+      id: node.id,
+      parent_task_id: node.parent_task_id,
+      source: node.source ?? '',
+      title: node.title,
+    })))
+    const rawNodes = includeCodexInbox === true
+      ? allNodes
+      : allNodes.filter(node => !hiddenCodexIds.has(node.id))
     const ordered = orderMindmapOrganizationNodes(rawNodes)
     const candidateGroups = suggestMindmapOrganizationCandidates(ordered, candidateLimit)
-    const wishlistHeadings = (wishlistRows || [])
+    const wishlistHeadings = shouldIncludeNoteHeadings ? (wishlistRows || [])
       .filter(row => !row.is_completed && !['done', 'dismissed', 'archived'].includes(row.memo_status ?? ''))
       .map(row => ({
         record_type: 'wishlist' as const,
@@ -1894,8 +1908,8 @@ export const proposeMindmapOrganization = tool({
         title: row.title ?? '無題',
         status: row.memo_status ?? row.status ?? null,
         updated_at: row.updated_at,
-      }))
-    const memoHeadings = (memoRows || [])
+      })) : []
+    const memoHeadings = shouldIncludeNoteHeadings ? (memoRows || [])
       .filter(row => !['done', 'dismissed', 'archived'].includes(row.status ?? ''))
       .map(row => ({
         record_type: 'memo_item' as const,
@@ -1904,7 +1918,7 @@ export const proposeMindmapOrganization = tool({
         status: row.status ?? null,
         item_kind: row.item_kind ?? null,
         updated_at: row.updated_at,
-      }))
+      })) : []
     const noteHeadings = [...wishlistHeadings, ...memoHeadings]
       .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))
       .slice(0, noteLimit)
@@ -1934,6 +1948,13 @@ export const proposeMindmapOrganization = tool({
         tasks: ordered.filter(node => !node.is_group).length,
         done_tasks: ordered.filter(node => !node.is_group && (node.status === 'done' || node.stage === 'done')).length,
       },
+      codex_scope: {
+        include_codex_inbox: includeCodexInbox === true,
+        excluded_codex_inbox_nodes: includeCodexInbox === true ? 0 : hiddenCodexIds.size,
+        instruction: includeCodexInbox === true
+          ? 'ユーザー確認済みとして、Codex Inbox配下の未配置/未取り込み扱いのチャット・作業も整理対象に含めています。'
+          : 'Codex Inbox配下の未配置/未取り込み扱いのチャット・作業は除外し、現在マインドマップ上にある通常ノードだけを整理対象にしています。',
+      },
       heading_tree: formatMindmapOrganizationTree(ordered, nodeLimit),
       nodes: ordered.map(node => ({
         id: node.id,
@@ -1943,13 +1964,15 @@ export const proposeMindmapOrganization = tool({
         path: node.path,
         depth: node.depth,
         is_group: node.is_group,
+        source: node.source ?? null,
         status: node.status,
         stage: node.stage,
         children_count: node.children_count,
       })),
       note_headings: {
         count_returned: noteHeadings.length,
-        truncated: ((wishlistRows || []).length >= noteLimit) || ((memoRows || []).length >= noteLimit),
+        included: shouldIncludeNoteHeadings,
+        truncated: shouldIncludeNoteHeadings && (((wishlistRows || []).length >= noteLimit) || ((memoRows || []).length >= noteLimit)),
         records: noteHeadings,
       },
       candidate_groups: candidateGroups,
