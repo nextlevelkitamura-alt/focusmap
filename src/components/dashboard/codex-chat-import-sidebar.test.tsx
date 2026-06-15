@@ -68,12 +68,14 @@ function renderSidebar(options: {
   initialSelectedChatId?: string | null
   onInitialSelectedChatClear?: ReturnType<typeof vi.fn>
   onPlaceChatItem?: ReturnType<typeof vi.fn>
+  onReturnPlacedChatItem?: ReturnType<typeof vi.fn>
   onChatDragStateChange?: ReturnType<typeof vi.fn>
 } = {}) {
   const onSelectRepoPath = vi.fn().mockResolvedValue(undefined)
   const onToggleImport = vi.fn().mockResolvedValue(undefined)
   const onDeleteChatItem = vi.fn().mockResolvedValue(undefined)
   const onPlaceChatItem = options.onPlaceChatItem ?? vi.fn().mockResolvedValue(undefined)
+  const onReturnPlacedChatItem = options.onReturnPlacedChatItem ?? vi.fn().mockResolvedValue(undefined)
   const onClose = vi.fn()
 
   render(
@@ -91,11 +93,12 @@ function renderSidebar(options: {
       onToggleImport={onToggleImport}
       onDeleteChatItem={onDeleteChatItem}
       onPlaceChatItem={onPlaceChatItem}
+      onReturnPlacedChatItem={onReturnPlacedChatItem}
       onChatDragStateChange={options.onChatDragStateChange}
     />,
   )
 
-  return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onPlaceChatItem, onClose }
+  return { onSelectRepoPath, onToggleImport, onDeleteChatItem, onPlaceChatItem, onReturnPlacedChatItem, onClose }
 }
 
 beforeEach(() => {
@@ -342,7 +345,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getAllByText("配置済みCodex作業").length).toBeGreaterThan(0)
     expect(screen.getByText("配置済み: プロジェクト直下")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "ノードへ配置" })).not.toBeInTheDocument()
-    expect(screen.getByText("配置済みのチャット履歴")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "履歴へ戻す" })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "一覧へ戻る" }))
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
@@ -436,6 +439,41 @@ describe("CodexChatImportSidebar", () => {
 
     await waitFor(() => {
       expect(onPlaceChatItem).toHaveBeenCalledWith("chat-node-1")
+    })
+    expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
+  })
+
+  test("returns the selected placed chat from the detail footer", async () => {
+    const onReturnPlacedChatItem = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-placed" })
+      if (url === "/api/ai-tasks/ai-task-placed/activity") return jsonResponse({ messages: [] })
+      if (url === "/api/tasks/chat-node-placed") {
+        return jsonResponse({ task: { title: "配置済みの相談", memo: "詳細" } })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar({
+      chatItems: [],
+      detailItems: [{
+        ...chatItems[0],
+        id: "chat-node-placed",
+        aiTaskId: "ai-task-placed",
+        title: "配置済みの相談",
+        placementLabel: "配置済み: アプリの修正",
+        placed: true,
+      }],
+      initialSelectedChatId: "chat-node-placed",
+      onReturnPlacedChatItem,
+    })
+
+    await screen.findByRole("button", { name: "履歴へ戻す" })
+    fireEvent.click(screen.getByRole("button", { name: "履歴へ戻す" }))
+
+    await waitFor(() => {
+      expect(onReturnPlacedChatItem).toHaveBeenCalledWith("chat-node-placed")
     })
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
   })

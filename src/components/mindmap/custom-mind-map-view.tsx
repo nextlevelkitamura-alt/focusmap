@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Bot, Check, ChevronDown, ChevronRight, Loader2, MoreVertical, Sparkles } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, GitBranch, Loader2, MoreVertical, Sparkles } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -125,6 +125,12 @@ type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowR
 type CustomDropTarget = {
     nodeId: string;
     position: CustomDropPosition;
+};
+
+type ExternalImportDropPreview = {
+    preview: Rect;
+    badge: Point;
+    path: string;
 };
 
 type DragState = {
@@ -425,6 +431,7 @@ function CustomTaskNode({
     dragging,
     dragReady,
     dropPosition,
+    importDropActive,
     triggerEdit,
     initialEditValue,
     floatingEditing,
@@ -461,6 +468,7 @@ function CustomTaskNode({
     dragging?: boolean;
     dragReady?: boolean;
     dropPosition?: CustomDropPosition | null;
+    importDropActive?: boolean;
     triggerEdit?: boolean;
     initialEditValue?: string;
     floatingEditing?: boolean;
@@ -861,6 +869,7 @@ function CustomTaskNode({
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 !dragging && "cursor-grab",
                 externalDropActive && "z-40 border-sky-400 bg-sky-500/15 ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
+                importDropActive && !dragging && "z-40 border-amber-400 bg-amber-500/15 ring-2 ring-amber-400 ring-offset-2 ring-offset-background shadow-[0_0_22px_rgba(245,158,11,0.45)]",
                 dropPosition === "as-child" && !dragging && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
             style={{ left: node.x, top: node.y, width: node.width, height: node.height, minHeight: node.height }}
@@ -884,10 +893,15 @@ function CustomTaskNode({
             onDragLeave={handleExternalDragLeave}
             onDrop={handleExternalDrop}
         >
-            {externalDropActive && (
-                <div className="pointer-events-none absolute -top-7 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-sky-300/40 bg-background/95 px-2 py-1 text-[11px] font-semibold text-sky-600 shadow-lg dark:bg-[#111111]/95 dark:text-sky-300">
+            {(externalDropActive || importDropActive) && (
+                <div className={cn(
+                    "pointer-events-none absolute -top-7 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background/95 px-2 py-1 text-[11px] font-semibold shadow-lg dark:bg-[#111111]/95",
+                    importDropActive
+                        ? "border-amber-300/50 text-amber-600 dark:text-amber-300"
+                        : "border-sky-300/40 text-sky-600 dark:text-sky-300"
+                )}>
                     <Bot className="h-3 w-3" />
-                    ここに入れる
+                    {importDropActive ? "親ノード候補" : "ここに入れる"}
                 </div>
             )}
             {dropPosition === "above" && !dragging && (
@@ -1095,6 +1109,7 @@ function CustomProjectNode({
     selected,
     primarySelected,
     dropPosition,
+    importDropActive,
     triggerEdit,
     floatingEditing,
     isMobile,
@@ -1111,6 +1126,7 @@ function CustomProjectNode({
     selected: boolean;
     primarySelected: boolean;
     dropPosition?: CustomDropPosition | null;
+    importDropActive?: boolean;
     triggerEdit?: boolean;
     floatingEditing?: boolean;
     isMobile: boolean;
@@ -1375,6 +1391,7 @@ function CustomProjectNode({
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 externalDropActive && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]",
+                importDropActive && "ring-2 ring-amber-400 ring-offset-2 ring-offset-background shadow-[0_0_22px_rgba(245,158,11,0.45)]",
                 dropPosition === "as-child" && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
             style={{ left: node.x, top: node.y, width: node.width, height: node.height, minHeight: node.height }}
@@ -1394,10 +1411,15 @@ function CustomProjectNode({
             onDragLeave={handleExternalDragLeave}
             onDrop={handleExternalDrop}
         >
-            {externalDropActive && (
-                <div className="pointer-events-none absolute -top-7 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-sky-300/40 bg-background/95 px-2 py-1 text-[11px] font-semibold text-sky-600 shadow-lg dark:bg-[#111111]/95 dark:text-sky-300">
+            {(externalDropActive || importDropActive) && (
+                <div className={cn(
+                    "pointer-events-none absolute -top-7 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background/95 px-2 py-1 text-[11px] font-semibold shadow-lg dark:bg-[#111111]/95",
+                    importDropActive
+                        ? "border-amber-300/50 text-amber-600 dark:text-amber-300"
+                        : "border-sky-300/40 text-sky-600 dark:text-sky-300"
+                )}>
                     <Bot className="h-3 w-3" />
-                    ここに入れる
+                    {importDropActive ? "親ノード候補" : "ここに入れる"}
                 </div>
             )}
             {dropPosition === "as-child" && (
@@ -1481,6 +1503,8 @@ export function CustomMindMapView({
     const [floatingEditValue, setFloatingEditValue] = useState("");
     const [mobileKeyboardAccessoryPinned, setMobileKeyboardAccessoryPinned] = useState(false);
     const [externalImportDragOverMap, setExternalImportDragOverMap] = useState(false);
+    const [externalImportDropTarget, setExternalImportDropTarget] = useState<CustomDropTarget | null>(null);
+    const externalImportDropTargetRef = useRef<CustomDropTarget | null>(null);
     const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight();
     const codexRunnerStatus = useCodexRunnerStatus(Boolean(onToggleCodexThreadImport));
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -1979,6 +2003,28 @@ export function CustomMindMapView({
 
         return best ? { nodeId: best.node.id, position: best.position } : null;
     }, [isDescendantNode, nodeById, positionedNodes]);
+
+    const getExternalImportDropTarget = useCallback((clientX: number, clientY: number): CustomDropTarget | null => {
+        const point = getStagePoint(clientX, clientY);
+        if (!point) return null;
+
+        let best: { node: MindMapModelNode; distance: number } | null = null;
+        for (const candidate of positionedNodes) {
+            if (candidate.kind !== "project" && candidate.kind !== "task") continue;
+
+            const left = candidate.x;
+            const top = candidate.y;
+            const right = candidate.x + candidate.width;
+            const bottom = candidate.y + candidate.height;
+            const clampedX = Math.max(left, Math.min(point.x, right));
+            const clampedY = Math.max(top, Math.min(point.y, bottom));
+            const distance = Math.hypot(clampedX - point.x, clampedY - point.y);
+            if (distance > DROP_TARGET_MAX_DISTANCE) continue;
+            if (!best || distance < best.distance) best = { node: candidate, distance };
+        }
+
+        return best ? { nodeId: best.node.id, position: "as-child" } : null;
+    }, [getStagePoint, positionedNodes]);
 
     const handleSelectTaskNode = useCallback((nodeId: string, options?: { additive: boolean }) => {
         if (Date.now() < suppressPaneClickUntilRef.current) return false;
@@ -3167,21 +3213,28 @@ export function CustomMindMapView({
             externalImportDragResetTimerRef.current = null;
         }
         setExternalImportDragOverMap(false);
+        externalImportDropTargetRef.current = null;
+        setExternalImportDropTarget(null);
     }, []);
 
     const handleExternalImportDragOverCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
+        const target = getExternalImportDropTarget(event.clientX, event.clientY);
         setExternalImportDragOverMap(true);
+        externalImportDropTargetRef.current = target;
+        setExternalImportDropTarget(target);
         if (externalImportDragResetTimerRef.current !== null) {
             window.clearTimeout(externalImportDragResetTimerRef.current);
         }
         externalImportDragResetTimerRef.current = window.setTimeout(() => {
             externalImportDragResetTimerRef.current = null;
             setExternalImportDragOverMap(false);
+            externalImportDropTargetRef.current = null;
+            setExternalImportDropTarget(null);
         }, 160);
-    }, []);
+    }, [getExternalImportDropTarget]);
 
     const handleExternalImportDragLeaveCapture = useCallback((event: React.DragEvent<HTMLDivElement>) => {
         if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
@@ -3199,17 +3252,18 @@ export function CustomMindMapView({
         if (!hasCodexChatImportDragPayload(event.dataTransfer)) return;
         event.preventDefault();
         event.stopPropagation();
+        const target = getExternalImportDropTarget(event.clientX, event.clientY) ?? externalImportDropTargetRef.current ?? externalImportDropTarget;
         clearExternalImportDragOverMap();
         const payload = readCodexChatImportDragPayload(event.dataTransfer);
         if (!payload) return;
         void Promise.resolve(onDropImportedChatNode?.({
             taskId: payload.taskId,
-            targetId: "project-root",
-            position: "as-child",
+            targetId: target?.nodeId ?? "project-root",
+            position: target?.position ?? "as-child",
         })).catch(error => {
             console.error("[CustomMindMap] Failed to drop imported Codex chat:", error);
         });
-    }, [clearExternalImportDragOverMap, onDropImportedChatNode]);
+    }, [clearExternalImportDragOverMap, externalImportDropTarget, getExternalImportDropTarget, onDropImportedChatNode]);
 
     useEffect(() => () => {
         if (externalImportDragResetTimerRef.current !== null) {
@@ -3226,6 +3280,39 @@ export function CustomMindMapView({
             height: Math.abs(selectionBox.currentY - selectionBox.startY),
         }
         : null;
+    const externalImportPreview = useMemo<ExternalImportDropPreview | null>(() => {
+        if (!externalImportDragOverMap || externalImportDropTarget?.position !== "as-child") return null;
+        const target = nodeById.get(externalImportDropTarget.nodeId);
+        if (!target) return null;
+
+        const previewWidth = Math.max(180, Math.min(260, (importedChatDragTitle?.trim().length ?? 0) * 8 + 96));
+        const previewHeight = 44;
+        const rawX = target.x + target.width + 52;
+        const preview = {
+            x: Math.min(Math.max(rawX, 24), Math.max(24, stageWidth - previewWidth - 24)),
+            y: Math.min(
+                Math.max(target.y + target.height / 2 - previewHeight / 2, 24),
+                Math.max(24, stageHeight - previewHeight - 24),
+            ),
+            width: previewWidth,
+            height: previewHeight,
+        };
+        const sourceX = target.x + target.width;
+        const sourceY = target.y + target.height / 2;
+        const targetX = preview.x;
+        const targetY = preview.y + preview.height / 2;
+        const branchX = Math.round(sourceX + Math.max(28, (targetX - sourceX) / 2));
+        const path = `M ${Math.round(sourceX)} ${Math.round(sourceY)} C ${branchX} ${Math.round(sourceY)}, ${branchX} ${Math.round(targetY)}, ${Math.round(targetX)} ${Math.round(targetY)}`;
+
+        return {
+            preview,
+            badge: {
+                x: Math.max(16, Math.min(stageWidth - 96, branchX - 42)),
+                y: Math.max(16, Math.min(stageHeight - 28, Math.min(sourceY, targetY) - 28)),
+            },
+            path,
+        };
+    }, [externalImportDragOverMap, externalImportDropTarget, importedChatDragTitle, nodeById, stageHeight, stageWidth]);
     const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
     const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
     const codexRunnerUnavailable = codexRunnerStatus.loading || !codexRunnerStatus.ready;
@@ -3371,6 +3458,25 @@ export function CustomMindMapView({
                             );
                         })}
                     </svg>
+                    {externalImportPreview && (
+                        <svg
+                            className="pointer-events-none absolute inset-0 z-[5] text-amber-300"
+                            width={stageWidth}
+                            height={stageHeight}
+                            aria-hidden="true"
+                            data-testid="codex-chat-import-drop-connector"
+                        >
+                            <path
+                                d={externalImportPreview.path}
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeDasharray="6 5"
+                                fill="none"
+                                strokeLinecap="round"
+                                strokeOpacity="0.9"
+                            />
+                        </svg>
+                    )}
 
                     {positionedNodes.map(node => {
                         const isDraggingNode = !!dragState?.nodeStarts[node.id];
@@ -3382,6 +3488,7 @@ export function CustomMindMapView({
                             }
                             : node;
                         const dropPosition = dragState?.target?.nodeId === node.id ? dragState.target.position : null;
+                        const importDropActive = externalImportDropTarget?.nodeId === node.id;
                         if (node.kind === "project") {
                             return (
                                 <CustomProjectNode
@@ -3390,6 +3497,7 @@ export function CustomMindMapView({
                                     selected={selectedNodeId === node.id}
                                     primarySelected={selectedNodeId === node.id}
                                     dropPosition={dropPosition}
+                                    importDropActive={importDropActive}
                                     triggerEdit={pendingEditNodeId === node.id}
                                     floatingEditing={floatingEditNodeId === node.id}
                                     isMobile={isMobile}
@@ -3414,6 +3522,7 @@ export function CustomMindMapView({
                                 dragging={isDraggingNode && dragState?.dragging}
                                 dragReady={isDraggingNode && !!dragState && !dragState.dragging}
                                 dropPosition={dropPosition}
+                                importDropActive={importDropActive}
                                 triggerEdit={pendingEditNodeId === node.id}
                                 initialEditValue={rawTaskTitleById.get(node.id)}
                                 floatingEditing={floatingEditNodeId === node.id}
@@ -3442,9 +3551,34 @@ export function CustomMindMapView({
                                 onPreviewTitleChange={handlePreviewTitleChange}
                                 onDropImportedChatNode={onDropImportedChatNode}
                                 mobilePlacementMode={mobilePlacementMode}
-                            />
+                        />
                         );
                     })}
+                    {externalImportPreview && (
+                        <>
+                            <div
+                                className="pointer-events-none absolute z-30 flex items-center gap-1.5 rounded-full border border-amber-300/50 bg-[#111111]/95 px-2 py-1 text-[11px] font-semibold text-amber-200 shadow-lg"
+                                style={{ left: externalImportPreview.badge.x, top: externalImportPreview.badge.y }}
+                                data-testid="codex-chat-import-drop-badge"
+                            >
+                                <Bot className="h-3 w-3" />
+                                ここに紐づく
+                            </div>
+                            <div
+                                className="pointer-events-none absolute z-30 flex items-center gap-1.5 rounded-lg border border-dashed border-amber-300/80 bg-[#171513]/92 px-2.5 py-1.5 text-[12px] font-semibold text-amber-50 shadow-[0_0_24px_rgba(245,158,11,0.32)]"
+                                style={{
+                                    left: externalImportPreview.preview.x,
+                                    top: externalImportPreview.preview.y,
+                                    width: externalImportPreview.preview.width,
+                                    height: externalImportPreview.preview.height,
+                                }}
+                                data-testid="codex-chat-import-ghost-node"
+                            >
+                                <GitBranch className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+                                <span className="min-w-0 truncate">{importedChatDragTitle?.trim() || "Codexチャット"}</span>
+                            </div>
+                        </>
+                    )}
                     {selectionRect && (
                         <div
                             className="pointer-events-none absolute z-40 rounded border border-sky-400 bg-sky-400/15 shadow-[0_0_16px_rgba(56,189,248,0.35)]"

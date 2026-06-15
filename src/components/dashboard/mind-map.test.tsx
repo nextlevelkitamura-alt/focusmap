@@ -22,6 +22,7 @@ vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
     onClose,
     onDeleteChatItem,
     onPlaceChatItem,
+    onReturnPlacedChatItem,
   }: {
     chatItems?: Array<{ id: string; title: string; placementLabel?: string }>
     detailItems?: Array<{ id: string; title: string; placementLabel?: string; placed?: boolean }>
@@ -29,6 +30,7 @@ vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
     onClose: () => void
     onDeleteChatItem?: (taskId: string) => void
     onPlaceChatItem?: (taskId: string) => void
+    onReturnPlacedChatItem?: (taskId: string) => void
   }) => (
     <aside aria-label="チャット取り込み">
       {initialSelectedChatId && (() => {
@@ -37,6 +39,11 @@ vi.mock("@/components/dashboard/codex-chat-import-sidebar", () => ({
           <div data-testid="selected-codex-chat-detail">
             <span>{selected?.title ?? "missing"}</span>
             {selected?.placementLabel && <span>{selected.placementLabel}</span>}
+            {selected?.placed && (
+              <button type="button" onClick={() => onReturnPlacedChatItem?.(selected.id)}>
+                履歴へ戻す
+              </button>
+            )}
           </div>
         )
       })()}
@@ -396,6 +403,49 @@ describe("MindMap controls", () => {
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByTestId("selected-codex-chat-detail")).toHaveTextContent("配置済みCodexチャット")
     expect(screen.getByText("配置済み: Root task")).toBeInTheDocument()
+  })
+
+  test("returns a placed Codex node to the chat history inbox", async () => {
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+    const inboxGroup = {
+      ...task,
+      id: "inbox-1",
+      title: "Codex Inbox",
+      source: "codex_inbox",
+      deleted_at: null,
+    } as Task
+    const placedChat = {
+      ...task,
+      id: "chat-node-placed",
+      title: "配置済みCodexチャット",
+      parent_task_id: "root-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      codex_thread_id: "thread-placed",
+      codex_status: "awaiting_approval",
+      deleted_at: null,
+    } as Task
+
+    render(
+      <MindMap
+        project={project}
+        projects={[project]}
+        groups={[task, inboxGroup]}
+        tasks={[placedChat]}
+        allTasks={[task, inboxGroup, placedChat]}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "配置済みCodexノード詳細" }))
+    fireEvent.click(screen.getByRole("button", { name: "履歴へ戻す" }))
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("chat-node-placed", {
+        parent_task_id: "inbox-1",
+        project_id: "project-1",
+      })
+    })
   })
 
   test("turns a long node title into memo detail and saves the generated heading", async () => {

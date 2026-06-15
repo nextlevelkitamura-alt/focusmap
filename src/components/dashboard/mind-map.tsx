@@ -1888,6 +1888,64 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         updateTaskForCodexScope,
     ]);
 
+    const findCodexInboxForImportedTask = useCallback((task: Task) => {
+        const taskRepoPath = (task.codex_work_dir ?? selectedCodexImportRepoPath ?? projectRepoPath ?? '').trim();
+        const inboxCandidates = repoScopedCodexTaskNodes.filter(candidate => (
+            candidate.deleted_at == null &&
+            (candidate.source === 'codex_inbox' || candidate.title === 'Codex Inbox')
+        ));
+        if (inboxCandidates.length === 0) return null;
+
+        const sameProjectInbox = inboxCandidates.find(candidate => candidate.project_id === project.id);
+        if (sameProjectInbox) return sameProjectInbox;
+
+        if (taskRepoPath) {
+            const sameRepoInbox = inboxCandidates.find(candidate => {
+                const candidateProject = candidate.project_id ? projectById.get(candidate.project_id) ?? null : null;
+                const candidateRepoPath = candidateProject?.repo_path?.trim() || (candidate.project_id === project.id ? projectRepoPath : '');
+                return candidateRepoPath === taskRepoPath;
+            });
+            if (sameRepoInbox) return sameRepoInbox;
+        }
+
+        return inboxCandidates[0] ?? null;
+    }, [project.id, projectById, projectRepoPath, repoScopedCodexTaskNodes, selectedCodexImportRepoPath]);
+
+    const handleReturnCodexChatToHistory = useCallback(async (taskId: string) => {
+        if (!project?.id) return;
+        const importedTask = repoScopedTasksById.get(taskId) ?? getTaskById(taskId);
+        if (!importedTask) return;
+        const inboxTask = findCodexInboxForImportedTask(importedTask);
+        if (!inboxTask) {
+            console.error('[MindMap] Failed to return Codex chat: Codex Inbox node was not found');
+            return;
+        }
+
+        setHiddenCodexChatImportIds(prev => {
+            const next = new Set(prev);
+            next.delete(taskId);
+            return next;
+        });
+
+        try {
+            await updateTaskForCodexScope(taskId, {
+                parent_task_id: inboxTask.id,
+                project_id: inboxTask.project_id ?? project.id,
+            });
+            applySelection(new Set(), null);
+            setSelectedCodexChatDetailId(null);
+        } catch (error) {
+            console.error('[MindMap] Failed to return Codex chat to history:', error);
+        }
+    }, [
+        applySelection,
+        findCodexInboxForImportedTask,
+        getTaskById,
+        project?.id,
+        repoScopedTasksById,
+        updateTaskForCodexScope,
+    ]);
+
     const handleDeleteCodexChatImportItem = useCallback(async (taskId: string) => {
         const capturedTask = repoScopedTasksById.get(taskId);
         if (!capturedTask) return;
@@ -2094,6 +2152,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 onToggleImport={toggleSelectedRepoImport}
                                 onDeleteChatItem={handleDeleteCodexChatImportItem}
                                 onPlaceChatItem={(taskId) => handleDropImportedChatNode({ taskId, targetId: 'project-root', position: 'as-child' })}
+                                onReturnPlacedChatItem={handleReturnCodexChatToHistory}
                                 onChatDragStateChange={setActiveCodexChatDrag}
                             />
                         </div>

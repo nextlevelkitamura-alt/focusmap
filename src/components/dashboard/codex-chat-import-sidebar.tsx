@@ -52,6 +52,7 @@ type CodexChatImportSidebarProps = {
   onToggleImport: () => Promise<void> | void
   onDeleteChatItem?: (taskId: string) => Promise<void> | void
   onPlaceChatItem?: (taskId: string) => Promise<void> | void
+  onReturnPlacedChatItem?: (taskId: string) => Promise<void> | void
   onChatDragStateChange?: (state: { itemId: string; title: string } | null) => void
 }
 
@@ -446,6 +447,7 @@ export function CodexChatImportSidebar({
   onToggleImport,
   onDeleteChatItem,
   onPlaceChatItem,
+  onReturnPlacedChatItem,
   onChatDragStateChange,
 }: CodexChatImportSidebarProps) {
   const [pickerPending, setPickerPending] = React.useState(false)
@@ -457,6 +459,7 @@ export function CodexChatImportSidebar({
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [latestChatActivityAtById, setLatestChatActivityAtById] = React.useState<Record<string, string>>({})
   const [placingPending, setPlacingPending] = React.useState(false)
+  const [returningPending, setReturningPending] = React.useState(false)
   const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
   const backgroundSyncedChatIdsRef = React.useRef(new Set<string>())
@@ -746,6 +749,17 @@ export function CodexChatImportSidebar({
       setPlacingPending(false)
     }
   }, [onPlaceChatItem, placingPending, selectedChatItem])
+
+  const handleReturnSelectedChatItem = React.useCallback(async () => {
+    if (!selectedChatItem || !onReturnPlacedChatItem || returningPending) return
+    setReturningPending(true)
+    try {
+      await onReturnPlacedChatItem(selectedChatItem.id)
+      setSelectedChatId(null)
+    } finally {
+      setReturningPending(false)
+    }
+  }, [onReturnPlacedChatItem, returningPending, selectedChatItem])
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
@@ -1183,9 +1197,16 @@ export function CodexChatImportSidebar({
             ノードへ配置
           </Button>
         ) : selectedChatItem ? (
-          <div className="flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500">
-            配置済みのチャット履歴
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 min-w-0 border-amber-400/35 bg-amber-500/10 text-amber-100 hover:bg-amber-500/18 hover:text-amber-50"
+            onClick={() => void handleReturnSelectedChatItem()}
+            disabled={!onReturnPlacedChatItem || returningPending}
+          >
+            {returningPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ArrowLeft className="mr-1.5 h-4 w-4" />}
+            履歴へ戻す
+          </Button>
         ) : (
           <div className={cn(
             "flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500 transition-colors",
