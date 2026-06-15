@@ -1080,7 +1080,7 @@ export function CodexChatImportSidebar({
                       role="button"
                       tabIndex={0}
                       className={cn(
-                        "group relative flex w-full cursor-grab flex-col gap-2.5 overflow-visible rounded-[18px] border px-7 py-5 pl-9 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:cursor-grabbing",
+                        "group relative flex w-full cursor-grab flex-col gap-1 overflow-visible rounded-lg border px-3 py-2 pl-4 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:cursor-grabbing",
                         codexMonitorCardClass(visualStatus),
                         isDragging && "scale-[0.985] opacity-70 shadow-inner ring-1 ring-sky-400/60",
                       )}
@@ -1110,47 +1110,47 @@ export function CodexChatImportSidebar({
                       title={item.snippet ?? item.title}
                     >
                     {uiStatus === "running" && <CodexMonitorRunningOutline />}
-                    <span className={cn("absolute bottom-4 left-0 top-4 w-1.5 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-start gap-2">
-                        <GitBranch className={cn("mt-1 h-5 w-5 shrink-0 text-zinc-500 transition-colors", uiStatus === "running" && "text-emerald-200", isDragging && "text-sky-300")} />
-                        <div className="line-clamp-2 min-w-0 flex-1 break-words text-[17px] font-semibold leading-snug text-zinc-100">{item.title}</div>
+                    <span className={cn("absolute bottom-2 left-0 top-2 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 flex-1 items-start gap-1.5">
+                        <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", uiStatus === "running" && "text-emerald-200", isDragging && "text-sky-300")} />
+                        <div className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</div>
                       </div>
-                      {updatedLabel && <span className="shrink-0 text-sm text-zinc-500">{updatedLabel}</span>}
+                      {updatedLabel && <span className="shrink-0 text-[10px] text-zinc-500">{updatedLabel}</span>}
                     </div>
                     {item.snippet && (
-                      <div className="line-clamp-2 text-[15px] leading-7 text-zinc-500">
+                      <div className="line-clamp-2 text-xs leading-5 text-zinc-500">
                         {item.snippet}
                       </div>
                     )}
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1">
                       <span className={cn(
-                        "rounded-full px-3 py-1 text-[13px] font-medium leading-none",
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
                         item.placed ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300",
                       )}>
                         {item.placementLabel}
                       </span>
-                      <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-semibold leading-none", codexMonitorToneClass(visualStatus))}>
-                        {uiStatus === "running" && <Loader2 className="h-4 w-4 animate-spin" />}
+                      <span className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none", codexMonitorToneClass(visualStatus))}>
+                        {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
                         {statusText}
                       </span>
                       {item.repoPath && (
-                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-[13px] leading-none text-zinc-500" title={item.repoPath}>
+                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] leading-none text-zinc-500" title={item.repoPath}>
                           {repoNameFromPath(item.repoPath)}
                         </span>
                       )}
                     </div>
                     {(threadHref || onDeleteChatItem) && (
-                      <div className="mt-2 flex min-h-12 items-end gap-2">
+                      <div className="mt-1 flex min-h-8 items-end gap-2">
                         {threadHref && (
                           <a
                             href={threadHref}
-                            className="inline-flex min-h-12 w-fit items-center gap-2 rounded-xl border border-emerald-400/45 bg-emerald-500/10 px-4 text-[15px] font-semibold text-emerald-100 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                            className="inline-flex min-h-8 w-fit items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                             onClick={event => openCodexThread(event, threadHref)}
                             draggable={false}
                             aria-label={`Codexで開く ${item.title}`}
                           >
-                            <ExternalLink className="h-5 w-5" />
+                            <ExternalLink className="h-3.5 w-3.5" />
                             Codexで開く
                           </a>
                         )}

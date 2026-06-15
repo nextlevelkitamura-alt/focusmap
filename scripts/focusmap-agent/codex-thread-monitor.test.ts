@@ -6,6 +6,7 @@ import {
   activityMessages,
   codexStateDbPath,
   codexThreadGeneratedTitle,
+  DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   hasPendingArchiveRequest,
   isFocusmapManualHandoffThread,
   isOrphanImportApiUnavailable,
@@ -55,6 +56,10 @@ function task(overrides: Record<string, unknown> = {}) {
 }
 
 describe('codex-thread-monitor state detection', () => {
+  test('refreshes monitor targets within three seconds by default', () => {
+    expect(DEFAULT_TARGET_REFRESH_INTERVAL_MS).toBe(3_000);
+  });
+
   test('prefers the current Codex sqlite state DB path over the legacy root path', () => {
     const originalConfiguredPath = process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
     delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH;

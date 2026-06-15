@@ -141,7 +141,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
   })
 
-  test("renders running chats as green large history cards with a fallback status pill", () => {
+  test("renders running chats as compact green history cards with a fallback status pill", () => {
     renderSidebar({
       chatItems: [
         {
@@ -158,11 +158,12 @@ describe("CodexChatImportSidebar", () => {
     })
 
     const row = screen.getByTestId("codex-chat-import-row-chat-running")
-    expect(row.className).toContain("rounded-[18px]")
+    expect(row.className).toContain("rounded-lg")
+    expect(row.className).toContain("py-2")
     expect(row.className).toContain("border-emerald-400/75")
     expect(within(row).getByLabelText("Codex 実行中")).toHaveClass("codex-monitor-running-orbit")
     expect(within(row).getByText("実行中")).toBeInTheDocument()
-    expect(within(row).getByRole("link", { name: /Codexで開く AI要約の横幅を拡張/ }).className).toContain("min-h-12")
+    expect(within(row).getByRole("link", { name: /Codexで開く AI要約の横幅を拡張/ }).className).toContain("min-h-8")
   })
 
   test("marks a chat card as grabbed and writes the drag payload", () => {

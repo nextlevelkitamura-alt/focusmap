@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 
 const RUNNER_ONLINE_WINDOW_MS = 90_000
-const RUNNER_STATUS_POLL_MS = 30_000
+const RUNNER_STATUS_POLL_MS = 3_000
 const RUNNER_STATUS_REFRESH_DEDUPE_MS = 750
 
 type RunnerHeartbeat = {

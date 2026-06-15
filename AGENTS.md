@@ -30,16 +30,16 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 作業開始時に `git fetch --prune origin` を実行してから `git status --short --branch` と `git worktree list` を確認し、`main` が `origin/main` より先行・遅延している場合は報告する
 - Codex.app ではチャットごとに worktree が作られることがある。小さな修正で現在地が `main` 以外なら、まず既存の `main` worktree を探し、あればそこを使う。`main` が別 worktree で使用中なら、同じ用途の worktree を二重に作らない
 - 既存の `main` worktree が無い、または未コミット差分で使えない場合だけ、`origin/main` から一時 worktree を作る。ユーザーが明示的にブランチ作業を求めた場合だけ現在ブランチで続ける
-- Codex は毎回ブランチを切らない。基本は `main` で小さく作業し、検証後にコミットする
+- Codex は毎回ブランチを切らない。基本は `main` で小さく作業し、差分範囲を確認してコミットする
 - Git worktree は、未コミット差分の保護や並行作業のための隔離場所として使う。作業完了時は、コミットが `local main` / `origin/main` / 本番デプロイのどこまで反映済みかを分けて報告する
 - Focusmapの作業完了の正は **local main にコミットが取り込み済み** であること。pushは明示依頼があるまでしないが、完了報告時点で `main` に入っていれば次回 `git push origin main` でまとめて反映される
-- worktree / feature / fix ブランチは作業中の隔離場所。そこにコミットが残っているだけでは完了扱いにしない。ユーザーが「mainへ入れないで」と明示した場合を除き、検証後にIntegrationまたは担当Codexが `local main` へ取り込む
+- worktree / feature / fix ブランチは作業中の隔離場所。そこにコミットが残っているだけでは完了扱いにしない。ユーザーが「mainへ入れないで」と明示した場合を除き、Integrationまたは担当Codexが `local main` へ取り込む
 - ブランチを切るのは、ユーザーが明示した場合、大きな機能、数日またぐ作業、破壊的変更、DBマイグレーション、本番にすぐ出したくない変更に限る
 - 複数スレッドで同じリポジトリを触る場合も、最終的な正はGit履歴。Codexのスレッド分離だけで変更の整合性が保証されるとは考えない
 
 ### コミットルール
 - **こまめにコミットする**（1機能完成まで待たない）
-- **Codex は作業完了時に必ずコミットする**。コード変更・設定変更・ドキュメント変更を行ったら、検証後にその作業分をコミットしてから完了報告する
+- **Codex は作業完了時に必ずコミットする**。コード変更・設定変更・ドキュメント変更を行ったら、その作業分をコミットしてから完了報告する
 - フックで自動コミットできない環境でも、Codex は `git status --short` で差分を確認し、自分が触ったファイルだけを `git add` してコミットする
 - 既存の未コミット変更がある場合は、勝手に混ぜない。ユーザーが明示した場合を除き、自分の作業範囲だけをコミットし、残っている差分を報告する
 - push はユーザーが明示的に依頼したときだけ行う
@@ -54,27 +54,25 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 1. `git fetch --prune origin` でリモート追跡情報を更新
 2. `git status --short --branch` と `git worktree list` で現在地、未コミット差分、既存 `main` worktree を確認
 3. 小さな修正なら `main` で作る。現在地が `main` 以外の場合は、既存の `main` worktree へ移るか、必要な場合だけ `origin/main` の一時 worktree を作る
-4. 下の検証ポリシーに従って必要な確認を行い、自分が触ったファイルだけを `git add` してコミット
-5. worktree / 一時ブランチで作った場合は、検証後に `local main` へ取り込む。取り込めない場合は完了扱いにせず、`worktree path`、`branch`、`commit hash`、阻害要因、次の判断を報告する
+4. 自分が触ったファイルだけを `git add` してコミットする
+5. worktree / 一時ブランチで作った場合は `local main` へ取り込む。取り込めない場合は完了扱いにせず、`worktree path`、`branch`、`commit hash`、阻害要因、次の判断を報告する
 6. `origin/main` に取り込み済みで `git status --short` が clean な worktree / local branch は整理対象にしてよい
 7. 大きい/危険/本番保留の作業だけ、事前にユーザーへ伝えてから `feat/*` / `fix/*` を作る
 8. **迷ったらブランチではなく、小さくコミットして戻せる状態にする**
 
-### 検証ポリシー
-- **毎回フルテストを走らせない。** 小さなUI調整、文言変更、ドキュメント変更、影響範囲が明確な軽微修正では、原則として `npm run test:run` / `npm run lint` / `npm run build` は省略する
-- 小さな変更の確認は、差分レビュー、`git diff --check`、必要な場合だけ対象ファイルの軽いlint、または既存の `http://localhost:3001` 表示確認に留める。テストを省略した場合は、完了報告に「小変更のためテスト未実行」と明記する
-- 大きい実装、共有ロジック変更、DB/API/認証/課金/ai_tasks/Realtime/カレンダー同期/マインドマップモデル変更、削除や移行を伴う変更、本番反映前の変更では、関連する最小限のテストを選んで実行する
-- `npm run build` は、Next.js設定、ルーティング、ビルド時挙動、Cloud Run/Docker、Macパッケージング、依存関係を変えた時、またはリリース前の確認が必要な時だけ実行する
-- 全体lintや全体テストは、ユーザーが明示した時、広範囲の共通部品を変えた時、原因不明の破壊が疑われる時、リリース前の品質確認時に限る
-- 検証に時間がかかりそうな場合は、先に「どの確認を省略し、どれだけ実行するか」を短く伝えてから進める
+### 自動検証ポリシー
+- **Codex は自動で検証を実行しない。** `npm run test:run` / `npm run lint` / `npm run build` / `git diff --check` / `curl` / Playwright / Browser / Arc / Cloudflare表示確認は、ユーザーが明示的に依頼した場合だけ実行する。
+- 変更後に検証が必要だと判断した場合も、勝手に実行せず、完了報告または作業中の短い報告で「必要なら実行できる確認」として提案する。
+- `git status` / `git diff` / `git diff --cached` は、既存差分を混ぜず自分の変更だけをコミットするための差分確認として扱い、テスト・lint・ブラウザ確認の代わりに「検証済み」とは書かない。
+- ユーザーが検証を明示した場合だけ、対象範囲とコマンドを確認してから実行し、結果を完了報告に書く。
 
 ### AIエージェント並列作業
 - 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は `task-router` Skill を使う
 - 詳細な判断基準・worktree安全策・プロンプト雛形は `task-router` の workflows を正とする
 - 並列化は時間だけで判断しない。編集範囲、共通契約、衝突コスト、危険操作、統合条件を見て提案する
 - 複数Codexで実装する場合は、原則 `1チャット = 1 worktree = 1 branch` にする
-- 並列実装では、各チャットの担当範囲・触ってよいファイル・触らないファイル・検証コマンドを先に決める。同じファイルを触りそうなら、先に共通仕様を決めるか直列にする
-- 並列workerのコミットは中間成果物。親チャットまたはIntegration担当が全workerのcommitを確認し、衝突解消と全体検証後に `local main` へ取り込んでから完了報告する
+- 並列実装では、各チャットの担当範囲・触ってよいファイル・触らないファイルを先に決める。ユーザーが明示した場合だけ検証コマンドも決める。同じファイルを触りそうなら、先に共通仕様を決めるか直列にする
+- 並列workerのコミットは中間成果物。親チャットまたはIntegration担当が全workerのcommitを確認し、衝突解消と統合判断後に `local main` へ取り込んでから完了報告する
 - `docs/ai/task-board.md` には branch / worktree / owner / status に加えて、必要に応じて `local main 取り込み済み` か `main未統合` かを残す
 - 競合は後で解消してよいが、履歴を壊さないため `rebase` / `push --force` / `reset --hard` は明示承認なしに使わない
 
@@ -100,10 +98,9 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - `npm run dev` は `localhost:3001` を開く前提。既に3001が埋まっている場合は、別ポート起動ではなく、3001を使っている古いプロセスを確認・再起動する
 - スマホ確認用の Cloudflare tunnel も **必ず `http://localhost:3001` をプロキシ**する。`scripts/phone-preview.sh` は3001固定なので、`npm run dev:phone` / `npm run dev:phone:bg` を使う
 - スマホURLを確認するときは `npm run dev:phone:status` で現在の `https://*.trycloudflare.com/...` を確認し、同じURLが3001へ向いている前提で作業する
-- UI修正後は、ローカル `http://localhost:3001/dashboard` だけでなく、必要に応じて Cloudflare のスマホURLもリロードして確認する
-- UI修正完了時は、ローカル `http://localhost:3001/dashboard` を確認できる状態にする。レビュー・評価は、画面共有やユーザーの作業中ブラウザへの影響を避けるため、ログイン不要または認証済みstorage stateを用意できる場合は Playwright のヘッドレス確認を優先する
-- Playwright等の独立ブラウザーはArcのCookieを自動共有しない。認証済み画面の確認でPlaywright側のログイン状態を安定して用意できない場合だけ、ユーザーのログイン済みセッションがある Arc ブラウザーをfallbackにする
-- Arcで確認する時は、既存作業への影響を避けるため、必要最小限の新規タブ/対象URLだけを開く。Arc操作が不要な確認はPlaywrightヘッドレス、テスト、スクリーンショット保存で済ませる
+- UI修正後に、Codexが自動でローカル `http://localhost:3001/dashboard`、CloudflareスマホURL、Playwright、Browser、Arcを開いて確認しない。ユーザーが明示的に表示確認を依頼した場合だけ行う
+- 表示確認を明示された場合でも、Playwright等の独立ブラウザーはArcのCookieを自動共有しない。認証済み画面の確認でPlaywright側のログイン状態を安定して用意できない場合だけ、ユーザーのログイン済みセッションがある Arc ブラウザーをfallbackにする
+- Arcで確認する時は、既存作業への影響を避けるため、必要最小限の新規タブ/対象URLだけを開く
 - 「ローカルには反映されているがCloudflareに出ない」場合は、まず Cloudflare tunnel が3001を見ているか、Next dev serverが3001で起動しているかを確認する。必要ならNext dev serverを3001で再起動し、スマホ側は `?v=数字` を付けてキャッシュを避ける
 - Cloudflare URLを本番反映と混同しない。Cloudflare はローカル3001のプレビュー、本番は `origin/main` / Cloud Run
 
