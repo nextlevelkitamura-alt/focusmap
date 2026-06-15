@@ -220,7 +220,7 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
 
     await waitFor(() => {
-      expect(screen.getByText("DBに保存してから表示します")).toBeInTheDocument()
+      expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(1)
     })
     expect(screen.getByRole("button", { name: "戻る" }).className).toContain("hover:bg-white/10")
     expect(screen.queryByRole("switch", { name: "リポ監視" })).not.toBeInTheDocument()
@@ -231,6 +231,11 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("確認待ち")).toBeInTheDocument()
     expect(screen.getByText("focusmap")).toBeInTheDocument()
     expect(screen.getByText("3時間")).toBeInTheDocument()
+    expect(screen.getByRole("region", { name: "AI要約" })).toBeInTheDocument()
+    expect(screen.getByText("やったこと")).toBeInTheDocument()
+    expect(screen.getByText("変更・判断")).toBeInTheDocument()
+    expect(screen.getByText("次に見ること")).toBeInTheDocument()
+    expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
     expect(screen.getByText("Codexの返答")).toBeInTheDocument()
     expect(screen.queryByText("プロジェクト更新完了")).not.toBeInTheDocument()
@@ -239,7 +244,7 @@ describe("CodexChatImportSidebar", () => {
       "href",
       "codex://threads/thread-abcdef123456",
     )
-    expect(screen.getByText("右側サイドバーにチャット一覧を表示する").className).toContain("bg-white")
+    expect(screen.getAllByText("右側サイドバーにチャット一覧を表示する").some(element => element.className.includes("bg-white"))).toBe(true)
 
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
     expect(fetchMock).toHaveBeenCalledWith("/api/ai-tasks/ai-task-1/activity", { cache: "no-store" })
