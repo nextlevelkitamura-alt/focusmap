@@ -16,7 +16,7 @@ import {
     broadcastCalendarOptimisticEvent,
     broadcastCalendarOptimisticEventRemoval,
 } from "@/hooks/useCalendarEvents"
-import { ChevronLeft, ChevronRight, Target } from "lucide-react"
+import { ChevronLeft, ChevronRight, PanelLeft, Sparkles, SquarePen, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
@@ -221,6 +221,7 @@ export function DashboardClient({
         key: 0,
     })
     const openSelectedProjectChat = useCallback(() => {
+        if (!selectedProjectId) return
         setProjectChatLaunchRequest(prev => ({
             projectId: selectedProjectId,
             key: prev.key + 1,
@@ -289,18 +290,21 @@ export function DashboardClient({
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
     const [isMapSplitOpen, setIsMapSplitOpen] = useState(false)
+    const [isAiOrganizeSidebarOpen, setIsAiOrganizeSidebarOpen] = useState(false)
     const [mindmapLinkedMemoTarget, setMindmapLinkedMemoTarget] = useState<{ taskId: string; requestKey: number } | null>(null)
     const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
     const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
+    const isAiOrganizeSidebarVisible = activeView === 'map' && isAiOrganizeSidebarOpen
     const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
     const isMapSplitVisible = activeView === 'long-term' && isMapSplitOpen
-    const isRightSidePanelVisible = isCalendarPanelVisible
+    const isRightSidePanelVisible = isCalendarPanelVisible || isAiOrganizeSidebarVisible
     const toggleCalendarSplit = useCallback(() => {
         setIsCalendarSplitOpen(prev => {
             const next = !prev
             if (next) {
                 setIsMemoSplitOpen(false)
                 setIsMapSplitOpen(false)
+                setIsAiOrganizeSidebarOpen(false)
             }
             return next
         })
@@ -311,6 +315,7 @@ export function DashboardClient({
             if (next) {
                 setIsCalendarSplitOpen(false)
                 setIsMapSplitOpen(false)
+                setIsAiOrganizeSidebarOpen(false)
             }
             return next
         })
@@ -321,12 +326,40 @@ export function DashboardClient({
             if (next) {
                 setIsCalendarSplitOpen(false)
                 setIsMemoSplitOpen(false)
+                setIsAiOrganizeSidebarOpen(false)
             }
             return next
         })
     }, [])
+    const toggleAiOrganizeSidebar = useCallback(() => {
+        if (!selectedProjectId) return
+        setIsAiOrganizeSidebarOpen(prev => {
+            const next = !prev
+            if (next) {
+                setIsCalendarSplitOpen(false)
+                setIsMemoSplitOpen(false)
+                setIsMapSplitOpen(false)
+                setProjectChatLaunchRequest(current => ({
+                    projectId: selectedProjectId,
+                    key: current.key + 1,
+                }))
+            }
+            return next
+        })
+    }, [selectedProjectId])
+    useEffect(() => {
+        if (!isAiOrganizeSidebarOpen || activeView !== 'map' || !selectedProjectId) return
+        setProjectChatLaunchRequest(current => {
+            if (current.projectId === selectedProjectId) return current
+            return {
+                projectId: selectedProjectId,
+                key: current.key + 1,
+            }
+        })
+    }, [activeView, isAiOrganizeSidebarOpen, selectedProjectId])
     const openMindmapLinkedMemos = useCallback((taskId: string) => {
         setIsCalendarSplitOpen(false)
+        setIsAiOrganizeSidebarOpen(false)
         setMindmapLinkedMemoTarget({ taskId, requestKey: Date.now() })
     }, [])
     // --- Sync Error Toast ---
@@ -1305,7 +1338,8 @@ export function DashboardClient({
                     showMemoSplitToggle={activeView === 'map'}
                     isMemoSplitVisible={isMemoSplitVisible}
                     onToggleMemoSplit={toggleMemoSplit}
-                    onMindmapUpdated={refreshFromServer}
+                    isAiOrganizeSidebarVisible={isAiOrganizeSidebarVisible}
+                    onOpenAiOrganizeSidebar={toggleAiOrganizeSidebar}
                     onLogoClick={openTodayBoard}
                 />
 
@@ -1528,6 +1562,9 @@ export function DashboardClient({
                             selectedProjectTitle={selectedProject?.title ?? null}
                             projects={projects}
                             onSelectProject={setSelectedProjectId}
+                            projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
+                            projectChatLaunchKey={projectChatLaunchRequest.key}
+                            onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
                         />
                     </div>
                 )}
@@ -1540,6 +1577,9 @@ export function DashboardClient({
                             selectedProjectTitle={selectedProject?.title ?? null}
                             projects={projects}
                             onSelectProject={setSelectedProjectId}
+                            projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
+                            projectChatLaunchKey={projectChatLaunchRequest.key}
+                            onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
                         />
                     </div>
                 )}
@@ -1776,26 +1816,85 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {/* Pane 3: Right Sidebar (Calendar) */}
+                {/* Pane 3: Right Sidebar (Calendar / AI organize) */}
                 {isRightSidePanelVisible && (
                     <div
                         className="flex-none overflow-hidden h-full"
                         style={{ width: rightSidebarWidth }}
                     >
-                        <RightSidebar
-                            ref={rightSidebarRef}
-                            onUpdateTask={handleUpdateTaskWithQuickSync}
-                            tasks={allTasksMerged}
-                            projects={projects}
-                            selectedProjectId={selectedProjectId}
-                            onCreateQuickTask={handleCreateQuickTask}
-                            onCreateSubTask={handleCreateSubTask}
-                            onDeleteTask={handleDeleteTaskFromToday}
-                            onOpenAiChat={() => setIsAiChatOpen(true)}
-                            syncFailedIds={syncFailedIds}
-                            calendarScrollToHour={todayMemoScheduleFocus ? 12 : undefined}
-                            calendarScrollRequestKey={todayMemoScheduleFocus?.requestKey}
-                        />
+                        {isAiOrganizeSidebarVisible ? (
+                            <div className="flex h-full min-h-0 flex-col border-l border-[#303030] bg-[#1f1f1f] text-zinc-100">
+                                <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 bg-[#171717] px-3">
+                                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                                        <Sparkles className="h-4 w-4 shrink-0 text-blue-300" />
+                                        <div className="min-w-0">
+                                            <div className="truncate text-xs font-semibold text-zinc-100">AIで整理</div>
+                                            <div className="truncate text-[10px] text-zinc-500">{selectedProject?.title ?? "プロジェクト未選択"}</div>
+                                        </div>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white"
+                                        onClick={() => window.dispatchEvent(new Event("focusmap:chat:toggle-sidebar"))}
+                                        aria-label="チャット履歴を開閉"
+                                        title="チャット履歴"
+                                    >
+                                        <PanelLeft className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white"
+                                        onClick={() => window.dispatchEvent(new Event("focusmap:chat:new"))}
+                                        aria-label="新規チャット"
+                                        title="新規チャット"
+                                    >
+                                        <SquarePen className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white"
+                                        onClick={() => setIsAiOrganizeSidebarOpen(false)}
+                                        aria-label="AIで整理サイドバーを閉じる"
+                                        title="閉じる"
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                                <div className="min-h-0 flex-1 overflow-hidden">
+                                    <AiView
+                                        selectedSpaceId={selectedSpaceId}
+                                        selectedProjectId={selectedProjectId}
+                                        selectedProjectTitle={selectedProject?.title ?? null}
+                                        projects={projects}
+                                        onSelectProject={setSelectedProjectId}
+                                        projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
+                                        projectChatLaunchKey={projectChatLaunchRequest.key}
+                                        onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            <RightSidebar
+                                ref={rightSidebarRef}
+                                onUpdateTask={handleUpdateTaskWithQuickSync}
+                                tasks={allTasksMerged}
+                                projects={projects}
+                                selectedProjectId={selectedProjectId}
+                                onCreateQuickTask={handleCreateQuickTask}
+                                onCreateSubTask={handleCreateSubTask}
+                                onDeleteTask={handleDeleteTaskFromToday}
+                                onOpenAiChat={() => setIsAiChatOpen(true)}
+                                syncFailedIds={syncFailedIds}
+                                calendarScrollToHour={todayMemoScheduleFocus ? 12 : undefined}
+                                calendarScrollRequestKey={todayMemoScheduleFocus?.requestKey}
+                            />
+                        )}
                     </div>
                 )}
             </div>

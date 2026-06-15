@@ -9,6 +9,9 @@ interface AiViewProps {
   selectedProjectTitle?: string | null
   projects?: Project[]
   onSelectProject?: (id: string) => void
+  projectChatLaunchProjectId?: string | null
+  projectChatLaunchKey?: number
+  onProjectChatLaunchConsumed?: () => void
 }
 
 export function AiView({
@@ -17,6 +20,9 @@ export function AiView({
   selectedProjectTitle = null,
   projects = [],
   onSelectProject,
+  projectChatLaunchProjectId = null,
+  projectChatLaunchKey = 0,
+  onProjectChatLaunchConsumed,
 }: AiViewProps) {
   return (
     <div className="flex h-full w-full min-w-0 flex-col bg-background">
@@ -26,6 +32,9 @@ export function AiView({
         projectTitle={selectedProjectTitle}
         projects={projects}
         onSelectProject={onSelectProject}
+        projectChatLaunchProjectId={projectChatLaunchProjectId}
+        projectChatLaunchKey={projectChatLaunchKey}
+        onProjectChatLaunchConsumed={onProjectChatLaunchConsumed}
       />
     </div>
   )

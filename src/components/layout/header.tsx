@@ -19,7 +19,6 @@ import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
-import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { isFocusmapDesktopShell } from "@/lib/external-auth-launch"
@@ -49,7 +48,8 @@ interface HeaderProps {
     showMemoSplitToggle?: boolean
     isMemoSplitVisible?: boolean
     onToggleMemoSplit?: () => void
-    onMindmapUpdated?: () => void
+    isAiOrganizeSidebarVisible?: boolean
+    onOpenAiOrganizeSidebar?: () => void
     onLogoClick?: () => void
 }
 
@@ -73,17 +73,13 @@ export function Header({
     showMemoSplitToggle = false,
     isMemoSplitVisible = false,
     onToggleMemoSplit,
-    onMindmapUpdated,
+    isAiOrganizeSidebarVisible = false,
+    onOpenAiOrganizeSidebar,
     onLogoClick,
 }: HeaderProps) {
     const router = useRouter()
     const [user, setUser] = useState<User | null>(null)
     const [supabase] = useState(() => createClient())
-    const [organizeDialogOpen, setOrganizeDialogOpen] = useState(false)
-    const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
-    const [organizeMemoProjects, setOrganizeMemoProjects] = useState<Record<string, string | null>>({})
-    const [organizeError, setOrganizeError] = useState<string | null>(null)
-    const [isLoadingOrganizeMemos, setIsLoadingOrganizeMemos] = useState(false)
 
     useEffect(() => {
         const getUser = async () => {
@@ -164,49 +160,6 @@ export function Header({
         { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
         { id: 'ai',        label: 'チャット', icon: <MessageCircle className="h-3.5 w-3.5" /> },
     ]
-
-    const handleOpenAiOrganize = async () => {
-        if (!selectedProjectId) {
-            setOrganizeError("プロジェクトを選択してください")
-            return
-        }
-        setIsLoadingOrganizeMemos(true)
-        setOrganizeError(null)
-        try {
-            const res = await fetch(`/api/wishlist?project_id=${encodeURIComponent(selectedProjectId)}`, { cache: "no-store" })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data?.error || "メモの取得に失敗しました")
-            const items = ((data.items || []) as Array<{
-                id: string
-                memo_status?: string | null
-                is_completed?: boolean | null
-                google_event_id?: string | null
-                project_id?: string | null
-            }>)
-                .filter(item =>
-                    !item.is_completed &&
-                    !item.google_event_id &&
-                    (item.memo_status ?? "unsorted") === "unsorted",
-                )
-
-            const ids = items.map(item => item.id)
-            const projectMap: Record<string, string | null> = {}
-            for (const item of items) {
-                projectMap[item.id] = item.project_id ?? null
-            }
-
-            const slicedIds = ids.slice(0, 50)
-            setOrganizeMemoIds(slicedIds)
-            setOrganizeMemoProjects(
-                Object.fromEntries(slicedIds.map(id => [id, projectMap[id] ?? null])),
-            )
-            setOrganizeDialogOpen(true)
-        } catch (error) {
-            setOrganizeError(error instanceof Error ? error.message : "メモの取得に失敗しました")
-        } finally {
-            setIsLoadingOrganizeMemos(false)
-        }
-    }
 
     return (
         <header
@@ -328,17 +281,22 @@ export function Header({
                 </div>
                 {activeView === 'map' && (
                     <Button
-                        variant="ghost"
+                        variant={isAiOrganizeSidebarVisible ? "secondary" : "ghost"}
                         size="sm"
                         className={cn(
                             "gap-1.5 h-7 px-3 text-xs font-medium",
-                            "text-muted-foreground hover:text-foreground"
+                            isAiOrganizeSidebarVisible
+                                ? "bg-background text-primary shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
                         )}
-                        onClick={handleOpenAiOrganize}
-                        disabled={isLoadingOrganizeMemos || !selectedProjectId}
+                        onClick={onOpenAiOrganizeSidebar}
+                        disabled={!selectedProjectId || !onOpenAiOrganizeSidebar}
+                        aria-pressed={isAiOrganizeSidebarVisible}
+                        aria-label={isAiOrganizeSidebarVisible ? "AIで整理サイドバーを閉じる" : "AIで整理サイドバーを開く"}
+                        title="AIで整理"
                         style={desktopNoDragStyle}
                     >
-                        <Sparkles className={cn("h-3.5 w-3.5", isLoadingOrganizeMemos && "animate-spin")} />
+                        <Sparkles className="h-3.5 w-3.5" />
                         AIで整理
                     </Button>
                 )}
@@ -466,36 +424,6 @@ export function Header({
                 </DropdownMenu>
             </div>
 
-            {organizeError && (
-                <div className="fixed left-1/2 top-16 z-[80] -translate-x-1/2 rounded-md border bg-background px-3 py-2 text-sm shadow-lg">
-                    <span className="text-muted-foreground">{organizeError}</span>
-                    <button
-                        type="button"
-                        className="ml-3 text-xs text-primary hover:underline"
-                        onClick={() => setOrganizeError(null)}
-                    >
-                        閉じる
-                    </button>
-                </div>
-            )}
-
-            <MemoToMindmapDialog
-                open={organizeDialogOpen}
-                noteIds={organizeMemoIds}
-                noteProjects={organizeMemoProjects}
-                source="wishlist"
-                projects={projects.map(p => ({ id: p.id, title: p.title }))}
-                spaces={spaces.map(s => ({ id: s.id, title: s.title }))}
-                defaultSpaceId={selectedSpaceId}
-                defaultProjectId={selectedProjectId}
-                onClose={() => setOrganizeDialogOpen(false)}
-                onSuccess={() => {
-                    setOrganizeDialogOpen(false)
-                    setOrganizeMemoIds([])
-                    onMindmapUpdated?.()
-                }}
-                allowTextImport
-            />
         </header>
     )
 }
