@@ -798,10 +798,10 @@ export function CodexChatImportSidebar({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
-            <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">未配置チャット</div>
+            <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">Codexチャット履歴</div>
             {filteredChatItems.length === 0 ? (
               <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
-                未配置チャットはありません
+                Codexチャット履歴はありません
               </div>
             ) : (
               <div className="space-y-1">
