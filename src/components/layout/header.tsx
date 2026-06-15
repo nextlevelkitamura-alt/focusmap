@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, type CSSProperties } from "react"
+import { useState, useEffect, useMemo, type CSSProperties } from "react"
 import { createClient } from "@/utils/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { useRouter } from "next/navigation"
@@ -14,7 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut, MessageCircle, Network, PanelLeft, Settings, SquarePen, User as UserIcon, CalendarDays, Sparkles, StickyNote } from "lucide-react"
+import { Bot, LogOut, MessageCircle, Network, PanelLeft, Settings, SquarePen, User as UserIcon, CalendarDays, Sparkles, StickyNote } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -24,6 +24,7 @@ import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switc
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { isFocusmapDesktopShell } from "@/lib/external-auth-launch"
 import { useAgentConnection, type AgentConnectionState } from "@/components/chat/agent-status-chip"
+import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -111,6 +112,24 @@ export function Header({
     const desktopDragStyle = isDesktopShell ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined
     const desktopNoDragStyle = isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined
     const isChatView = activeView === 'ai' || activeView === 'automation'
+    const selectedProject = useMemo(
+        () => projects.find(project => project.id === selectedProjectId) ?? null,
+        [projects, selectedProjectId],
+    )
+    const selectedProjectRepoPath = selectedProject?.repo_path?.trim() ?? ""
+    const isSelectedRepoImportEnabled = Boolean(
+        selectedProjectRepoPath &&
+        projects.some(project =>
+            (project.repo_path ?? "").trim() === selectedProjectRepoPath &&
+            project.codex_thread_import_enabled,
+        ),
+    )
+    const aiExecutionStatusClass = isSelectedRepoImportEnabled
+        ? "bg-emerald-500"
+        : selectedProjectRepoPath
+            ? "bg-muted-foreground/45"
+            : "bg-amber-500"
+    const showAiExecutionButton = activeView === 'map' || (activeView === 'long-term' && isMapSplitVisible)
 
     const handleLogoClick = () => {
         if (onLogoClick) {
@@ -125,6 +144,10 @@ export function Header({
 
     const handleOpenSettings = () => {
         setActiveView('settings')
+    }
+
+    const handleOpenAiExecution = () => {
+        window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
     }
 
     const handleToggleChatSidebar = () => {
@@ -341,6 +364,26 @@ export function Header({
                         title={isMapSplitVisible ? "マップ分割を閉じる" : "マップを分割表示"}
                     >
                         <Network className="h-4 w-4" />
+                    </Button>
+                )}
+                {showAiExecutionButton && (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="relative h-8 gap-1.5 px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                        onClick={handleOpenAiExecution}
+                        aria-label="AI実行履歴を開く"
+                        title="AI実行"
+                    >
+                        <Bot className="h-4 w-4" />
+                        <span>AI実行</span>
+                        <span
+                            className={cn(
+                                "absolute bottom-1.5 left-5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+                                aiExecutionStatusClass,
+                            )}
+                        />
                     </Button>
                 )}
                 {showCalendarSplitToggle && onToggleCalendarSplit && (

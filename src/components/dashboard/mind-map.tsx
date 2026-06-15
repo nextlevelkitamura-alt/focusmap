@@ -1,9 +1,7 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
-import { Bot } from "lucide-react";
 import { Task, Project, Space } from "@/types/database";
-import { Button } from "@/components/ui/button";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { CodexChatImportSidebar, type CodexChatImportItem } from "@/components/dashboard/codex-chat-import-sidebar";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
@@ -27,6 +25,7 @@ import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
+import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useMindMapCollapsedTaskIds } from "@/hooks/useMindMapCollapsedTaskIds";
 import { createClient } from "@/utils/supabase/client";
@@ -257,6 +256,16 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setSelectedCodexChatDetailId(null);
         setActiveCodexChatDrag(null);
     }, [project?.id, project?.space_id]);
+
+    useEffect(() => {
+        const handleOpenCodexChatImport = () => {
+            setSelectedCodexChatDetailId(null);
+            setIsCodexChatImportSidebarOpen(true);
+        };
+
+        window.addEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, handleOpenCodexChatImport);
+        return () => window.removeEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, handleOpenCodexChatImport);
+    }, []);
 
     const projectRepoPath = useMemo(() => (
         (codexRepoPathOverride !== undefined ? codexRepoPathOverride ?? '' : project?.repo_path ?? '').trim()
@@ -2138,26 +2147,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             {/* Map toolbar buttons (Top Right) */}
             {!isCodexChatImportSidebarOpen && (
                 <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="relative h-7 w-7 text-muted-foreground/70 transition-colors hover:bg-muted/50 hover:text-muted-foreground"
-                        onClick={() => {
-                            setSelectedCodexChatDetailId(null);
-                            setIsCodexChatImportSidebarOpen(true);
-                        }}
-                        aria-label="チャット取り込み"
-                        title="チャット取り込み"
-                    >
-                        <Bot className="h-4 w-4" />
-                        <span
-                            className={[
-                                "absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-1 ring-background",
-                                selectedRepoImportEnabled && selectedCodexImportRepoPath ? "bg-emerald-500" : selectedCodexImportRepoPath ? "bg-muted-foreground/45" : "bg-amber-500",
-                            ].join(" ")}
-                        />
-                    </Button>
                     <MindMapDisplaySettingsPopover
                         value={displaySettings}
                         onChange={setDisplaySettings}
