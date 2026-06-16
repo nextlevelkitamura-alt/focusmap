@@ -1,5 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, describe, expect, test, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
+
+const taskProgressSnapshotState = vi.hoisted(() => ({
+  tasks: [] as Array<Record<string, unknown>>,
+}))
 
 vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
   loadSettings: () => ({
@@ -81,13 +85,29 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
 
 vi.mock("@/hooks/useTaskProgressSnapshot", () => ({
   useTaskProgressSnapshot: () => ({
-    tasks: [],
+    tasks: taskProgressSnapshotState.tasks,
     getById: () => null,
     pollIntervalMs: 3000,
     isLoading: false,
     error: null,
     refresh: vi.fn(),
   }),
+}))
+
+vi.mock("@/utils/supabase/client", () => ({
+  createClient: () => {
+    const channel = {
+      on: vi.fn(() => channel),
+      subscribe: vi.fn(() => channel),
+    }
+    return {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+      },
+      channel: vi.fn(() => channel),
+      removeChannel: vi.fn(),
+    }
+  },
 }))
 
 vi.mock("@/components/mindmap/custom-mind-map-view", () => ({
@@ -189,6 +209,23 @@ const task = {
   habit_end_date: null,
 } as Task
 
+beforeEach(() => {
+  taskProgressSnapshotState.tasks = []
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/mindmap/drafts")) {
+      return {
+        ok: true,
+        json: async () => ({ success: true, draft: null }),
+      }
+    }
+    return {
+      ok: false,
+      json: async () => ({ success: false }),
+      text: async () => "",
+    }
+  }))
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -197,7 +234,7 @@ describe("MindMap controls", () => {
   test("keeps map settings in the corner and hides node shortcut help", () => {
     render(<MindMap project={project} groups={[task]} tasks={[]} />)
 
-    expect(screen.getByRole("button", { name: "チャット取り込み" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Codex監視snapshotを更新" })).not.toBeInTheDocument()
 
@@ -213,7 +250,7 @@ describe("MindMap controls", () => {
 
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
+    fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
@@ -222,26 +259,30 @@ describe("MindMap controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
 
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "チャット取り込み" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
   })
 
   test("toggles the chat import sidebar from the header event and closes it from map interaction", async () => {
     render(<MindMap project={project} groups={[task]} tasks={[]} />)
 
-    window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+    fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
-    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    })
 
-    window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+    fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
     await waitFor(() => {
       expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
     })
 
-    window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+    fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
-    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    })
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Root task" }))
 
@@ -347,7 +388,10 @@ describe("MindMap controls", () => {
       />
     )
 
-    fireEvent.click(screen.getByRole("button", { name: "チャット取り込み" }))
+    fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+    await waitFor(() => {
+      expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+    })
     expect(screen.getByText("SNS運用の相談")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
     expect(screen.queryByText("配置済みの相談")).not.toBeInTheDocument()
@@ -362,6 +406,33 @@ describe("MindMap controls", () => {
         parent_task_id: null,
         project_id: "project-1",
       })
+    })
+  })
+
+  test("refreshes map tasks silently when Turso snapshot has a missing source task", async () => {
+    taskProgressSnapshotState.tasks = [{
+      id: "ai-task-1",
+      title: "AI確定UIと再提案導線",
+      status: "running",
+      executor: "codex_app",
+      source_type: "mindmap",
+      source_id: "chat-node-1",
+      updated_at: new Date().toISOString(),
+    }]
+    const onMindmapUpdated = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MindMap
+        project={project}
+        groups={[task]}
+        tasks={[]}
+        allTasks={[task]}
+        onMindmapUpdated={onMindmapUpdated}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onMindmapUpdated).toHaveBeenCalledWith({ staleMs: 3000, silent: true })
     })
   })
 
@@ -529,9 +600,17 @@ describe("MindMap controls", () => {
   })
 
   test("turns a long node title into memo detail and saves the generated heading", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ heading: "クリップボード改善" }),
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/mindmap/drafts")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, draft: null }),
+        }
+      }
+      return {
+        ok: true,
+        json: async () => ({ heading: "クリップボード改善" }),
+      }
     })
     vi.stubGlobal("fetch", fetchMock)
     const onUpdateTask = vi.fn()
@@ -563,7 +642,9 @@ describe("MindMap controls", () => {
         memo: `${longTitle}\n\n既存メモ`,
       })
     })
-    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const generateCall = fetchMock.mock.calls.find(([input]) => String(input) === "/api/ai/generate-memo-heading")
+    expect(generateCall).toBeTruthy()
+    const requestInit = generateCall?.[1] as RequestInit
     expect(JSON.parse(String(requestInit.body))).toEqual({
       detail: `${longTitle}\n\n既存メモ`,
       currentHeading: "プロンプトに関して",

@@ -112,6 +112,8 @@ flowchart LR
 
 `/api/codex/sync-node` は移行中のfallbackだが、無変化pollではSupabaseへ書かない。thread未検出で「見に行っただけ」の時はresponseに `checked_at` を返すだけにし、`ai_tasks.result.codex_last_checked_at` は更新しない。sqlite上で `archived=1` になったthreadだけを、ユーザーがCodex側で片付けた合図として `ai_tasks.status='completed'` にして元ノードも完了する。既存thread idがsqliteから一時的に読めなくなった場合は `thread_unavailable` の確認待ちとして扱い、監視を継続し、元ノードを完了しない。通常のCodex実行完了や承認待ちは、ユーザー確認前に元ノードを完了しない。
 
+マップ/チャット取り込みUIでSupabase task stateを短周期に再取得してよいのは、Turso snapshotが欠落補完の証拠を持つ時だけにする。具体的には、`/api/task-progress/snapshot` に最近のactiveな `source_type='mindmap'` / `source_id` があり、現在の `tasks` stateにそのsource taskが無い場合だけ、画面側が `refreshFromServer({ staleMs: 3000, silent: true })` を発火する。欠落sourceが無い時はTurso snapshot pollだけで表示を更新し、Supabase全件3秒pollや表示中だけの追加writeへ戻さない。
+
 activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定なら有効扱いで、Turso保存に成功したactivityはSupabaseへmirrorしない。明示的にSupabaseにもactivityを書きたい検証時だけ `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=0` を設定する。Turso未設定またはTurso保存失敗時は、既存互換のためSupabaseへfallbackする。
 
 `dispatch_mode='auto'` のCodex.app実行では、Mac側 `focusmap-agent` が `turn/start` 後のapp-server通知からユーザー可視のassistant発話だけを短いactivity候補として保持する。実行中は一覧向けsnapshotに本文を載せず、Codex turnが終わって `ai_tasks.status` を `running` から `awaiting_approval` へ更新する1回だけ、直近最大8件・各2000文字以内の可視発話と「確認待ち」status activityを `/api/agents/tasks/[id]/state` へ同送する。これにより詳細画面を開いた瞬間はクラウド側のactivityを読むだけでよく、開いてからローカルCodexログを取りに行く遅延を避ける。raw log、command output、full rollout、full thread historyはこの単発同期にも含めない。

@@ -38,7 +38,7 @@ interface CenterPaneProps {
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
-    onMindmapUpdated?: () => Promise<void>
+    onMindmapUpdated?: (options?: { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean }) => Promise<void>
     onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
     isTaskListVisible?: boolean

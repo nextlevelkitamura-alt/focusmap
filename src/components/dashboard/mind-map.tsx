@@ -26,6 +26,7 @@ import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
+import { missingTaskProgressSourceIds } from "@/lib/task-progress-source-refresh";
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events";
@@ -106,6 +107,8 @@ const fileToDataUrl = (file: File): Promise<string> =>
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ['running', 'awaiting_approval', 'completed', 'failed'];
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input']);
+type MindmapRefreshOptions = { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean };
+const MISSING_CODEX_SOURCE_REFRESH_RETRY_MS = 3_000;
 
 function formatChatImportUpdatedLabel(value: string | null | undefined) {
     if (!value) return null;
@@ -200,7 +203,7 @@ interface MindMapProps {
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
-    onMindmapUpdated?: () => Promise<void>
+    onMindmapUpdated?: (options?: MindmapRefreshOptions) => Promise<void>
     onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
 }
@@ -406,6 +409,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [isDraftBusy, setIsDraftBusy] = useState(false);
     const [draftError, setDraftError] = useState<string | null>(null);
     const [draftDetailNodeId, setDraftDetailNodeId] = useState<string | null>(null);
+    const missingCodexSourceRefreshRef = useRef<{ key: string; requestedAt: number } | null>(null);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -927,6 +931,27 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         for (const task of taskProgressTasks) merged.set(task.id, task);
         return hydrateTaskProgressMindMapSources(Array.from(merged.values()), aiTasksBySourceId);
     }, [aiTasksBySourceId, taskProgressFallbackTasks, taskProgressTasks]);
+    const missingTaskProgressSourceIdKey = useMemo(() => (
+        missingTaskProgressSourceIds({
+            snapshots: taskProgressDisplayTasks,
+            tasks: repoScopedCodexTaskNodes,
+        }).join("|")
+    ), [repoScopedCodexTaskNodes, taskProgressDisplayTasks]);
+    useEffect(() => {
+        if (!missingTaskProgressSourceIdKey || !onMindmapUpdated) return;
+        const now = Date.now();
+        const previous = missingCodexSourceRefreshRef.current;
+        if (
+            previous?.key === missingTaskProgressSourceIdKey &&
+            now - previous.requestedAt < MISSING_CODEX_SOURCE_REFRESH_RETRY_MS
+        ) {
+            return;
+        }
+        missingCodexSourceRefreshRef.current = { key: missingTaskProgressSourceIdKey, requestedAt: now };
+        void onMindmapUpdated({ staleMs: 3_000, silent: true }).catch(error => {
+            console.warn("[MindMap] Failed to refresh missing Codex source tasks from snapshot:", error);
+        });
+    }, [missingTaskProgressSourceIdKey, onMindmapUpdated]);
     const appliedCodexCompletionKeysRef = useRef(new Set<string>());
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {};
