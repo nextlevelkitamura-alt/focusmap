@@ -46,6 +46,21 @@ function isUuid(value: unknown): value is string {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function extractSavedMindmapDraftAction(output: unknown) {
+  if (!isRecord(output) || output.success === false || typeof output.draftId !== 'string') return null
+  return {
+    draftId: output.draftId,
+    projectId: typeof output.projectId === 'string' ? output.projectId : null,
+    summary: isRecord(output.summary) ? output.summary : null,
+    nodeCount: typeof output.nodeCount === 'number' ? output.nodeCount : null,
+    canApply: true,
+  }
+}
+
 function normalizeScopeKey(value: unknown) {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   return trimmed.length > 0 && trimmed.length <= 180 ? trimmed : 'general'
@@ -84,10 +99,11 @@ function deriveTitle(messages: UIMessage[]) {
   return text.length > 28 ? `${text.slice(0, 28)}...` : text
 }
 
-function createAssistantMessage(text: string): UIMessage {
+function createAssistantMessage(text: string, metadata?: Record<string, unknown>): UIMessage {
   return {
     id: crypto.randomUUID(),
     role: 'assistant',
+    ...(metadata ? { metadata } : {}),
     parts: [{ type: 'text', text }],
   }
 }
@@ -128,6 +144,7 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
   const row = session as AgentChatSessionRow
   let liveMessages: UIMessage[] = Array.isArray(row.messages) ? row.messages : []
   const toolStartedAt = new Map<string, string>()
+  let savedMindmapDraftAction: ReturnType<typeof extractSavedMindmapDraftAction> | null = null
 
   async function persistProgressMessage(progressMessage: UIMessage) {
     liveMessages = upsertAgentProgressMessage(liveMessages, progressMessage)
@@ -182,10 +199,16 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
           completedAt,
           durationMs: event.durationMs,
         }))
+        if (event.success && toolName === 'saveMindmapDraft') {
+          savedMindmapDraftAction = extractSavedMindmapDraftAction(event.output)
+        }
       },
     })
     const replyText = result.text?.trim() || '完了しました。'
-    const nextMessages = [...liveMessages, createAssistantMessage(replyText)]
+    const replyMetadata = savedMindmapDraftAction
+      ? { focusmapMindmapDraftReady: savedMindmapDraftAction }
+      : undefined
+    const nextMessages = [...liveMessages, createAssistantMessage(replyText, replyMetadata)]
     const completedAt = new Date().toISOString()
 
     const { error } = await supabase

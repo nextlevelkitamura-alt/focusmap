@@ -44,8 +44,8 @@ interface GroupStat {
   completionRate: number
 }
 
-const PROJECT_CHAT_MAP_NODE_LIMIT = 240
-const PROJECT_CHAT_NOTE_LIMIT = 100
+const PROJECT_CHAT_MAP_NODE_LIMIT = 100
+const PROJECT_CHAT_NOTE_LIMIT = 40
 const PROJECT_CHAT_HEADING_LIMIT = 12
 
 function formatApproxCount(count: number, truncated: boolean): string {

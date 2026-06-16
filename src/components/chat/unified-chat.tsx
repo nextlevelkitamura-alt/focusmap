@@ -86,7 +86,7 @@ const CHAT_STARTERS = [
   {
     label: "マインドマップを整理",
     description: "配置・親子関係を相談",
-    prompt: "マインドマップを整理して。対象はまず現在マップ上にあるノードだけにしてください。Codex取り込みチャット、未整理メモ、ノートは私が明示した時だけ含めてください。整理したら本番tasksへ直接反映せず、AI案下書きとして保存してください。",
+    prompt: "マインドマップを整理して。対象はまず現在マップ上にあるノードだけにしてください。Codex取り込みチャット、未整理メモ、ノートは私が明示した時だけ含めてください。整理したら本番tasksへ直接反映せず、AI案下書きとして保存してください。保存後の返答は短くしてください。",
     icon: Workflow,
   },
   {
@@ -125,7 +125,7 @@ const AUTOMATION_SHORTCUTS = [
   {
     label: "マップ整理",
     description: "ノード・進捗・メモ紐づき",
-    prompt: "現在のプロジェクトのマインドマップを整理して。対象はまず現在マップ上にあるノードだけにしてください。Codex取り込みチャット、未整理メモ、ノートは私が明示した時だけ含めてください。新規ノード、既存ノード移動、元メモ/チャット紐づきだけをAI案下書きとして保存してください。本番tasksへ直接反映しないでください。",
+    prompt: "現在のプロジェクトのマインドマップを整理して。対象はまず現在マップ上にあるノードだけにしてください。Codex取り込みチャット、未整理メモ、ノートは私が明示した時だけ含めてください。新規ノード、既存ノード移動、元メモ/チャット紐づきだけをAI案下書きとして保存してください。本番tasksへ直接反映しないでください。保存後の返答は短くしてください。",
     icon: Workflow,
   },
   {
@@ -1372,8 +1372,28 @@ function AssistantThinking() {
 
 type ApprovalHandler = (args: { id: string; approved: boolean; reason?: string }) => void | PromiseLike<void>
 
+type MindmapDraftReadyAction = {
+  draftId: string
+  nodeCount: number | null
+}
+
 type MindmapDraftApplyAction = {
   historyId: string
+}
+
+function getMindmapDraftReadyAction(message: UIMessage): MindmapDraftReadyAction | null {
+  const metadata = message.metadata
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const record = metadata as Record<string, unknown>
+  const value = record.focusmapMindmapDraftReady
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const action = value as Record<string, unknown>
+  return typeof action.draftId === "string" && action.canApply === true
+    ? {
+      draftId: action.draftId,
+      nodeCount: typeof action.nodeCount === "number" ? action.nodeCount : null,
+    }
+    : null
 }
 
 function getMindmapDraftApplyAction(message: UIMessage): MindmapDraftApplyAction | null {
@@ -1393,6 +1413,7 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
   if (progress) return <ProgressLogMessage progress={progress} />
 
   const isUser = message.role === "user"
+  const mindmapDraftReadyAction = isUser ? null : getMindmapDraftReadyAction(message)
   const mindmapDraftApplyAction = isUser ? null : getMindmapDraftApplyAction(message)
 
   return (
@@ -1423,10 +1444,66 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
           }
           return null
         })}
+        {mindmapDraftReadyAction && (
+          <MindmapDraftReadyActions action={mindmapDraftReadyAction} />
+        )}
         {mindmapDraftApplyAction && (
           <MindmapDraftApplyActions action={mindmapDraftApplyAction} />
         )}
       </div>
+    </div>
+  )
+}
+
+function MindmapDraftReadyActions({ action }: { action: MindmapDraftReadyAction }) {
+  const [state, setState] = useState<"ready" | "applying" | "applied" | "failed">("ready")
+  const [historyId, setHistoryId] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const busy = state === "applying"
+
+  const handleApply = useCallback(async () => {
+    if (busy || state === "applied") return
+    setState("applying")
+    setError(null)
+    try {
+      const response = await fetch(`/api/mindmap/drafts/${action.draftId}/apply`, {
+        method: "POST",
+        credentials: "same-origin",
+      })
+      const data = await response.json().catch(() => ({})) as {
+        history?: { id?: string }
+        message?: string
+        error?: string
+      }
+      if (!response.ok || !data.history?.id) throw new Error(data.error || "AI案の確定に失敗しました")
+      window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
+      setHistoryId(data.history.id)
+      setMessage(data.message ?? "AI案を確定しました")
+      setState("applied")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "AI案の確定に失敗しました")
+      setState("failed")
+    }
+  }, [action.draftId, busy, state])
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 gap-1.5 border-emerald-400/30 bg-emerald-400/10 px-2.5 text-xs text-emerald-100 hover:bg-emerald-400/15 hover:text-emerald-50 disabled:opacity-60"
+        disabled={busy || state === "applied"}
+        onClick={() => void handleApply()}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+        {state === "applied" ? "確定済み" : "AI案を確定"}
+        {action.nodeCount ? <span className="text-emerald-100/70">({action.nodeCount})</span> : null}
+      </Button>
+      {message && <span className="text-xs text-emerald-200">{message}</span>}
+      {historyId && <MindmapDraftApplyActions action={{ historyId }} />}
+      {error && <span className="text-xs text-red-300">{error}</span>}
     </div>
   )
 }

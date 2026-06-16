@@ -1830,9 +1830,9 @@ export const proposeMindmapOrganization = tool({
   inputSchema: z.object({
     projectId: z.string().describe('整理提案するプロジェクトID'),
     focus: z.string().optional().describe('整理したい観点。例: チャット文脈、ノート整理、未分類ノードなど。'),
-    maxNodes: z.number().optional().describe('見出しとして返す最大ノード数。通常120、最大240。'),
-    maxNoteHeadings: z.number().optional().describe('返すノート/メモ見出し数。通常30、最大80。'),
-    maxCandidates: z.number().optional().describe('機械的に拾うまとめ候補数。通常6、最大12。'),
+    maxNodes: z.number().optional().describe('見出しとして返す最大ノード数。通常90、最大180。'),
+    maxNoteHeadings: z.number().optional().describe('返すノート/メモ見出し数。通常20、最大60。'),
+    maxCandidates: z.number().optional().describe('機械的に拾うまとめ候補数。通常5、最大8。'),
     includeCodexInbox: z.boolean().optional().describe('Codex Inbox配下の未配置/未取り込み扱いのCodexチャット・作業も整理対象に含めるか。ユーザーに確認済みの場合だけtrue。未指定/falseなら現在マインドマップ上にある通常ノードだけを見る。'),
     includeNoteHeadings: z.boolean().optional().describe('ノート/メモ見出しも整理候補として含めるか。ユーザーが明示した場合だけtrue。未指定/falseなら現在マップ上のノードだけを見る。'),
   }),
@@ -1841,10 +1841,30 @@ export const proposeMindmapOrganization = tool({
     const user = await requireAuthedUser(supabase)
     if (!user) return { success: false, error: '認証エラー' }
 
-    const nodeLimit = normalizeLimit(maxNodes, 120, 240)
-    const noteLimit = normalizeLimit(maxNoteHeadings, 30, 80)
-    const candidateLimit = normalizeLimit(maxCandidates, 6, 12)
+    const nodeLimit = normalizeLimit(maxNodes, 90, 180)
+    const noteLimit = normalizeLimit(maxNoteHeadings, 20, 60)
+    const candidateLimit = normalizeLimit(maxCandidates, 5, 8)
     const shouldIncludeNoteHeadings = includeNoteHeadings === true
+
+    const wishlistHeadingsQuery = shouldIncludeNoteHeadings
+      ? supabase
+        .from('ideal_goals')
+        .select('id, title, status, memo_status, is_completed, updated_at')
+        .eq('user_id', user.id)
+        .eq('project_id', projectId)
+        .in('status', ['wishlist', 'memo'])
+        .order('updated_at', { ascending: false })
+        .limit(noteLimit)
+      : Promise.resolve({ data: [] })
+    const memoHeadingsQuery = shouldIncludeNoteHeadings
+      ? supabase
+        .from('memo_items')
+        .select('id, title, status, item_kind, updated_at')
+        .eq('user_id', user.id)
+        .eq('project_id', projectId)
+        .order('updated_at', { ascending: false })
+        .limit(noteLimit)
+      : Promise.resolve({ data: [] })
 
     const [{ data: project, error: projectError }, { data: context }] = await Promise.all([
       supabase
@@ -1872,21 +1892,8 @@ export const proposeMindmapOrganization = tool({
         .is('deleted_at', null)
         .order('order_index', { ascending: true })
         .limit(nodeLimit),
-      supabase
-        .from('ideal_goals')
-        .select('id, title, status, memo_status, is_completed, updated_at')
-        .eq('user_id', user.id)
-        .eq('project_id', projectId)
-        .in('status', ['wishlist', 'memo'])
-        .order('updated_at', { ascending: false })
-        .limit(noteLimit),
-      supabase
-        .from('memo_items')
-        .select('id, title, status, item_kind, updated_at')
-        .eq('user_id', user.id)
-        .eq('project_id', projectId)
-        .order('updated_at', { ascending: false })
-        .limit(noteLimit),
+      wishlistHeadingsQuery,
+      memoHeadingsQuery,
     ])
     if (taskError) return { success: false, error: taskError.message }
 
@@ -1938,8 +1945,8 @@ export const proposeMindmapOrganization = tool({
       },
       project_context: context ? {
         heading: context.heading,
-        details_preview: compactPreview(context.details, 1200),
-        progress_preview: compactPreview(context.progress, 1200),
+        details_preview: compactPreview(context.details, 700),
+        progress_preview: compactPreview(context.progress, 700),
         progress_status: context.progress_status,
         updated_at: context.updated_at,
       } : null,
@@ -1962,11 +1969,8 @@ export const proposeMindmapOrganization = tool({
         id: node.id,
         title: node.title,
         parent_task_id: node.parent_task_id,
-        parent_title: node.parent_title,
-        path: node.path,
         depth: node.depth,
         is_group: node.is_group,
-        source: node.source ?? null,
         status: node.status,
         stage: node.stage,
         children_count: node.children_count,
@@ -1978,7 +1982,10 @@ export const proposeMindmapOrganization = tool({
         records: noteHeadings,
       },
       candidate_groups: candidateGroups,
-      response_harness: buildMindmapOrganizationHarness(),
+      response_hints: [
+        '必要な差分だけ saveMindmapDraft に保存する。',
+        'AI案保存後の返答は短くし、詳細な表や追加提案はユーザーが求めた時だけ出す。',
+      ],
       message: `「${project.title}」のマインドマップ整理用に、見出し${ordered.length}件とノート/メモ見出し${noteHeadings.length}件を取得しました。`,
     }
   },

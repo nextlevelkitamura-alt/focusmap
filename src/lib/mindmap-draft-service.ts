@@ -498,8 +498,6 @@ async function applyDraftNodeRows(
         memo_images: null,
         source: "manual",
         deleted_at: null,
-        node_width: null,
-        mindmap_collapsed: false,
       }
       const { data, error } = await supabase
         .from("tasks")
