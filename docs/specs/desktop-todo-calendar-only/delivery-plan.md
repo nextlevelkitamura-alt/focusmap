@@ -39,8 +39,10 @@ External services:
 3. Prevent the right calendar side panel from also rendering when `activeView === 'today'`.
 4. Pass `defaultRangeMode="3days"` only for the desktop Todo main pane.
 5. Keep optional map/long-term side calendars on their existing default behavior.
-6. Tune 3days card density only if full-width screenshots show unreadable wrapping.
-7. Update `docs/CONTEXT.md` after implementation because this changes a major desktop dashboard UI flow.
+6. Change desktop Todo `3days` conflict rendering so it never creates `+N` overflow chips; show every overlapping item as a horizontal lane within the day column.
+7. Keep the existing compact overflow behavior available for mobile or narrow side-panel use if needed.
+8. Tune 3days card density only if full-width screenshots show unreadable wrapping.
+9. Update `docs/CONTEXT.md` after implementation because this changes a major desktop dashboard UI flow.
 
 ## Verification
 
@@ -60,4 +62,4 @@ Revert the small UI commit. No DB or API migration is involved.
 ## Blockers
 
 - Decide whether "表示のみ" means only the screen should show calendar, or whether event create/edit/delete controls should also be disabled.
-
+- Decide whether narrow desktop side panels should keep the old overflow chips while the main Todo screen removes them.
