@@ -26,6 +26,7 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 ## Git ルール
 
 ### 基本方針
+- Git運用で古い計画書や個別docsと矛盾する記述がある場合は、この `AGENTS.md` のGitルールを優先する
 - **小さな修正・UI調整・ドキュメント変更は `main` に直接コミットしてよい**
 - 作業開始時に `git fetch --prune origin` を実行してから `git status --short --branch` と `git worktree list` を確認し、`main` が `origin/main` より先行・遅延している場合は報告する
 - Codex.app ではチャットごとに worktree が作られることがある。小さな修正で現在地が `main` 以外なら、まず既存の `main` worktree を探し、あればそこを使う。`main` が別 worktree で使用中なら、同じ用途の worktree を二重に作らない
