@@ -293,6 +293,94 @@ function makeDraftTask(row: MindmapDraftNodeRow, baseTask: Task | null, parentTa
     };
 }
 
+function DraftNodeDetailPanel({
+    node,
+    meta,
+    onClose,
+    onSaveTitle,
+}: {
+    node: Task;
+    meta?: { kind: "new" | "moved" | "adjusted"; label: string } | null;
+    onClose: () => void;
+    onSaveTitle: (nodeId: string, title: string) => Promise<void>;
+}) {
+    const [title, setTitle] = useState(node.title);
+    const [isSaving, setIsSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        setTitle(node.title);
+        setError(null);
+    }, [node.id, node.title]);
+
+    const handleSave = useCallback(async () => {
+        const nextTitle = title.trim() || "New Task";
+        if (nextTitle === node.title) {
+            setTitle(nextTitle);
+            return;
+        }
+        setIsSaving(true);
+        setError(null);
+        try {
+            await onSaveTitle(node.id, nextTitle);
+            setTitle(nextTitle);
+        } catch (error) {
+            setError(error instanceof Error ? error.message : "AI案ノードの保存に失敗しました");
+        } finally {
+            setIsSaving(false);
+        }
+    }, [node.id, node.title, onSaveTitle, title]);
+
+    return (
+        <div className="absolute inset-y-0 right-0 z-50 flex w-[min(92vw,360px)] flex-col border-l border-border bg-card/95 shadow-2xl backdrop-blur">
+            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-sky-100">
+                        <span className="inline-flex h-2 w-2 rounded-full bg-sky-400" />
+                        AI案ノード
+                        {meta && (
+                            <span className="rounded-full border border-sky-300/35 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-100">
+                                {meta.label}
+                            </span>
+                        )}
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        確定前の下書きです
+                    </p>
+                </div>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={onClose} aria-label="AI案ノード詳細を閉じる">
+                    <X className="h-4 w-4" />
+                </Button>
+            </div>
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+                <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-muted-foreground">見出し</span>
+                    <input
+                        value={title}
+                        onChange={(event) => setTitle(event.target.value)}
+                        onBlur={() => void handleSave()}
+                        className="h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-sky-400"
+                        placeholder="見出し"
+                    />
+                </label>
+                {error && (
+                    <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                        {error}
+                    </div>
+                )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
+                <Button type="button" variant="outline" size="sm" onClick={onClose}>
+                    閉じる
+                </Button>
+                <Button type="button" size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                    {isSaving ? "保存中" : "保存"}
+                </Button>
+            </div>
+        </div>
+    );
+}
+
 function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onPatchProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onMindmapUpdated, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
     const projectId = project?.id ?? '';
     const [supabase] = useState(() => createClient());
@@ -317,6 +405,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [isDraftVisible, setIsDraftVisible] = useState(false);
     const [isDraftBusy, setIsDraftBusy] = useState(false);
     const [draftError, setDraftError] = useState<string | null>(null);
+    const [draftDetailNodeId, setDraftDetailNodeId] = useState<string | null>(null);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -434,6 +523,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         return Array.from(display.values());
     }, [activeDraft, baseNodeById, visibleMapNodes]);
     const draftDisplayNodeById = useMemo(() => new Map(draftDisplayNodes.map(node => [node.id, node])), [draftDisplayNodes]);
+    useEffect(() => {
+        if (!draftDetailNodeId) return;
+        if (!isDraftMode || !draftDisplayNodeById.has(draftDetailNodeId)) {
+            setDraftDetailNodeId(null);
+        }
+    }, [draftDetailNodeId, draftDisplayNodeById, isDraftMode]);
     const mapGroupsForView = useMemo(
         () => (isDraftMode ? draftDisplayNodes : visibleMapGroups)
             .filter(node => !node.parent_task_id)
@@ -1184,6 +1279,15 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setSelectedNodeId(primaryId);
         selectedNodeIdRef.current = primaryId;
     }, []);
+
+    const handleOpenDraftNodeDetail = useCallback((taskId: string) => {
+        const node = draftDisplayNodeById.get(taskId);
+        if (!node) return;
+        setSelectedCodexChatDetailId(null);
+        setCodexPanelTaskId(null);
+        setDraftDetailNodeId(taskId);
+        applySelection(new Set([taskId]), taskId);
+    }, [applySelection, draftDisplayNodeById]);
 
     // HELPER: Find the editable element (textarea or input) inside a node
     const findEditableElement = useCallback((nodeElement: Element): HTMLTextAreaElement | HTMLInputElement | null => {
@@ -2743,6 +2847,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         });
     }, [buildClipboardNode, getTopLevelCopyNodeIds, pasteClipboardTree]);
 
+    const draftDetailNode = draftDetailNodeId ? draftDisplayNodeById.get(draftDetailNodeId) ?? null : null;
     const activeMapCallbacks = isDraftMode ? draftCallbacks : callbacks;
 
     return (
@@ -2871,7 +2976,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         onResizeNode={isDraftMode ? undefined : onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                         onGenerateHeadingFromLongNode={isDraftMode ? undefined : handleGenerateHeadingFromLongNode}
                         generatingHeadingNodeIds={generatingHeadingNodeIds}
-                        onRunCodex={isDraftMode ? undefined : handleRunCodex}
+                        onRunCodex={isDraftMode ? handleOpenDraftNodeDetail : handleRunCodex}
                         codexRunByNodeId={codexRunByNodeId}
                         codexThreadImportEnabled={selectedRepoImportEnabled}
                         codexThreadImportAvailable={!!selectedCodexImportRepoPath}
@@ -2942,6 +3047,14 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     if (!open) setTaskProgressPanelTaskId(null);
                 }}
             />
+            {isDraftMode && draftDetailNode && (
+                <DraftNodeDetailPanel
+                    node={draftDetailNode}
+                    meta={draftMetaByNodeId[draftDetailNode.id] ?? null}
+                    onClose={() => setDraftDetailNodeId(null)}
+                    onSaveTitle={handleDraftSaveTaskTitle}
+                />
+            )}
             {codexPanelNode && (
                 <CodexNodePanel
                     open

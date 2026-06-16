@@ -45,6 +45,7 @@
 - プロジェクトチャット初期文脈と `proposeMindmapOrganization` の返却を軽量化し、ユーザーが明示していない時はノート/メモ見出し取得を省略するようにした。
 - `saveMindmapDraft` 成功時の最終assistantメッセージへ `metadata.focusmapMindmapDraftReady` を付け、`UnifiedChat` に `AI案を確定` ボタンを表示するようにした。
 - AI案保存後の返答を短くする指示へ更新し、追加の表や気づきはユーザーが求めた時だけ出す方針にした。
+- AI案表示中のノード三点ボタンで軽量な下書き詳細パネルを開き、見出し編集だけを下書きへ保存するようにした。本番DBへ副作用が出るメモ・予定・画像・Codex実行は確定後に扱う。
 
 ## Links
 
