@@ -1879,6 +1879,7 @@ export function DashboardClient({
                                         projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
                                         projectChatLaunchKey={projectChatLaunchRequest.key}
                                         onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
+                                        variant="map-sidebar"
                                     />
                                 </div>
                             </div>

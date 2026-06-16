@@ -78,6 +78,7 @@ interface UnifiedChatProps {
   projectChatLaunchProjectId?: string | null
   projectChatLaunchKey?: number
   onProjectChatLaunchConsumed?: () => void
+  variant?: "full" | "map-sidebar"
 }
 
 const CHAT_STARTERS = [
@@ -275,19 +276,19 @@ type ChatMode = "general" | "project"
 
 export function UnifiedChat({
   spaceId = null,
-  projectId: _projectId = null,
+  projectId = null,
   projectTitle = null,
   projects = [],
   onSelectProject,
   projectChatLaunchProjectId = null,
   projectChatLaunchKey = 0,
   onProjectChatLaunchConsumed,
+  variant = "full",
 }: UnifiedChatProps) {
-  void _projectId
-  void projectTitle
+  const isMapSidebar = variant === "map-sidebar"
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMapSidebar)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [activeProjectChatId, setActiveProjectChatId] = useState<string | null>(null)
   const [modelMode, setModelMode] = useState<AgentModelMode>(() => loadModelModePreference())
@@ -307,6 +308,7 @@ export function UnifiedChat({
       (!spaceId || project.space_id === spaceId),
     ) ?? null
   }, [activeProjectChatId, projects, spaceId])
+  const activeProjectChatTitle = activeProjectChat?.title ?? projectTitle ?? null
   const activeProjectChatIdForRequest = activeProjectChat?.id ?? null
   const chatMode: ChatMode = activeProjectChatIdForRequest ? "project" : "general"
   const chatScopeKey = activeProjectChatIdForRequest ? `project:${activeProjectChatIdForRequest}` : "general"
@@ -365,6 +367,11 @@ export function UnifiedChat({
   }, [onSelectProject, projectChatLaunchKey, projectChatLaunchProjectId, projects, spaceId])
 
   useEffect(() => {
+    if (!isMapSidebar) return
+    setActiveProjectChatId(projectId)
+  }, [isMapSidebar, projectId])
+
+  useEffect(() => {
     const pending = pendingProjectChatLaunchRef.current
     if (!pending) return
     if (activeProjectChatIdForRequest !== pending.projectId) return
@@ -389,8 +396,9 @@ export function UnifiedChat({
 
   useEffect(() => {
     if (!activeProjectChatId || activeProjectChat) return
+    if (isMapSidebar && activeProjectChatId === projectId) return
     setActiveProjectChatId(null)
-  }, [activeProjectChat, activeProjectChatId])
+  }, [activeProjectChat, activeProjectChatId, isMapSidebar, projectId])
 
   useEffect(() => {
     try {
@@ -491,7 +499,16 @@ export function UnifiedChat({
   }, [])
 
   const handleNewSession = useCallback(() => {
-    createSession()
+    createSession(activeProjectChatIdForRequest
+      ? {
+        chatMode: "project",
+        spaceId,
+        projectId: activeProjectChatIdForRequest,
+      }
+      : {
+        chatMode: "general",
+        spaceId,
+      })
     setInput("")
     setAttachments([])
     setAttachmentError(null)
@@ -500,7 +517,7 @@ export function UnifiedChat({
     if (isDesktopViewport()) {
       setTimeout(() => inputRef.current?.focus(), 0)
     }
-  }, [createSession])
+  }, [activeProjectChatIdForRequest, createSession, spaceId])
 
   const handleSelectSession = (session: AgentChatSession) => {
     selectSession(session.id)
@@ -608,7 +625,7 @@ export function UnifiedChat({
           </Button>
           <div className="min-w-0 flex-1 text-center">
             <div className="truncate text-[15px] font-semibold leading-5 text-zinc-100">
-              {activeProjectChat?.title ?? "Focusmap"}
+              {activeProjectChatTitle ?? "Focusmap"}
             </div>
             <div className="truncate text-[11px] leading-4 text-zinc-500">
               {activeProjectChat ? "プロジェクトチャット" : "新しいチャット"}

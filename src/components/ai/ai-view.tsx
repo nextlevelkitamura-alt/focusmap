@@ -12,6 +12,7 @@ interface AiViewProps {
   projectChatLaunchProjectId?: string | null
   projectChatLaunchKey?: number
   onProjectChatLaunchConsumed?: () => void
+  variant?: "full" | "map-sidebar"
 }
 
 export function AiView({
@@ -23,6 +24,7 @@ export function AiView({
   projectChatLaunchProjectId = null,
   projectChatLaunchKey = 0,
   onProjectChatLaunchConsumed,
+  variant = "full",
 }: AiViewProps) {
   return (
     <div className="flex h-full w-full min-w-0 flex-col bg-background">
@@ -35,6 +37,7 @@ export function AiView({
         projectChatLaunchProjectId={projectChatLaunchProjectId}
         projectChatLaunchKey={projectChatLaunchKey}
         onProjectChatLaunchConsumed={onProjectChatLaunchConsumed}
+        variant={variant}
       />
     </div>
   )
