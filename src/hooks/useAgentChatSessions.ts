@@ -181,13 +181,14 @@ function sessionHasCompletedMindmapDraftMutation(session: AgentChatSession): boo
   })
 }
 
-function createUserMessage(text: string, files: FileUIPart[]): UIMessage {
+function createUserMessage(text: string, files: FileUIPart[], metadata?: Record<string, unknown>): UIMessage {
   const parts: UIMessage["parts"] = []
   if (text.trim()) parts.push({ type: "text", text: text.trim() })
   parts.push(...files)
   return {
     id: newId(),
     role: "user",
+    ...(metadata ? { metadata } : {}),
     parts,
   }
 }
@@ -446,9 +447,16 @@ export function useAgentChatSessions(scopeKey = "general") {
   }, [])
 
   const startRun = useCallback(async ({ text, files, spaceId, projectId, chatMode, modelMode }: StartRunInput) => {
-    const userMessage = createUserMessage(text, files)
     const current = stateRef.current
     const now = Date.now()
+    const startedAt = new Date(now).toISOString()
+    const userMessage = createUserMessage(text, files, {
+      focusmapAgentRun: {
+        version: 1,
+        modelMode,
+        startedAt,
+      },
+    })
     const targetId = current.activeSessionId && current.sessions.some(session => session.id === current.activeSessionId)
       ? current.activeSessionId
       : newId()
@@ -463,7 +471,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       updatedAt: now,
       status: "running",
       lastError: null,
-      runStartedAt: new Date(now).toISOString(),
+      runStartedAt: startedAt,
       runCompletedAt: null,
     }
 

@@ -15,7 +15,6 @@ import { DEFAULT_WORKING_HOURS, type WorkingHours } from '@/lib/time-utils'
 import { parseAgentCalendarPreferences } from '@/lib/ai/agent-preferences'
 import { matchProjectSearch } from '@/lib/ai/project-search'
 import {
-  buildMindmapOrganizationHarness,
   formatMindmapOrganizationTree,
   orderMindmapOrganizationNodes,
   suggestMindmapOrganizationCandidates,
@@ -1983,8 +1982,9 @@ export const proposeMindmapOrganization = tool({
       },
       candidate_groups: candidateGroups,
       response_hints: [
-        '必要な差分だけ saveMindmapDraft に保存する。',
-        'AI案保存後の返答は短くし、詳細な表や追加提案はユーザーが求めた時だけ出す。',
+        'まず構造診断を行い、今のままでよい場合は saveMindmapDraft を呼ばない。',
+        '必要な差分だけ saveMindmapDraft に保存する。追加候補はユーザー承認前にAI案へ入れない。',
+        'AI案保存後も、追加候補と深掘り質問を短く添える。',
       ],
       message: `「${project.title}」のマインドマップ整理用に、見出し${ordered.length}件とノート/メモ見出し${noteHeadings.length}件を取得しました。`,
     }

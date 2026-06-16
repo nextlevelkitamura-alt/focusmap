@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronLeft,
   CheckCircle2,
+  Clock,
   FileText,
   Image as ImageIcon,
   ListTodo,
@@ -86,7 +87,7 @@ const CHAT_STARTERS = [
   {
     label: "マインドマップを整理",
     description: "配置・親子関係を相談",
-    prompt: "マインドマップを整理して。対象はまず現在マップ上にあるノードだけにしてください。Codex取り込みチャット、未整理メモ、ノートは私が明示した時だけ含めてください。整理したら本番tasksへ直接反映せず、AI案下書きとして保存してください。保存後の返答は短くしてください。",
+    prompt: "マインドマップを整理する",
     icon: Workflow,
   },
   {
@@ -125,7 +126,7 @@ const AUTOMATION_SHORTCUTS = [
   {
     label: "マップ整理",
     description: "ノード・進捗・メモ紐づき",
-    prompt: "現在のプロジェクトのマインドマップを整理して。対象はまず現在マップ上にあるノードだけにしてください。Codex取り込みチャット、未整理メモ、ノートは私が明示した時だけ含めてください。新規ノード、既存ノード移動、元メモ/チャット紐づきだけをAI案下書きとして保存してください。本番tasksへ直接反映しないでください。保存後の返答は短くしてください。",
+    prompt: "マインドマップを整理する",
     icon: Workflow,
   },
   {
@@ -197,6 +198,66 @@ function isDesktopViewport() {
 
 function formatDate(value: number) {
   return new Date(value).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function parseIsoMs(value: string | null | undefined): number | null {
+  if (!value) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : null
+}
+
+function formatElapsedMs(ms: number | null | undefined): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return null
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds}秒`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  if (minutes < 60) return rest > 0 ? `${minutes}分${rest}秒` : `${minutes}分`
+  const hours = Math.floor(minutes / 60)
+  const minuteRest = minutes % 60
+  return minuteRest > 0 ? `${hours}時間${minuteRest}分` : `${hours}時間`
+}
+
+type AgentRunTiming = {
+  modelMode: AgentModelMode
+  startedAt: string | null
+  completedAt?: string | null
+  durationMs?: number | null
+}
+
+function readAgentRunTimingFromMetadata(metadata: unknown, key: "focusmapAgentRun" | "focusmapAgentRunResult"): AgentRunTiming | null {
+  if (!isRecord(metadata)) return null
+  const value = metadata[key]
+  if (!isRecord(value)) return null
+  const modelMode = normalizeAgentModelMode(value.modelMode)
+  const startedAt = typeof value.startedAt === "string" ? value.startedAt : null
+  const completedAt = typeof value.completedAt === "string" ? value.completedAt : null
+  const durationMs = typeof value.durationMs === "number" ? value.durationMs : null
+  return { modelMode, startedAt, completedAt, durationMs }
+}
+
+function getMessageRunTiming(message: UIMessage): AgentRunTiming | null {
+  return readAgentRunTimingFromMetadata(message.metadata, "focusmapAgentRunResult")
+}
+
+function getSessionRunTiming(session: AgentChatSession | null): AgentRunTiming | null {
+  if (!session) return null
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const timing = readAgentRunTimingFromMetadata(session.messages[index]?.metadata, "focusmapAgentRun")
+    if (timing) return timing
+  }
+  return null
+}
+
+function elapsedForSessionRun(session: AgentChatSession | null, nowMs: number): number | null {
+  const startMs = parseIsoMs(session?.runStartedAt ?? getSessionRunTiming(session)?.startedAt ?? null)
+  if (startMs === null) return null
+  const endMs = parseIsoMs(session?.runCompletedAt ?? null)
+  return Math.max(0, (endMs ?? nowMs) - startMs)
 }
 
 function loadModelModePreference(): AgentModelMode {
@@ -332,6 +393,19 @@ export function UnifiedChat({
   } = sessions
   const messages = activeSession?.messages ?? []
   const isBusy = activeSession?.status === "running"
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isBusy) return
+    setNowMs(Date.now())
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [isBusy])
+  const activeRunTiming = useMemo(() => getSessionRunTiming(activeSession), [activeSession])
+  const activeRunModelMode = activeRunTiming?.modelMode ?? modelMode
+  const activeRunElapsedMs = useMemo(
+    () => elapsedForSessionRun(activeSession, nowMs),
+    [activeSession, nowMs],
+  )
   const mapHistorySessions = useMemo(() => {
     return [...chatSessions]
       .filter(session => session.messages.length > 0 || session.title !== "新しいチャット")
@@ -696,7 +770,7 @@ export function UnifiedChat({
                 />
               ))}
               {isBusy && (
-                <AssistantThinking />
+                <AssistantThinking modelMode={activeRunModelMode} elapsedMs={activeRunElapsedMs} />
               )}
             </div>
           )}
@@ -1357,10 +1431,13 @@ function MapChatHistoryRow({
   )
 }
 
-function AssistantThinking() {
+function AssistantThinking({ modelMode, elapsedMs }: { modelMode: AgentModelMode; elapsedMs: number | null }) {
+  const elapsedLabel = formatElapsedMs(elapsedMs)
   return (
     <div className="flex items-center gap-2 px-0 py-1 text-sm text-zinc-400" aria-live="polite">
-      <span className="motion-safe:animate-pulse motion-reduce:opacity-80">考えています</span>
+      <span className="motion-safe:animate-pulse motion-reduce:opacity-80">
+        {AGENT_MODEL_MODE_LABELS[modelMode]}で実行中{elapsedLabel ? ` ${elapsedLabel}` : ""}
+      </span>
       <span className="flex items-center gap-1" aria-hidden="true">
         <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse" />
         <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse [animation-delay:150ms]" />
@@ -1415,6 +1492,7 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
   const isUser = message.role === "user"
   const mindmapDraftReadyAction = isUser ? null : getMindmapDraftReadyAction(message)
   const mindmapDraftApplyAction = isUser ? null : getMindmapDraftApplyAction(message)
+  const runTiming = isUser ? null : getMessageRunTiming(message)
 
   return (
     <div className={cn("flex", isUser && "justify-end")}>
@@ -1450,7 +1528,27 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
         {mindmapDraftApplyAction && (
           <MindmapDraftApplyActions action={mindmapDraftApplyAction} />
         )}
+        {runTiming && (
+          <RunTimingBadge timing={runTiming} />
+        )}
       </div>
+    </div>
+  )
+}
+
+function RunTimingBadge({ timing }: { timing: AgentRunTiming }) {
+  const elapsed = timing.durationMs ?? (() => {
+    const startMs = parseIsoMs(timing.startedAt)
+    const endMs = parseIsoMs(timing.completedAt ?? null)
+    return startMs !== null && endMs !== null ? Math.max(0, endMs - startMs) : null
+  })()
+  const elapsedLabel = formatElapsedMs(elapsed)
+  if (!elapsedLabel) return null
+
+  return (
+    <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-zinc-400">
+      <Clock className="h-3.5 w-3.5" />
+      <span>{AGENT_MODEL_MODE_LABELS[timing.modelMode]}・{elapsedLabel}</span>
     </div>
   )
 }

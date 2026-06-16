@@ -108,6 +108,38 @@ function createAssistantMessage(text: string, metadata?: Record<string, unknown>
   }
 }
 
+function runDurationMs(startedAt: string | null | undefined, completedAt: string) {
+  const startMs = startedAt ? Date.parse(startedAt) : NaN
+  const completedMs = Date.parse(completedAt)
+  if (!Number.isFinite(startMs) || !Number.isFinite(completedMs)) return undefined
+  return Math.max(0, Math.round(completedMs - startMs))
+}
+
+function withUserRunMetadata(message: UIMessage, modelMode: AgentModelMode, startedAt: string): UIMessage {
+  const metadata = isRecord(message.metadata) ? message.metadata : {}
+  return {
+    ...message,
+    metadata: {
+      ...metadata,
+      focusmapAgentRun: {
+        version: 1,
+        modelMode,
+        startedAt,
+      },
+    },
+  }
+}
+
+function runResultMetadata(modelMode: AgentModelMode, startedAt: string | null | undefined, completedAt: string) {
+  return {
+    version: 1,
+    modelMode,
+    startedAt: startedAt ?? null,
+    completedAt,
+    durationMs: runDurationMs(startedAt, completedAt),
+  }
+}
+
 function normalizeSession(row: AgentChatSessionRow) {
   return {
     id: row.id,
@@ -205,11 +237,12 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
       },
     })
     const replyText = result.text?.trim() || '完了しました。'
-    const replyMetadata = savedMindmapDraftAction
-      ? { focusmapMindmapDraftReady: savedMindmapDraftAction }
-      : undefined
-    const nextMessages = [...liveMessages, createAssistantMessage(replyText, replyMetadata)]
     const completedAt = new Date().toISOString()
+    const replyMetadata = {
+      focusmapAgentRunResult: runResultMetadata(modelMode, row.run_started_at, completedAt),
+      ...(savedMindmapDraftAction ? { focusmapMindmapDraftReady: savedMindmapDraftAction } : {}),
+    }
+    const nextMessages = [...liveMessages, createAssistantMessage(replyText, replyMetadata)]
 
     const { error } = await supabase
       .from('agent_chat_sessions')
@@ -226,7 +259,9 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
   } catch (error) {
     const message = friendlyAgentError(error)
     const failedAt = new Date().toISOString()
-    const nextMessages = [...liveMessages, createAssistantMessage(message)]
+    const nextMessages = [...liveMessages, createAssistantMessage(message, {
+      focusmapAgentRunResult: runResultMetadata(modelMode, row.run_started_at, failedAt),
+    })]
     const { error: updateError } = await supabase
       .from('agent_chat_sessions')
       .update({
@@ -291,10 +326,11 @@ export async function POST(request: NextRequest) {
   const baseMessages: UIMessage[] = existingRow && Array.isArray(existingRow.messages)
     ? existingRow.messages
     : previousMessages
-  const messages = baseMessages.some(message => message.id === userMessage.id)
-    ? baseMessages
-    : [...baseMessages, userMessage]
   const startedAt = new Date().toISOString()
+  const stampedUserMessage = withUserRunMetadata(userMessage, modelMode, startedAt)
+  const messages = baseMessages.some(message => message.id === userMessage.id)
+    ? baseMessages.map(message => message.id === userMessage.id ? stampedUserMessage : message)
+    : [...baseMessages, stampedUserMessage]
   const payload = {
     id: sessionId,
     user_id: user.id,

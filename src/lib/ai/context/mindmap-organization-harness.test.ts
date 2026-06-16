@@ -72,15 +72,18 @@ describe('mindmap organization harness', () => {
     expect(candidates[0].operation_hint[0]).toContain('saveMindmapDraft')
   })
 
-  test('返答ハーネスは既定範囲とAI案下書き保存を指示する', () => {
+  test('返答ハーネスは既定範囲と診断後のAI案下書き保存を指示する', () => {
     const harness = buildMindmapOrganizationHarness()
 
     expect(harness.rules.join('\n')).toContain('現在マインドマップ上にあるノードだけ')
     expect(harness.rules.join('\n')).toContain('ユーザーが明示した時だけ含める')
     expect(harness.response_format.join('\n')).toContain('採用範囲')
+    expect(harness.response_format.join('\n')).toContain('構造診断')
     expect(harness.response_format.join('\n')).toContain('既存ノードへ入れる案')
-    expect(harness.rules.join('\n')).toContain('整理依頼が明確なら')
+    expect(harness.rules.join('\n')).toContain('無理に新規グループや移動案を作らない')
+    expect(harness.save_draft_rules.join('\n')).toContain('今のままでよい')
     expect(harness.rules.join('\n')).toContain('saveMindmapDraft')
+    expect(harness.rules.join('\n')).toContain('追加するとよさそうな新規項目')
     expect(harness.save_draft_rules.join('\n')).toContain('AIによる既存タイトル一括変更')
     expect(harness.save_draft_rules.join('\n')).toContain('保存対象に入れない')
     expect(harness.diagram_template).toContain('```text')
