@@ -239,7 +239,8 @@ function parseIsoMs(value: string | null | undefined): number | null {
 
 function formatElapsedMs(ms: number | null | undefined): string | null {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return null
-  const seconds = Math.max(0, Math.round(ms / 1000))
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds <= 0) return null
   if (seconds < 60) return `${seconds}秒`
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
@@ -427,8 +428,6 @@ export function UnifiedChat({
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [isBusy])
-  const activeRunTiming = useMemo(() => getSessionRunTiming(activeSession), [activeSession])
-  const activeRunModelMode = activeRunTiming?.modelMode ?? modelMode
   const activeRunElapsedMs = useMemo(
     () => elapsedForSessionRun(activeSession, nowMs),
     [activeSession, nowMs],
@@ -797,7 +796,7 @@ export function UnifiedChat({
                 />
               ))}
               {isBusy && (
-                <AssistantThinking modelMode={activeRunModelMode} elapsedMs={activeRunElapsedMs} />
+                <AssistantThinking elapsedMs={activeRunElapsedMs} />
               )}
             </div>
           )}
@@ -1491,17 +1490,17 @@ function MapChatHistoryRow({
   )
 }
 
-function AssistantThinking({ modelMode, elapsedMs }: { modelMode: AgentModelMode; elapsedMs: number | null }) {
+function AssistantThinking({ elapsedMs }: { elapsedMs: number | null }) {
   const elapsedLabel = formatElapsedMs(elapsedMs)
   return (
     <div className="flex items-center gap-2 px-0 py-1 text-sm text-zinc-400" aria-live="polite">
       <span className="motion-safe:animate-pulse motion-reduce:opacity-80">
-        {AGENT_MODEL_MODE_LABELS[modelMode]}で実行中{elapsedLabel ? ` ${elapsedLabel}` : ""}
+        思考中{elapsedLabel ? ` ${elapsedLabel}` : ""}
       </span>
       <span className="flex items-center gap-1" aria-hidden="true">
-        <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse" />
-        <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse [animation-delay:150ms]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 motion-safe:animate-pulse [animation-delay:300ms]" />
+        <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-zinc-500" />
+        <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-zinc-500 [animation-delay:150ms]" />
+        <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-zinc-500 [animation-delay:300ms]" />
       </span>
     </div>
   )
@@ -1650,7 +1649,7 @@ function RunTimingBadge({ timing }: { timing: AgentRunTiming }) {
   return (
     <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-zinc-400">
       <Clock className="h-3.5 w-3.5" />
-      <span>{AGENT_MODEL_MODE_LABELS[timing.modelMode]}・{elapsedLabel}</span>
+      <span>{elapsedLabel}</span>
     </div>
   )
 }

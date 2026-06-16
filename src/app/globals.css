@@ -170,6 +170,28 @@
   user-select: text;
 }
 
+/* Unified chat: assistant thinking indicator */
+.agent-thinking-dot {
+  opacity: 0.42;
+  transform: translateY(0);
+  animation: agentThinkingDot 0.95s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes agentThinkingDot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.42;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 0.95;
+    transform: translateY(-2px);
+  }
+}
+
 /* Custom Mind Map: Codex running state */
 .codex-node-running-orbit {
   position: absolute;
@@ -260,6 +282,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .agent-thinking-dot,
   .codex-node-running-orbit__runner,
   .codex-monitor-running-orbit__runner {
     animation: none;
