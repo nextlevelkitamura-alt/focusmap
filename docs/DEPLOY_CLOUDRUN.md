@@ -59,6 +59,23 @@ npm run codex-monitoring:migrate-turso
 `codex-monitoring:set-secrets` は `gh secret set` でGitHub Secretsへ登録する。値は標準出力へ表示しない。
 `codex-monitoring:migrate-turso` は `db/turso/migrations/20260605000000_codex_monitoring.sql` をTursoへ適用する。
 
+### Supabase secret rotation / 漏洩対応
+
+tracked docs やチャットに Supabase access token / service role key / JWT secret を貼らない。
+漏洩または漏洩疑いがある場合は、アプリ停止を避けるため次の順番で進める。
+
+1. Supabase dashboard で新しい `anon` / `service_role` / JWT関連設定を取得する。旧値はまだ無効化しない。
+2. GitHub Secrets の `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` を新値へ更新する。
+3. ローカル `.env.local`、Macアプリ用 `~/.focusmap/desktop.env`、必要なら `.env.monitoring.local` も新値へ更新する。
+4. `NEXT_PUBLIC_SUPABASE_ANON_KEY` はNext.jsのビルド時にクライアントJSへ埋め込まれるため、`git push origin main` でGitHub ActionsのCloud Run再ビルド/再デプロイを通す。手動Cloud Run env更新だけでは古いビルド済みJSが残る。
+5. Focusmap Macアプリや常駐agentがローカルenvを読む場合は、再起動して新値を読ませる。
+6. 本番ログイン、Google Calendar callback、agent heartbeat、`/api/v1/*` API key認証、Stripe webhook、task-runner系のservice role依存機能を確認する。
+7. 新値で動くことを確認してから、Supabase dashboard 側で旧値を失効する。
+
+このリポジトリ側で行えるのは、実値をtracked filesから消すこと、GitHub Actionsのsecret scanを通すこと、運用手順を残すことまで。Supabase dashboardでの実際のkey rotation、GitHub Secretsへの実値登録、必要なgit history rewriteは外部作業として扱う。
+
+tracked files に混入しやすい値は `npm run security:secrets` で確認できる。GitHub Actionsの `Secret Scan` も `main` push / pull request で同じチェックを実行する。
+
 ---
 
 ## 本番デプロイ運用ルール

@@ -13,7 +13,7 @@
 - パス: /Users/kitamuranaohiro/Private/P dev/shikumika-app
 - フレームワーク: Next.js 14 App Router, TypeScript, Tailwind CSS
 - DB: Supabase (PostgreSQL) — project-ref: whsjsscgmkkkzgcwxjko
-- Supabase Access Token: sbp_153e6bbaf018843eafeb2f8dea524378da7761ec
+- Supabase Access Token: リポジトリに保存しない。必要時だけローカル shell の `SUPABASE_ACCESS_TOKEN` から参照する。
 - マイグレーション方法: Management API経由（docs/SUPABASE_CLI.md 参照）
 
 ## 機能コンセプト
@@ -85,13 +85,14 @@
 ## Supabase マイグレーション手順（今後）
 新しいマイグレーションが必要なときは以下で適用:
 ```bash
+test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
 python3 -c "
 import json
 sql = open('supabase/migrations/<ファイル名>.sql').read()
 print(json.dumps({'query': sql}))
 " > /tmp/migration.json && curl -s -X POST \
   "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
-  -H "Authorization: Bearer sbp_153e6bbaf018843eafeb2f8dea524378da7761ec" \
+  -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d @/tmp/migration.json
 ```

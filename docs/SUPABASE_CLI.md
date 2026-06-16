@@ -1,6 +1,9 @@
-# Supabase CLI 使用ガイド
+# Supabase CLI / Management API 使用ガイド
 
 ## 認証（アクセストークン）
+
+Supabase access token / service role key / JWT secret は、リポジトリ内の tracked file に直接書かない。
+必要な値はローカル shell、`.env.local`、GitHub Secrets、または各サービスのSecret Managerにだけ置く。
 
 ```bash
 # ログイン（個人アクセストークンを使用）
@@ -10,7 +13,7 @@ supabase login --token <SUPABASE_ACCESS_TOKEN>
 SUPABASE_ACCESS_TOKEN="<トークン>" supabase <command>
 ```
 
-> **注意**: トークンはgit管理ファイルに直接書かない。このファイルは `.gitignore` 対象にすること。
+> 注意: このファイル自体はgit管理対象なので、実値を書かない。例示は必ず `<SUPABASE_ACCESS_TOKEN>` / `${SUPABASE_ACCESS_TOKEN}` / `${SUPABASE_SERVICE_ROLE_KEY}` のような参照だけにする。
 
 ## プロジェクト情報
 
@@ -28,7 +31,7 @@ SUPABASE_ACCESS_TOKEN="<トークン>" supabase <command>
 supabase login --token <アクセストークン>
 
 # 2. プロジェクトをリンク
-cd /Users/kitamuranaohiro/Private/P\ dev/shikumika-app
+cd /Users/kitamuranaohiro/Private/focusmap
 supabase link --project-ref whsjsscgmkkkzgcwxjko
 ```
 
@@ -39,9 +42,10 @@ supabase link --project-ref whsjsscgmkkkzgcwxjko
 
 ### 手順
 
+事前にローカル shell へ `SUPABASE_ACCESS_TOKEN` を設定してから実行する。
+
 ```bash
-# 1. SQLファイルを読み込んでAPIで実行
-SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec"
+test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
 SQL=$(cat supabase/migrations/<ファイル名>.sql)
 
 curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
@@ -64,11 +68,11 @@ supabase/migrations/YYYYMMDD_<説明>.sql
 # 単一ファイルを適用するヘルパー
 apply_migration() {
   local file="$1"
-  local token="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec"
   local sql=$(cat "$file")
+  test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
   echo "Applying: $file"
   curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
-    -H "Authorization: Bearer ${token}" \
+    -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{\"query\": $(echo "$sql" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}"
   echo ""
@@ -84,7 +88,8 @@ apply_migration supabase/migrations/20260316_create_ideal_goals.sql
 
 ```bash
 # マイグレーション一覧（リモートで適用済みかを確認）
-SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec" supabase migration list
+test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
+supabase migration list
 
 # ※ db push は管理テーブルとのズレが起きやすいため、上記Management API方式を優先する
 ```
@@ -92,16 +97,16 @@ SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec" supabase mi
 ### テーブルが存在するか確認（APIで）
 
 ```bash
-SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODczODM1NywiZXhwIjoyMDg0MzE0MzU3fQ.APasqqw8dD2dV3imTKYFhF1GPhMZ4vbj6OUdGgnUkGY"
+test -n "${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}"
 curl -s "https://whsjsscgmkkkzgcwxjko.supabase.co/rest/v1/<テーブル名>?limit=1" \
-  -H "apikey: ${SERVICE_KEY}" \
-  -H "Authorization: Bearer ${SERVICE_KEY}"
+  -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+  -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
 ```
 
 ### SQLを直接実行（マイグレーションなしで単発実行）
 
 ```bash
-SUPABASE_ACCESS_TOKEN="<トークン>"
+test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
 curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
   -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
@@ -111,10 +116,10 @@ curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/datab
 ### Storageバケット作成
 
 ```bash
-SERVICE_KEY="<service_role_key>"
+test -n "${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY is required}"
 curl -s -X POST "https://whsjsscgmkkkzgcwxjko.supabase.co/storage/v1/bucket" \
-  -H "apikey: ${SERVICE_KEY}" \
-  -H "Authorization: Bearer ${SERVICE_KEY}" \
+  -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+  -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"id": "bucket-name", "name": "bucket-name", "public": false}'
 ```
@@ -141,7 +146,7 @@ done
 Management API を使って直接SQL実行が最も確実：
 
 ```bash
-SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec"
+test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
 curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
   -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \

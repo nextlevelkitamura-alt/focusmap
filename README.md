@@ -1,42 +1,36 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Focusmap
 
-## Getting Started
+AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 
-First, run the development server:
+## Local Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+ローカルWebは `http://localhost:3001` 固定で使う。3001が埋まっている場合は別ポートへ逃がさず、古いNext dev serverを確認して再起動する。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+必要な環境変数は `.env.example` を元に `.env.local` へ置く。`.env.local`、`.env.monitoring.local`、service role key、access token、JWT secret、GCP service account JSONはコミットしない。
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Production
 
-## Learn More
+本番は Cloud Run。`origin/main` への push 後、GitHub Actions が Docker build と Cloud Run deploy を行う。
 
-To learn more about Next.js, take a look at the following resources:
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` はNext.jsのビルド時にクライアントJSへ埋め込まれるため、Supabase key rotation後はGitHub Secrets更新だけでなく、Cloud Runの再ビルド/再デプロイが必要。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Database / Monitoring
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Main DB: Supabase PostgreSQL
+- High-frequency Codex progress: Turso/libSQL
+- Screenshot preview objects: Cloudflare R2
+- Google Calendar actual events: Google Calendar
 
-## Deploy on Vercel
+DB境界と運用詳細は `docs/CONTEXT.md`、Cloud Run設定は `docs/DEPLOY_CLOUDRUN.md`、Supabase CLI/Management API手順は `docs/SUPABASE_CLI.md` を参照。
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Safety Checks
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run security:secrets
+```
 
-## Features
-
-- Google Calendar Integration (Phase 1)
-- MindMap-based Task Management
-- Timer Functionality
+tracked files に Supabase personal access token、Supabase `service_role` JWT、private key PEM が混入していないか確認する。GitHub Actions の `Secret Scan` も `main` push / pull request で同じチェックを実行する。

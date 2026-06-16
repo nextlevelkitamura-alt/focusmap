@@ -30,6 +30,7 @@
     "codex-monitoring:migrate-turso": "node scripts/apply-turso-monitoring-migration.mjs",
     "codex-monitoring:backfill": "node scripts/backfill-codex-monitoring-to-turso.mjs",
     "deploy:cloudrun": "./deploy-cloudrun.sh",
+    "security:secrets": "node scripts/check-no-secrets.mjs",
     "test": "vitest",
     "test:run": "vitest run"
   },
