@@ -23,12 +23,14 @@ import {
   Menu,
   Mic,
   Plus,
+  Redo2,
   Search,
   ArrowUp,
   Square,
   SquarePen,
   Terminal,
   Trash2,
+  Undo2,
   Workflow,
   Wrench,
   X,
@@ -64,6 +66,7 @@ import {
   normalizeAgentModelMode,
   type AgentModelMode,
 } from "@/lib/ai/agent-model-mode"
+import { MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
 import type { Project } from "@/types/database"
 
 interface UnifiedChatProps {
@@ -1168,11 +1171,28 @@ function AssistantThinking() {
 
 type ApprovalHandler = (args: { id: string; approved: boolean; reason?: string }) => void | PromiseLike<void>
 
+type MindmapDraftApplyAction = {
+  historyId: string
+}
+
+function getMindmapDraftApplyAction(message: UIMessage): MindmapDraftApplyAction | null {
+  const metadata = message.metadata
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
+  const record = metadata as Record<string, unknown>
+  const value = record.focusmapMindmapDraftApply
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const action = value as Record<string, unknown>
+  return typeof action.historyId === "string" && action.canUndo === true
+    ? { historyId: action.historyId }
+    : null
+}
+
 function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval: ApprovalHandler }) {
   const progress = getAgentProgressMetadata(message)
   if (progress) return <ProgressLogMessage progress={progress} />
 
   const isUser = message.role === "user"
+  const mindmapDraftApplyAction = isUser ? null : getMindmapDraftApplyAction(message)
 
   return (
     <div className={cn("flex", isUser && "justify-end")}>
@@ -1202,7 +1222,77 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
           }
           return null
         })}
+        {mindmapDraftApplyAction && (
+          <MindmapDraftApplyActions action={mindmapDraftApplyAction} />
+        )}
       </div>
+    </div>
+  )
+}
+
+function MindmapDraftApplyActions({ action }: { action: MindmapDraftApplyAction }) {
+  const [state, setState] = useState<"applied" | "undoing" | "undone" | "redoing" | "failed">("applied")
+  const [error, setError] = useState<string | null>(null)
+  const busy = state === "undoing" || state === "redoing"
+
+  const handleUndo = useCallback(async () => {
+    if (busy) return
+    setState("undoing")
+    setError(null)
+    try {
+      const response = await fetch(`/api/mindmap/draft-history/${action.historyId}/undo`, {
+        method: "POST",
+        credentials: "same-origin",
+      })
+      const data = await response.json().catch(() => ({})) as { error?: string }
+      if (!response.ok) throw new Error(data.error || "AI案のUndoに失敗しました")
+      window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
+      setState("undone")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "AI案のUndoに失敗しました")
+      setState("failed")
+    }
+  }, [action.historyId, busy])
+
+  const handleRedo = useCallback(async () => {
+    if (busy) return
+    setState("redoing")
+    setError(null)
+    try {
+      const response = await fetch(`/api/mindmap/draft-history/${action.historyId}/redo`, {
+        method: "POST",
+        credentials: "same-origin",
+      })
+      const data = await response.json().catch(() => ({})) as { error?: string }
+      if (!response.ok) throw new Error(data.error || "AI案のRedoに失敗しました")
+      window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
+      setState("applied")
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "AI案のRedoに失敗しました")
+      setState("undone")
+    }
+  }, [action.historyId, busy])
+
+  const isUndone = state === "undone" || state === "redoing"
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 gap-1.5 border-blue-400/30 bg-blue-400/10 px-2.5 text-xs text-blue-100 hover:bg-blue-400/15 hover:text-blue-50 disabled:opacity-60"
+        disabled={busy}
+        onClick={() => void (isUndone ? handleRedo() : handleUndo())}
+      >
+        {busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          isUndone ? <Redo2 className="h-3.5 w-3.5" /> : <Undo2 className="h-3.5 w-3.5" />
+        )}
+        {isUndone ? "やり直す" : "元に戻す"}
+      </Button>
+      {error && <span className="text-xs text-red-300">{error}</span>}
     </div>
   )
 }

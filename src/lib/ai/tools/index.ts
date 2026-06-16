@@ -1993,6 +1993,7 @@ export const saveMindmapDraft = tool({
     'マップチャットの整理結果を本番tasksへ直接反映せず、プロジェクト全体の最新AI案下書きとして保存する。新規ノード、既存ノード移動、ユーザー明示のタイトル調整、元メモ/チャット紐づきを保存対象にする。',
   inputSchema: z.object({
     projectId: z.string().describe('AI案を保存するプロジェクトID'),
+    chatSessionId: z.string().optional().describe('内部連携用。マップチャットのセッションIDがある場合だけ自動で渡される'),
     focus: z.string().optional().describe('整理した観点。例: 優先度順、重複整理、次にやる順'),
     scope: z.object({
       includeCodexInbox: z.boolean().optional().describe('Codex Inbox/未配置チャットを含めた場合だけtrue'),
@@ -2023,7 +2024,7 @@ export const saveMindmapDraft = tool({
       })).optional().describe('元メモ/チャット紐づき。memoItemId + sourceType(wishlist/note) + sourceId があるものは確定時にmemo_node_linksへ保存される'),
     })).describe('保存する差分ノード。既存ノードのAIタイトル一括変更、削除、状態/メモ/予定変更は入れない。'),
   }),
-  execute: async ({ projectId, focus, scope, summary, nodes }) => {
+  execute: async ({ projectId, chatSessionId, focus, scope, summary, nodes }) => {
     const supabase = await createClient()
     const user = await requireAuthedUser(supabase)
     if (!user) return { success: false, error: '認証エラー' }
@@ -2065,6 +2066,7 @@ export const saveMindmapDraft = tool({
       supabase,
       userId: user.id,
       projectId,
+      chatSessionId: looksLikeUuid(chatSessionId) ? chatSessionId : null,
       scope: {
         focus: focus ?? null,
         includeCodexInbox: scope?.includeCodexInbox === true,

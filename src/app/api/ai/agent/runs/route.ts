@@ -146,6 +146,7 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
   try {
     const result = await generateAgentChatReply({
       userId,
+      chatSessionId: sessionId,
       messages: liveMessages,
       spaceId: row.space_id,
       projectId: row.project_id,

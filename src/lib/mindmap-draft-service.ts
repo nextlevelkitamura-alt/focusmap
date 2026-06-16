@@ -846,6 +846,13 @@ export async function redoMindmapDraftHistory({
     .eq("user_id", userId)
   if (updateError) throw new Error(updateError.message)
 
+  await appendChatMessageIfPossible(
+    supabase,
+    userId,
+    history.chat_session_id,
+    "やり直しました。AI案の反映を再適用しました。",
+  )
+
   return {
     history: { ...history, status: "redone" as const, redone_at: redoneAt },
     message: "やり直しました。AI案の反映を再適用しました。",

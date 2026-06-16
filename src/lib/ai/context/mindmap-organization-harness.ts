@@ -31,7 +31,7 @@ export interface MindmapOrganizationCandidate {
 export interface MindmapOrganizationHarness {
   rules: string[]
   response_format: string[]
-  apply_after_approval: string[]
+  save_draft_rules: string[]
   diagram_template: string
 }
 
@@ -234,7 +234,7 @@ export function buildMindmapOrganizationHarness(): MindmapOrganizationHarness {
     rules: [
       '整理範囲は既定で現在マインドマップ上にあるノードだけにする。Codex未配置/未取り込みチャット、未整理メモ、ノート見出しはユーザーが明示した時だけ含める。',
       '最初は見出しだけで全体を眺め、本文やメモ詳細を無差別に読まない。',
-      'まとめ候補は提案に留め、ユーザー承認前に saveMindmapDraft を実行しない。',
+      '整理依頼が明確なら、本番DBへ直接反映せず saveMindmapDraft で AI案 下書きとして保存する。大きく範囲を広げる時だけ先に確認する。',
       'チャット経由の整理結果は addMindmapGroup / moveMindmapNode / updateMindmapNode で本番DBへ直接反映せず、saveMindmapDraft で AI案 下書きへ保存する。',
       '判断に迷う候補だけ getMindmapNodeDetail や getNoteOrganizationDetail で詳細を読む。',
       '削除は提案しない。まず新規まとめノード作成、既存ノード配下への移動、必要なら名称変更案だけに絞る。',
@@ -245,9 +245,9 @@ export function buildMindmapOrganizationHarness(): MindmapOrganizationHarness {
       '2. 読んだ前提: プロジェクト概要、現在の見出し数、見出しの大枠を短く共有する。',
       '3. 整理提案: 新規ノード作成案、既存ノードへ入れる案、移動するノード、理由、実行操作をカード風に出す。',
       '4. 図: ```text``` のツリーで「現在 → 提案後」を見せる。',
-      '5. 確認: 「この案をAI案として保存してよいですか？」と聞き、承認後だけ saveMindmapDraft を呼ぶ。',
+      '5. 次の操作: AI案として保存した場合は、画面の AI案 で確認・手動調整し、確定で本番反映できることを短く伝える。',
     ],
-    apply_after_approval: [
+    save_draft_rules: [
       'saveMindmapDraft に新規ノード、既存ノード移動、ユーザー明示のタイトル調整、元メモ/チャット紐づきだけを渡す。',
       'AIによる既存タイトル一括変更、メモ/状態/進捗/予定変更、削除候補は下書き保存対象に入れない。',
       '保存後は、画面の AI案 で確認・手動調整し、確定で本番反映できることを短く伝える。',

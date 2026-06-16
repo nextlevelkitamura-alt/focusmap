@@ -261,6 +261,7 @@ export function friendlyAgentError(error: unknown): string {
 
 export async function generateAgentChatReply({
   userId,
+  chatSessionId,
   messages,
   spaceId,
   projectId,
@@ -270,6 +271,7 @@ export async function generateAgentChatReply({
   onToolCallFinish,
 }: {
   userId: string
+  chatSessionId?: string | null
   messages: UIMessage[]
   spaceId: string | null
   projectId: string | null
@@ -282,7 +284,7 @@ export async function generateAgentChatReply({
   const modelInputMessages = sanitizeUIMessagesForModel(withoutAgentProgressMessages(messages))
   const usesVision = agentMessagesHaveImage(modelInputMessages)
   const { model } = usesVision ? getAgentVisionModel() : getAgentModel(modelMode)
-  const { tools, runner } = await buildAgentTools(userId, spaceId)
+  const { tools, runner } = await buildAgentTools(userId, spaceId, { chatSessionId })
   const { data: userContext } = await supabase
     .from('ai_user_context')
     .select('preferences')
