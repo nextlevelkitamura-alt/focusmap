@@ -5,6 +5,11 @@
 Supabase access token / service role key / JWT secret は、リポジトリ内の tracked file に直接書かない。
 必要な値はローカル shell、`.env.local`、GitHub Secrets、または各サービスのSecret Managerにだけ置く。
 
+アクセストークンが必要になった時は、まずこのURLを案内する:
+
+- https://supabase.com/dashboard/account/tokens
+- 公式リファレンス: https://supabase.com/docs/reference/api/introduction
+
 ```bash
 # ログイン（個人アクセストークンを使用）
 supabase login --token <SUPABASE_ACCESS_TOKEN>
@@ -40,9 +45,27 @@ supabase link --project-ref whsjsscgmkkkzgcwxjko
 **このプロジェクトでは Management API + アクセストークンでマイグレーションを適用する。**
 `supabase db push` はCLI管理テーブルの同期問題が起きやすいため、基本的に使わない。
 
-### 手順
+### 手順A: CLIログイン済みの場合
 
-事前にローカル shell へ `SUPABASE_ACCESS_TOKEN` を設定してから実行する。
+`supabase projects list` / `supabase migration list` が通るなら、CLI保存済みログインを使って個別SQLをManagement API経由で適用できる。
+この方法は `db push` ではなく、指定SQLファイルだけを `--linked` のDBへ実行する。
+
+```bash
+cd /Users/kitamuranaohiro/Private/focusmap
+supabase projects list
+supabase db query --linked --file supabase/migrations/<ファイル名>.sql
+```
+
+直接SQL適用後、`supabase migration list` のRemote欄が空のままなら、RESTでテーブル存在を確認してから履歴だけ修復する。
+
+```bash
+supabase migration repair --status applied <migration_version>
+supabase migration list
+```
+
+### 手順B: `SUPABASE_ACCESS_TOKEN` を明示する場合
+
+CLIログインが使えない場合は、事前にローカル shell へ `SUPABASE_ACCESS_TOKEN` を設定してから実行する。
 
 ```bash
 test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
@@ -88,10 +111,12 @@ apply_migration supabase/migrations/20260316_create_ideal_goals.sql
 
 ```bash
 # マイグレーション一覧（リモートで適用済みかを確認）
-test -n "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN is required}"
 supabase migration list
 
-# ※ db push は管理テーブルとのズレが起きやすいため、上記Management API方式を優先する
+# 単一SQLファイルをlinked projectへ適用（db pushではない）
+supabase db query --linked --file supabase/migrations/<ファイル名>.sql
+
+# ※ db push は管理テーブルとのズレが起きやすいため、上記の個別適用方式を優先する
 ```
 
 ### テーブルが存在するか確認（APIで）
@@ -156,10 +181,11 @@ curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/datab
 ## 環境変数（.env.local）の場所
 
 ```
-/Users/kitamuranaohiro/Private/P dev/shikumika-app/.env.local
+/Users/kitamuranaohiro/Private/focusmap/.env.local
 ```
 
 必要なキー:
 - `NEXT_PUBLIC_SUPABASE_URL` — プロジェクトURL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — 公開キー
 - `SUPABASE_SERVICE_ROLE_KEY` — サービスロールキー（サーバーサイドのみ）
+- `SUPABASE_ACCESS_TOKEN` — Management API / CLI login用。通常はtracked fileに置かず、必要時にshellまたは `supabase login --token <SUPABASE_ACCESS_TOKEN>` で扱う
