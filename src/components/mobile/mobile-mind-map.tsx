@@ -1224,6 +1224,7 @@ export function MobileMindMap({
                     onPersistDir={persistCodexDir}
                     onSaveHeading={(taskId, heading) => updateTaskForCodexScope(taskId, { title: heading })}
                     onSaveDraft={(taskId, draft) => updateTaskForCodexScope(taskId, { title: draft.title, memo: draft.memo })}
+                    onSaveTaskDetails={(taskId, updates) => updateTaskForCodexScope(taskId, updates)}
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
                     onAddChild={(taskId) => { void handleAddChildNode(taskId) }}

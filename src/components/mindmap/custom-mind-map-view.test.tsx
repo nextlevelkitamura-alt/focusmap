@@ -143,6 +143,14 @@ const makeAiTask = (overrides: Partial<AiTask>): AiTask => ({
   ...overrides,
 } as AiTask)
 
+function jsonResponse(body: unknown, init: ResponseInit = {}) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  })
+}
+
 const renderMap = (props: Partial<React.ComponentProps<typeof CustomMindMapView>> = {}) => {
   const rootTask = makeTask({ id: "root-1", title: "Root task" })
   const childTask = makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1" })
@@ -268,6 +276,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   window.localStorage.clear()
   memoAiTasksMock.bySourceId.clear()
   memoAiTasksMock.getBySourceId.mockClear()
@@ -1190,6 +1199,50 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => {
       expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: false })
       expect(onCreateTask).toHaveBeenCalledWith("root-1", "", "root-1")
+    })
+  })
+
+  test("passes mobile detail schedule updates through the same task updater as desktop", async () => {
+    const rootTask = makeTask({
+      id: "root-1",
+      title: "Root task",
+      estimated_time: 15,
+      calendar_id: null,
+    })
+    const onUpdateTask = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/tasks/root-1") {
+        return jsonResponse({
+          task: {
+            ...rootTask,
+            memo: "",
+            scheduled_at: null,
+            google_event_id: null,
+          },
+        })
+      }
+      if (url === "/api/tasks/root-1/attachments") {
+        return jsonResponse({ attachments: [] })
+      }
+      return jsonResponse({})
+    }))
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask]}
+        tasks={[]}
+        onUpdateTask={onUpdateTask}
+      />
+    )
+
+    fireEvent.click(within(getNode("Root task", "root-1")).getByRole("button", { name: "ノード詳細を開く" }))
+    const scheduleSection = await screen.findByTestId("codex-node-schedule-section")
+    fireEvent.click(within(scheduleSection).getByRole("button", { name: "30分" }))
+
+    await waitFor(() => {
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", { estimated_time: 30 })
     })
   })
 
