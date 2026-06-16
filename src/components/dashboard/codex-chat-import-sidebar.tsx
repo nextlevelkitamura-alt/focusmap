@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, PanelBottomOpen, RefreshCw, Search, Trash2 } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, PanelBottomOpen, RefreshCw, Search, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -956,6 +956,17 @@ export function CodexChatImportSidebar({
               title={runnerUnavailable ? runnerUnavailableMessage : undefined}
               className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
             />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
+              onClick={onClose}
+              aria-label="AI実行を閉じる"
+              title="閉じる"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
 
           <div className="relative">
@@ -1125,6 +1136,17 @@ export function CodexChatImportSidebar({
                 </div>
 
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="-mr-1 h-9 w-9 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
+                onClick={onClose}
+                aria-label="AI実行を閉じる"
+                title="閉じる"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
             <CodexChatAiSummaryRow
               summary={selectedSummary}
@@ -1341,10 +1363,7 @@ export function CodexChatImportSidebar({
       )}
 
       {!selectedChatItem && (
-        <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] gap-2 border-t border-[#303030] bg-[#171717] p-3">
-          <Button type="button" variant="outline" className="h-11 min-w-0 border-[#303030] bg-[#111111] text-zinc-200 hover:bg-white/10 hover:text-white" onClick={onClose}>
-            閉じる
-          </Button>
+        <div className="flex min-h-12 items-center justify-end border-t border-[#303030] bg-[#171717] px-3 py-2">
           <div className={cn(
             "flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500 transition-colors",
             draggingChatId && "text-sky-300",

@@ -259,15 +259,25 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setActiveCodexChatDrag(null);
     }, [project?.id, project?.space_id]);
 
-    useEffect(() => {
-        const handleOpenCodexChatImport = () => {
-            setSelectedCodexChatDetailId(null);
-            setIsCodexChatImportSidebarOpen(true);
-        };
-
-        window.addEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, handleOpenCodexChatImport);
-        return () => window.removeEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, handleOpenCodexChatImport);
+    const closeCodexChatImportSidebar = useCallback(() => {
+        setIsCodexChatImportSidebarOpen(false);
+        setSelectedCodexChatDetailId(null);
+        setActiveCodexChatDrag(null);
     }, []);
+
+    const toggleCodexChatImportSidebar = useCallback(() => {
+        if (isCodexChatImportSidebarOpen) {
+            closeCodexChatImportSidebar();
+            return;
+        }
+        setSelectedCodexChatDetailId(null);
+        setIsCodexChatImportSidebarOpen(true);
+    }, [closeCodexChatImportSidebar, isCodexChatImportSidebarOpen]);
+
+    useEffect(() => {
+        window.addEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, toggleCodexChatImportSidebar);
+        return () => window.removeEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, toggleCodexChatImportSidebar);
+    }, [toggleCodexChatImportSidebar]);
 
     const projectRepoPath = useMemo(() => (
         (codexRepoPathOverride !== undefined ? codexRepoPathOverride ?? '' : project?.repo_path ?? '').trim()
@@ -1638,10 +1648,16 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setKanbanCloseSignal(signal => signal + 1);
     }, []);
     const openKanbanFromCodexSidebar = useCallback(() => {
-        setIsCodexChatImportSidebarOpen(false);
-        setSelectedCodexChatDetailId(null);
+        closeCodexChatImportSidebar();
         setKanbanOpenSignal(signal => signal + 1);
-    }, []);
+    }, [closeCodexChatImportSidebar]);
+    const handleMapPointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        closeKanbanFromMapInteraction();
+        const target = event.target;
+        if (target instanceof Element && target.closest('[data-codex-chat-import-sidebar="true"]')) return;
+        if (!isCodexChatImportSidebarOpen) return;
+        closeCodexChatImportSidebar();
+    }, [closeCodexChatImportSidebar, closeKanbanFromMapInteraction, isCodexChatImportSidebarOpen]);
 
     const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
         if (getIsTypingTarget(event.target)) return;
@@ -2138,7 +2154,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             )}
 
             <div className="flex h-full min-h-0 flex-col">
-                <div className="relative min-h-0 flex-1" onPointerDownCapture={closeKanbanFromMapInteraction}>
+                <div className="relative min-h-0 flex-1" onPointerDownCapture={handleMapPointerDownCapture}>
                     <CustomMindMapView
                         project={project}
                         groups={visibleMapGroups}
@@ -2184,7 +2200,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         onDropImportedChatNode={handleDropImportedChatNode}
                     />
                     {isCodexChatImportSidebarOpen && (
-                        <div className="absolute inset-y-0 right-0 z-40 flex">
+                        <div className="absolute inset-y-0 right-0 z-40 flex" data-codex-chat-import-sidebar="true">
                             <CodexChatImportSidebar
                                 projectTitle={project?.title ?? 'Project'}
                                 selectedRepoPath={selectedCodexImportRepoPath || null}
@@ -2195,10 +2211,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 detailItems={codexChatDetailItems}
                                 initialSelectedChatId={selectedCodexChatDetailId}
                                 onInitialSelectedChatClear={() => setSelectedCodexChatDetailId(null)}
-                                onClose={() => {
-                                    setIsCodexChatImportSidebarOpen(false);
-                                    setSelectedCodexChatDetailId(null);
-                                }}
+                                onClose={closeCodexChatImportSidebar}
                                 onSelectRepoPath={selectCodexImportRepoPath}
                                 onToggleImport={toggleSelectedRepoImport}
                                 onDeleteChatItem={handleDeleteCodexChatImportItem}

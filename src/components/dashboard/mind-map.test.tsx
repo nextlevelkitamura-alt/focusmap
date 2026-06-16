@@ -161,6 +161,7 @@ vi.mock("@/components/codex/codex-node-panel", () => ({
 
 import { MindMap } from "./mind-map"
 import type { Project, Task } from "@/types/database"
+import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events"
 
 const project = {
   id: "project-1",
@@ -223,6 +224,30 @@ describe("MindMap controls", () => {
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
+  })
+
+  test("toggles the chat import sidebar from the header event and closes it from map interaction", async () => {
+    render(<MindMap project={project} groups={[task]} tasks={[]} />)
+
+    window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+
+    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+
+    window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+
+    await waitFor(() => {
+      expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+    })
+
+    window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+
+    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Root task" }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+    })
   })
 
   test("restores and saves collapsed node state through the task record", async () => {

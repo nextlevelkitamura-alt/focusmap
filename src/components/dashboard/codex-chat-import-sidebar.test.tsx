@@ -159,8 +159,8 @@ describe("CodexChatImportSidebar", () => {
       "codex://threads/thread-abcdef123456",
     )
     expect(screen.getByRole("button", { name: "チャットを削除 Codexスレッド連携UI" })).toBeVisible()
-    expect(buttonContainingText("閉じる")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "チャット取り込みを閉じる" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "AI実行を閉じる" })).toBeInTheDocument()
+    expect(screen.queryByText("閉じる")).not.toBeInTheDocument()
   })
 
   test("renders running chats as compact green history cards with a fallback status pill", () => {

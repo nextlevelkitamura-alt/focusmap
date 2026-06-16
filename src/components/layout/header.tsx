@@ -331,7 +331,7 @@ export function Header({
                         size="sm"
                         className="relative h-8 gap-1.5 px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
                         onClick={handleOpenAiExecution}
-                        aria-label="AI実行履歴を開く"
+                        aria-label="AI実行履歴を開閉"
                         title="AI実行"
                     >
                         <Bot className="h-4 w-4" />
