@@ -60,6 +60,15 @@ describe('shouldCompleteSourceTaskFromAgentState', () => {
         codex_source_task_completed: true,
       },
     })).toBe(false)
+
+    expect(shouldCompleteSourceTaskFromAgentState({
+      status: 'completed',
+      sourceTaskId: 'task-1',
+      result: {
+        codex_review_reason: 'thread_unavailable',
+        codex_source_task_completed: true,
+      },
+    })).toBe(false)
   })
 })
 

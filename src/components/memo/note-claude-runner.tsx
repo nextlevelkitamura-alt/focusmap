@@ -127,6 +127,7 @@ function codexReviewReasonLabel(reason: string | null) {
     case "manual_handoff": return "プロンプト待ち"
     case "monitoring_lost": return "同期確認"
     case "thread_deleted": return "スレッド確認"
+    case "thread_unavailable": return "一時確認"
     case "aborted": return "停止確認"
     case "archived": return "アーカイブ確認"
     case "started": return "実行開始"
@@ -146,6 +147,8 @@ function codexReviewDefaultBody(reason: string | null) {
       return "Codexの状態同期が途切れています。Codex側の画面を開いて、作業が続いているか確認してください。"
     case "thread_deleted":
       return "Codex threadが見つかりません。Codex側で対象スレッドが残っているか確認してください。"
+    case "thread_unavailable":
+      return "Codex threadを一時的に確認できません。削除扱いにはせず、監視を継続します。"
     case "aborted":
       return "Codex実行が停止しています。中断理由を確認して、必要なら再実行してください。"
     case "archived":

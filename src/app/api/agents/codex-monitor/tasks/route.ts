@@ -42,7 +42,6 @@ function isRecentManualHandoffDiscoveryCandidate(row: Record<string, unknown>, n
 export function shouldReturnCodexMonitorTask(row: Record<string, unknown>) {
   const result = isRecord(row.result) ? row.result : {}
   const reviewReason = stringValue(result.codex_review_reason)
-  if (reviewReason === 'thread_deleted') return false
   if (reviewReason === 'archived' && result.codex_source_task_completion_suppressed === true) return false
   if (stringValue(row.status) === 'completed') return hasPendingCodexArchiveRequest(row)
 

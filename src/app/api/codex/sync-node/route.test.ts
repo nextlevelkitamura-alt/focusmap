@@ -264,7 +264,7 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     }))
   })
 
-  test('keeps the source node unchecked when the Codex thread was deleted', async () => {
+  test('keeps the source node unchecked when the Codex thread is temporarily unavailable', async () => {
     setThreadRow(null)
 
     const { POST } = await import('./route')
@@ -281,13 +281,13 @@ describe('/api/codex/sync-node Codex thread closure', () => {
       codex_thread_id: 'thread-1',
     }))
     expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
-      codex_review_reason: 'thread_deleted',
+      codex_review_reason: 'thread_unavailable',
       codex_source_task_completed: false,
       codex_source_task_id: 'source-task-1',
     }))
     expect(mockInsertActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       kind: 'approval',
-      dedupeKey: 'thread:thread-1:closed:thread_deleted',
+      dedupeKey: 'thread:thread-1:closed:thread_unavailable',
     }))
   })
 
@@ -336,14 +336,14 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(mockInsertActivity).not.toHaveBeenCalled()
   })
 
-  test('does not rewrite database rows after a deleted thread closure with no source node is already persisted', async () => {
+  test('does not rewrite database rows after a temporarily unavailable thread with no source node is already persisted', async () => {
     setAiTask(baseTask({
       status: 'awaiting_approval',
       source_task_id: null,
       result: {
         codex_thread_id: 'thread-1',
         codex_run_state: 'awaiting_approval',
-        codex_review_reason: 'thread_deleted',
+        codex_review_reason: 'thread_unavailable',
         codex_source_task_completed: false,
       },
     }))

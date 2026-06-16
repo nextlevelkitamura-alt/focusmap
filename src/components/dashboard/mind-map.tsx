@@ -820,7 +820,9 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             const closedFromCodex =
                 aiResult.codex_source_task_completed === true &&
                 reason !== "thread_deleted" &&
-                completionReason !== "thread_deleted";
+                reason !== "thread_unavailable" &&
+                completionReason !== "thread_deleted" &&
+                completionReason !== "thread_unavailable";
             if (!closedFromCodex) continue;
             const completedAt = typeof aiTask.completed_at === "string" ? aiTask.completed_at : "";
             updates.push({ taskId: task.id, key: `${task.id}:${aiTask.id}:${completedAt || reason}` });

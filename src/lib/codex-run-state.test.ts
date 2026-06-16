@@ -257,6 +257,15 @@ describe("getCodexTaskUiState", () => {
       executor: "codex_app",
       status: "completed",
       result: {
+        codex_source_task_completed: true,
+        codex_review_reason: "thread_unavailable",
+      },
+    })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "completed",
+      result: {
         codex_review_reason: "completed",
       },
     })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
@@ -289,6 +298,7 @@ describe("shouldCompleteSourceTaskForCodexReview", () => {
   test("only treats archived Codex sessions as source task completion", () => {
     expect(shouldCompleteSourceTaskForCodexReview("archived")).toBe(true)
     expect(shouldCompleteSourceTaskForCodexReview("thread_deleted")).toBe(false)
+    expect(shouldCompleteSourceTaskForCodexReview("thread_unavailable")).toBe(false)
     expect(shouldCompleteSourceTaskForCodexReview("completed")).toBe(false)
     expect(shouldCompleteSourceTaskForCodexReview("monitoring_lost")).toBe(false)
     expect(shouldCompleteSourceTaskForCodexReview("approval_requested")).toBe(false)

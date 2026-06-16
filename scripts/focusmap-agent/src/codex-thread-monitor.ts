@@ -806,7 +806,15 @@ async function importOrphanThreads(
 
 type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
 
-async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_deleted' | 'archived'): Promise<void> {
+function isThreadUnavailableMarked(task: AiTask, threadId: string): boolean {
+  const current = taskResult(task);
+  const currentThreadId = typeof current.codex_thread_id === 'string'
+    ? current.codex_thread_id.trim()
+    : task.codex_thread_id?.trim();
+  return currentThreadId === threadId && current.codex_review_reason === 'thread_unavailable';
+}
+
+async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_unavailable' | 'archived'): Promise<void> {
   const nowIso = new Date().toISOString();
   const current = taskResult(task);
   const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true;
@@ -818,7 +826,7 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
     output: '',
     message: reason === 'archived'
       ? 'Codex thread がアーカイブされたため監視を停止しました。'
-      : 'Codex thread が見つからないため監視を停止しました。',
+      : 'Codex thread が一時的に見つからないため、監視を継続します。',
     codex_thread_id: threadId,
     codex_thread_url: `codex://threads/${threadId}`,
     codex_run_state: 'awaiting_approval',
@@ -866,9 +874,11 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
 
   const row = await readThread(dbPath, threadId);
   if (!row) {
-    await markThreadGone(api, runnerId, task, threadId, 'thread_deleted');
-    syncCache.delete(task.id);
-    return 'remove';
+    if (!isThreadUnavailableMarked(task, threadId)) {
+      await markThreadGone(api, runnerId, task, threadId, 'thread_unavailable');
+      syncCache.delete(task.id);
+    }
+    return 'unchanged';
   }
   if (row.archived) {
     await markThreadGone(api, runnerId, task, threadId, 'archived');

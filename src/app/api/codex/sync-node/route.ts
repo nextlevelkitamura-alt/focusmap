@@ -215,6 +215,9 @@ function activityForReviewReason(reason: CodexReviewReason): {
   if (reason === 'aborted' || reason === 'monitoring_lost' || reason === 'thread_deleted') {
     return { kind: 'failed', role: 'status', body: 'Codexの実行が停止しました。Codex.app側の状態確認が必要です。' }
   }
+  if (reason === 'thread_unavailable') {
+    return { kind: 'approval', role: 'status', body: 'Codex threadを一時的に確認できません。監視は継続します。' }
+  }
   return { kind: 'approval', role: 'status', body: 'Codexセッションは確認待ちです。' }
 }
 
@@ -224,6 +227,7 @@ function reviewReasonLabel(reason: CodexReviewReason): string {
   if (reason === 'manual_handoff') return 'プロンプト待ち'
   if (reason === 'monitoring_lost') return '同期確認'
   if (reason === 'thread_deleted') return 'スレッド確認'
+  if (reason === 'thread_unavailable') return '一時確認'
   if (reason === 'aborted') return '停止確認'
   if (reason === 'archived') return 'アーカイブ確認'
   return '確認待ち'
@@ -413,16 +417,16 @@ function codexProgressSummary(input: {
   }
 }
 
-function codexClosureStep(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>): string {
-  return reason === 'archived'
-    ? 'Codex threadがアーカイブされたため完了しました'
-    : 'Codex threadが削除されたため完了しました'
+function codexClosureStep(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted' | 'thread_unavailable'>): string {
+  if (reason === 'archived') return 'Codex threadがアーカイブされたため完了しました'
+  if (reason === 'thread_unavailable') return 'Codex threadを一時的に確認できません'
+  return 'Codex threadが削除されたため確認待ちです'
 }
 
-function codexClosureMessage(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>): string {
-  return reason === 'archived'
-    ? 'Codex.app側でthreadがアーカイブされたため、Focusmapタスクを完了しました。'
-    : 'Codex.app側でthreadが削除されたため、Focusmapタスクを完了しました。'
+function codexClosureMessage(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted' | 'thread_unavailable'>): string {
+  if (reason === 'archived') return 'Codex.app側でthreadがアーカイブされたため、Focusmapタスクを完了しました。'
+  if (reason === 'thread_unavailable') return 'Codex.app側のthreadを一時的に確認できません。削除扱いにはせず、監視を継続します。'
+  return 'Codex.app側でthreadが削除された可能性があります。内容確認が必要です。'
 }
 
 function upsertStep(steps: unknown[], nextStep: Record<string, unknown>) {
@@ -533,7 +537,7 @@ function codexClosureAlreadyRecorded(input: {
   task: CodexTaskRow
   threadId: string
   current: Record<string, unknown>
-  reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
+  reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted' | 'thread_unavailable'>
   sourceTaskId: string | null
 }) {
   const completesSourceTask = shouldCompleteSourceTaskForCodexReview(input.reason)
@@ -602,7 +606,7 @@ async function persistCodexThreadClosure(input: {
   task: CodexTaskRow
   threadId: string
   current: Record<string, unknown>
-  reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
+  reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted' | 'thread_unavailable'>
   nowIso: string
   previousRunState: string | null
   hadThreadId: boolean
@@ -875,7 +879,7 @@ export async function POST(req: NextRequest) {
         task,
         threadId,
         current,
-        reason: 'thread_deleted',
+        reason: 'thread_unavailable',
         nowIso,
         previousRunState,
         hadThreadId,
@@ -891,7 +895,7 @@ export async function POST(req: NextRequest) {
         source_task_missing: closure.sourceTaskMissing,
       })
     } catch (closureError) {
-      console.error('[codex/sync-node closure thread_deleted]', closureError)
+      console.error('[codex/sync-node closure thread_unavailable]', closureError)
       return NextResponse.json({ error: 'Codex thread closure sync failed' }, { status: 500 })
     }
   }

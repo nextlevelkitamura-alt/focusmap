@@ -8,6 +8,7 @@ export type CodexReviewReason =
   | "aborted"
   | "archived"
   | "thread_deleted"
+  | "thread_unavailable"
   | "approval_requested"
   | "monitoring_lost"
   | "external_app_handoff"
@@ -422,7 +423,9 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
     result.codex_source_task_completed === true &&
     result.codex_source_task_completion_suppressed !== true &&
     reviewReason !== "thread_deleted" &&
-    sourceCompletionReason !== "thread_deleted"
+    reviewReason !== "thread_unavailable" &&
+    sourceCompletionReason !== "thread_deleted" &&
+    sourceCompletionReason !== "thread_unavailable"
   ) {
     return { state: "completed", label: "完了済み" }
   }

@@ -61,15 +61,17 @@ describe('shouldReturnCodexMonitorTask', () => {
     })).toBe(false)
   })
 
-  test('does not keep scanning closed threads that should stay in review', () => {
+  test('keeps locally missing threads recoverable when the Codex thread id is known', () => {
     expect(shouldReturnCodexMonitorTask({
       executor: 'codex_app',
       codex_thread_id: 'thread-deleted',
       result: {
         codex_review_reason: 'thread_deleted',
       },
-    })).toBe(false)
+    })).toBe(true)
+  })
 
+  test('does not keep scanning archived threads that were explicitly suppressed', () => {
     expect(shouldReturnCodexMonitorTask({
       executor: 'codex_app',
       codex_thread_id: 'thread-archived',
