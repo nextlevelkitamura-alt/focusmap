@@ -10,6 +10,8 @@ function hasOwn(record: Record<string, unknown>, key: string) {
     return Object.prototype.hasOwnProperty.call(record, key)
 }
 
+const CODEX_THREAD_IMPORT_INITIAL_BACKFILL_MS = 2 * 60 * 60 * 1000
+
 async function currentProjectRepoPath(
     supabase: Awaited<ReturnType<typeof createClient>>,
     userId: string,
@@ -66,7 +68,9 @@ export async function PATCH(
                         { status: 400 },
                     )
                 }
-                updates.codex_thread_import_enabled_since = new Date().toISOString()
+                updates.codex_thread_import_enabled_since = new Date(
+                    Date.now() - CODEX_THREAD_IMPORT_INITIAL_BACKFILL_MS,
+                ).toISOString()
             } else {
                 updates.codex_thread_import_enabled_since = null
             }

@@ -500,20 +500,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         (codexImportRepoPathOverride !== undefined ? codexImportRepoPathOverride ?? '' : projectRepoPath).trim()
     ), [codexImportRepoPathOverride, projectRepoPath]);
     const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project?.codex_thread_import_enabled);
-    const projectsForSelectedImportRepo = useMemo(() => {
-        if (!selectedCodexImportRepoPath) return [];
-        return projects.filter(candidate => (candidate.repo_path ?? '').trim() === selectedCodexImportRepoPath);
-    }, [projects, selectedCodexImportRepoPath]);
-    const selectedRepoImportProjects = useMemo(() => (
-        projectsForSelectedImportRepo.filter(candidate => Boolean(candidate.codex_thread_import_enabled))
-    ), [projectsForSelectedImportRepo]);
-    const selectedRepoImportEnabled = selectedRepoImportProjects.length > 0 ||
-        (projectRepoPath === selectedCodexImportRepoPath && codexThreadImportEnabled);
-    const selectedRepoImportOwnerLabel = selectedRepoImportProjects
-        .map(candidate => candidate.title)
-        .filter(Boolean)
-        .slice(0, 2)
-        .join(' / ') || (selectedRepoImportEnabled ? project.title : null);
+    const selectedRepoImportEnabled = projectRepoPath === selectedCodexImportRepoPath && codexThreadImportEnabled;
+    const selectedRepoImportOwnerLabel = selectedRepoImportEnabled ? project.title : null;
 
     const patchProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
         if (onPatchProject) {
@@ -531,9 +519,44 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         }
     }, [onPatchProject]);
 
-    const selectCodexImportRepoPath = useCallback((repoPath: string | null) => {
-        setCodexImportRepoPathOverride(repoPath?.trim().replace(/\/+$/, '') || null);
-    }, []);
+    const selectCodexImportRepoPath = useCallback(async (repoPath: string | null) => {
+        if (!project?.id || isCodexThreadImportSaving) return;
+        const normalized = repoPath?.trim().replace(/\/+$/, '') || null;
+        const previousImportRepoOverride = codexImportRepoPathOverride;
+        const previousRepoOverride = codexRepoPathOverride;
+        const previousImportOverride = codexThreadImportOverride;
+        setCodexImportRepoPathOverride(normalized);
+        setIsCodexThreadImportSaving(true);
+        try {
+            if (!normalized) {
+                await patchProject(project.id, { repo_path: null });
+                setCodexRepoPathOverride(null);
+                setCodexThreadImportOverride(false);
+                return;
+            }
+            await patchProject(project.id, {
+                repo_path: normalized,
+                codex_thread_import_enabled: true,
+            });
+            setCodexRepoPathOverride(normalized);
+            setCodexThreadImportOverride(true);
+        } catch (error) {
+            setCodexImportRepoPathOverride(previousImportRepoOverride);
+            setCodexRepoPathOverride(previousRepoOverride);
+            setCodexThreadImportOverride(previousImportOverride);
+            console.error('[MindMap] Failed to save repo-scoped Codex thread import:', error);
+            throw error;
+        } finally {
+            setIsCodexThreadImportSaving(false);
+        }
+    }, [
+        codexImportRepoPathOverride,
+        codexRepoPathOverride,
+        codexThreadImportOverride,
+        isCodexThreadImportSaving,
+        patchProject,
+        project?.id,
+    ]);
 
     const toggleSelectedRepoImport = useCallback(async () => {
         if (!project?.id || !selectedCodexImportRepoPath || isCodexThreadImportSaving) return;
@@ -542,13 +565,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setIsCodexThreadImportSaving(true);
         try {
             if (selectedRepoImportEnabled) {
-                const targets = selectedRepoImportProjects.length > 0
-                    ? selectedRepoImportProjects
-                    : (projectRepoPath === selectedCodexImportRepoPath ? [project] : []);
-                await Promise.all(targets.map(candidate => (
-                    patchProject(candidate.id, { codex_thread_import_enabled: false })
-                )));
-                if (projectRepoPath === selectedCodexImportRepoPath) setCodexThreadImportOverride(false);
+                await patchProject(project.id, { codex_thread_import_enabled: false });
+                setCodexThreadImportOverride(false);
                 return;
             }
 
@@ -574,7 +592,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         projectRepoPath,
         selectedCodexImportRepoPath,
         selectedRepoImportEnabled,
-        selectedRepoImportProjects,
     ]);
 
     const kanbanProject = useMemo(() => (

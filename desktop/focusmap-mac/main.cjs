@@ -896,6 +896,72 @@ async function chooseFolderFromBridge() {
   return { ok: true, path: result.filePaths[0].replace(/\/+$/, '') };
 }
 
+function codexStateDbPath() {
+  const candidates = [
+    path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
+    path.join(os.homedir(), '.codex', 'state_5.sqlite'),
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) || null;
+}
+
+function normalizeLocalPath(value) {
+  return typeof value === 'string' ? value.trim().replace(/\/+$/, '') : '';
+}
+
+async function listCodexReposFromBridge() {
+  const dbPath = codexStateDbPath();
+  if (!dbPath) return { ok: false, repos: [], error: 'Codex state DB が見つかりません' };
+
+  const sql = [
+    'SELECT cwd AS absolute_path, COUNT(*) AS thread_count, MAX(updated_at_ms) AS updated_at_ms',
+    'FROM threads',
+    "WHERE cwd IS NOT NULL AND trim(cwd) <> ''",
+    'GROUP BY cwd',
+    'ORDER BY MAX(updated_at_ms) DESC',
+    'LIMIT 80',
+  ].join(' ');
+
+  try {
+    const stdout = await execFileText('/usr/bin/sqlite3', ['-json', dbPath, sql], { timeout: 5000 });
+    const rows = JSON.parse(String(stdout || '[]'));
+    const repos = [];
+    const seen = new Set();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const absolutePath = normalizeLocalPath(row.absolute_path);
+      if (!absolutePath || !path.isAbsolute(absolutePath)) continue;
+      let resolved = '';
+      try {
+        resolved = fs.realpathSync(absolutePath);
+        if (!fs.statSync(resolved).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      const gitRoot = await resolveGitRoot(resolved);
+      const repoPath = normalizeLocalPath(gitRoot);
+      if (!repoPath || seen.has(repoPath)) continue;
+      seen.add(repoPath);
+      const updatedMs = Number(row.updated_at_ms);
+      repos.push({
+        id: `codex:${repoPath}`,
+        hostname: 'Codex',
+        absolute_path: repoPath,
+        display_name: path.basename(repoPath) || repoPath,
+        last_git_commit_at: null,
+        last_seen_at: Number.isFinite(updatedMs) && updatedMs > 0 ? new Date(updatedMs).toISOString() : new Date().toISOString(),
+        source: 'codex',
+        thread_count: Number(row.thread_count) || 0,
+      });
+    }
+    return { ok: true, repos };
+  } catch (error) {
+    return {
+      ok: false,
+      repos: [],
+      error: error instanceof Error ? error.message : 'Codex repo list failed',
+    };
+  }
+}
+
 function resolveDesktopAuthOrigin(value) {
   const origin = normalizeHttpOrigin(value || WEB_AUTH_ORIGIN);
   if (!origin) throw new Error('認証セッション取得先URLが不正です');
@@ -2203,6 +2269,7 @@ handleDesktopIpc('focusmap-desktop:getAutomationStatus', getAutomationStatus);
 handleDesktopIpc('focusmap-desktop:connectAutomation', connectAutomation);
 handleDesktopIpc('focusmap-desktop:disconnectAutomation', disconnectAutomation);
 handleDesktopIpc('focusmap-desktop:chooseFolder', chooseFolderFromBridge);
+handleDesktopIpc('focusmap-desktop:listCodexRepos', listCodexReposFromBridge);
 handleDesktopIpc('focusmap-desktop:copyText', copyTextFromBridge);
 handleDesktopIpc('focusmap-desktop:copyCodexImage', copyCodexImageFromBridge);
 handleDesktopIpc('focusmap-desktop:launchCodex', launchCodexFromBridge);

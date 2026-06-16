@@ -1052,7 +1052,9 @@ export function CodexChatImportSidebar({
                         <span className="min-w-0 flex-1 truncate text-xs font-medium">
                           {repo.display_name || repoNameFromPath(repo.absolute_path)}
                         </span>
-                        <span className="shrink-0 text-[10px] text-zinc-500">agent</span>
+                        <span className="shrink-0 text-[10px] text-zinc-500">
+                          {repo.source === "codex" ? "codex" : "agent"}
+                        </span>
                         {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
                       </button>
                     )
