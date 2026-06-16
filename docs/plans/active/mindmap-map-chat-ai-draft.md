@@ -1,7 +1,7 @@
 # マップチャットとAI案下書き
 
 作成日: 2026-06-16
-ステータス: 設計確定・実装前
+ステータス: 実装済み（local main / 未push）
 
 ## 目的
 
@@ -106,3 +106,11 @@ PCのマップ画面で、右サイドバーのプロジェクトチャットか
 - `src/app/api/ai/agent/route.ts`
 - Supabase migration
 
+## 実装メモ
+
+- DBは `mindmap_drafts` / `mindmap_draft_nodes` / `mindmap_draft_history` を追加した。activeなAI案はプロジェクト単位で1件だけ持ち、履歴は `expires_at = now() + interval '15 days'` で保持する。
+- APIは `/api/mindmap/drafts`、`/api/mindmap/drafts/[draftId]/nodes`、`/api/mindmap/drafts/[draftId]/apply`、`/api/mindmap/draft-history/[historyId]/undo|redo` を使う。
+- AIツールは `saveMindmapDraft` を追加した。`proposeMindmapOrganization` は読み取り専用で、既定範囲は現在マップ上のノードのみ。Codex Inbox / 未整理メモ / ノート見出しはユーザー明示時だけ含める。
+- UIは上部中央の旧 `AIで整理` を置かず、右上 `AI実行` の右側に `マップチャット` を置く。右サイドバーは選択中プロジェクトの `UnifiedChat` を表示する。
+- マップは active draft をRealtimeと `focusmap:mindmap-draft:changed` で読み直し、`AI案` バー、`確定`、`現行`、`破棄` を表示する。AI案中の追加・移動・タイトル変更は下書きノードAPIへ保存する。
+- 確定時は新規ノード、既存ノード移動、ユーザー手動タイトル変更、元メモ/チャット紐づきだけを本番 `tasks` / `memo_node_links` へ反映し、グローバルUndo/RedoへDB履歴ベースの `元に戻す` / `やり直す` を登録する。
