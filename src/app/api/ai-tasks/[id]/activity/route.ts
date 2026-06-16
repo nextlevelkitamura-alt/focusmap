@@ -227,6 +227,7 @@ function isHiddenActivityMessage(message: { role?: unknown; kind?: unknown; body
   if (message.role === 'status' && /^Codex threadを検出しました/u.test(body)) return true
   if (/^状態:\s*(running|awaiting_approval)$/u.test(body)) return true
   if (/^(thread_detected|running|awaiting_approval)$/u.test(body)) return true
+  if (/^(Codex実行を開始しました|Codexが実行を開始しました|Codex thread が見つからないため監視を停止しました|Codex thread が一時的に見つからないため、監視を継続します|Codex thread の監視を停止しました)/u.test(body)) return true
   return false
 }
 

@@ -294,6 +294,28 @@ describe("CodexChatImportSidebar", () => {
               created_at: minutesAgo(1),
             },
             {
+              id: "msg-internal-running",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "Codexが実行を開始しました",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(8),
+            },
+            {
+              id: "msg-internal-stopped",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "Codex thread が見つからないため監視を停止しました。",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(7),
+            },
+            {
               id: "msg-codex-long",
               task_id: "ai-task-1",
               user_id: "user-1",
@@ -364,6 +386,13 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
     expect(screen.queryByText("Codexの返答")).not.toBeInTheDocument()
     expect(screen.queryByText("プロジェクト更新完了")).not.toBeInTheDocument()
+    expect(screen.queryByText("Codexが実行を開始しました")).not.toBeInTheDocument()
+    expect(screen.queryByText("Codex thread が見つからないため監視を停止しました。")).not.toBeInTheDocument()
+    expect(screen.getByText("全文や細かい操作は各エディター画面から確認できます。")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /各エディター画面で履歴を開く Codexスレッド連携UI/ })).toHaveAttribute(
+      "href",
+      "codex://threads/thread-abcdef123456",
+    )
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
       "href",

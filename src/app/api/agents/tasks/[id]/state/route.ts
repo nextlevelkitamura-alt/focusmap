@@ -38,6 +38,14 @@ function compactString(value: unknown, max: number) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 }
 
+function isThreadUnavailableReason(value: unknown) {
+  return value === 'thread_deleted' || value === 'thread_unavailable'
+}
+
+function isInternalAgentActivityBody(value: string) {
+  return /^(Codex実行を開始しました|Codexが実行を開始しました|Codex thread が見つからないため監視を停止しました|Codex thread が一時的に見つからないため、監視を継続します|Codex thread の監視を停止しました)/u.test(value.trim())
+}
+
 function parseTimeMs(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) return null
   const ms = Date.parse(value)
@@ -67,6 +75,36 @@ export function shouldCompleteSourceTaskFromAgentState(input: {
   return result.codex_review_reason === 'archived' &&
     result.codex_source_task_completed === true &&
     result.codex_source_task_completion_suppressed !== true
+}
+
+export function normalizeAgentStateForLegacyThreadMissing(input: {
+  status: string
+  result?: Record<string, unknown> | null
+  previousStatus?: unknown
+}) {
+  const result = isRecord(input.result) ? { ...input.result } : null
+  if (!result || !isThreadUnavailableReason(result.codex_review_reason)) {
+    return { status: input.status, result }
+  }
+
+  result.codex_review_reason = 'thread_unavailable'
+
+  if (typeof result.message === 'string' && result.message.includes('見つからないため監視を停止')) {
+    result.message = 'Codex thread が一時的に見つからないため、監視を継続します。'
+  }
+
+  if (
+    input.previousStatus === 'running' &&
+    input.status === 'awaiting_approval'
+  ) {
+    result.codex_run_state = 'running'
+    result.message = 'Codex thread を一時的に確認できません。実行中として監視を継続します。'
+    result.current_step = 'Codex thread を一時確認中です'
+    delete result.awaiting_approval_at
+    return { status: 'running', result }
+  }
+
+  return { status: input.status, result }
 }
 
 function normalizeSourceTaskTitle(value: unknown, max = MAX_SOURCE_TASK_TITLE_CHARS) {
@@ -177,6 +215,7 @@ function compactActivityMessages(value: unknown) {
       : null
     const body = compactString(item.body, MAX_ACTIVITY_BODY_CHARS)
     if (!role || !kind || !body) return []
+    if (isInternalAgentActivityBody(body)) return []
 
     const importance = typeof item.importance === 'string' && VALID_ACTIVITY_IMPORTANCE.has(item.importance as AiTaskActivityImportance)
       ? item.importance as AiTaskActivityImportance
@@ -208,7 +247,7 @@ export async function POST(
     const { id } = await params
     const body = await request.json().catch(() => ({}))
     const runnerId = typeof body.runner_id === 'string' ? body.runner_id : ''
-    const status = typeof body.status === 'string' ? body.status : ''
+    let status = typeof body.status === 'string' ? body.status : ''
     if (!runnerId) return NextResponse.json({ error: 'runner_id is required' }, { status: 400 })
     if (!VALID_STATUSES.has(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 })
 
@@ -225,10 +264,17 @@ export async function POST(
       return NextResponse.json({ error: 'Task is claimed by another runner' }, { status: 409 })
     }
 
+    const normalizedState = normalizeAgentStateForLegacyThreadMissing({
+      status,
+      result: isRecord(body.result) ? body.result : null,
+      previousStatus: task.status,
+    })
+    status = normalizedState.status
+
     const updates: Record<string, unknown> = {
       status,
     }
-    if (body.result && typeof body.result === 'object') updates.result = body.result
+    if (normalizedState.result) updates.result = normalizedState.result
     if (typeof body.error === 'string') updates.error = body.error
     if (status === 'running') updates.started_at = new Date().toISOString()
     if (status === 'completed' || status === 'failed') {
@@ -284,7 +330,7 @@ export async function POST(
       }
     }
 
-    const resultForSourceCompletion = isRecord(body.result) ? body.result : null
+    const resultForSourceCompletion = normalizedState.result
     if (shouldCompleteSourceTaskFromAgentState({
       status,
       result: resultForSourceCompletion,
@@ -314,7 +360,7 @@ export async function POST(
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     if (isTursoConfigured()) {
       try {
-        const resultJson = isRecord(body.result) ? body.result : {}
+        const resultJson = normalizedState.result ?? {}
         const currentStep = compactString(resultJson.current_step, MAX_CURRENT_STEP_CHARS)
           ?? compactLatestLine(resultJson.message, MAX_CURRENT_STEP_CHARS)
           ?? compactLatestLine(resultJson.live_log, MAX_CURRENT_STEP_CHARS)

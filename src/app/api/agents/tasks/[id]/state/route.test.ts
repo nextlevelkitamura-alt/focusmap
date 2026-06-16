@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   isClaimedByOtherActiveRunner,
   memoWithUpdatedImportedThreadTitle,
+  normalizeAgentStateForLegacyThreadMissing,
   shouldApplyCodexThreadTitleToSourceTask,
   shouldCompleteSourceTaskFromAgentState,
 } from './route'
@@ -69,6 +70,46 @@ describe('shouldCompleteSourceTaskFromAgentState', () => {
         codex_source_task_completed: true,
       },
     })).toBe(false)
+  })
+})
+
+describe('normalizeAgentStateForLegacyThreadMissing', () => {
+  test('keeps a running task running when a legacy agent reports thread_deleted', () => {
+    expect(normalizeAgentStateForLegacyThreadMissing({
+      previousStatus: 'running',
+      status: 'awaiting_approval',
+      result: {
+        codex_review_reason: 'thread_deleted',
+        codex_run_state: 'awaiting_approval',
+        message: 'Codex thread が見つからないため監視を停止しました。',
+        awaiting_approval_at: '2026-06-16T00:00:00.000Z',
+      },
+    })).toEqual({
+      status: 'running',
+      result: {
+        codex_review_reason: 'thread_unavailable',
+        codex_run_state: 'running',
+        message: 'Codex thread を一時的に確認できません。実行中として監視を継続します。',
+        current_step: 'Codex thread を一時確認中です',
+      },
+    })
+  })
+
+  test('normalizes thread_deleted to thread_unavailable for non-running tasks', () => {
+    expect(normalizeAgentStateForLegacyThreadMissing({
+      previousStatus: 'awaiting_approval',
+      status: 'awaiting_approval',
+      result: {
+        codex_review_reason: 'thread_deleted',
+        message: 'Codex thread が見つからないため監視を停止しました。',
+      },
+    })).toEqual({
+      status: 'awaiting_approval',
+      result: {
+        codex_review_reason: 'thread_unavailable',
+        message: 'Codex thread が一時的に見つからないため、監視を継続します。',
+      },
+    })
   })
 })
 

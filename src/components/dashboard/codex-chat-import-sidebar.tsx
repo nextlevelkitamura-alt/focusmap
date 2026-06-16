@@ -82,6 +82,7 @@ const CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT = 30
 const ACTIVITY_DETAIL_PAGE_LIMIT = 30
 const ACTIVITY_DETAIL_MAX_PAGES = 6
 const ACTIVITY_TIME_BREAK_MIN_GAP_MS = 60 * 60 * 1000
+const CHAT_DETAIL_REFRESH_INTERVAL_MS = 5_000
 
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
 const ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
@@ -186,7 +187,7 @@ function dedupeActivityMessages(messages: AiTaskActivityMessage[]) {
 }
 
 function isGenericCodexPulseText(value: string) {
-  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです|Codex実行を開始しました|Codexが実行を開始しました|Codex thread が見つからないため監視を停止しました|Codex thread が一時的に見つからないため、監視を継続します|Codex thread の監視を停止しました/u.test(value.trim())
 }
 
 function visibleActivityMessages(messages: AiTaskActivityMessage[]) {
@@ -745,17 +746,24 @@ export function CodexChatImportSidebar({
     rememberLatestChatActivityAt(item.id, messages)
   }, [fetchLatestChatActivityMessages, rememberLatestChatActivityAt, syncChatActivity])
 
-  const loadChatDetail = React.useCallback(async (item: CodexChatImportItem) => {
-    setChatDetailsById(prev => ({
-      ...prev,
-      [item.id]: {
-        loading: true,
-        messages: prev[item.id]?.messages ?? [],
-        text: prev[item.id]?.text ?? null,
-        hasMore: prev[item.id]?.hasMore ?? false,
-        error: null,
-      },
-    }))
+  const loadChatDetail = React.useCallback(async (
+    item: CodexChatImportItem,
+    options: { background?: boolean } = {},
+  ) => {
+    const background = options.background === true
+    setChatDetailsById(prev => {
+      const previous = prev[item.id]
+      return {
+        ...prev,
+        [item.id]: {
+          loading: background ? previous?.loading ?? false : true,
+          messages: previous?.messages ?? [],
+          text: previous?.text ?? null,
+          hasMore: previous?.hasMore ?? false,
+          error: background ? previous?.error ?? null : null,
+        },
+      }
+    })
 
     let aiTaskId = resolveAiTaskId(item)
     try {
@@ -794,16 +802,28 @@ export function CodexChatImportSidebar({
         },
       }))
     } catch (error) {
-      setChatDetailsById(prev => ({
-        ...prev,
-        [item.id]: {
-          loading: false,
-          messages: [],
-          text: null,
-          hasMore: false,
-          error: error instanceof Error ? error.message : "チャット詳細を取得できませんでした",
-        },
-      }))
+      setChatDetailsById(prev => {
+        const previous = prev[item.id]
+        if (background && previous) {
+          return {
+            ...prev,
+            [item.id]: {
+              ...previous,
+              loading: false,
+            },
+          }
+        }
+        return {
+          ...prev,
+          [item.id]: {
+            loading: false,
+            messages: [],
+            text: null,
+            hasMore: false,
+            error: error instanceof Error ? error.message : "チャット詳細を取得できませんでした",
+          },
+        }
+      })
     }
   }, [fetchChatActivityMessages, rememberLatestChatActivityAt, resolveAiTaskId, syncChatActivity])
 
@@ -842,6 +862,16 @@ export function CodexChatImportSidebar({
     setRepoPickerOpen(false)
     void loadChatDetail(item)
   }, [initialSelectedChatId, loadChatDetail, selectableChatItems])
+
+  React.useEffect(() => {
+    if (!selectedChatItem) return
+    const timer = window.setInterval(() => {
+      void loadChatDetail(selectedChatItem, { background: true })
+    }, CHAT_DETAIL_REFRESH_INTERVAL_MS)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [loadChatDetail, selectedChatItem])
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
@@ -1129,14 +1159,19 @@ export function CodexChatImportSidebar({
 
             {selectedMessages.length > 0 ? (
               <div className="space-y-5">
-                {selectedDetail?.hasMore && (
+                {(selectedDetail?.hasMore || selectedThreadHref) && (
                   <div className="flex min-w-0 items-center gap-2 rounded-lg border border-dashed border-[#3a3a3a] bg-[#111111] px-3 py-2 text-[12px] text-zinc-400">
-                    <span className="min-w-0 flex-1">これより前の履歴は各エディター画面から確認してください。</span>
+                    <span className="min-w-0 flex-1">
+                      {selectedDetail?.hasMore
+                        ? "これより前の履歴は各エディター画面から確認してください。"
+                        : "全文や細かい操作は各エディター画面から確認できます。"}
+                    </span>
                     {selectedThreadHref && (
                       <a
                         href={selectedThreadHref}
                         className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                         onClick={event => openCodexThread(event, selectedThreadHref)}
+                        aria-label={`各エディター画面で履歴を開く ${selectedChatItem.title}`}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                         Codexで開く
