@@ -2,6 +2,11 @@ import { NextRequest } from 'next/server'
 import { authenticateApiKey, isAuthError } from '../../_lib/auth'
 import { apiSuccess, apiError, handleCors } from '../../_lib/response'
 import { createServiceClient } from '@/utils/supabase/service'
+import { changedMeta } from '../../_lib/external-ai'
+import {
+  createCalendarEventV1,
+  normalizeCalendarError,
+} from '../../_lib/calendar-event-actions'
 
 // OPTIONS /api/v1/calendar/events
 export async function OPTIONS() {
@@ -37,7 +42,7 @@ export async function GET(request: NextRequest) {
 
   let query = serviceClient
     .from('calendar_events')
-    .select('id, title, start_time, end_time, calendar_id, description, location, is_all_day, status, created_at, updated_at')
+    .select('id, google_event_id, calendar_id, title, description, location, start_time, end_time, is_all_day, timezone, recurrence, recurring_event_id, reminders, is_completed, created_at, updated_at')
     .eq('user_id', auth.userId)
     .order('start_time', { ascending: true })
     .limit(limit)
@@ -63,4 +68,26 @@ export async function GET(request: NextRequest) {
     events: events ?? [],
     count: (events ?? []).length,
   })
+}
+
+// POST /api/v1/calendar/events
+export async function POST(request: NextRequest) {
+  const auth = await authenticateApiKey(request, 'calendar:write')
+  if (isAuthError(auth)) return auth
+
+  let serviceClient
+  try {
+    serviceClient = createServiceClient()
+  } catch {
+    return apiError('SERVER_ERROR', 'Service configuration error', 500)
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}))
+    const result = await createCalendarEventV1(serviceClient, auth.userId, body)
+    return apiSuccess(result, 201, changedMeta(['calendar_events']))
+  } catch (error) {
+    const normalized = normalizeCalendarError(error)
+    return apiError(normalized.code, normalized.message, normalized.status)
+  }
 }

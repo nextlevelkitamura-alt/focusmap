@@ -106,7 +106,7 @@ export function ApiKeySettings() {
             APIキー
           </CardTitle>
           <CardDescription>
-            外部アプリやMCPからShikimikaに接続するためのAPIキーを管理します
+            Codexなどの外部AIからFocusmapに接続するためのAPIキーを管理します
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

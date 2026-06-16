@@ -8,9 +8,9 @@ export function corsHeaders() {
   }
 }
 
-export function apiSuccess(data: unknown, status = 200) {
+export function apiSuccess(data: unknown, status = 200, meta?: unknown) {
   return NextResponse.json(
-    { success: true, data },
+    { success: true, data, ...(meta ? { meta } : {}) },
     { status, headers: corsHeaders() },
   )
 }

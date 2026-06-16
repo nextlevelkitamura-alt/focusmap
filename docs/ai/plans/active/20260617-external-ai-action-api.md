@@ -1,7 +1,7 @@
 # 外部AI操作APIとAPI設定画面プラン
 
 - Task ID: TASK-20260617-002
-- Status: planned
+- Status: in_progress
 - Created: 2026-06-17
 - Completed:
 - Board: `docs/ai/task-board.md`
@@ -37,6 +37,28 @@ HTTP smoke は `npm run dev:desktop` で `http://localhost:3001` を起動して
 - `npm run test:run -- 'src/app/api/calendar/events/[eventId]/route.test.ts' 'src/app/api/wishlist/[id]/calendar/route.test.ts'` は4 tests passed。Cookie認証側のカレンダー移動・メモ予定化ロジックは通っているが、APIキー認証のv1へはまだ露出していない。
 
 結論: 現行v1 APIは、旧APIキーprefixで限定的に `tasks/projects/spaces/notes/calendar read` を使うための土台に留まる。外部AIへ渡してすぐに「プロジェクト理解 -> マインドマップ整理 -> draft保存/確定 -> メモ追加 -> 予定移動」まで任せるには、この計画のBackend API、scope、設定UI、promptを実装する必要がある。
+
+## Implementation Progress 2026-06-17
+
+同一チャットで直列実装した。大きなマップ整理は `draft-first` を正とし、単発ノード操作だけdirect APIを許可する。
+
+- APIキーprefixを `sk_focusmap_` へ変更し、旧 `sk_shikumika_` は認証互換として継続した。
+- scope/presetを追加した。既定は `AI整理用` で、`AI実行用` はプロジェクト文脈、メモ、マップ確定/単発ノード、カレンダー書き込みまで許可する。
+- `GET /api/v1/capabilities` と `GET /api/v1/bootstrap` を追加した。
+- `GET/PATCH /api/v1/projects/[id]` と `GET/PUT /api/v1/projects/[id]/context` を追加し、`GET /api/v1/projects` は検索と `context_summary` 付き取得に拡張した。
+- `GET/POST/PATCH/DELETE /api/v1/memos` を追加し、現行メモ画面の正本である `ideal_goals` と `memo_items` を対象にした。
+- `GET /api/v1/mindmap/overview`、`POST/GET /api/v1/mindmap/drafts`、`POST /api/v1/mindmap/drafts/[draftId]/nodes`、`apply`、`undo/redo` を追加し、既存 `mindmap_drafts` サービスへ接続した。
+- `POST /api/v1/mindmap/nodes` と `PATCH/DELETE /api/v1/mindmap/nodes/[id]` を追加した。大きな再編では使わず、単発の小さな追加・修正用に限定する。
+- `GET /api/v1/calendar/events` は `google_event_id` を返すようにし、`POST /api/v1/calendar/events`、`PATCH/DELETE /api/v1/calendar/events/[eventId]`、`POST /api/v1/calendar/events/[eventId]/move` を追加した。Google Calendar更新、`calendar_events` cache、関連 `tasks` / `ideal_goals` を同期する。
+- `POST /api/v1/ai/actions` を追加した。最大10件のv1 subrequestを同じAPIキーで順番に実行するbatch gatewayで、各subrequestの既存scopeチェックをそのまま使う。
+- 設定画面のAPIキー発行にpreset選択を追加し、作成後dialogと外部AI連携ガイドにコピー用prompt、主要endpoint、予定移動例を追加した。
+- `docs/CONTEXT.md` へ外部AI/APIキー経由の正本routeとdraft-first方針を追記した。
+
+残る改善:
+
+- `X-Focusmap-Idempotency-Key` はmetadata/batch転送として受け取るが、全write APIで厳密な replay 防止をする専用テーブルはまだ無い。
+- `memo_items` の専用作成routeと `memos/[id]/link-task` wrapper は未追加。現時点では `POST /api/v1/memos` の `subtask_suggestions` と既存マップdraftの `source_links` を使う。
+- `/api/v1/openapi.json` は未追加。現時点の外部AI向けdiscoverは `/api/v1/capabilities` と設定画面ガイドを正にする。
 
 ## Scope
 
@@ -186,10 +208,9 @@ HTTP smoke は `npm run dev:desktop` で `http://localhost:3001` を起動して
 
 - `POST /api/v1/ai/actions`
   - scope: `ai:actions`。
-  - body: `{ dry_run?: boolean, operations: [...] }`。
-  - operation type: `create_memo`、`update_project`、`save_mindmap_draft`、`apply_mindmap_draft`、`create_calendar_event`、`update_calendar_event`、`move_calendar_event`、`update_node`。
+  - body: `{ stop_on_error?: boolean, actions: [{ method, path, body?, idempotency_key? }] }`。
+  - path は `/api/v1/` 配下だけ許可し、`/api/v1/ai/actions` 自身の再帰呼び出しは拒否する。
   - 1リクエスト最大10操作。
-  - destructive actionは `confirm: true` を必須にする。
   - 失敗時は全体transactionにしない。`results[]` に各operationの成功/失敗を返し、AIが再試行しやすい形にする。
 
 ## Settings UI
@@ -207,7 +228,7 @@ HTTP smoke は `npm run dev:desktop` で `http://localhost:3001` を起動して
   - API key。
   - base URL。
   - Codex/Claude/Geminiに渡すプロンプト。
-  - curl smoke sample。
+  - 主要endpointと最短操作例。
 - `ApiKeyMcpGuide` は「MCP連携ガイド」から「外部AI連携ガイド」へ広げる。
 - API referenceは最初は画面内の主要endpoint表でよい。余裕があれば `/api/v1/openapi.json` を追加してリンクする。
 
@@ -230,8 +251,9 @@ POST /api/v1/mindmap/drafts でAI案を保存してください。
 メモ追加は POST /api/v1/memos を使い、title/bodyの両方を空にしないでください。
 カレンダー予定を動かす時は GET /api/v1/calendar/events で対象を確認してから
 PATCH /api/v1/calendar/events/{googleEventId} を使ってください。
+複数操作をまとめたい時は POST /api/v1/ai/actions を使えます。
 
-各書き込みリクエストには X-Focusmap-Idempotency-Key を付けてください。
+各書き込みリクエストには、可能なら X-Focusmap-Idempotency-Key を付けてください。
 削除や大きな変更は実行前にユーザーへ確認してください。
 ```
 

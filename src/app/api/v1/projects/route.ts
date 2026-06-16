@@ -15,6 +15,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const space_id = searchParams.get('space_id')
   const status = searchParams.get('status')
+  const q = searchParams.get('q')
+  const includeContext = searchParams.get('include_context') !== 'false'
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10), 200)
   const offset = parseInt(searchParams.get('offset') ?? '0', 10)
 
@@ -34,6 +36,7 @@ export async function GET(request: NextRequest) {
 
   if (space_id) query = query.eq('space_id', space_id)
   if (status) query = query.eq('status', status)
+  if (q) query = query.or(`title.ilike.%${q}%,description.ilike.%${q}%,purpose.ilike.%${q}%`)
 
   const { data, error } = await query
 
@@ -41,7 +44,22 @@ export async function GET(request: NextRequest) {
     return apiError('QUERY_ERROR', error.message, 500)
   }
 
-  return apiSuccess(data)
+  if (!includeContext || !data || data.length === 0) {
+    return apiSuccess(data)
+  }
+
+  const projectIds = data.map(project => project.id).filter((id): id is string => typeof id === 'string')
+  const { data: contexts } = await serviceClient
+    .from('project_contexts')
+    .select('project_id, heading, progress, progress_status, updated_at')
+    .eq('user_id', auth.userId)
+    .in('project_id', projectIds)
+  const contextByProjectId = new Map((contexts ?? []).map(context => [context.project_id, context]))
+
+  return apiSuccess(data.map(project => ({
+    ...project,
+    context_summary: contextByProjectId.get(project.id) ?? null,
+  })))
 }
 
 // POST /api/v1/projects — Create a project

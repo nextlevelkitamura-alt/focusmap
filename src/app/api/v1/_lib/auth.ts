@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { hashApiKey } from '@/lib/api-key'
+import { ACCEPTED_API_KEY_PREFIXES, hashApiKey } from '@/lib/api-key'
 import { createServiceClient } from '@/utils/supabase/service'
 import { checkRateLimit } from './rate-limit'
 import { apiError } from './response'
@@ -8,6 +8,18 @@ export interface ApiAuthResult {
   userId: string
   keyHash: string
   scopes: string[]
+}
+
+const SCOPE_ALIASES: Record<string, string[]> = {
+  'memos:read': ['notes:read'],
+  'notes:read': ['memos:read'],
+  'memos:write': ['notes:write'],
+  'notes:write': ['memos:write'],
+}
+
+function hasScope(scopes: string[], requiredScope: string) {
+  const accepted = [requiredScope, ...(SCOPE_ALIASES[requiredScope] ?? [])]
+  return accepted.some(scope => scopes.includes(scope))
 }
 
 /**
@@ -27,7 +39,7 @@ export async function authenticateApiKey(
   }
 
   const rawKey = authHeader.slice(7)
-  if (!rawKey.startsWith('sk_shikumika_')) {
+  if (!ACCEPTED_API_KEY_PREFIXES.some(prefix => rawKey.startsWith(prefix))) {
     return apiError('UNAUTHORIZED', 'Invalid API key format', 401)
   }
 
@@ -68,7 +80,7 @@ export async function authenticateApiKey(
   // Scope check (単一 or any-of 配列)
   if (requiredScope) {
     const required = Array.isArray(requiredScope) ? requiredScope : [requiredScope]
-    const hasAny = required.some(s => apiKey.scopes.includes(s))
+    const hasAny = required.some(scope => hasScope(apiKey.scopes, scope))
     if (!hasAny) {
       return apiError('FORBIDDEN', `Missing required scope: ${required.join(' or ')}`, 403)
     }

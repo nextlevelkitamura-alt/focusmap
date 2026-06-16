@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { generateApiKey } from '@/lib/api-key'
+import { normalizeApiScopes } from '@/lib/api-scopes'
 import { apiSuccess, apiError, handleCors } from '../_lib/response'
 
 export async function OPTIONS() {
@@ -28,16 +29,7 @@ export async function POST(request: NextRequest) {
         key_hash: keyHash,
         key_prefix: keyPrefix,
         name: name || 'Default',
-        scopes: scopes || [
-          'tasks:read', 'tasks:write',
-          'projects:read', 'projects:write',
-          'notes:read', 'notes:write',
-          'spaces:read', 'spaces:write', 'habits:read',
-          'ai:tasks:read', 'ai:tasks:write',
-          'ai:packages:read', 'ai:packages:write', 'ai:runners',
-          'ai:scheduling', 'ai:chat',
-          'calendar:read',
-        ],
+        scopes: normalizeApiScopes(scopes),
       })
       .select('id, key_prefix, name, scopes, is_active, created_at')
       .single()

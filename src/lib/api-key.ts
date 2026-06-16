@@ -1,6 +1,8 @@
 import { randomBytes, createHash } from 'crypto'
 
-const API_KEY_PREFIX = 'sk_shikumika_'
+export const API_KEY_PREFIX = 'sk_focusmap_'
+export const LEGACY_API_KEY_PREFIX = 'sk_shikumika_'
+export const ACCEPTED_API_KEY_PREFIXES = [API_KEY_PREFIX, LEGACY_API_KEY_PREFIX] as const
 
 /**
  * Generate a new API key with its hash.

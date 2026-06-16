@@ -1,8 +1,8 @@
-import { createClient } from "@/utils/supabase/server"
+import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, Json, Task } from "@/types/database"
 import { MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
 
-type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
+type MindmapDraftSupabaseClient = SupabaseClient<Database>
 type MindmapDraftRow = Database["public"]["Tables"]["mindmap_drafts"]["Row"]
 type MindmapDraftNodeRow = Database["public"]["Tables"]["mindmap_draft_nodes"]["Row"]
 type MindmapDraftHistoryRow = Database["public"]["Tables"]["mindmap_draft_history"]["Row"]
@@ -104,7 +104,7 @@ export function formatDraftSummary(summary: MindmapDraftSummary) {
   return `新規 ${summary.newNodes} / 移動 ${summary.movedNodes} / 調整 ${summary.adjustedNodes}`
 }
 
-async function ensureProject(supabase: SupabaseServerClient, userId: string, projectId: string) {
+async function ensureProject(supabase: MindmapDraftSupabaseClient, userId: string, projectId: string) {
   const { data, error } = await supabase
     .from("projects")
     .select("id")
@@ -116,7 +116,7 @@ async function ensureProject(supabase: SupabaseServerClient, userId: string, pro
 }
 
 export async function fetchProjectMindmapTasks(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   projectId: string,
 ): Promise<Task[]> {
@@ -158,7 +158,7 @@ export async function fetchProjectMindmapTasks(
 }
 
 async function fetchProjectMemoLinks(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   projectId: string,
 ): Promise<MemoNodeLinkRow[]> {
@@ -174,7 +174,7 @@ async function fetchProjectMemoLinks(
 }
 
 async function loadDraftNodes(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   draftId: string,
   userId: string,
 ): Promise<MindmapDraftNodeRow[]> {
@@ -189,7 +189,7 @@ async function loadDraftNodes(
 }
 
 export async function fetchActiveMindmapDraft(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   projectId: string,
 ): Promise<MindmapDraftWithNodes | null> {
@@ -247,7 +247,7 @@ function normalizeDraftNodeInput(
   }
 }
 
-async function updateDraftSummary(supabase: SupabaseServerClient, userId: string, draftId: string) {
+async function updateDraftSummary(supabase: MindmapDraftSupabaseClient, userId: string, draftId: string) {
   const nodes = await loadDraftNodes(supabase, draftId, userId)
   const summary = summarizeDraftNodes(nodes)
   const { error } = await supabase
@@ -269,7 +269,7 @@ export async function replaceActiveMindmapDraft({
   nodes,
   createdBy = "ai",
 }: {
-  supabase: SupabaseServerClient
+  supabase: MindmapDraftSupabaseClient
   userId: string
   projectId: string
   chatSessionId?: string | null
@@ -337,7 +337,7 @@ export async function upsertMindmapDraftNode({
   draftId,
   input,
 }: {
-  supabase: SupabaseServerClient
+  supabase: MindmapDraftSupabaseClient
   userId: string
   draftId: string
   input: SaveMindmapDraftNodeInput
@@ -395,7 +395,7 @@ function sourceLinksForNode(node: MindmapDraftNodeRow) {
 }
 
 async function applySourceLinks(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   projectId: string,
   taskId: string,
@@ -449,7 +449,7 @@ async function applySourceLinks(
 }
 
 async function applyDraftNodeRows(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   projectId: string,
   nodes: MindmapDraftNodeRow[],
@@ -609,7 +609,7 @@ function parseAppliedPayload(value: Json): AppliedDraftPayload {
 }
 
 async function appendChatMessageIfPossible(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   chatSessionId: string | null,
   text: string,
@@ -641,7 +641,7 @@ export async function applyMindmapDraft({
   userId,
   draftId,
 }: {
-  supabase: SupabaseServerClient
+  supabase: MindmapDraftSupabaseClient
   userId: string
   draftId: string
 }) {
@@ -707,7 +707,7 @@ export async function applyMindmapDraft({
 }
 
 async function loadHistory(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   historyId: string,
 ): Promise<MindmapDraftHistoryRow> {
@@ -727,7 +727,7 @@ async function loadHistory(
 }
 
 async function restoreMemoLinks(
-  supabase: SupabaseServerClient,
+  supabase: MindmapDraftSupabaseClient,
   userId: string,
   beforeLinks: MemoNodeLinkRow[],
   payload: AppliedDraftPayload,
@@ -759,7 +759,7 @@ export async function undoMindmapDraftHistory({
   userId,
   historyId,
 }: {
-  supabase: SupabaseServerClient
+  supabase: MindmapDraftSupabaseClient
   userId: string
   historyId: string
 }) {
@@ -810,7 +810,7 @@ export async function redoMindmapDraftHistory({
   userId,
   historyId,
 }: {
-  supabase: SupabaseServerClient
+  supabase: MindmapDraftSupabaseClient
   userId: string
   historyId: string
 }) {
