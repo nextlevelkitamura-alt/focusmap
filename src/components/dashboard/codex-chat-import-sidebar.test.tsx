@@ -150,7 +150,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
     const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
     expect(within(row).getByText("Codexスレッド連携UI")).toBeInTheDocument()
-    expect(within(row).getByText("未配置")).toBeInTheDocument()
+    expect(within(row).queryByText("未配置")).not.toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
     expect(within(row).getByText("focusmap")).toBeInTheDocument()
     expect(within(row).queryByText("仕事")).not.toBeInTheDocument()
@@ -343,9 +343,9 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
     expect(screen.getByRole("region", { name: "AI要約" })).toBeInTheDocument()
     expect(screen.getByText("AI要約")).toBeInTheDocument()
-    expect(screen.getByText("ここで何をやったのか")).toBeInTheDocument()
-    expect(screen.getByText("次に確認すること")).toBeInTheDocument()
-    expect(screen.getByText("変更")).toBeInTheDocument()
+    expect(screen.getByText("実行したこと")).toBeInTheDocument()
+    expect(screen.getByText("現状")).toBeInTheDocument()
+    expect(screen.getByText("確認すること")).toBeInTheDocument()
     const doneText = screen.getByText("一覧生成は未配置だけに変え、配置処理では保存反映前から対象カードを隠し、失敗時だけ戻すようにしました")
     expect(doneText).toBeInTheDocument()
     expect(doneText.textContent).not.toContain("…")
@@ -353,16 +353,16 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("ノード化の要否")).toBeInTheDocument()
     expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(2)
     fireEvent.click(screen.getByRole("button", { name: "AI要約を折りたたむ" }))
-    expect(screen.queryByText("ここで何をやったのか")).not.toBeInTheDocument()
-    expect(screen.queryByText("変更")).not.toBeInTheDocument()
-    expect(screen.getByText("ノード化の要否").closest("p")?.className).toContain("line-clamp-1")
+    expect(screen.queryByText("実行したこと")).not.toBeInTheDocument()
+    expect(screen.queryByText("現状")).not.toBeInTheDocument()
+    expect(screen.queryByText("ノード化の要否")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "AI要約を展開" }))
-    expect(screen.getByText("ここで何をやったのか")).toBeInTheDocument()
-    expect(screen.getByText("変更")).toBeInTheDocument()
+    expect(screen.getByText("実行したこと")).toBeInTheDocument()
+    expect(screen.getByText("現状")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "AI要約を折りたたむ" })).toBeInTheDocument()
     expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText("送信内容")).not.toBeInTheDocument()
-    expect(screen.getAllByText("Codexの返答").length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText("Codexの返答")).not.toBeInTheDocument()
     expect(screen.queryByText("プロジェクト更新完了")).not.toBeInTheDocument()
     expect(screen.queryByText(/thread-abcdef123456/)).not.toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Codexで開く Codexスレッド連携UI/ })).toHaveAttribute(
@@ -373,7 +373,7 @@ describe("CodexChatImportSidebar", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=100"),
+      expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=30"),
       { cache: "no-store" },
     )
 
@@ -404,7 +404,7 @@ describe("CodexChatImportSidebar", () => {
           next_cursor: null,
         })
       }
-      if (url === "/api/ai-tasks/ai-task-1/activity?limit=100") {
+      if (url === "/api/ai-tasks/ai-task-1/activity?limit=30") {
         return jsonResponse({
           messages: [
             {
@@ -490,7 +490,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getAllByText("配置済みCodex作業").length).toBeGreaterThan(0)
     expect(screen.getByText("配置済み: プロジェクト直下")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "ノードへ配置" })).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "履歴へ戻す" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "履歴へ戻す" })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "一覧へ戻る" }))
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
@@ -546,7 +546,7 @@ describe("CodexChatImportSidebar", () => {
     })
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=100"),
+        expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=30"),
         { cache: "no-store" },
       )
       expect(screen.getByText("5分前")).toBeInTheDocument()
@@ -554,8 +554,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
   })
 
-  test("places the selected chat from the detail footer", async () => {
-    const onPlaceChatItem = vi.fn().mockResolvedValue(undefined)
+  test("does not render detail footer actions in the selected chat view", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
@@ -579,51 +578,13 @@ describe("CodexChatImportSidebar", () => {
       return jsonResponse({}, false)
     })
     vi.stubGlobal("fetch", fetchMock)
-    renderSidebar({ onPlaceChatItem })
+    renderSidebar()
 
     fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
-    await screen.findByRole("button", { name: "ノードへ配置" })
-    fireEvent.click(screen.getByRole("button", { name: "ノードへ配置" }))
-
-    await waitFor(() => {
-      expect(onPlaceChatItem).toHaveBeenCalledWith("chat-node-1")
-    })
-    expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
-  })
-
-  test("returns the selected placed chat from the detail footer", async () => {
-    const onReturnPlacedChatItem = vi.fn().mockResolvedValue(undefined)
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-placed" })
-      if (url.startsWith("/api/ai-tasks/ai-task-placed/activity")) return jsonResponse({ messages: [] })
-      if (url === "/api/tasks/chat-node-placed") {
-        return jsonResponse({ task: { title: "配置済みの相談", memo: "詳細" } })
-      }
-      return jsonResponse({}, false)
-    })
-    vi.stubGlobal("fetch", fetchMock)
-    renderSidebar({
-      chatItems: [],
-      detailItems: [{
-        ...chatItems[0],
-        id: "chat-node-placed",
-        aiTaskId: "ai-task-placed",
-        title: "配置済みの相談",
-        placementLabel: "配置済み: アプリの修正",
-        placed: true,
-      }],
-      initialSelectedChatId: "chat-node-placed",
-      onReturnPlacedChatItem,
-    })
-
-    await screen.findByRole("button", { name: "履歴へ戻す" })
-    fireEvent.click(screen.getByRole("button", { name: "履歴へ戻す" }))
-
-    await waitFor(() => {
-      expect(onReturnPlacedChatItem).toHaveBeenCalledWith("chat-node-placed")
-    })
-    expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
+    await screen.findByText("配置するチャット")
+    expect(screen.queryByRole("button", { name: "閉じる" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "ノードへ配置" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "履歴へ戻す" })).not.toBeInTheDocument()
   })
 
   test("selects a repo folder picked from Finder immediately", async () => {

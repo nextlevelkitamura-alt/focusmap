@@ -74,11 +74,14 @@ type ChatDetailState = {
   loading: boolean
   messages: AiTaskActivityMessage[]
   text: string | null
+  hasMore: boolean
   error: string | null
 }
 
-const ACTIVITY_DETAIL_PAGE_LIMIT = 100
-const ACTIVITY_DETAIL_MAX_PAGES = 50
+const CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT = 30
+const ACTIVITY_DETAIL_PAGE_LIMIT = 30
+const ACTIVITY_DETAIL_MAX_PAGES = 6
+const ACTIVITY_TIME_BREAK_MIN_GAP_MS = 60 * 60 * 1000
 
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
 const ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
@@ -190,6 +193,10 @@ function visibleActivityMessages(messages: AiTaskActivityMessage[]) {
   return messages.filter(message => !isGenericCodexPulseText(message.body) && !isStatusActivityMessage(message))
 }
 
+function latestVisibleActivityMessages(messages: AiTaskActivityMessage[], limit = CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT) {
+  return visibleActivityMessages(dedupeActivityMessages(messages)).slice(-limit)
+}
+
 function latestVisibleActivityAt(messages: AiTaskActivityMessage[]) {
   let latestAt: string | null = null
   let latestMs = Number.NEGATIVE_INFINITY
@@ -228,9 +235,28 @@ function formatActivityTime(value: string | null | undefined) {
   return new Date(time).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
 }
 
-function activityLabel(message: AiTaskActivityMessage) {
-  if (message.role === "user" || message.kind === "sent" || message.kind === "user_answer") return "送信内容"
-  return "Codexの返答"
+function shouldShowActivityTimeBreak(previous: AiTaskActivityMessage | null, current: AiTaskActivityMessage) {
+  const currentTime = new Date(current.created_at).getTime()
+  if (!Number.isFinite(currentTime)) return false
+  if (!previous) return true
+
+  const previousTime = new Date(previous.created_at).getTime()
+  if (!Number.isFinite(previousTime)) return true
+  const previousDay = new Date(previousTime).toLocaleDateString("ja-JP")
+  const currentDay = new Date(currentTime).toLocaleDateString("ja-JP")
+  return previousDay !== currentDay || currentTime - previousTime >= ACTIVITY_TIME_BREAK_MIN_GAP_MS
+}
+
+function ActivityTimeBreak({ value }: { value: string }) {
+  const label = formatActivityTime(value)
+  if (!label) return null
+  return (
+    <div className="flex items-center gap-3 py-1 text-center text-[11px] font-medium text-zinc-500" aria-label={label}>
+      <span className="h-px min-w-0 flex-1 bg-[#303030]" aria-hidden="true" />
+      <span className="shrink-0">{label}</span>
+      <span className="h-px min-w-0 flex-1 bg-[#303030]" aria-hidden="true" />
+    </div>
+  )
 }
 
 function createChatDragImage(item: CodexChatImportItem) {
@@ -400,9 +426,9 @@ function CodexChatAiSummaryRow({
   if (!summary) return null
 
   const rows = [
-    { label: "ここで何をやったのか", value: summary.done },
-    { label: "次に確認すること", value: summary.next },
-    { label: "変更", value: summary.change },
+    { label: "実行したこと", value: summary.done },
+    { label: "現状", value: summary.change },
+    { label: "確認すること", value: summary.next },
   ]
 
   return (
@@ -429,15 +455,10 @@ function CodexChatAiSummaryRow({
           {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
         </button>
       </div>
-      {collapsed ? (
-        <p className="min-w-0 break-words text-[12px] leading-relaxed text-zinc-300 line-clamp-1">
-          <span className="mr-2 font-semibold text-zinc-500">次に確認すること</span>
-          {summary.next}
-        </p>
-      ) : (
+      {!collapsed && (
         <dl className="min-w-0 divide-y divide-[#303030]/80">
           {rows.map(row => (
-            <div key={row.label} className="grid min-w-0 grid-cols-[7.75rem_minmax(0,1fr)] gap-3 py-2 first:pt-1.5">
+            <div key={row.label} className="grid min-w-0 grid-cols-[5.75rem_minmax(0,1fr)] gap-2 py-2 first:pt-1.5">
               <dt className="min-w-0 text-[11px] font-semibold leading-relaxed text-zinc-500">
                 {row.label}
               </dt>
@@ -454,23 +475,13 @@ function CodexChatAiSummaryRow({
 
 function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) {
   const isUserMessage = isUserActivityMessage(message)
-  const timeLabel = formatActivityTime(message.created_at)
 
   return (
     <article className={cn("flex", isUserMessage && "justify-end")}>
       <div className={cn(
-        "flex min-w-0 flex-col gap-1.5",
+        "flex min-w-0 flex-col",
         isUserMessage ? "max-w-[82%] items-end" : "w-full",
       )}>
-        {(!isUserMessage || timeLabel) && (
-          <div className={cn(
-            "flex max-w-full items-center gap-2 text-[11px] text-zinc-500",
-            isUserMessage && "justify-end",
-          )}>
-            {!isUserMessage && <span className="shrink-0 font-medium text-zinc-400">{activityLabel(message)}</span>}
-            {timeLabel && <span className="truncate">{timeLabel}</span>}
-          </div>
-        )}
         <div
           className={cn(
             "whitespace-pre-wrap break-words text-[15px] leading-7",
@@ -501,8 +512,6 @@ export function CodexChatImportSidebar({
   onSelectRepoPath,
   onToggleImport,
   onDeleteChatItem,
-  onPlaceChatItem,
-  onReturnPlacedChatItem,
   onChatDragStateChange,
   onOpenBoard,
 }: CodexChatImportSidebarProps) {
@@ -514,8 +523,6 @@ export function CodexChatImportSidebar({
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [latestChatActivityAtById, setLatestChatActivityAtById] = React.useState<Record<string, string>>({})
-  const [placingPending, setPlacingPending] = React.useState(false)
-  const [returningPending, setReturningPending] = React.useState(false)
   const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
   const backgroundSyncedChatIdsRef = React.useRef(new Set<string>())
@@ -598,18 +605,30 @@ export function CodexChatImportSidebar({
   }, [])
   const fetchLatestChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
     const page = await fetchChatActivityPage(aiTaskId)
-    return dedupeActivityMessages(page.messages)
+    return latestVisibleActivityMessages(page.messages)
   }, [fetchChatActivityPage])
   const fetchChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
     const messages: AiTaskActivityMessage[] = []
     let cursor: { created_at: string; id: string | null } | null = null
+    let hasMore = false
     for (let page = 0; page < ACTIVITY_DETAIL_MAX_PAGES; page += 1) {
       const activityPage = await fetchChatActivityPage(aiTaskId, cursor)
       messages.push(...activityPage.messages)
-      if (!activityPage.nextCursor) break
+      const visibleMessages = latestVisibleActivityMessages(messages)
+      const allVisibleMessages = visibleActivityMessages(dedupeActivityMessages(messages))
+      if (allVisibleMessages.length > CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT) {
+        return { messages: visibleMessages, hasMore: true }
+      }
+      if (!activityPage.nextCursor) {
+        return { messages: visibleMessages, hasMore: false }
+      }
+      hasMore = true
       cursor = activityPage.nextCursor
+      if (allVisibleMessages.length >= CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT) {
+        return { messages: visibleMessages, hasMore: true }
+      }
     }
-    return dedupeActivityMessages(messages)
+    return { messages: latestVisibleActivityMessages(messages), hasMore }
   }, [fetchChatActivityPage])
 
   const selectRepoPath = React.useCallback(async (nextRepoPath: string | null) => {
@@ -733,6 +752,7 @@ export function CodexChatImportSidebar({
         loading: true,
         messages: prev[item.id]?.messages ?? [],
         text: prev[item.id]?.text ?? null,
+        hasMore: prev[item.id]?.hasMore ?? false,
         error: null,
       },
     }))
@@ -746,12 +766,12 @@ export function CodexChatImportSidebar({
       }
 
       if (aiTaskId) {
-        const messages = await fetchChatActivityMessages(aiTaskId)
+        const { messages, hasMore } = await fetchChatActivityMessages(aiTaskId)
         rememberLatestChatActivityAt(item.id, messages)
         if (messages.length > 0) {
           setChatDetailsById(prev => ({
             ...prev,
-            [item.id]: { loading: false, messages, text: null, error: null },
+            [item.id]: { loading: false, messages, text: null, hasMore, error: null },
           }))
           return
         }
@@ -769,6 +789,7 @@ export function CodexChatImportSidebar({
           loading: false,
           messages: [],
           text: readTaskDetailText(fallbackData, item.snippet),
+          hasMore: false,
           error: null,
         },
       }))
@@ -779,6 +800,7 @@ export function CodexChatImportSidebar({
           loading: false,
           messages: [],
           text: null,
+          hasMore: false,
           error: error instanceof Error ? error.message : "チャット詳細を取得できませんでした",
         },
       }))
@@ -820,28 +842,6 @@ export function CodexChatImportSidebar({
     setRepoPickerOpen(false)
     void loadChatDetail(item)
   }, [initialSelectedChatId, loadChatDetail, selectableChatItems])
-
-  const handlePlaceSelectedChatItem = React.useCallback(async () => {
-    if (!selectedChatItem || !onPlaceChatItem || placingPending) return
-    setPlacingPending(true)
-    try {
-      await onPlaceChatItem(selectedChatItem.id)
-      setSelectedChatId(null)
-    } finally {
-      setPlacingPending(false)
-    }
-  }, [onPlaceChatItem, placingPending, selectedChatItem])
-
-  const handleReturnSelectedChatItem = React.useCallback(async () => {
-    if (!selectedChatItem || !onReturnPlacedChatItem || returningPending) return
-    setReturningPending(true)
-    try {
-      await onReturnPlacedChatItem(selectedChatItem.id)
-      setSelectedChatId(null)
-    } finally {
-      setReturningPending(false)
-    }
-  }, [onReturnPlacedChatItem, returningPending, selectedChatItem])
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
@@ -1062,12 +1062,11 @@ export function CodexChatImportSidebar({
                   <div className="min-w-0 flex-1" title={selectedChatItem.title}>
                     <div className="line-clamp-2 break-words text-base font-semibold leading-snug text-zinc-100">{selectedChatItem.title}</div>
                     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-                      <span className={cn(
-                        "rounded-full px-2 py-1 text-[11px] font-medium leading-none",
-                        selectedChatItem.placed ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300",
-                      )}>
-                        {selectedChatItem.placementLabel}
-                      </span>
+                      {selectedChatItem.placed && (
+                        <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[11px] font-medium leading-none text-emerald-300">
+                          {selectedChatItem.placementLabel}
+                        </span>
+                      )}
                       {selectedChatItem.repoPath && (
                         <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
                           <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath)}</span>
@@ -1106,6 +1105,8 @@ export function CodexChatImportSidebar({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5">
+            <div className="mb-3 text-[12px] font-semibold text-zinc-400">チャット履歴</div>
+
             {selectedDetail?.loading && selectedMessages.length === 0 && !selectedDetail.text ? (
               <div className="flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-3 py-2 text-xs text-zinc-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1128,7 +1129,30 @@ export function CodexChatImportSidebar({
 
             {selectedMessages.length > 0 ? (
               <div className="space-y-5">
-                {selectedMessages.map(message => <ActivityMessageBubble key={message.id} message={message} />)}
+                {selectedDetail?.hasMore && (
+                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-dashed border-[#3a3a3a] bg-[#111111] px-3 py-2 text-[12px] text-zinc-400">
+                    <span className="min-w-0 flex-1">これより前の履歴は各エディター画面から確認してください。</span>
+                    {selectedThreadHref && (
+                      <a
+                        href={selectedThreadHref}
+                        className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                        onClick={event => openCodexThread(event, selectedThreadHref)}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Codexで開く
+                      </a>
+                    )}
+                  </div>
+                )}
+                {selectedMessages.map((message, index) => {
+                  const previous = index > 0 ? selectedMessages[index - 1] : null
+                  return (
+                    <React.Fragment key={message.id}>
+                      {shouldShowActivityTimeBreak(previous, message) && <ActivityTimeBreak value={message.created_at} />}
+                      <ActivityMessageBubble message={message} />
+                    </React.Fragment>
+                  )
+                })}
               </div>
             ) : selectedDetail?.text ? (
               <div className="space-y-2">
@@ -1225,12 +1249,11 @@ export function CodexChatImportSidebar({
                       </div>
                     )}
                     <div className="flex min-w-0 flex-wrap items-center gap-1">
-                      <span className={cn(
-                        "rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
-                        item.placed ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300",
-                      )}>
-                        {item.placementLabel}
-                      </span>
+                      {item.placed && (
+                        <span className="rounded-full bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-emerald-300">
+                          {item.placementLabel}
+                        </span>
+                      )}
                       <span className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none", codexMonitorToneClass(visualStatus))}>
                         {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
                         {statusText}
@@ -1282,40 +1305,19 @@ export function CodexChatImportSidebar({
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] gap-2 border-t border-[#303030] bg-[#171717] p-3">
-        <Button type="button" variant="outline" className="h-11 min-w-0 border-[#303030] bg-[#111111] text-zinc-200 hover:bg-white/10 hover:text-white" onClick={onClose}>
-          閉じる
-        </Button>
-        {selectedChatItem && !selectedChatItem.placed ? (
-          <Button
-            type="button"
-            className="h-11 min-w-0 bg-white text-zinc-950 shadow-[0_10px_30px_rgba(255,255,255,0.12)] hover:bg-zinc-200"
-            onClick={() => void handlePlaceSelectedChatItem()}
-            disabled={!onPlaceChatItem || placingPending}
-          >
-            {placingPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <GitBranch className="mr-1.5 h-4 w-4" />}
-            ノードへ配置
+      {!selectedChatItem && (
+        <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] gap-2 border-t border-[#303030] bg-[#171717] p-3">
+          <Button type="button" variant="outline" className="h-11 min-w-0 border-[#303030] bg-[#111111] text-zinc-200 hover:bg-white/10 hover:text-white" onClick={onClose}>
+            閉じる
           </Button>
-        ) : selectedChatItem ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 min-w-0 border-amber-400/35 bg-amber-500/10 text-amber-100 hover:bg-amber-500/18 hover:text-amber-50"
-            onClick={() => void handleReturnSelectedChatItem()}
-            disabled={!onReturnPlacedChatItem || returningPending}
-          >
-            {returningPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ArrowLeft className="mr-1.5 h-4 w-4" />}
-            履歴へ戻す
-          </Button>
-        ) : (
           <div className={cn(
             "flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500 transition-colors",
             draggingChatId && "text-sky-300",
           )}>
             {draggingChatId ? "マップ外で離すとカードに戻ります" : "ドラッグしてノードへ配置"}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </aside>
   )
 }
