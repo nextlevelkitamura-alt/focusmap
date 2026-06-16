@@ -1399,6 +1399,66 @@ export const saveProjectContext = tool({
   },
 })
 
+export const prepareProjectContextSaveProposal = tool({
+  description:
+    'プロジェクトについて壁打ち・深掘り・アイデア出しした内容を、すぐ保存せず「保存してよいですか？」の承認UIに出すための保存候補へ整形する。ユーザーが保存ボタンを押すまでDBは変更しない。',
+  inputSchema: z.object({
+    projectId: z.string().describe('保存候補を出すプロジェクトID'),
+    projectDescription: z.string().optional().describe('projects.description に保存したい安定概要。何のプロジェクトか・目的・対象を短くまとめる。未指定なら変更しない。'),
+    heading: z.string().optional().describe('project_contexts.heading に保存したい短い見出し。'),
+    details: z.string().optional().describe('project_contexts.details に保存したい背景メモ。## 目的 / ## 判断基準 / ## 重要制約 / ## 最近の決定 などで整理する。'),
+    progress: z.string().optional().describe('project_contexts.progress に保存したい現在地メモ。## 現在地 / ## 次の論点 / ## ブロッカー などで整理する。'),
+    progressStatus: z.enum(PROJECT_CONTEXT_STATUSES).optional().describe('保存したい進捗状態。'),
+    reason: z.string().optional().describe('なぜ保存するとよいかの短い理由。'),
+    nextQuestions: z.array(z.string()).optional().describe('次に深掘りするとよい質問。最大3件。'),
+  }),
+  execute: async ({ projectId, projectDescription, heading, details, progress, progressStatus, reason, nextQuestions }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const { data: project, error } = await supabase
+      .from('projects')
+      .select('id, title')
+      .eq('user_id', user.id)
+      .eq('id', projectId)
+      .maybeSingle()
+    if (error) return { success: false, error: error.message }
+    if (!project) return { success: false, error: 'プロジェクトが見つかりません' }
+
+    const proposal = {
+      projectId,
+      projectTitle: project.title,
+      projectDescription: typeof projectDescription === 'string' ? compactText(projectDescription, 3000) : null,
+      heading: typeof heading === 'string' ? compactText(heading, 160) : null,
+      details: typeof details === 'string' ? compactText(details, 3000) : null,
+      progress: typeof progress === 'string' ? compactText(progress, 2000) : null,
+      progressStatus: progressStatus ?? null,
+      reason: typeof reason === 'string' ? compactText(reason, 500) : null,
+      nextQuestions: (nextQuestions ?? [])
+        .filter(question => typeof question === 'string' && question.trim())
+        .slice(0, 3)
+        .map(question => compactText(question, 240)),
+    }
+
+    const hasContent = Boolean(
+      proposal.projectDescription ||
+      proposal.heading ||
+      proposal.details ||
+      proposal.progress ||
+      proposal.progressStatus,
+    )
+    if (!hasContent) return { success: false, error: '保存候補の内容が指定されていません' }
+
+    return {
+      success: true,
+      ...proposal,
+      canApply: true,
+      message: `「${project.title}」の保存候補を作成しました。ユーザーが保存ボタンを押すまでDBは更新しません。`,
+    }
+  },
+})
+
 export const updateProject = tool({
   description:
     'Focusmapのプロジェクト本体を更新する。プロジェクト名、概要、目的、状態、リポジトリパス、優先度などを変更したい時に使う。',

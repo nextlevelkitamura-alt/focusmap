@@ -110,7 +110,34 @@ const CHAT_STARTERS = [
   },
 ] as const
 
+const PROJECT_TALK_OPTIONS = [
+  {
+    label: "じっくり話す",
+    description: "一問ずつ深掘りして理解を保存候補化",
+    prompt: "プロジェクトについてじっくり話す。まずこのプロジェクトの概要・蓄積コンテキスト・現在のマインドマップ概要を読んでください。マインドマップの親や上位ノードはプロジェクト理解の構造、子や葉ノードは作業・検証・次アクションとして扱ってください。grill-meのように一問ずつ深掘りし、回答がまとまったらDBへ勝手に保存せず、prepareProjectContextSaveProposalで保存候補を作って、保存してよいか確認してください。",
+    icon: Brain,
+  },
+  {
+    label: "軽くアイデア出し",
+    description: "短く案を広げて保存候補だけ整理",
+    prompt: "プロジェクトについて軽くアイデア出しする。まずこのプロジェクトの概要・蓄積コンテキスト・現在のマインドマップ概要を読んで、今の理解構造から足りない観点、作業に紐づきそうな候補、次に試す案を短く出してください。保存した方がよい要点がまとまった場合だけ、DBへ直接保存せずprepareProjectContextSaveProposalで保存候補を作ってください。",
+    icon: Zap,
+  },
+] as const
+
 const AUTOMATION_SHORTCUTS = [
+  {
+    label: "プロジェクト深掘り",
+    description: "理解構造を一問ずつ整理",
+    prompt: PROJECT_TALK_OPTIONS[0].prompt,
+    icon: Brain,
+  },
+  {
+    label: "アイデア出し",
+    description: "軽く案を広げる",
+    prompt: PROJECT_TALK_OPTIONS[1].prompt,
+    icon: Zap,
+  },
   {
     label: "予定を整理",
     description: "カレンダーの確認・調整案",
@@ -1257,6 +1284,39 @@ function EmptyChat({
           </p>
         </div>
 
+        {project && (
+          <section className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-3 text-left">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[13px] font-semibold text-emerald-200">プロジェクトについて話す</div>
+                <div className="mt-0.5 text-[11px] leading-4 text-emerald-100/55">理解の構造を深めて、必要なら保存候補にします。</div>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {PROJECT_TALK_OPTIONS.map(option => {
+                const Icon = option.icon
+                return (
+                  <button
+                    key={option.label}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onSelectStarter(option.prompt)}
+                    className="flex min-h-14 items-center gap-3 rounded-lg border border-emerald-300/15 bg-black/20 px-3 py-2 text-left transition hover:border-emerald-300/30 hover:bg-emerald-300/10 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-300/12 text-emerald-200">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-semibold leading-5 text-zinc-100">{option.label}</span>
+                      <span className="block text-[11px] leading-4 text-zinc-500">{option.description}</span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
           {CHAT_STARTERS.map((starter) => {
             const Icon = starter.icon
@@ -1458,6 +1518,22 @@ type MindmapDraftApplyAction = {
   historyId: string
 }
 
+type ProjectContextProposalAction = {
+  projectId: string
+  projectTitle: string | null
+  projectDescription: string | null
+  heading: string | null
+  details: string | null
+  progress: string | null
+  progressStatus: string | null
+  reason: string | null
+  nextQuestions: string[]
+}
+
+function metadataString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null
+}
+
 function getMindmapDraftReadyAction(message: UIMessage): MindmapDraftReadyAction | null {
   const metadata = message.metadata
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null
@@ -1485,6 +1561,28 @@ function getMindmapDraftApplyAction(message: UIMessage): MindmapDraftApplyAction
     : null
 }
 
+function getProjectContextProposalAction(message: UIMessage): ProjectContextProposalAction | null {
+  const metadata = message.metadata
+  if (!isRecord(metadata)) return null
+  const value = metadata.focusmapProjectContextProposalReady
+  if (!isRecord(value)) return null
+  if (typeof value.projectId !== "string" || value.canApply !== true) return null
+  const nextQuestions = Array.isArray(value.nextQuestions)
+    ? value.nextQuestions.filter((item): item is string => typeof item === "string" && item.trim()).slice(0, 3)
+    : []
+  return {
+    projectId: value.projectId,
+    projectTitle: metadataString(value.projectTitle),
+    projectDescription: metadataString(value.projectDescription),
+    heading: metadataString(value.heading),
+    details: metadataString(value.details),
+    progress: metadataString(value.progress),
+    progressStatus: metadataString(value.progressStatus),
+    reason: metadataString(value.reason),
+    nextQuestions,
+  }
+}
+
 function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval: ApprovalHandler }) {
   const progress = getAgentProgressMetadata(message)
   if (progress) return <ProgressLogMessage progress={progress} />
@@ -1492,6 +1590,7 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
   const isUser = message.role === "user"
   const mindmapDraftReadyAction = isUser ? null : getMindmapDraftReadyAction(message)
   const mindmapDraftApplyAction = isUser ? null : getMindmapDraftApplyAction(message)
+  const projectContextProposalAction = isUser ? null : getProjectContextProposalAction(message)
   const runTiming = isUser ? null : getMessageRunTiming(message)
 
   return (
@@ -1528,6 +1627,9 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
         {mindmapDraftApplyAction && (
           <MindmapDraftApplyActions action={mindmapDraftApplyAction} />
         )}
+        {projectContextProposalAction && (
+          <ProjectContextProposalActions action={projectContextProposalAction} />
+        )}
         {runTiming && (
           <RunTimingBadge timing={runTiming} />
         )}
@@ -1549,6 +1651,112 @@ function RunTimingBadge({ timing }: { timing: AgentRunTiming }) {
     <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-zinc-400">
       <Clock className="h-3.5 w-3.5" />
       <span>{AGENT_MODEL_MODE_LABELS[timing.modelMode]}・{elapsedLabel}</span>
+    </div>
+  )
+}
+
+function proposalRows(action: ProjectContextProposalAction) {
+  return [
+    action.projectDescription ? { label: "概要", value: action.projectDescription } : null,
+    action.heading ? { label: "見出し", value: action.heading } : null,
+    action.details ? { label: "背景", value: action.details } : null,
+    action.progress ? { label: "現在地", value: action.progress } : null,
+    action.progressStatus ? { label: "状態", value: action.progressStatus } : null,
+  ].filter((row): row is { label: string; value: string } => Boolean(row))
+}
+
+function ProjectContextProposalActions({ action }: { action: ProjectContextProposalAction }) {
+  const [state, setState] = useState<"ready" | "saving" | "saved" | "dismissed" | "failed">("ready")
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const rows = proposalRows(action)
+  if (state === "dismissed") return null
+
+  const busy = state === "saving"
+  const handleSave = async () => {
+    if (busy || state === "saved") return
+    setState("saving")
+    setError(null)
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(action.projectId)}/context/proposal/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectDescription: action.projectDescription,
+          heading: action.heading,
+          details: action.details,
+          progress: action.progress,
+          progressStatus: action.progressStatus,
+        }),
+      })
+      const json = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof json.error === "string" ? json.error : "保存に失敗しました")
+      }
+      setMessage(typeof json.message === "string" ? json.message : "保存しました")
+      setState("saved")
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "保存に失敗しました")
+      setState("failed")
+    }
+  }
+
+  return (
+    <div className="w-full max-w-[680px] rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] p-3 text-sm text-zinc-100">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-300/12 text-emerald-200">
+          <CheckCircle2 className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-emerald-100">
+            {action.projectTitle ? `「${action.projectTitle}」に保存しますか？` : "この内容を保存しますか？"}
+          </div>
+          {action.reason && (
+            <p className="mt-1 text-xs leading-5 text-emerald-50/65">{action.reason}</p>
+          )}
+          {rows.length > 0 && (
+            <div className="mt-2 space-y-1.5">
+              {rows.map(row => (
+                <div key={row.label} className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2">
+                  <div className="text-[11px] font-semibold text-emerald-200">{row.label}</div>
+                  <div className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-zinc-300">{row.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {action.nextQuestions.length > 0 && (
+            <div className="mt-2 text-xs leading-5 text-zinc-400">
+              次の深掘り: {action.nextQuestions.join(" / ")}
+            </div>
+          )}
+          {message && <div className="mt-2 text-xs font-medium text-emerald-200">{message}</div>}
+          {error && <div className="mt-2 text-xs font-medium text-red-300">{error}</div>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-lg bg-emerald-300 px-3 text-xs font-semibold text-zinc-950 hover:bg-emerald-200"
+              disabled={busy || state === "saved"}
+              onClick={handleSave}
+            >
+              {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {state === "saved" ? "保存済み" : "保存"}
+            </Button>
+            {state !== "saved" && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-lg border-white/10 bg-transparent px-3 text-xs text-zinc-300 hover:bg-white/10 hover:text-white"
+                disabled={busy}
+                onClick={() => setState("dismissed")}
+              >
+                しない
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

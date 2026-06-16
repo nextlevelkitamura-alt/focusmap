@@ -61,6 +61,30 @@ function extractSavedMindmapDraftAction(output: unknown) {
   }
 }
 
+function nullableString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function extractProjectContextProposalAction(output: unknown) {
+  if (!isRecord(output) || output.success === false || typeof output.projectId !== 'string') return null
+  const nextQuestions = Array.isArray(output.nextQuestions)
+    ? output.nextQuestions.filter((item): item is string => typeof item === 'string' && item.trim()).slice(0, 3)
+    : []
+  return {
+    version: 1,
+    projectId: output.projectId,
+    projectTitle: nullableString(output.projectTitle),
+    projectDescription: nullableString(output.projectDescription),
+    heading: nullableString(output.heading),
+    details: nullableString(output.details),
+    progress: nullableString(output.progress),
+    progressStatus: nullableString(output.progressStatus),
+    reason: nullableString(output.reason),
+    nextQuestions,
+    canApply: output.canApply === true,
+  }
+}
+
 function normalizeScopeKey(value: unknown) {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   return trimmed.length > 0 && trimmed.length <= 180 ? trimmed : 'general'
@@ -177,6 +201,7 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
   let liveMessages: UIMessage[] = Array.isArray(row.messages) ? row.messages : []
   const toolStartedAt = new Map<string, string>()
   let savedMindmapDraftAction: ReturnType<typeof extractSavedMindmapDraftAction> | null = null
+  let projectContextProposalAction: ReturnType<typeof extractProjectContextProposalAction> | null = null
 
   async function persistProgressMessage(progressMessage: UIMessage) {
     liveMessages = upsertAgentProgressMessage(liveMessages, progressMessage)
@@ -234,6 +259,9 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
         if (event.success && toolName === 'saveMindmapDraft') {
           savedMindmapDraftAction = extractSavedMindmapDraftAction(event.output)
         }
+        if (event.success && toolName === 'prepareProjectContextSaveProposal') {
+          projectContextProposalAction = extractProjectContextProposalAction(event.output)
+        }
       },
     })
     const replyText = result.text?.trim() || '完了しました。'
@@ -241,6 +269,7 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
     const replyMetadata = {
       focusmapAgentRunResult: runResultMetadata(modelMode, row.run_started_at, completedAt),
       ...(savedMindmapDraftAction ? { focusmapMindmapDraftReady: savedMindmapDraftAction } : {}),
+      ...(projectContextProposalAction ? { focusmapProjectContextProposalReady: projectContextProposalAction } : {}),
     }
     const nextMessages = [...liveMessages, createAssistantMessage(replyText, replyMetadata)]
 

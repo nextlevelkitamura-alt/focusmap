@@ -39,6 +39,7 @@ const TOOL_LABELS: Record<string, string> = {
   listProjects: 'プロジェクト検索',
   getProjectContext: 'プロジェクト確認',
   saveProjectContext: 'プロジェクト記録',
+  prepareProjectContextSaveProposal: '保存候補作成',
   updateProject: 'プロジェクト更新',
   listProjectTasks: 'DBタスク確認',
   listNotesForOrganization: 'ノート整理確認',
