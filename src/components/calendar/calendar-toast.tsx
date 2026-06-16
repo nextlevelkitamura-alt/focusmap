@@ -35,8 +35,9 @@ export function CalendarToast({ type, message, duration = 3000, onClose, actionL
 
   return (
     <div
+      style={{ top: "calc(env(safe-area-inset-top, 0px) + 60px)" }}
       className={cn(
-        "fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 bg-background border rounded-lg shadow-lg transition-all duration-300",
+        "pointer-events-none fixed right-4 z-50 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-lg border bg-background px-4 py-3 shadow-lg transition-all duration-300",
         isVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
       )}
     >
@@ -44,22 +45,25 @@ export function CalendarToast({ type, message, duration = 3000, onClose, actionL
       <span className="text-sm font-medium">{message}</span>
       {actionLabel && onAction && (
         <button
+          type="button"
           onClick={() => {
             onAction()
             setIsVisible(false)
             setTimeout(() => onClose?.(), 300)
           }}
-          className="rounded-md border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted"
+          className="pointer-events-auto rounded-md border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted"
         >
           {actionLabel}
         </button>
       )}
       <button
+        type="button"
+        aria-label="通知を閉じる"
         onClick={() => {
           setIsVisible(false)
           setTimeout(() => onClose?.(), 300)
         }}
-        className="ml-2 text-muted-foreground hover:text-foreground"
+        className="pointer-events-auto ml-2 text-muted-foreground hover:text-foreground"
       >
         ×
       </button>
