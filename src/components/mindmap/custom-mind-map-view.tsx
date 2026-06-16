@@ -71,6 +71,7 @@ type CustomMindMapViewProps = {
     codexThreadImportRepoPath?: string | null;
     onToggleCodexThreadImport?: () => void | Promise<void>;
     taskProgressByNodeId?: Record<string, TaskProgressSnapshotTask>;
+    draftMetaByNodeId?: Record<string, CustomMindMapDraftMeta>;
     onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
     onMoveTask?: (params: {
         taskId: string;
@@ -93,6 +94,11 @@ type CustomMindMapViewProps = {
         targetId: string;
         position: CustomDropPosition;
     }) => void | Promise<void>;
+};
+
+type CustomMindMapDraftMeta = {
+    kind: "new" | "moved" | "adjusted";
+    label: string;
 };
 
 type CodexNodeState = {
@@ -459,6 +465,7 @@ function CustomTaskNode({
     onRunCodex,
     codexState,
     taskProgress,
+    draftMeta,
     onOpenTaskProgress,
     onEditingChange,
     onRegisterEditController,
@@ -497,6 +504,7 @@ function CustomTaskNode({
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexState?: CodexNodeState | null;
     taskProgress?: TaskProgressSnapshotTask | null;
+    draftMeta?: CustomMindMapDraftMeta | null;
     onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
@@ -876,6 +884,9 @@ function CustomTaskNode({
                 taskProgress?.status === "running" && "border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
                 (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
+                draftMeta?.kind === "new" && "border-sky-400 bg-sky-500/10 shadow-[0_0_18px_rgba(56,189,248,0.24)]",
+                draftMeta?.kind === "moved" && "border-violet-400 bg-violet-500/10 shadow-[0_0_18px_rgba(167,139,250,0.22)]",
+                draftMeta?.kind === "adjusted" && "border-amber-400 bg-amber-500/10 shadow-[0_0_18px_rgba(245,158,11,0.2)]",
                 selected && node.isDone && "ring-muted-foreground/40",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
@@ -930,6 +941,19 @@ function CustomTaskNode({
             )}
             {isMemoNode && (
                 <div className={cn("absolute -left-0.5 top-1 bottom-1 w-1 rounded-full", node.isDone ? "bg-muted-foreground/35" : "bg-amber-400")} />
+            )}
+            {draftMeta && (
+                <div
+                    className={cn(
+                        "pointer-events-none absolute -left-2 -top-2 z-20 max-w-[96px] truncate rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm",
+                        draftMeta.kind === "new" && "border-sky-300/50 bg-sky-500/15 text-sky-200",
+                        draftMeta.kind === "moved" && "border-violet-300/50 bg-violet-500/15 text-violet-200",
+                        draftMeta.kind === "adjusted" && "border-amber-300/50 bg-amber-500/15 text-amber-200",
+                    )}
+                    title={`AI案: ${draftMeta.label}`}
+                >
+                    {draftMeta.label}
+                </div>
             )}
             {codexState?.state === "running" && (
                 <CodexRunningOrbit width={node.width} height={node.height} />
@@ -1505,6 +1529,7 @@ export function CustomMindMapView({
     codexThreadImportRepoPath,
     onToggleCodexThreadImport,
     taskProgressByNodeId = {},
+    draftMetaByNodeId = {},
     onOpenTaskProgress,
     onMoveTask,
     onMoveTasks,
@@ -3599,6 +3624,7 @@ export function CustomMindMapView({
                                 onRunCodex={onRunCodex}
                                 codexState={codexRunByNodeId[node.id] ?? null}
                                 taskProgress={taskProgressByNodeId[node.id] ?? null}
+                                draftMeta={draftMetaByNodeId[node.id] ?? null}
                                 onOpenTaskProgress={onOpenTaskProgress}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}

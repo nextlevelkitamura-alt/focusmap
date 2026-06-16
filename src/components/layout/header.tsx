@@ -48,8 +48,8 @@ interface HeaderProps {
     showMemoSplitToggle?: boolean
     isMemoSplitVisible?: boolean
     onToggleMemoSplit?: () => void
-    isAiOrganizeSidebarVisible?: boolean
-    onOpenAiOrganizeSidebar?: () => void
+    isMapChatSidebarVisible?: boolean
+    onOpenMapChatSidebar?: () => void
     onLogoClick?: () => void
 }
 
@@ -73,8 +73,8 @@ export function Header({
     showMemoSplitToggle = false,
     isMemoSplitVisible = false,
     onToggleMemoSplit,
-    isAiOrganizeSidebarVisible = false,
-    onOpenAiOrganizeSidebar,
+    isMapChatSidebarVisible = false,
+    onOpenMapChatSidebar,
     onLogoClick,
 }: HeaderProps) {
     const router = useRouter()
@@ -279,27 +279,6 @@ export function Header({
                         </Button>
                     ))}
                 </div>
-                {activeView === 'map' && (
-                    <Button
-                        variant={isAiOrganizeSidebarVisible ? "secondary" : "ghost"}
-                        size="sm"
-                        className={cn(
-                            "gap-1.5 h-7 px-3 text-xs font-medium",
-                            isAiOrganizeSidebarVisible
-                                ? "bg-background text-primary shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                        )}
-                        onClick={onOpenAiOrganizeSidebar}
-                        disabled={!selectedProjectId || !onOpenAiOrganizeSidebar}
-                        aria-pressed={isAiOrganizeSidebarVisible}
-                        aria-label={isAiOrganizeSidebarVisible ? "AIで整理サイドバーを閉じる" : "AIで整理サイドバーを開く"}
-                        title="AIで整理"
-                        style={desktopNoDragStyle}
-                    >
-                        <Sparkles className="h-3.5 w-3.5" />
-                        AIで整理
-                    </Button>
-                )}
             </div>
 
             {/* Right: User Profile & Settings */}
@@ -342,6 +321,27 @@ export function Header({
                                 aiExecutionStatusClass,
                             )}
                         />
+                    </Button>
+                )}
+                {activeView === 'map' && (
+                    <Button
+                        type="button"
+                        variant={isMapChatSidebarVisible ? "secondary" : "ghost"}
+                        size="sm"
+                        className={cn(
+                            "h-8 gap-1.5 px-2.5 text-xs font-medium",
+                            isMapChatSidebarVisible
+                                ? "border border-primary/30 bg-background text-primary shadow-sm"
+                                : "text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={onOpenMapChatSidebar}
+                        disabled={!selectedProjectId || !onOpenMapChatSidebar}
+                        aria-pressed={isMapChatSidebarVisible}
+                        aria-label={isMapChatSidebarVisible ? "マップチャットを閉じる" : "マップチャットを開く"}
+                        title="マップチャット"
+                    >
+                        <MessageCircle className="h-4 w-4" />
+                        <span>マップチャット</span>
                     </Button>
                 )}
                 {showCalendarSplitToggle && onToggleCalendarSplit && (

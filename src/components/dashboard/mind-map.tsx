@@ -1,7 +1,10 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
-import { Task, Project, Space } from "@/types/database";
+import { CheckCircle2, Eye, Trash2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Database, Task, Project, Space } from "@/types/database";
+import { createClient } from "@/utils/supabase/client";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { CodexChatImportSidebar, type CodexChatImportItem } from "@/components/dashboard/codex-chat-import-sidebar";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
@@ -26,6 +29,8 @@ import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
 import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events";
+import { MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events";
+import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useMindMapCollapsedTaskIds } from "@/hooks/useMindMapCollapsedTaskIds";
 import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
@@ -195,12 +200,103 @@ interface MindMapProps {
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
+    onMindmapUpdated?: () => Promise<void>
     onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
 }
 
-function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onPatchProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
+type MindmapDraftRow = Database["public"]["Tables"]["mindmap_drafts"]["Row"];
+type MindmapDraftNodeRow = Database["public"]["Tables"]["mindmap_draft_nodes"]["Row"];
+type MindmapDraftHistoryRow = Database["public"]["Tables"]["mindmap_draft_history"]["Row"];
+type DraftNodeChangeType = MindmapDraftNodeRow["change_type"];
+
+type MindmapDraftSummary = {
+    newNodes: number;
+    movedNodes: number;
+    adjustedNodes: number;
+};
+
+type MindmapDraftWithNodes = {
+    draft: MindmapDraftRow;
+    nodes: MindmapDraftNodeRow[];
+    summary: MindmapDraftSummary;
+};
+
+type DraftNodeInput = {
+    draftNodeId?: string | null;
+    taskId?: string | null;
+    parentDraftNodeId?: string | null;
+    parentTaskId?: string | null;
+    title: string;
+    originalTitle?: string | null;
+    isGroup?: boolean;
+    orderIndex?: number | null;
+    changeType?: DraftNodeChangeType;
+    origin?: "ai" | "user";
+    sourceLinks?: Database["public"]["Tables"]["mindmap_draft_nodes"]["Row"]["source_links"];
+    metadata?: Database["public"]["Tables"]["mindmap_draft_nodes"]["Row"]["metadata"];
+};
+
+function draftSummaryLabel(summary: MindmapDraftSummary | null | undefined) {
+    if (!summary) return "変更なし";
+    return `新規 ${summary.newNodes} / 移動 ${summary.movedNodes} / 調整 ${summary.adjustedNodes}`;
+}
+
+function draftNodeMeta(changeType: DraftNodeChangeType, origin: string | null) {
+    if (changeType === "new") return { kind: "new" as const, label: "新規" };
+    if (changeType === "moved" || changeType === "moved_title_adjusted") return { kind: "moved" as const, label: "移動" };
+    if (changeType === "title_adjusted" || changeType === "link_adjusted" || origin === "user") {
+        return { kind: "adjusted" as const, label: "調整" };
+    }
+    return { kind: "adjusted" as const, label: "AI案" };
+}
+
+function makeDraftTask(row: MindmapDraftNodeRow, baseTask: Task | null, parentTaskId: string | null): Task {
+    const now = row.updated_at ?? new Date().toISOString();
+    return {
+        id: row.draft_node_id,
+        user_id: row.user_id,
+        project_id: parentTaskId ? (baseTask?.project_id ?? row.project_id) : row.project_id,
+        parent_task_id: parentTaskId,
+        is_group: row.is_group,
+        title: row.title || baseTask?.title || "New Task",
+        status: baseTask?.status ?? "todo",
+        stage: baseTask?.stage ?? "plan",
+        priority: baseTask?.priority ?? null,
+        order_index: row.order_index,
+        scheduled_at: baseTask?.scheduled_at ?? null,
+        estimated_time: baseTask?.estimated_time ?? 0,
+        actual_time_minutes: baseTask?.actual_time_minutes ?? 0,
+        google_event_id: baseTask?.google_event_id ?? null,
+        calendar_event_id: baseTask?.calendar_event_id ?? null,
+        calendar_id: baseTask?.calendar_id ?? null,
+        total_elapsed_seconds: baseTask?.total_elapsed_seconds ?? 0,
+        last_started_at: baseTask?.last_started_at ?? null,
+        is_timer_running: baseTask?.is_timer_running ?? false,
+        created_at: baseTask?.created_at ?? row.created_at ?? now,
+        updated_at: now,
+        source: baseTask?.source ?? "manual",
+        deleted_at: null,
+        google_event_fingerprint: baseTask?.google_event_fingerprint ?? null,
+        is_habit: baseTask?.is_habit ?? false,
+        habit_frequency: baseTask?.habit_frequency ?? null,
+        habit_icon: baseTask?.habit_icon ?? null,
+        habit_start_date: baseTask?.habit_start_date ?? null,
+        habit_end_date: baseTask?.habit_end_date ?? null,
+        memo: baseTask?.memo ?? null,
+        memo_images: baseTask?.memo_images ?? null,
+        node_width: baseTask?.node_width ?? null,
+        mindmap_collapsed: baseTask?.mindmap_collapsed ?? false,
+        codex_work_dir: baseTask?.codex_work_dir ?? null,
+        codex_thread_id: baseTask?.codex_thread_id ?? null,
+        codex_status: baseTask?.codex_status ?? null,
+    };
+}
+
+function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onPatchProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onMindmapUpdated, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
     const projectId = project?.id ?? '';
+    const [supabase] = useState(() => createClient());
+    const { pushAction } = useUndoRedo();
 
     // 画面幅 767px 以下でモバイルレイアウト（コンパクト化）
     const isNarrow = useIsNarrowViewport();
@@ -217,6 +313,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     const [isCodexChatImportSidebarOpen, setIsCodexChatImportSidebarOpen] = useState(false);
     const [selectedCodexChatDetailId, setSelectedCodexChatDetailId] = useState<string | null>(null);
     const [activeCodexChatDrag, setActiveCodexChatDrag] = useState<{ itemId: string; title: string } | null>(null);
+    const [activeDraft, setActiveDraft] = useState<MindmapDraftWithNodes | null>(null);
+    const [isDraftVisible, setIsDraftVisible] = useState(false);
+    const [isDraftBusy, setIsDraftBusy] = useState(false);
+    const [draftError, setDraftError] = useState<string | null>(null);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -243,6 +343,120 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         () => [...visibleMapGroups, ...visibleMapTasks],
         [visibleMapGroups, visibleMapTasks]
     );
+    const fetchActiveDraft = useCallback(async (options: { reveal?: boolean } = {}) => {
+        if (!projectId) {
+            setActiveDraft(null);
+            setIsDraftVisible(false);
+            return null;
+        }
+        const response = await fetch(`/api/mindmap/drafts?project_id=${encodeURIComponent(projectId)}`, {
+            method: "GET",
+            credentials: "same-origin",
+        });
+        const data = await response.json().catch(() => ({})) as {
+            success?: boolean;
+            draft?: MindmapDraftWithNodes | null;
+            error?: string;
+        };
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || "AI案の取得に失敗しました");
+        }
+        const nextDraft = data.draft ?? null;
+        setActiveDraft(nextDraft);
+        if (nextDraft && options.reveal !== false) {
+            setIsDraftVisible(true);
+        }
+        if (!nextDraft) {
+            setIsDraftVisible(false);
+        }
+        return nextDraft;
+    }, [projectId]);
+
+    useEffect(() => {
+        setActiveDraft(null);
+        setIsDraftVisible(false);
+        setDraftError(null);
+        void fetchActiveDraft({ reveal: true }).catch(error => {
+            console.error("[MindMap] Failed to load active draft:", error);
+            setDraftError(error instanceof Error ? error.message : "AI案の取得に失敗しました");
+        });
+    }, [fetchActiveDraft]);
+
+    useEffect(() => {
+        if (!projectId) return;
+        const refreshDraft = () => {
+            void fetchActiveDraft({ reveal: true }).catch(error => {
+                console.error("[MindMap] Failed to refresh active draft:", error);
+            });
+        };
+        window.addEventListener(MINDMAP_DRAFT_CHANGED_EVENT, refreshDraft);
+        const channel = supabase
+            .channel(`mindmap-drafts:${projectId}`)
+            .on(
+                "postgres_changes",
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "mindmap_drafts",
+                    filter: `project_id=eq.${projectId}`,
+                },
+                refreshDraft,
+            )
+            .on(
+                "postgres_changes",
+                {
+                    event: "*",
+                    schema: "public",
+                    table: "mindmap_draft_nodes",
+                    filter: `project_id=eq.${projectId}`,
+                },
+                refreshDraft,
+            )
+            .subscribe();
+        return () => {
+            window.removeEventListener(MINDMAP_DRAFT_CHANGED_EVENT, refreshDraft);
+            void supabase.removeChannel(channel);
+        };
+    }, [fetchActiveDraft, projectId, supabase]);
+    const baseNodeById = useMemo(() => new Map(mindMapTaskNodes.map(node => [node.id, node])), [mindMapTaskNodes]);
+    const draftNodeByDisplayId = useMemo(() => (
+        new Map((activeDraft?.nodes ?? []).map(node => [node.draft_node_id, node]))
+    ), [activeDraft?.nodes]);
+    const isDraftMode = Boolean(activeDraft && isDraftVisible);
+    const draftDisplayNodes = useMemo(() => {
+        if (!activeDraft) return visibleMapNodes;
+        const display = new Map<string, Task>(visibleMapNodes.map(node => [node.id, node]));
+        for (const node of activeDraft.nodes) {
+            const baseTask = node.task_id ? baseNodeById.get(node.task_id) ?? null : null;
+            const parentTaskId = node.parent_draft_node_id ?? node.parent_task_id ?? null;
+            display.set(node.draft_node_id, makeDraftTask(node, baseTask, parentTaskId));
+        }
+        return Array.from(display.values());
+    }, [activeDraft, baseNodeById, visibleMapNodes]);
+    const draftDisplayNodeById = useMemo(() => new Map(draftDisplayNodes.map(node => [node.id, node])), [draftDisplayNodes]);
+    const mapGroupsForView = useMemo(
+        () => (isDraftMode ? draftDisplayNodes : visibleMapGroups)
+            .filter(node => !node.parent_task_id)
+            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)),
+        [draftDisplayNodes, isDraftMode, visibleMapGroups],
+    );
+    const mapTasksForView = useMemo(
+        () => (isDraftMode ? draftDisplayNodes : visibleMapTasks)
+            .filter(node => !!node.parent_task_id)
+            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)),
+        [draftDisplayNodes, isDraftMode, visibleMapTasks],
+    );
+    const mapNodesForView = useMemo(
+        () => [...mapGroupsForView, ...mapTasksForView],
+        [mapGroupsForView, mapTasksForView],
+    );
+    const draftMetaByNodeId = useMemo(() => {
+        if (!isDraftMode || !activeDraft) return {};
+        return activeDraft.nodes.reduce<Record<string, { kind: "new" | "moved" | "adjusted"; label: string }>>((acc, node) => {
+            acc[node.draft_node_id] = draftNodeMeta(node.change_type, node.origin);
+            return acc;
+        }, {});
+    }, [activeDraft, isDraftMode]);
     const kanbanProjects = useMemo(() => projects.length > 0 ? projects : [project], [project, projects]);
     const [kanbanSpaceId, setKanbanSpaceId] = useState<string | null>(() => project?.space_id ?? null);
     const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(() => project?.id ?? null);
@@ -1635,6 +1849,382 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         onUpdateProject,
     ]);
 
+    const getDraftParentPayload = useCallback((parentDisplayId: string | null | undefined) => {
+        if (!parentDisplayId || parentDisplayId === "project-root") {
+            return { parentDraftNodeId: null, parentTaskId: null };
+        }
+        const row = draftNodeByDisplayId.get(parentDisplayId);
+        return {
+            parentDraftNodeId: parentDisplayId,
+            parentTaskId: row?.task_id ?? (baseNodeById.has(parentDisplayId) ? parentDisplayId : null),
+        };
+    }, [baseNodeById, draftNodeByDisplayId]);
+
+    const getNextDraftOrder = useCallback((parentDisplayId: string | null) => {
+        const siblings = mapNodesForView.filter(node => (node.parent_task_id ?? null) === (parentDisplayId ?? null));
+        if (siblings.length === 0) return 0;
+        return Math.max(...siblings.map(node => node.order_index ?? 0)) + 1;
+    }, [mapNodesForView]);
+
+    const getDropDraftOrder = useCallback((movingTaskId: string, targetId: string, parentDisplayId: string | null, position: 'above' | 'below') => {
+        const siblings = mapNodesForView
+            .filter(node => node.id !== movingTaskId && (node.parent_task_id ?? null) === (parentDisplayId ?? null))
+            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        const targetIndex = siblings.findIndex(node => node.id === targetId);
+        if (targetIndex < 0) return getNextDraftOrder(parentDisplayId);
+
+        const before = position === 'above' ? siblings[targetIndex - 1] : siblings[targetIndex];
+        const after = position === 'above' ? siblings[targetIndex] : siblings[targetIndex + 1];
+        if (!before && !after) return 0;
+        if (!before) return (after?.order_index ?? 0) - 1;
+        if (!after) return (before.order_index ?? 0) + 1;
+        const beforeOrder = before.order_index ?? 0;
+        const afterOrder = after.order_index ?? beforeOrder + 2;
+        if (afterOrder - beforeOrder > 1) return Math.floor((beforeOrder + afterOrder) / 2);
+        return position === 'above' ? (after.order_index ?? 0) - 1 : (before.order_index ?? 0) + 1;
+    }, [getNextDraftOrder, mapNodesForView]);
+
+    const inferDraftChangeType = useCallback((
+        node: Task,
+        input: { parentDisplayId?: string | null; orderIndex?: number | null; title?: string },
+    ): DraftNodeChangeType => {
+        const row = draftNodeByDisplayId.get(node.id);
+        const baseTask = baseNodeById.get(row?.task_id ?? node.id) ?? null;
+        if (!baseTask && !row?.task_id) return "new";
+
+        const parentDisplayId = input.parentDisplayId ?? node.parent_task_id ?? null;
+        const orderIndex = input.orderIndex ?? node.order_index ?? 0;
+        const nextTitle = (input.title ?? node.title ?? "").trim();
+        const baseTitle = (row?.original_title ?? baseTask?.title ?? "").trim();
+        const moved = parentDisplayId !== (baseTask?.parent_task_id ?? null) || orderIndex !== (baseTask?.order_index ?? 0);
+        const titleAdjusted = nextTitle.length > 0 && nextTitle !== baseTitle;
+
+        if (moved && titleAdjusted) return "moved_title_adjusted";
+        if (titleAdjusted) return "title_adjusted";
+        return moved ? "moved" : (row?.change_type ?? "moved");
+    }, [baseNodeById, draftNodeByDisplayId]);
+
+    const buildDraftNodeInput = useCallback((
+        node: Task,
+        input: { parentDisplayId?: string | null; orderIndex?: number | null; title?: string; changeType?: DraftNodeChangeType },
+    ): DraftNodeInput => {
+        const row = draftNodeByDisplayId.get(node.id);
+        const baseTask = baseNodeById.get(row?.task_id ?? node.id) ?? null;
+        const parentDisplayId = input.parentDisplayId ?? node.parent_task_id ?? null;
+        const parentPayload = getDraftParentPayload(parentDisplayId);
+        const taskId = row?.task_id ?? (baseTask ? baseTask.id : null);
+        const title = input.title ?? node.title ?? "New Task";
+        return {
+            draftNodeId: row?.draft_node_id ?? node.id,
+            taskId,
+            ...parentPayload,
+            title,
+            originalTitle: row?.original_title ?? baseTask?.title ?? null,
+            isGroup: node.is_group,
+            orderIndex: input.orderIndex ?? node.order_index ?? 0,
+            changeType: input.changeType ?? inferDraftChangeType(node, { ...input, parentDisplayId }),
+            origin: "user",
+            sourceLinks: row?.source_links ?? [],
+            metadata: row?.metadata ?? {},
+        };
+    }, [baseNodeById, draftNodeByDisplayId, getDraftParentPayload, inferDraftChangeType]);
+
+    const upsertDraftNode = useCallback(async (node: DraftNodeInput) => {
+        if (!activeDraft?.draft.id) return null;
+        setDraftError(null);
+        try {
+            const response = await fetch(`/api/mindmap/drafts/${activeDraft.draft.id}/nodes`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ node }),
+            });
+            const data = await response.json().catch(() => ({})) as {
+                success?: boolean;
+                draft?: MindmapDraftWithNodes;
+                error?: string;
+            };
+            if (!response.ok || data.success === false || !data.draft) {
+                throw new Error(data.error || "AI案の保存に失敗しました");
+            }
+            setActiveDraft(data.draft);
+            setIsDraftVisible(true);
+            window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT));
+            return data.draft;
+        } catch (error) {
+            console.error("[MindMap] Failed to save draft node:", error);
+            setDraftError(error instanceof Error ? error.message : "AI案の保存に失敗しました");
+            return null;
+        }
+    }, [activeDraft?.draft.id]);
+
+    const focusDraftNodeAfterCreate = useCallback((nodeId: string) => {
+        setPendingEditNodeId(nodeId);
+        applySelection(new Set([nodeId]), nodeId);
+        focusNodeWithPollingV2(nodeId);
+    }, [applySelection, focusNodeWithPollingV2]);
+
+    const handleDraftCreateRootTaskAndFocus = useCallback(async (title: string) => {
+        if (!activeDraft) return;
+        const draftNodeId = crypto.randomUUID();
+        const saved = await upsertDraftNode({
+            draftNodeId,
+            taskId: null,
+            parentDraftNodeId: null,
+            parentTaskId: null,
+            title,
+            originalTitle: null,
+            isGroup: true,
+            orderIndex: getNextDraftOrder(null),
+            changeType: "new",
+            origin: "user",
+            sourceLinks: [],
+            metadata: {},
+        });
+        if (saved) focusDraftNodeAfterCreate(draftNodeId);
+    }, [activeDraft, focusDraftNodeAfterCreate, getNextDraftOrder, upsertDraftNode]);
+
+    const handleDraftAddChildTask = useCallback(async (parentTaskId: string) => {
+        if (!activeDraft || parentTaskId === "project-root") {
+            await handleDraftCreateRootTaskAndFocus("");
+            return;
+        }
+        const parent = draftDisplayNodeById.get(parentTaskId);
+        if (!parent) return;
+        const draftNodeId = crypto.randomUUID();
+        const parentPayload = getDraftParentPayload(parentTaskId);
+        const saved = await upsertDraftNode({
+            draftNodeId,
+            taskId: null,
+            ...parentPayload,
+            title: "",
+            originalTitle: null,
+            isGroup: false,
+            orderIndex: getNextDraftOrder(parentTaskId),
+            changeType: "new",
+            origin: "user",
+            sourceLinks: [],
+            metadata: {},
+        });
+        if (saved) focusDraftNodeAfterCreate(draftNodeId);
+    }, [activeDraft, draftDisplayNodeById, focusDraftNodeAfterCreate, getDraftParentPayload, getNextDraftOrder, handleDraftCreateRootTaskAndFocus, upsertDraftNode]);
+
+    const handleDraftAddSiblingTask = useCallback(async (taskId: string) => {
+        if (!activeDraft) return;
+        const sibling = draftDisplayNodeById.get(taskId);
+        if (!sibling) return;
+        const parentDisplayId = sibling.parent_task_id ?? null;
+        const draftNodeId = crypto.randomUUID();
+        const parentPayload = getDraftParentPayload(parentDisplayId);
+        const saved = await upsertDraftNode({
+            draftNodeId,
+            taskId: null,
+            ...parentPayload,
+            title: "",
+            originalTitle: null,
+            isGroup: parentDisplayId === null,
+            orderIndex: (sibling.order_index ?? 0) + 1,
+            changeType: "new",
+            origin: "user",
+            sourceLinks: [],
+            metadata: {},
+        });
+        if (saved) focusDraftNodeAfterCreate(draftNodeId);
+    }, [activeDraft, draftDisplayNodeById, focusDraftNodeAfterCreate, getDraftParentPayload, upsertDraftNode]);
+
+    const handleDraftSaveTaskTitle = useCallback(async (taskId: string, title: string) => {
+        const node = draftDisplayNodeById.get(taskId);
+        if (!node || !title.trim()) return;
+        await upsertDraftNode(buildDraftNodeInput(node, { title: title.trim() }));
+    }, [buildDraftNodeInput, draftDisplayNodeById, upsertDraftNode]);
+
+    const isDraftDescendant = useCallback((ancestorId: string, childId: string) => {
+        let current = draftDisplayNodeById.get(childId);
+        const visited = new Set<string>();
+        while (current?.parent_task_id) {
+            if (current.parent_task_id === ancestorId) return true;
+            if (visited.has(current.parent_task_id)) break;
+            visited.add(current.parent_task_id);
+            current = draftDisplayNodeById.get(current.parent_task_id);
+        }
+        return false;
+    }, [draftDisplayNodeById]);
+
+    const handleDraftPromoteTask = useCallback(async (taskId: string) => {
+        const node = draftDisplayNodeById.get(taskId);
+        if (!node?.parent_task_id) return;
+        const parent = draftDisplayNodeById.get(node.parent_task_id);
+        const nextParentId = parent?.parent_task_id ?? null;
+        await upsertDraftNode(buildDraftNodeInput(node, {
+            parentDisplayId: nextParentId,
+            orderIndex: getNextDraftOrder(nextParentId),
+        }));
+        focusNodeWithPollingV2(taskId);
+    }, [buildDraftNodeInput, draftDisplayNodeById, focusNodeWithPollingV2, getNextDraftOrder, upsertDraftNode]);
+
+    const handleDraftMoveTask = useCallback(async ({
+        taskId,
+        targetId,
+        position,
+    }: {
+        taskId: string;
+        targetId: string;
+        position: 'above' | 'below' | 'as-child';
+    }) => {
+        const node = draftDisplayNodeById.get(taskId);
+        if (!node || taskId === targetId) return;
+        if (targetId !== "project-root" && isDraftDescendant(taskId, targetId)) return;
+
+        if (targetId === "project-root") {
+            await upsertDraftNode(buildDraftNodeInput(node, {
+                parentDisplayId: null,
+                orderIndex: getNextDraftOrder(null),
+            }));
+            return;
+        }
+
+        const target = draftDisplayNodeById.get(targetId);
+        if (!target) return;
+        if (position === "as-child") {
+            await upsertDraftNode(buildDraftNodeInput(node, {
+                parentDisplayId: target.id,
+                orderIndex: getNextDraftOrder(target.id),
+            }));
+            return;
+        }
+
+        const parentDisplayId = target.parent_task_id ?? null;
+        await upsertDraftNode(buildDraftNodeInput(node, {
+            parentDisplayId,
+            orderIndex: getDropDraftOrder(taskId, targetId, parentDisplayId, position),
+        }));
+    }, [buildDraftNodeInput, draftDisplayNodeById, getDropDraftOrder, getNextDraftOrder, isDraftDescendant, upsertDraftNode]);
+
+    const handleDraftMoveTasks = useCallback(async ({
+        taskIds,
+        targetId,
+        position,
+    }: {
+        taskIds: string[];
+        targetId: string;
+        position: 'above' | 'below' | 'as-child';
+    }) => {
+        for (const taskId of Array.from(new Set(taskIds))) {
+            await handleDraftMoveTask({ taskId, targetId, position });
+        }
+    }, [handleDraftMoveTask]);
+
+    const draftCallbacks = useMemo<MindMapCallbacks>(() => ({
+        saveTaskTitle: handleDraftSaveTaskTitle,
+        addChildTask: handleDraftAddChildTask,
+        addSiblingTask: handleDraftAddSiblingTask,
+        deleteTask: async () => undefined,
+        handleNavigate,
+        promoteTask: handleDraftPromoteTask,
+        updateTaskScheduledAt: async () => undefined,
+        updateTaskPriority: async () => undefined,
+        updateTaskEstimatedTime: async () => undefined,
+        onUpdateTask: undefined,
+        toggleTaskCollapse: () => undefined,
+        createRootTaskAndFocus: handleDraftCreateRootTaskAndFocus,
+        onUpdateProject: undefined,
+    }), [
+        handleDraftAddChildTask,
+        handleDraftAddSiblingTask,
+        handleDraftCreateRootTaskAndFocus,
+        handleDraftPromoteTask,
+        handleDraftSaveTaskTitle,
+        handleNavigate,
+    ]);
+
+    const refreshAfterDraftMutation = useCallback(async () => {
+        await onMindmapUpdated?.();
+        window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT));
+    }, [onMindmapUpdated]);
+
+    const handleApplyDraft = useCallback(async () => {
+        if (!activeDraft || isDraftBusy) return;
+        setIsDraftBusy(true);
+        setDraftError(null);
+        try {
+            const response = await fetch(`/api/mindmap/drafts/${activeDraft.draft.id}/apply`, {
+                method: "POST",
+                credentials: "same-origin",
+            });
+            const data = await response.json().catch(() => ({})) as {
+                success?: boolean;
+                history?: MindmapDraftHistoryRow;
+                summary?: MindmapDraftSummary;
+                message?: string;
+                error?: string;
+            };
+            if (!response.ok || data.success === false || !data.history?.id) {
+                throw new Error(data.error || "AI案の確定に失敗しました");
+            }
+            const historyId = data.history.id;
+            setActiveDraft(null);
+            setIsDraftVisible(false);
+            await refreshAfterDraftMutation();
+            pushAction({
+                description: "AI案の確定",
+                toast: {
+                    message: data.message ?? "AI案を確定しました",
+                    actionLabel: "元に戻す",
+                    duration: 5000,
+                },
+                undo: async () => {
+                    const undoResponse = await fetch(`/api/mindmap/draft-history/${historyId}/undo`, {
+                        method: "POST",
+                        credentials: "same-origin",
+                    });
+                    if (!undoResponse.ok) throw new Error("AI案のUndoに失敗しました");
+                    await refreshAfterDraftMutation();
+                },
+                redo: async () => {
+                    const redoResponse = await fetch(`/api/mindmap/draft-history/${historyId}/redo`, {
+                        method: "POST",
+                        credentials: "same-origin",
+                    });
+                    if (!redoResponse.ok) throw new Error("AI案のRedoに失敗しました");
+                    await refreshAfterDraftMutation();
+                },
+            });
+            flashClipboardFeedback(data.message ?? "AI案を確定しました");
+        } catch (error) {
+            console.error("[MindMap] Failed to apply draft:", error);
+            setDraftError(error instanceof Error ? error.message : "AI案の確定に失敗しました");
+        } finally {
+            setIsDraftBusy(false);
+        }
+    }, [activeDraft, flashClipboardFeedback, isDraftBusy, pushAction, refreshAfterDraftMutation]);
+
+    const handleDiscardDraft = useCallback(async () => {
+        if (!activeDraft || isDraftBusy) return;
+        setIsDraftBusy(true);
+        setDraftError(null);
+        try {
+            const response = await fetch(`/api/mindmap/drafts/${activeDraft.draft.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ status: "discarded" }),
+            });
+            const data = await response.json().catch(() => ({})) as { success?: boolean; error?: string };
+            if (!response.ok || data.success === false) {
+                throw new Error(data.error || "AI案の破棄に失敗しました");
+            }
+            setActiveDraft(null);
+            setIsDraftVisible(false);
+            window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT));
+            flashClipboardFeedback("AI案を破棄しました");
+        } catch (error) {
+            console.error("[MindMap] Failed to discard draft:", error);
+            setDraftError(error instanceof Error ? error.message : "AI案の破棄に失敗しました");
+        } finally {
+            setIsDraftBusy(false);
+        }
+    }, [activeDraft, flashClipboardFeedback, isDraftBusy]);
+
     const handleDeleteTaskFromKanban = useCallback(async (taskId: string) => {
         const sourceTask = fallbackSourceTasksByIdForCodex.get(taskId);
         if (sourceTask?.project_id && sourceTask.project_id !== project.id && onKanbanDeleteTask) {
@@ -2136,12 +2726,14 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         });
     }, [buildClipboardNode, getTopLevelCopyNodeIds, pasteClipboardTree]);
 
+    const activeMapCallbacks = isDraftMode ? draftCallbacks : callbacks;
+
     return (
         <div
             className="w-full h-full bg-muted/5 relative outline-none"
             tabIndex={0}
-            onKeyDown={handleContainerKeyDown}
-            onPasteCapture={handleContainerPasteCapture}
+            onKeyDown={isDraftMode ? undefined : handleContainerKeyDown}
+            onPasteCapture={isDraftMode ? undefined : handleContainerPasteCapture}
         >
             {/* Map toolbar buttons (Top Right) */}
             {!isCodexChatImportSidebarOpen && (
@@ -2153,51 +2745,129 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 </div>
             )}
 
+            {activeDraft && (
+                <div className="absolute left-1/2 top-3 z-30 flex max-w-[calc(100%-8rem)] -translate-x-1/2 items-center gap-2 rounded-lg border bg-card/95 px-2.5 py-1.5 text-xs shadow-lg backdrop-blur">
+                    <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 font-semibold text-sky-200">
+                            <span className="inline-flex h-2 w-2 rounded-full bg-sky-400" />
+                            AI案
+                            {!isDraftVisible && <span className="font-normal text-muted-foreground">非表示</span>}
+                        </div>
+                        <div className="truncate text-[11px] text-muted-foreground">
+                            {draftSummaryLabel(activeDraft.summary)}
+                        </div>
+                    </div>
+                    {isDraftVisible ? (
+                        <>
+                            <Button
+                                type="button"
+                                size="sm"
+                                className="h-7 gap-1.5 px-2 text-xs"
+                                disabled={isDraftBusy}
+                                onClick={() => void handleApplyDraft()}
+                            >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                確定
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1.5 px-2 text-xs"
+                                disabled={isDraftBusy}
+                                onClick={() => setIsDraftVisible(false)}
+                            >
+                                <Eye className="h-3.5 w-3.5" />
+                                現行
+                            </Button>
+                        </>
+                    ) : (
+                        <Button
+                            type="button"
+                            size="sm"
+                            className="h-7 gap-1.5 px-2 text-xs"
+                            disabled={isDraftBusy}
+                            onClick={() => setIsDraftVisible(true)}
+                        >
+                            <Eye className="h-3.5 w-3.5" />
+                            表示
+                        </Button>
+                    )}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        disabled={isDraftBusy}
+                        onClick={() => void handleDiscardDraft()}
+                        aria-label="AI案を破棄"
+                        title="AI案を破棄"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                </div>
+            )}
+
+            {draftError && (
+                <div className="absolute left-1/2 top-16 z-30 flex max-w-[520px] -translate-x-1/2 items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200 shadow-lg">
+                    <span className="min-w-0 flex-1 truncate">{draftError}</span>
+                    <button
+                        type="button"
+                        className="rounded p-1 text-red-200/70 hover:bg-red-500/15 hover:text-red-100"
+                        onClick={() => setDraftError(null)}
+                        aria-label="AI案エラーを閉じる"
+                    >
+                        <X className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+            )}
+
             <div className="flex h-full min-h-0 flex-col">
                 <div className="relative min-h-0 flex-1" onPointerDownCapture={handleMapPointerDownCapture}>
                     <CustomMindMapView
                         project={project}
-                        groups={visibleMapGroups}
-                        tasks={visibleMapTasks}
+                        groups={mapGroupsForView}
+                        tasks={mapTasksForView}
                         isMobile={isNarrow}
                         collapsedTaskIds={collapsedTaskIds}
                         selectedNodeId={selectedNodeId}
                         selectedNodeIds={selectedNodeIds}
                         onSelectNode={handleCustomSelectNode}
                         onSelectNodes={handleCustomSelectNodes}
-                        onToggleCollapse={toggleTaskCollapse}
+                        onToggleCollapse={activeMapCallbacks.toggleTaskCollapse}
                         pendingEditNodeId={pendingEditNodeId}
-                        onAddRootNode={() => callbacks.createRootTaskAndFocus("")}
-                        onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
-                        onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
-                        onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}
-                        onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
-                        onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
-                        onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
-                        onSaveProjectTitle={(title) => project?.id ? callbacks.onUpdateProject?.(project.id, title) : undefined}
-                        onUpdateStatus={handleUpdateTaskStatus}
-                        onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
-                        onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
+                        onAddRootNode={() => activeMapCallbacks.createRootTaskAndFocus("")}
+                        onAddChildNode={(taskId) => activeMapCallbacks.addChildTask(taskId)}
+                        onAddSiblingNode={(taskId) => activeMapCallbacks.addSiblingTask(taskId)}
+                        onPromoteNode={(taskId) => activeMapCallbacks.promoteTask(taskId)}
+                        onDeleteNode={isDraftMode ? undefined : (taskId) => activeMapCallbacks.deleteTask(taskId)}
+                        onNavigateNode={(taskId, direction) => activeMapCallbacks.handleNavigate(taskId, direction)}
+                        onSaveTitle={(taskId, title) => activeMapCallbacks.saveTaskTitle(taskId, title)}
+                        onSaveProjectTitle={isDraftMode ? undefined : (title) => project?.id ? callbacks.onUpdateProject?.(project.id, title) : undefined}
+                        onUpdateStatus={isDraftMode ? undefined : handleUpdateTaskStatus}
+                        onUpdateScheduledAt={isDraftMode ? undefined : (taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
+                        onUpdateSchedule={isDraftMode ? undefined : (taskId, params) => onUpdateTask?.(taskId, {
                             scheduled_at: params.scheduledAt,
                             estimated_time: params.estimatedMinutes,
                             calendar_id: params.calendarId,
                         })}
-                        onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
-                        onGenerateHeadingFromLongNode={handleGenerateHeadingFromLongNode}
+                        onResizeNode={isDraftMode ? undefined : onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
+                        onGenerateHeadingFromLongNode={isDraftMode ? undefined : handleGenerateHeadingFromLongNode}
                         generatingHeadingNodeIds={generatingHeadingNodeIds}
-                        onRunCodex={handleRunCodex}
+                        onRunCodex={isDraftMode ? undefined : handleRunCodex}
                         codexRunByNodeId={codexRunByNodeId}
                         codexThreadImportEnabled={selectedRepoImportEnabled}
                         codexThreadImportAvailable={!!selectedCodexImportRepoPath}
                         codexThreadImportPending={isCodexThreadImportSaving}
                         codexThreadImportRepoPath={selectedCodexImportRepoPath || null}
                         taskProgressByNodeId={taskProgressByNodeId}
+                        draftMetaByNodeId={draftMetaByNodeId}
                         onOpenTaskProgress={handleOpenTaskProgress}
-                        onMoveTask={handleCustomMoveTask}
-                        onMoveTasks={handleCustomMoveTasks}
-                        onDuplicateTasks={handleCustomDuplicateTasks}
+                        onMoveTask={isDraftMode ? handleDraftMoveTask : handleCustomMoveTask}
+                        onMoveTasks={isDraftMode ? handleDraftMoveTasks : handleCustomMoveTasks}
+                        onDuplicateTasks={isDraftMode ? undefined : handleCustomDuplicateTasks}
                         importedChatDragTitle={activeCodexChatDrag?.title ?? null}
-                        onDropImportedChatNode={handleDropImportedChatNode}
+                        onDropImportedChatNode={isDraftMode ? undefined : handleDropImportedChatNode}
                     />
                     {isCodexChatImportSidebarOpen && (
                         <div className="absolute inset-y-0 right-0 z-40 flex" data-codex-chat-import-sidebar="true">
