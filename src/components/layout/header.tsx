@@ -48,8 +48,8 @@ interface HeaderProps {
     showMemoSplitToggle?: boolean
     isMemoSplitVisible?: boolean
     onToggleMemoSplit?: () => void
-    isMapChatSidebarVisible?: boolean
-    onOpenMapChatSidebar?: () => void
+    isProjectChatSidebarVisible?: boolean
+    onOpenProjectChatSidebar?: () => void
     onLogoClick?: () => void
 }
 
@@ -73,8 +73,8 @@ export function Header({
     showMemoSplitToggle = false,
     isMemoSplitVisible = false,
     onToggleMemoSplit,
-    isMapChatSidebarVisible = false,
-    onOpenMapChatSidebar,
+    isProjectChatSidebarVisible = false,
+    onOpenProjectChatSidebar,
     onLogoClick,
 }: HeaderProps) {
     const router = useRouter()
@@ -125,7 +125,8 @@ export function Header({
         : selectedProjectRepoPath
             ? "bg-muted-foreground/45"
             : "bg-amber-500"
-    const showAiExecutionButton = activeView === 'map' || (activeView === 'long-term' && isMapSplitVisible)
+    const showAiExecutionButton = activeView === 'today' || activeView === 'map' || (activeView === 'long-term' && isMapSplitVisible)
+    const showProjectChatButton = activeView === 'map' || activeView === 'long-term'
 
     const handleLogoClick = () => {
         if (onLogoClick) {
@@ -143,7 +144,13 @@ export function Header({
     }
 
     const handleOpenAiExecution = () => {
-        window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+        const open = () => window.dispatchEvent(new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+        if (activeView !== 'map' && !(activeView === 'long-term' && isMapSplitVisible)) {
+            setActiveView('map')
+            window.setTimeout(open, 0)
+            return
+        }
+        open()
     }
 
     const handleToggleChatSidebar = () => {
@@ -323,25 +330,24 @@ export function Header({
                         />
                     </Button>
                 )}
-                {activeView === 'map' && (
+                {showProjectChatButton && (
                     <Button
                         type="button"
-                        variant={isMapChatSidebarVisible ? "secondary" : "ghost"}
-                        size="sm"
+                        variant={isProjectChatSidebarVisible ? "secondary" : "ghost"}
+                        size="icon"
                         className={cn(
-                            "h-8 gap-1.5 px-2.5 text-xs font-medium",
-                            isMapChatSidebarVisible
+                            "h-8 w-8",
+                            isProjectChatSidebarVisible
                                 ? "border border-primary/30 bg-background text-primary shadow-sm"
                                 : "text-muted-foreground hover:text-foreground",
                         )}
-                        onClick={onOpenMapChatSidebar}
-                        disabled={!selectedProjectId || !onOpenMapChatSidebar}
-                        aria-pressed={isMapChatSidebarVisible}
-                        aria-label={isMapChatSidebarVisible ? "マップチャットを閉じる" : "マップチャットを開く"}
-                        title="マップチャット"
+                        onClick={onOpenProjectChatSidebar}
+                        disabled={!selectedProjectId || !onOpenProjectChatSidebar}
+                        aria-pressed={isProjectChatSidebarVisible}
+                        aria-label={isProjectChatSidebarVisible ? "チャットを閉じる" : "チャットを開く"}
+                        title={isProjectChatSidebarVisible ? "チャットを閉じる" : "チャット"}
                     >
                         <MessageCircle className="h-4 w-4" />
-                        <span>マップチャット</span>
                     </Button>
                 )}
                 {showCalendarSplitToggle && onToggleCalendarSplit && (
