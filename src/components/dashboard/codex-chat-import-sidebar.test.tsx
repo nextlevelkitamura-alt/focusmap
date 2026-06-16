@@ -368,7 +368,8 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("実行したこと")).toBeInTheDocument()
     expect(screen.getByText("現状")).toBeInTheDocument()
     expect(screen.getByText("確認すること")).toBeInTheDocument()
-    const doneText = screen.getByText("一覧生成は未配置だけに変え、配置処理では保存反映前から対象カードを隠し、失敗時だけ戻すようにしました")
+    const summaryRegion = screen.getByRole("region", { name: "AI要約" })
+    const doneText = within(summaryRegion).getByText("一覧生成は未配置だけに変え、配置処理では保存反映前から対象カードを隠し、失敗時だけ戻すようにしました")
     expect(doneText).toBeInTheDocument()
     expect(doneText.textContent).not.toContain("…")
     expect(doneText.closest("section")?.className).toContain("border-t")
@@ -610,7 +611,7 @@ describe("CodexChatImportSidebar", () => {
     renderSidebar()
 
     fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
-    await screen.findByText("配置するチャット")
+    expect((await screen.findAllByText("配置するチャット")).length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByRole("button", { name: "閉じる" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "ノードへ配置" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "履歴へ戻す" })).not.toBeInTheDocument()

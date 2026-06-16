@@ -14,6 +14,7 @@ const SQLITE_BIN = '/usr/bin/sqlite3';
 const MONITOR_LIMIT = 80;
 const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
 const MAX_ACTIVITY_BODY_CHARS = 8_000;
+const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
 const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
@@ -192,10 +193,25 @@ function sqlString(value: string): string {
 }
 
 async function sqliteJson<T>(dbPath: string, sql: string): Promise<T[]> {
-  const { stdout } = await execFileAsync(SQLITE_BIN, ['-json', dbPath, sql], { timeout: 5_000 });
-  const text = stdout.trim();
-  if (!text) return [];
-  return JSON.parse(text) as T[];
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= SQLITE_READ_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync(
+        SQLITE_BIN,
+        ['-json', '-cmd', '.timeout 3000', dbPath, sql],
+        { timeout: 8_000 },
+      );
+      const text = stdout.trim();
+      if (!text) return [];
+      return JSON.parse(text) as T[];
+    } catch (error) {
+      lastError = error;
+      const delayMs = SQLITE_READ_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined) break;
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
 }
 
 async function readThread(dbPath: string, threadId: string): Promise<CodexThreadRow | null> {
