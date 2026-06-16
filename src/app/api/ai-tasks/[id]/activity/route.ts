@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
+import { sanitizeCodexDisplayText } from '@/lib/codex-display-sanitize'
 import { isTursoConfigured } from '@/lib/turso/client'
 import { getTursoTaskForAuth, listTaskEvents, listTaskProgressPage } from '@/lib/turso/codex-monitoring'
 
@@ -232,7 +233,15 @@ function isHiddenActivityMessage(message: { role?: unknown; kind?: unknown; body
 }
 
 function visibleActivityMessages<T extends { role?: unknown; kind?: unknown; body?: unknown }>(messages: T[]) {
-  return messages.filter(message => !isHiddenActivityMessage(message))
+  return messages.flatMap(message => {
+    if (isHiddenActivityMessage(message)) return []
+    const body = sanitizeCodexDisplayText(message.body, {
+      maxChars: 4_000,
+      fallback: '',
+    }).text
+    if (!body) return []
+    return [{ ...message, body } as T]
+  })
 }
 
 export async function GET(

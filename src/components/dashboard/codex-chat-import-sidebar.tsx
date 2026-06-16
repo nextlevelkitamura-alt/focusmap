@@ -5,12 +5,20 @@ import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, FolderGit2, Fol
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAvailableRepos } from "@/hooks/useAvailableRepos"
 import { useCodexRunnerStatus } from "@/hooks/useCodexRunnerStatus"
+import {
+  buildFallbackCodexDisplaySummary,
+  codexDisplaySummarySignature,
+  type CodexDisplaySummary,
+  type CodexDisplaySummaryInput,
+} from "@/lib/codex-display-summary"
 import {
   CODEX_CHAT_IMPORT_DRAG_TYPE,
   encodeCodexChatImportDragPayload,
 } from "@/lib/codex-chat-import-dnd"
+import { sanitizeCodexDisplayText } from "@/lib/codex-display-sanitize"
 import {
   codexMonitorAccentClass,
   codexMonitorCardClass,
@@ -125,10 +133,10 @@ function canUseServerFolderPicker() {
 function readTaskDetailText(data: unknown, fallback: string | null) {
   const task = (data as { task?: { memo?: unknown; title?: unknown } } | null)?.task
   const memo = typeof task?.memo === "string" ? task.memo.trim() : ""
-  if (memo) return memo
+  if (memo) return sanitizeCodexDisplayText(memo, { maxChars: 1_200, fallback: "" }).text
   const title = typeof task?.title === "string" ? task.title.trim() : ""
-  if (title) return title
-  return fallback?.trim() || "詳細はありません"
+  if (title) return sanitizeCodexDisplayText(title, { maxChars: 1_200, fallback: "" }).text
+  return sanitizeCodexDisplayText(fallback, { maxChars: 1_200, fallback: "詳細はありません" }).text
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -139,7 +147,8 @@ function readActivityMessages(data: unknown): AiTaskActivityMessage[] {
   const rawMessages = isRecord(data) && Array.isArray(data.messages) ? data.messages : []
   return rawMessages.flatMap((rawMessage, index): AiTaskActivityMessage[] => {
     if (!isRecord(rawMessage)) return []
-    const body = typeof rawMessage.body === "string" ? rawMessage.body.trim() : ""
+    const rawBody = typeof rawMessage.body === "string" ? rawMessage.body.trim() : ""
+    const body = sanitizeCodexDisplayText(rawBody, { maxChars: 4_000, fallback: "" }).text
     if (!body) return []
     const role = ACTIVITY_ROLES.has(rawMessage.role as AiTaskActivityRole)
       ? rawMessage.role as AiTaskActivityRole
@@ -325,92 +334,24 @@ function isStatusActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "status" || message.role === "system"
 }
 
-function compactSummaryText(value: string) {
-  return value
-    .replace(/[`*_#>\-[\]]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-}
-
-function summarySentences(value: string | null | undefined) {
-  return (value ?? "")
-    .split(/[\n。！？!?]+/u)
-    .map(line => compactSummaryText(line))
-    .filter(line => line.length >= 3)
-}
-
-function pushSummaryItem(items: string[], value: string | null | undefined, maxItems = 3) {
-  if (items.length >= maxItems) return
-  const text = compactSummaryText(value ?? "")
-  if (!text || items.includes(text)) return
-  items.push(text)
-}
-
-function collectSummaryItems(
-  sources: string[],
-  matcher: RegExp,
-  maxItems = 3,
-) {
-  const items: string[] = []
-  for (const source of sources) {
-    for (const sentence of summarySentences(source)) {
-      if (!matcher.test(sentence)) continue
-      pushSummaryItem(items, sentence, maxItems)
-      if (items.length >= maxItems) return items
-    }
-  }
-  return items
-}
-
-type CodexChatAiSummary = {
-  done: string
-  next: string
-  change: string
-}
-
-function buildCodexChatSummary(
+function codexSummaryInput(
   item: CodexChatImportItem,
   messages: AiTaskActivityMessage[],
   detailText: string | null | undefined,
-): CodexChatAiSummary {
-  const visibleMessages = visibleActivityMessages(messages)
-  const codexTexts = visibleMessages
-    .filter(message => !isUserActivityMessage(message))
-    .map(message => message.body)
-  const userTexts = visibleMessages
-    .filter(isUserActivityMessage)
-    .map(message => message.body)
-  const allTexts = [...codexTexts, detailText ?? "", item.snippet ?? "", item.title].filter(Boolean)
-  const uiStatus = getCodexMonitorUiStatus(item.status ?? "awaiting_approval")
-
-  const doneItems = collectSummaryItems(
-    allTexts,
-    /確認|整理|修正|追加|実装|反映|保存|更新|通り|完了|削除|戻し|テスト|lint|型チェック|ステージ|コミット|デプロイ/u,
-  )
-  if (doneItems.length === 0 && userTexts.length > 0) pushSummaryItem(doneItems, userTexts[0], 1)
-  if (doneItems.length === 0) pushSummaryItem(doneItems, "チャット内容を確認", 1)
-
-  const changeItems = collectSummaryItems(
-    allTexts,
-    /方針|判断|仕様|変更|差分|原因|対象|状態|確認待ち|配置|表示|維持|戻す|優先/u,
-  )
-  if (changeItems[0] === doneItems[0]) changeItems.shift()
-  if (changeItems.length === 0) pushSummaryItem(changeItems, "表示と配置を整理", 1)
-
-  const nextItems = collectSummaryItems(
-    [...codexTexts].reverse(),
-    /次|確認|再確認|残|必要|TODO|レビュー|判断|ノード|配置|コミット|デプロイ|API|差分/u,
-  )
-  if (nextItems[0] === doneItems[0] || nextItems[0] === changeItems[0]) nextItems.shift()
-  if (!item.placed) pushSummaryItem(nextItems, "ノード化の要否", 1)
-  if (uiStatus === "review") pushSummaryItem(nextItems, "確認待ちの内容", 1)
-  if (uiStatus === "running") pushSummaryItem(nextItems, "完了後の差分", 1)
-  if (nextItems.length === 0) pushSummaryItem(nextItems, "原文ログ", 1)
-
-  const done = doneItems[0] ?? "チャット内容を確認"
-  const change = changeItems[0] ?? "表示と配置を整理"
-  const next = nextItems[0] ?? "原文ログ"
-  return { done, next, change }
+): CodexDisplaySummaryInput {
+  return {
+    title: item.title,
+    status: item.status ?? null,
+    statusLabel: item.statusLabel ?? null,
+    snippet: item.snippet,
+    detailText: detailText ?? null,
+    messages: visibleActivityMessages(messages).map(message => ({
+      role: message.role,
+      kind: message.kind,
+      body: message.body,
+      created_at: message.created_at,
+    })),
+  }
 }
 
 function CodexChatAiSummaryRow({
@@ -419,7 +360,7 @@ function CodexChatAiSummaryRow({
   onToggleCollapsed,
   loading,
 }: {
-  summary: CodexChatAiSummary | null
+  summary: CodexDisplaySummary | null
   collapsed: boolean
   onToggleCollapsed: () => void
   loading?: boolean
@@ -428,7 +369,7 @@ function CodexChatAiSummaryRow({
 
   const rows = [
     { label: "実行したこと", value: summary.done },
-    { label: "現状", value: summary.change },
+    { label: "現状", value: summary.current },
     { label: "確認すること", value: summary.next },
   ]
 
@@ -486,6 +427,7 @@ function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) 
         <div
           className={cn(
             "whitespace-pre-wrap break-words text-[15px] leading-7",
+            "[overflow-wrap:anywhere]",
             isUserMessage
               ? "rounded-2xl bg-white px-4 py-2.5 font-medium text-zinc-950 shadow-sm"
               : "px-0 py-0 text-zinc-100",
@@ -526,8 +468,15 @@ export function CodexChatImportSidebar({
   const [latestChatActivityAtById, setLatestChatActivityAtById] = React.useState<Record<string, string>>({})
   const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
+  const [aiSummaryByChatId, setAiSummaryByChatId] = React.useState<Record<string, {
+    signature: string
+    summary: CodexDisplaySummary
+    loading: boolean
+    source: "ai" | "fallback"
+  }>>({})
   const backgroundSyncedChatIdsRef = React.useRef(new Set<string>())
   const consumedInitialSelectedChatIdRef = React.useRef<string | null>(null)
+  const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const { repos, isLoading, error: reposError, refresh, requestRescan } = useAvailableRepos()
   const codexRunnerStatus = useCodexRunnerStatus()
 
@@ -877,9 +826,30 @@ export function CodexChatImportSidebar({
   const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
   const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
-  const selectedSummary = selectedChatItem
-    ? buildCodexChatSummary(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
-    : null
+  const selectedSummaryInput = React.useMemo(() => {
+    if (!selectedChatItem) return null
+    return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
+  }, [selectedChatItem, selectedDetail?.messages, selectedDetail?.text])
+  const selectedSummarySignature = React.useMemo(() => {
+    return selectedSummaryInput ? codexDisplaySummarySignature(selectedSummaryInput) : null
+  }, [selectedSummaryInput])
+  const selectedFallbackSummary = React.useMemo(() => {
+    return selectedSummaryInput ? buildFallbackCodexDisplaySummary(selectedSummaryInput) : null
+  }, [selectedSummaryInput])
+  const selectedAiSummaryState = selectedChatItem ? aiSummaryByChatId[selectedChatItem.id] : null
+  const selectedSummary = selectedAiSummaryState &&
+    selectedSummarySignature &&
+    selectedAiSummaryState.signature === selectedSummarySignature
+    ? selectedAiSummaryState.summary
+    : selectedFallbackSummary
+  const selectedSummaryLoading = Boolean(
+    selectedDetail?.loading ||
+    (
+      selectedAiSummaryState?.loading &&
+      selectedSummarySignature &&
+      selectedAiSummaryState.signature === selectedSummarySignature
+    ),
+  )
   const selectedSummaryCollapsed = selectedChatItem ? collapsedSummaryChatIds.has(selectedChatItem.id) : false
   const toggleSelectedSummaryCollapsed = React.useCallback(() => {
     if (!selectedChatItem) return
@@ -893,6 +863,83 @@ export function CodexChatImportSidebar({
       return next
     })
   }, [selectedChatItem])
+  React.useEffect(() => {
+    if (!selectedChatItem || !selectedSummaryInput || !selectedSummarySignature || !selectedFallbackSummary) return
+    if (!selectedDetail || selectedDetail.loading) return
+
+    const bodySize = JSON.stringify(selectedSummaryInput).length
+    if (bodySize < 240) return
+
+    const existing = aiSummaryByChatId[selectedChatItem.id]
+    if (existing?.signature === selectedSummarySignature && !existing.loading) return
+
+    const requestKey = `${selectedChatItem.id}:${selectedSummarySignature}`
+    if (summaryRequestInFlightRef.current.has(requestKey)) return
+    summaryRequestInFlightRef.current.add(requestKey)
+    setAiSummaryByChatId(prev => ({
+      ...prev,
+      [selectedChatItem.id]: {
+        signature: selectedSummarySignature,
+        summary: existing?.signature === selectedSummarySignature ? existing.summary : selectedFallbackSummary,
+        loading: true,
+        source: existing?.signature === selectedSummarySignature ? existing.source : "fallback",
+      },
+    }))
+
+    const targetId = resolveAiTaskId(selectedChatItem) ?? selectedChatItem.id
+    void fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(targetId)}/codex-display-summary`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(selectedSummaryInput),
+    })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}))
+        const summary = data && typeof data === "object" && "summary" in data
+          ? (data as { summary?: Partial<CodexDisplaySummary>; source?: "ai" | "fallback" }).summary
+          : null
+        setAiSummaryByChatId(prev => {
+          const current = prev[selectedChatItem.id]
+          if (!current || current.signature !== selectedSummarySignature) return prev
+          return {
+            ...prev,
+            [selectedChatItem.id]: {
+              signature: selectedSummarySignature,
+              summary: response.ok && summary?.done && summary.current && summary.next
+                ? { done: summary.done, current: summary.current, next: summary.next }
+                : selectedFallbackSummary,
+              loading: false,
+              source: response.ok && data?.source === "ai" ? "ai" : "fallback",
+            },
+          }
+        })
+      })
+      .catch(() => {
+        setAiSummaryByChatId(prev => {
+          const current = prev[selectedChatItem.id]
+          if (!current || current.signature !== selectedSummarySignature) return prev
+          return {
+            ...prev,
+            [selectedChatItem.id]: {
+              signature: selectedSummarySignature,
+              summary: selectedFallbackSummary,
+              loading: false,
+              source: "fallback",
+            },
+          }
+        })
+      })
+      .finally(() => {
+        summaryRequestInFlightRef.current.delete(requestKey)
+      })
+  }, [
+    aiSummaryByChatId,
+    resolveAiTaskId,
+    selectedChatItem,
+    selectedDetail,
+    selectedFallbackSummary,
+    selectedSummaryInput,
+    selectedSummarySignature,
+  ])
   const openCodexThread = React.useCallback((event: React.MouseEvent<HTMLAnchorElement>, href: string) => {
     event.stopPropagation()
     const bridge = focusmapDesktopFolderBridge()
@@ -1154,7 +1201,7 @@ export function CodexChatImportSidebar({
               summary={selectedSummary}
               collapsed={selectedSummaryCollapsed}
               onToggleCollapsed={toggleSelectedSummaryCollapsed}
-              loading={selectedDetail?.loading}
+              loading={selectedSummaryLoading}
             />
           </div>
 
