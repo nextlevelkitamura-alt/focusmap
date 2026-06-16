@@ -79,20 +79,12 @@ const AiTodosView = dynamic(
     () => import("@/components/ai-todos/ai-todos-view").then(mod => ({ default: mod.AiTodosView })),
     { loading: DashboardPaneFallback, ssr: false },
 )
-const TodayTaskBoard = dynamic(
-    () => import("@/components/today/today-task-board").then(mod => ({ default: mod.TodayTaskBoard })),
-    { loading: DashboardPaneFallback, ssr: false },
-)
-const AiExecutionTimeline = dynamic(
-    () => import("@/components/today/ai-execution-timeline").then(mod => ({ default: mod.AiExecutionTimeline })),
-    { loading: DashboardPaneFallback, ssr: false },
-)
 const SettingsOverview = dynamic(
     () => import("@/components/settings/settings-overview").then(mod => ({ default: mod.SettingsOverview })),
     { loading: DashboardPaneFallback, ssr: false },
 )
-const TodayMemoBoard = dynamic(
-    () => import("@/components/dashboard/today-memo-board").then(mod => ({ default: mod.TodayMemoBoard })),
+const DesktopTodayPanel = dynamic(
+    () => import("@/components/dashboard/desktop-today-panel").then(mod => ({ default: mod.DesktopTodayPanel })),
     { loading: DashboardPaneFallback, ssr: false },
 )
 const AiChatPanel = dynamic(
@@ -234,8 +226,6 @@ export function DashboardClient({
     // Scheduling panel open state
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
 
-    // Today タブのサブビュー: 'memo' = 今日するメモ + D&D / 'timeline' = 従来のタスクボード / 'ai' = AI実行
-    const [todaySubView, setTodaySubView] = useState<'memo' | 'timeline' | 'ai'>('memo')
     const [todaySelectedDate, setTodaySelectedDate] = useState<Date>(() => {
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
     })
@@ -244,16 +234,6 @@ export function DashboardClient({
         requestKey: number
     } | null>(null)
     const todayMemoScheduleRequestRef = useRef(0)
-    useEffect(() => {
-        const saved = typeof window !== "undefined" ? window.localStorage.getItem('focusmap:today-sub-view') : null
-        if (saved === 'memo' || saved === 'timeline' || saved === 'ai') {
-            queueMicrotask(() => setTodaySubView(saved))
-        }
-    }, [])
-    const updateTodaySubView = useCallback((v: 'memo' | 'timeline' | 'ai') => {
-        setTodaySubView(v)
-        if (typeof window !== "undefined") window.localStorage.setItem('focusmap:today-sub-view', v)
-    }, [])
     const openTodayMemoSchedule = useCallback((payload: { memoId: string; date: Date }) => {
         const normalizedDate = new Date(payload.date)
         normalizedDate.setHours(0, 0, 0, 0)
@@ -263,37 +243,34 @@ export function DashboardClient({
             memoId: payload.memoId,
             requestKey: todayMemoScheduleRequestRef.current,
         })
-        updateTodaySubView('memo')
         setActiveView('today')
-    }, [setActiveView, updateTodaySubView])
+    }, [setActiveView])
     const openTodayBoard = useCallback(() => {
         const today = new Date()
         today.setHours(0, 0, 0, 0)
         setTodaySelectedDate(today)
         setTodayMemoScheduleFocus(null)
-        updateTodaySubView('memo')
         setActiveView('today')
-    }, [setActiveView, updateTodaySubView])
+    }, [setActiveView])
     useEffect(() => {
         const handleOpenTodayCalendar = () => {
             const today = new Date()
             today.setHours(0, 0, 0, 0)
             setTodaySelectedDate(today)
             setTodayMemoScheduleFocus(null)
-            updateTodaySubView('memo')
             setActiveView('today')
         }
 
         window.addEventListener(OPEN_TODAY_CALENDAR_EVENT, handleOpenTodayCalendar)
         return () => window.removeEventListener(OPEN_TODAY_CALENDAR_EVENT, handleOpenTodayCalendar)
-    }, [setActiveView, updateTodaySubView])
+    }, [setActiveView])
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
     const [isMapSplitOpen, setIsMapSplitOpen] = useState(false)
     const [isMapChatSidebarOpen, setIsMapChatSidebarOpen] = useState(false)
     const [mindmapLinkedMemoTarget, setMindmapLinkedMemoTarget] = useState<{ taskId: string; requestKey: number } | null>(null)
     const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
-    const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
+    const isCalendarPanelVisible = isOptionalCalendarView && isCalendarSplitOpen
     const isMapChatSidebarVisible = activeView === 'map' && isMapChatSidebarOpen
     const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
     const isMapSplitVisible = activeView === 'long-term' && isMapSplitOpen
@@ -1648,83 +1625,27 @@ export function DashboardClient({
                     />
                 </div>
 
-                {/* Pane 2: Center (TodayTaskBoard / MindMap / Habits) */}
+                {/* Pane 2: Center (Todo calendar / MindMap / Habits) */}
                 <div className="flex-1 min-w-0 overflow-hidden h-full w-full flex flex-col" style={{ minWidth: 0 }}>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     {activeView === 'habits' ? (
                         <HabitsView onUpdateTask={updateTask} />
                     ) : activeView === 'today' ? (
-                        <div className="flex h-full w-full flex-col overflow-hidden">
-                            <div className="shrink-0 border-b bg-background px-3 py-2">
-                                <div className="inline-flex rounded-md border bg-muted/30 p-0.5 text-xs">
-                                    <button
-                                        type="button"
-                                        onClick={() => updateTodaySubView('memo')}
-                                        className={cn(
-                                            "min-h-[28px] rounded px-3 py-1 transition-colors",
-                                            todaySubView === 'memo'
-                                                ? "bg-background text-foreground shadow-sm"
-                                                : "text-muted-foreground hover:text-foreground",
-                                        )}
-                                    >
-                                        メモ + カレンダー
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => updateTodaySubView('timeline')}
-                                        className={cn(
-                                            "min-h-[28px] rounded px-3 py-1 transition-colors",
-                                            todaySubView === 'timeline'
-                                                ? "bg-background text-foreground shadow-sm"
-                                                : "text-muted-foreground hover:text-foreground",
-                                        )}
-                                    >
-                                        タイムライン
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => updateTodaySubView('ai')}
-                                        className={cn(
-                                            "min-h-[28px] rounded px-3 py-1 transition-colors",
-                                            todaySubView === 'ai'
-                                                ? "bg-background text-foreground shadow-sm"
-                                                : "text-muted-foreground hover:text-foreground",
-                                        )}
-                                    >
-                                        AI実行
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="flex-1 min-h-0 overflow-hidden">
-                                {todaySubView === 'memo' ? (
-                                    <TodayMemoBoard
-                                        projects={projects}
-                                        selectedSpaceId={selectedSpaceId}
-                                        selectedProjectId={selectedProjectId}
-                                        scheduleFocusMemoId={todayMemoScheduleFocus?.memoId ?? null}
-                                        scheduleFocusRequestKey={todayMemoScheduleFocus?.requestKey ?? null}
-                                        onClearScheduleFocus={() => setTodayMemoScheduleFocus(null)}
-                                    />
-                                ) : todaySubView === 'timeline' ? (
-                                    <TodayTaskBoard
-                                        allTasks={allTasksMerged}
-                                        onUpdateTask={handleUpdateTaskWithQuickSync}
-                                        projects={projects}
-                                        onCreateQuickTask={handleCreateQuickTask}
-                                        onDeleteTask={handleDeleteTaskFromToday}
-                                        syncFailedIds={syncFailedIds}
-                                    />
-                                ) : (
-                                    <AiExecutionTimeline
-                                        selectedDate={todaySelectedDate}
-                                        showDateControls
-                                        onDateChange={setTodaySelectedDate}
-                                        selectedSpaceId={selectedSpaceId}
-                                        spaces={spaces}
-                                    />
-                                )}
-                            </div>
-                        </div>
+                        <DesktopTodayPanel
+                            allTasks={allTasksMerged}
+                            onUpdateTask={handleUpdateTaskWithQuickSync}
+                            projects={projects}
+                            selectedProjectId={selectedProjectId}
+                            onCreateQuickTask={handleCreateQuickTask}
+                            onCreateSubTask={handleCreateSubTask}
+                            onDeleteTask={handleDeleteTaskFromToday}
+                            onOpenAiChat={() => setIsAiChatOpen(true)}
+                            syncFailedIds={syncFailedIds}
+                            calendarScrollToHour={todayMemoScheduleFocus ? 12 : undefined}
+                            calendarScrollRequestKey={todayMemoScheduleFocus?.requestKey}
+                            defaultRangeMode="3days"
+                            show3DayOverflowChips={false}
+                        />
                     ) : activeView === 'long-term' ? (
                         <WishlistView
                             projects={projects}

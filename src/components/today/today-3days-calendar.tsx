@@ -33,6 +33,7 @@ interface Today3DaysCalendarProps {
   onScrollPositionChange?: (scrollTop: number) => void
   onDateSelect?: (date: Date) => void
   onItemTap?: (item: TimeBlock) => void
+  showOverflowChips?: boolean
 }
 
 interface OverflowGroup {
@@ -125,7 +126,7 @@ function firstAvailableColumn(item: TimeBlock, columns: TimeBlock[][]): number {
   return columns.length
 }
 
-function buildConflictClusters(items: TimeBlock[]): ConflictCluster[] {
+function buildConflictClusters(items: TimeBlock[], showOverflowChips: boolean): ConflictCluster[] {
   const sorted = [...items].sort((a, b) => {
     const start = a.startTime.getTime() - b.startTime.getTime()
     if (start !== 0) return start
@@ -157,14 +158,15 @@ function buildConflictClusters(items: TimeBlock[]): ConflictCluster[] {
       columns[column].push(item)
       return { item, column }
     })
-    const totalColumns = Math.min(columns.length, 2)
+    const visibleColumnLimit = showOverflowChips ? 2 : Math.max(columns.length, 1)
+    const totalColumns = Math.min(Math.max(columns.length, 1), visibleColumnLimit)
 
     return {
       visible: assignments
-        .filter((assignment) => assignment.column < 2)
+        .filter((assignment) => assignment.column < visibleColumnLimit)
         .map((assignment) => ({ ...assignment, totalColumns })),
       hidden: assignments
-        .filter((assignment) => assignment.column >= 2)
+        .filter((assignment) => showOverflowChips && assignment.column >= visibleColumnLimit)
         .map((assignment) => assignment.item),
       start: new Date(Math.min(...group.map((item) => item.startTime.getTime()))),
       end: new Date(Math.max(...group.map((item) => item.endTime.getTime()))),
@@ -198,11 +200,12 @@ function eventPositionStyle(layout: ConflictLayoutItem): CSSProperties {
     }
   }
 
+  const columnWidth = 100 / layout.totalColumns
   return {
     top,
     height,
-    left: layout.column === 0 ? 4 : "calc(50% + 2px)",
-    width: "calc(50% - 6px)",
+    left: `calc(${columnWidth * layout.column}% + 4px)`,
+    width: `calc(${columnWidth}% - 8px)`,
   }
 }
 
@@ -245,6 +248,7 @@ export function Today3DaysCalendar({
   onScrollPositionChange,
   onDateSelect,
   onItemTap,
+  showOverflowChips = true,
 }: Today3DaysCalendarProps) {
   const [overflowGroup, setOverflowGroup] = useState<OverflowGroup | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -317,7 +321,7 @@ export function Today3DaysCalendar({
           </div>
 
           {days.map((day, dayIndex) => {
-            const clusters = buildConflictClusters(dayBlocks[dayIndex])
+            const clusters = buildConflictClusters(dayBlocks[dayIndex], showOverflowChips)
             return (
               <div key={day.toISOString()} className="relative border-r border-border/30">
                 {Array.from({ length: END_HOUR - START_HOUR }, (_, index) => (

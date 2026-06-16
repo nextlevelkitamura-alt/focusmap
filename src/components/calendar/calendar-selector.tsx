@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { RefreshCw, ChevronDown, CheckSquare, X } from "lucide-react"
+import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,9 +17,16 @@ import { startCalendarOAuth } from "@/lib/external-auth-launch"
 interface CalendarSelectorProps {
   onVisibleCalendarIdsChange?: (ids: string[]) => void
   compact?: boolean
+  compactLabel?: string
+  triggerClassName?: string
 }
 
-export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }: CalendarSelectorProps) {
+export function CalendarSelector({
+  onVisibleCalendarIdsChange,
+  compact = false,
+  compactLabel = "カレンダー",
+  triggerClassName,
+}: CalendarSelectorProps) {
   const { calendars, isLoading, error, fetchCalendars, toggleCalendar, toggleAll } = useCalendars()
 
   // 表示中のカレンダーIDのリストを親に通知
@@ -150,8 +158,12 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 px-2">
-            <span>カレンダー</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("h-6 text-[10px] gap-1 px-2", triggerClassName)}
+          >
+            <span>{compactLabel}</span>
             <span className="text-muted-foreground">({selectedCount})</span>
             <ChevronDown className="w-3 h-3" />
           </Button>

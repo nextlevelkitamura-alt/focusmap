@@ -1,11 +1,11 @@
 # Delivery Plan: desktop-todo-calendar-only
 
-Status: `planned`
+Status: `implemented_needs_verification`
 Last updated: 2026-06-17
 
 ## Summary
 
-PC版 `Todo` を、中央のメモ/タイムライン/AI実行サブビューつき分割画面から、全幅3日カレンダー画面へ切り替える。
+PC版 `Todo` を、中央のメモ/タイムライン/AI実行サブビューつき分割画面から、全幅3日カレンダー画面へ切り替える。ヘッダーは単独更新ボタンと旧 `ノード追加先` select を外し、表示カレンダーのチェックリストと時間軸表示ボタンを右側操作群へ寄せる。
 
 ## Related Requirements
 
@@ -26,7 +26,7 @@ API:
 
 DB:
 
-- No planned changes.
+- No schema changes. Display-calendar selection uses the existing `user_calendars.selected` flag through `useCalendars` and `PATCH /api/calendars/[id]`.
 
 External services:
 
@@ -61,5 +61,4 @@ Revert the small UI commit. No DB or API migration is involved.
 
 ## Blockers
 
-- Decide whether "表示のみ" means only the screen should show calendar, or whether event create/edit/delete controls should also be disabled.
-- Decide whether narrow desktop side panels should keep the old overflow chips while the main Todo screen removes them.
+- Visual verification is pending because repository policy requires an explicit user request before running browser checks.

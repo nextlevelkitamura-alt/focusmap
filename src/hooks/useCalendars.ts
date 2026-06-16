@@ -229,6 +229,7 @@ export function useCalendars() {
         .filter(cal => cal.selected)
         .map(cal => cal.google_calendar_id);
       writeStoredCalendars(cachedCalendars);
+      notifyListeners(cachedCalendars);
     }
 
     try {
@@ -254,6 +255,7 @@ export function useCalendars() {
           .filter(cal => cal.selected)
           .map(cal => cal.google_calendar_id);
         writeStoredCalendars(cachedCalendars);
+        notifyListeners(cachedCalendars);
       }
       setError(err as Error);
       throw err;
@@ -273,6 +275,7 @@ export function useCalendars() {
         .filter(cal => cal.selected)
         .map(cal => cal.google_calendar_id);
       writeStoredCalendars(cachedCalendars);
+      notifyListeners(cachedCalendars);
     }
 
     try {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    List, Flame, Play, Pause, RefreshCw, Check, Loader2, CalendarDays
+    List, Flame, Play, Pause, Loader2
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -24,9 +24,11 @@ import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useClickOutside } from "@/hooks/useClickOutside"
 import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
 import type { MindMapNodeCalendarDragPayload } from "@/lib/calendar-constants"
+import { CalendarSelector } from "@/components/calendar/calendar-selector"
 
 // --- Types ---
 const MINDMAP_NODE_DROP_IN_FLIGHT_MS = 4000
+type CalendarRangeMode = 'day' | '3days' | 'month'
 
 interface DesktopTodayPanelProps {
     allTasks: Task[]
@@ -40,6 +42,8 @@ interface DesktopTodayPanelProps {
     syncFailedIds?: Set<string>
     calendarScrollToHour?: number
     calendarScrollRequestKey?: number
+    defaultRangeMode?: CalendarRangeMode
+    show3DayOverflowChips?: boolean
 }
 
 // --- Component ---
@@ -56,6 +60,8 @@ export function DesktopTodayPanel({
     syncFailedIds,
     calendarScrollToHour,
     calendarScrollRequestKey,
+    defaultRangeMode = 'day',
+    show3DayOverflowChips = true,
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
     const calendarAreaRef = useRef<HTMLDivElement>(null)
@@ -67,8 +73,7 @@ export function DesktopTodayPanel({
         estimatedTime: number
         calendarId: string | null
     } | null>(null)
-    const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | '3days' | 'month'>('day')
-    const [mindMapDropCalendarId, setMindMapDropCalendarId] = useState<string | null>(null)
+    const [calendarRangeMode, setCalendarRangeMode] = useState<CalendarRangeMode>(defaultRangeMode)
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -122,7 +127,6 @@ export function DesktopTodayPanel({
         setExpandedHabitId,
         setHabitsExpanded,
         setTimelineMode,
-        syncState,
         timelineMode,
         timer,
         toggleChildTask,
@@ -131,7 +135,6 @@ export function DesktopTodayPanel({
         toggleTask,
         handleConvertEventToMemo,
         handleConvertCalendarPayloadToMemo,
-        refreshCalendar,
         writableCalendars,
         visibleTasks,
         stableCalendarColorMap,
@@ -140,7 +143,7 @@ export function DesktopTodayPanel({
     const handleTimelineScrollPositionChange = useCallback((pos: number) => {
         scrollPositionRef.current = pos
     }, [scrollPositionRef])
-    const handleCalendarRangeModeChange = useCallback((mode: 'day' | '3days' | 'month') => {
+    const handleCalendarRangeModeChange = useCallback((mode: CalendarRangeMode) => {
         setCalendarRangeMode(mode)
     }, [])
     const handleRangeDateSelect = useCallback((date: Date) => {
@@ -202,25 +205,9 @@ export function DesktopTodayPanel({
         )?.google_calendar_id
         ?? writableCalendars[0]?.id
         ?? null
-    const selectedMindMapDropCalendarId = useMemo(() => {
-        if (mindMapDropCalendarId && writableCalendars.some(c => c.id === mindMapDropCalendarId)) {
-            return mindMapDropCalendarId
-        }
-        return defaultQuickCreateCalendarId
-    }, [defaultQuickCreateCalendarId, mindMapDropCalendarId, writableCalendars])
     const draftCalendarColor = taskFormDraft?.calendarId
         ? writableCalendars.find(c => c.id === taskFormDraft.calendarId)?.background_color
         : undefined
-    useEffect(() => {
-        if (writableCalendars.length === 0) {
-            if (mindMapDropCalendarId !== null) setMindMapDropCalendarId(null)
-            return
-        }
-        if (mindMapDropCalendarId && writableCalendars.some(c => c.id === mindMapDropCalendarId)) return
-        if (defaultQuickCreateCalendarId && mindMapDropCalendarId !== defaultQuickCreateCalendarId) {
-            setMindMapDropCalendarId(defaultQuickCreateCalendarId)
-        }
-    }, [defaultQuickCreateCalendarId, mindMapDropCalendarId, writableCalendars])
     const mindMapNodeDropInFlightRef = useRef<Map<string, number>>(new Map())
     const handleMindMapNodeDrop = useCallback(async (payload: MindMapNodeCalendarDragPayload, startTime: Date) => {
         const durationMinutes = Math.max(15, payload.durationMinutes || 30)
@@ -238,14 +225,14 @@ export function DesktopTodayPanel({
             await onUpdateTask(payload.taskId, {
                 scheduled_at: scheduledAt,
                 estimated_time: durationMinutes,
-                calendar_id: selectedMindMapDropCalendarId ?? payload.calendarId ?? defaultQuickCreateCalendarId,
+                calendar_id: payload.calendarId ?? defaultQuickCreateCalendarId,
             })
         } finally {
             window.setTimeout(() => {
                 mindMapNodeDropInFlightRef.current.delete(dropKey)
             }, MINDMAP_NODE_DROP_IN_FLIGHT_MS)
         }
-    }, [defaultQuickCreateCalendarId, onUpdateTask, selectedMindMapDropCalendarId])
+    }, [defaultQuickCreateCalendarId, onUpdateTask])
     const draftPreview = taskFormDraft?.scheduledDate
         ? {
             title: taskFormDraft.title?.trim() || '新しい予定',
@@ -356,66 +343,40 @@ export function DesktopTodayPanel({
                         </p>
                     </div>
 
-                    {/* Range + Day-only mode toggle */}
-                    <div className="flex flex-shrink-0 items-start gap-1">
-                        <button
-                            type="button"
-                            onClick={() => void refreshCalendar()}
-                            disabled={syncState === 'syncing'}
-                            className={cn(
-                                "mt-1 grid h-8 w-8 place-items-center rounded-md border border-border/50 text-muted-foreground transition-colors",
-                                syncState === 'syncing'
-                                    ? "cursor-wait text-primary"
-                                    : "hover:bg-muted/60 hover:text-foreground",
-                                syncState === 'done' && "text-green-500"
-                            )}
-                            aria-label="カレンダーを更新"
-                            title="カレンダーを更新"
-                        >
-                            {syncState === 'syncing' ? (
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                            ) : syncState === 'done' ? (
-                                <Check className="h-3.5 w-3.5" />
-                            ) : (
-                                <RefreshCw className="h-3.5 w-3.5" />
-                            )}
-                        </button>
-                        {calendarRangeMode === 'day' && (
+                    {/* Right-aligned display controls */}
+                    <div className="flex flex-shrink-0 items-start justify-end gap-1">
+                        {(calendarRangeMode === 'day' || calendarRangeMode === '3days') && (
                             <button
                                 type="button"
-                                onClick={() => setTimelineMode(effectiveTimelineMode === 'cards' ? 'calendar' : 'cards')}
+                                onClick={() => {
+                                    if (calendarRangeMode === 'day') {
+                                        setTimelineMode(effectiveTimelineMode === 'cards' ? 'calendar' : 'cards')
+                                    } else {
+                                        setTimelineMode('calendar')
+                                    }
+                                }}
                                 className={cn(
-                                    "grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
-                                    effectiveTimelineMode === 'cards'
+                                    "mt-1 grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
+                                    effectiveTimelineMode === 'cards' && calendarRangeMode === 'day'
                                         ? "bg-muted text-foreground"
-                                        : "text-muted-foreground hover:text-foreground active:bg-muted/70"
+                                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground active:bg-muted/70",
+                                    calendarRangeMode === '3days' && "bg-background/80 text-foreground"
                                 )}
-                                aria-label={effectiveTimelineMode === 'cards' ? "通常表示に戻す" : "タイムライン表示"}
-                                aria-pressed={effectiveTimelineMode === 'cards'}
+                                aria-label={calendarRangeMode === 'day' && effectiveTimelineMode === 'cards' ? "時間軸表示に戻す" : "時間軸表示"}
+                                aria-pressed={calendarRangeMode === '3days' || effectiveTimelineMode !== 'cards'}
+                                title="時間軸表示"
                             >
                                 <List className="h-3.5 w-3.5" />
                             </button>
                         )}
-                        {calendarRangeMode === 'day' && writableCalendars.length > 0 && (
-                            <label className="mt-1 flex h-8 max-w-[218px] flex-shrink-0 items-center gap-1 rounded-md border border-border/50 bg-background px-1.5 text-[11px] text-muted-foreground">
-                                <CalendarDays className="h-3.5 w-3.5 flex-shrink-0" />
-                                <span className="flex-shrink-0 text-[10px] font-medium text-muted-foreground">
-                                    ノード追加先
-                                </span>
-                                <select
-                                    value={selectedMindMapDropCalendarId ?? ""}
-                                    onChange={event => setMindMapDropCalendarId(event.target.value || null)}
-                                    className="min-w-0 flex-1 bg-transparent text-[11px] font-medium text-foreground outline-none"
-                                    aria-label="マップノードを予定化するときの追加先カレンダー"
-                                    title="マップノードを予定化するときの追加先カレンダー"
-                                >
-                                    {writableCalendars.map(calendar => (
-                                        <option key={calendar.id} value={calendar.id}>
-                                            {calendar.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                        {calendars.length > 0 && (
+                            <div className="mt-1">
+                                <CalendarSelector
+                                    compact
+                                    compactLabel="表示カレンダー"
+                                    triggerClassName="h-8 rounded-md border border-border/50 bg-background/80 px-2 text-[11px] font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                                />
+                            </div>
                         )}
                         <div className="inline-flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5">
                             {(['day', '3days', 'month'] as const).map(mode => (
@@ -690,6 +651,7 @@ export function DesktopTodayPanel({
                         onScrollPositionChange={handleTimelineScrollPositionChange}
                         onDateSelect={handleRangeDateSelect}
                         onItemTap={handleItemTap}
+                        showOverflowChips={show3DayOverflowChips}
                     />
                 ) : calendarRangeMode === 'month' ? (
                     <TodayMonthCalendar
