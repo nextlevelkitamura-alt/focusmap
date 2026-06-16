@@ -69,17 +69,20 @@ describe('mindmap organization harness', () => {
       confidence: 'medium',
     })
     expect(candidates[0].diagram).toContain('└─ チャットを整理する')
-    expect(candidates[0].operation_hint[0]).toContain('addMindmapGroup')
+    expect(candidates[0].operation_hint[0]).toContain('saveMindmapDraft')
   })
 
-  test('返答ハーネスは承認前のDB変更を禁止する', () => {
+  test('返答ハーネスは既定範囲とAI案下書き保存を指示する', () => {
     const harness = buildMindmapOrganizationHarness()
 
-    expect(harness.rules.join('\n')).toContain('未配置/未取り込み')
-    expect(harness.response_format.join('\n')).toContain('範囲確認')
+    expect(harness.rules.join('\n')).toContain('現在マインドマップ上にあるノードだけ')
+    expect(harness.rules.join('\n')).toContain('ユーザーが明示した時だけ含める')
+    expect(harness.response_format.join('\n')).toContain('採用範囲')
     expect(harness.response_format.join('\n')).toContain('既存ノードへ入れる案')
     expect(harness.rules.join('\n')).toContain('ユーザー承認前')
-    expect(harness.apply_after_approval.join('\n')).toContain('addMindmapGroup')
+    expect(harness.rules.join('\n')).toContain('saveMindmapDraft')
+    expect(harness.apply_after_approval.join('\n')).toContain('AIによる既存タイトル一括変更')
+    expect(harness.apply_after_approval.join('\n')).toContain('保存対象に入れない')
     expect(harness.diagram_template).toContain('```text')
   })
 })

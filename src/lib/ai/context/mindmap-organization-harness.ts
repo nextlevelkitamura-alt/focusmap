@@ -209,8 +209,8 @@ export function suggestMindmapOrganizationCandidates(
           : `見出しに共通語「${key}」を含む兄弟ノードが複数あります。`,
         confidence: group.confidence,
         operation_hint: [
-          `addMindmapGroup(title: "${title}", projectId, parentId: ${parentId ? `"${parentId}"` : 'null'})`,
-          ...group.nodes.map(node => `moveMindmapNode(nodeId: "${node.id}", parentTaskId: "作成したグループID")`),
+          `saveMindmapDraft: 新規まとめ "${title}" を parentTaskId=${parentId ?? 'null'} に追加`,
+          ...group.nodes.map(node => `saveMindmapDraft: 既存ノード "${node.title}" (${node.id}) を新規まとめ配下へ移動案として保存`),
         ],
         diagram: [
           `${parentTitle ?? 'ルート'}`,
@@ -232,25 +232,25 @@ export function suggestMindmapOrganizationCandidates(
 export function buildMindmapOrganizationHarness(): MindmapOrganizationHarness {
   return {
     rules: [
-      '整理案を出す前に、Codexから未配置/未取り込みのチャット・作業も含めるか、現在マインドマップ上にあるノードだけにするかを必ず確認する。ユーザーが対象範囲を明示済みの場合だけ、その範囲で進める。',
+      '整理範囲は既定で現在マインドマップ上にあるノードだけにする。Codex未配置/未取り込みチャット、未整理メモ、ノート見出しはユーザーが明示した時だけ含める。',
       '最初は見出しだけで全体を眺め、本文やメモ詳細を無差別に読まない。',
-      'まとめ候補は提案に留め、ユーザー承認前に addMindmapGroup / moveMindmapNode / updateMindmapNode を実行しない。',
+      'まとめ候補は提案に留め、ユーザー承認前に saveMindmapDraft を実行しない。',
+      'チャット経由の整理結果は addMindmapGroup / moveMindmapNode / updateMindmapNode で本番DBへ直接反映せず、saveMindmapDraft で AI案 下書きへ保存する。',
       '判断に迷う候補だけ getMindmapNodeDetail や getNoteOrganizationDetail で詳細を読む。',
       '削除は提案しない。まず新規まとめノード作成、既存ノード配下への移動、必要なら名称変更案だけに絞る。',
       '提案では、新しいノードを作って紐づける案と、既存ノード配下へ入れる案の両方を検討して示す。片方が不要な場合は理由を短く添える。',
     ],
     response_format: [
-      '1. 範囲確認: Codex未配置/未取り込みも含めるか、マップ上のノードだけにするかを聞く。回答済みなら採用した範囲を明記する。',
+      '1. 採用範囲: 既定では現在マップ上のノードのみ。ユーザーが明示した場合だけ、含めたCodex/メモ/ノート範囲を短く明記する。',
       '2. 読んだ前提: プロジェクト概要、現在の見出し数、見出しの大枠を短く共有する。',
       '3. 整理提案: 新規ノード作成案、既存ノードへ入れる案、移動するノード、理由、実行操作をカード風に出す。',
       '4. 図: ```text``` のツリーで「現在 → 提案後」を見せる。',
-      '5. 確認: 「この案で実行してよいですか？」と聞き、承認後だけDB変更ツールを呼ぶ。',
+      '5. 確認: 「この案をAI案として保存してよいですか？」と聞き、承認後だけ saveMindmapDraft を呼ぶ。',
     ],
     apply_after_approval: [
-      '新規まとめノードが必要なら addMindmapGroup を使う。parentId がある場合は指定する。',
-      '作成された group.id を parentTaskId として moveMindmapNode を順番に呼ぶ。',
-      '既存ノード名を広げるだけなら updateMindmapNode の title を使う。',
-      '実行後に getMindmapOverview で結果を確認し、何を移動したか短く報告する。',
+      'saveMindmapDraft に新規ノード、既存ノード移動、ユーザー明示のタイトル調整、元メモ/チャット紐づきだけを渡す。',
+      'AIによる既存タイトル一括変更、メモ/状態/進捗/予定変更、削除候補は下書き保存対象に入れない。',
+      '保存後は、画面の AI案 で確認・手動調整し、確定で本番反映できることを短く伝える。',
     ],
     diagram_template: [
       '```text',

@@ -201,6 +201,162 @@ export interface Database {
                     metadata?: Json
                 }
             }
+            mindmap_drafts: {
+                Row: {
+                    id: string
+                    user_id: string
+                    project_id: string
+                    chat_session_id: string | null
+                    status: 'active' | 'discarded' | 'applied'
+                    scope: Json
+                    summary: Json
+                    base_snapshot: Json
+                    created_by: 'ai' | 'user'
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    project_id: string
+                    chat_session_id?: string | null
+                    status?: 'active' | 'discarded' | 'applied'
+                    scope?: Json
+                    summary?: Json
+                    base_snapshot?: Json
+                    created_by?: 'ai' | 'user'
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    project_id?: string
+                    chat_session_id?: string | null
+                    status?: 'active' | 'discarded' | 'applied'
+                    scope?: Json
+                    summary?: Json
+                    base_snapshot?: Json
+                    created_by?: 'ai' | 'user'
+                    created_at?: string
+                    updated_at?: string
+                }
+            }
+            mindmap_draft_nodes: {
+                Row: {
+                    id: string
+                    draft_id: string
+                    user_id: string
+                    project_id: string
+                    draft_node_id: string
+                    task_id: string | null
+                    parent_draft_node_id: string | null
+                    parent_task_id: string | null
+                    title: string
+                    original_title: string | null
+                    is_group: boolean
+                    order_index: number
+                    change_type: 'new' | 'moved' | 'title_adjusted' | 'moved_title_adjusted' | 'link_adjusted'
+                    origin: 'ai' | 'user'
+                    source_links: Json
+                    metadata: Json
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    draft_id: string
+                    user_id: string
+                    project_id: string
+                    draft_node_id: string
+                    task_id?: string | null
+                    parent_draft_node_id?: string | null
+                    parent_task_id?: string | null
+                    title: string
+                    original_title?: string | null
+                    is_group?: boolean
+                    order_index?: number
+                    change_type?: 'new' | 'moved' | 'title_adjusted' | 'moved_title_adjusted' | 'link_adjusted'
+                    origin?: 'ai' | 'user'
+                    source_links?: Json
+                    metadata?: Json
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    draft_id?: string
+                    user_id?: string
+                    project_id?: string
+                    draft_node_id?: string
+                    task_id?: string | null
+                    parent_draft_node_id?: string | null
+                    parent_task_id?: string | null
+                    title?: string
+                    original_title?: string | null
+                    is_group?: boolean
+                    order_index?: number
+                    change_type?: 'new' | 'moved' | 'title_adjusted' | 'moved_title_adjusted' | 'link_adjusted'
+                    origin?: 'ai' | 'user'
+                    source_links?: Json
+                    metadata?: Json
+                    created_at?: string
+                    updated_at?: string
+                }
+            }
+            mindmap_draft_history: {
+                Row: {
+                    id: string
+                    user_id: string
+                    project_id: string
+                    draft_id: string | null
+                    chat_session_id: string | null
+                    status: 'applied' | 'undone' | 'redone'
+                    summary: Json
+                    before_snapshot: Json
+                    after_snapshot: Json
+                    applied_payload: Json
+                    expires_at: string
+                    undone_at: string | null
+                    redone_at: string | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    project_id: string
+                    draft_id?: string | null
+                    chat_session_id?: string | null
+                    status?: 'applied' | 'undone' | 'redone'
+                    summary?: Json
+                    before_snapshot?: Json
+                    after_snapshot?: Json
+                    applied_payload?: Json
+                    expires_at?: string
+                    undone_at?: string | null
+                    redone_at?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    project_id?: string
+                    draft_id?: string | null
+                    chat_session_id?: string | null
+                    status?: 'applied' | 'undone' | 'redone'
+                    summary?: Json
+                    before_snapshot?: Json
+                    after_snapshot?: Json
+                    applied_payload?: Json
+                    expires_at?: string
+                    undone_at?: string | null
+                    redone_at?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+            }
             memo_tags: {
                 Row: {
                     id: string

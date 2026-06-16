@@ -21,6 +21,8 @@ import {
   suggestMindmapOrganizationCandidates,
   type MindmapOrganizationNodeInput,
 } from '@/lib/ai/context/mindmap-organization-harness'
+import { replaceActiveMindmapDraft, type SaveMindmapDraftNodeInput } from '@/lib/mindmap-draft-service'
+import type { Json } from '@/types/database'
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
@@ -1824,7 +1826,7 @@ export const getMindmapOverview = tool({
 
 export const proposeMindmapOrganization = tool({
   description:
-    'マインドマップを整理・統合・まとめ直したい時に、整理対象範囲をユーザーへ確認した後で使う読み取り専用ハーネス。プロジェクト概要、蓄積コンテキスト、ノード/ノート見出しだけを読み、まとめ候補と図解用テンプレートを返す。DBは変更しない。返答では新規ノード作成案と既存ノード配下へ入れる案を検討し、ユーザー承認後だけ addMindmapGroup / moveMindmapNode / updateMindmapNode を使う。',
+    'マインドマップを整理・統合・まとめ直したい時に使う読み取り専用ハーネス。既定では現在マップ上のノードだけを読み、ユーザーが明示した場合だけCodex Inboxやノート見出しを含める。DBは変更しない。変更案を保存する場合は本番tasksではなく saveMindmapDraft を使う。',
   inputSchema: z.object({
     projectId: z.string().describe('整理提案するプロジェクトID'),
     focus: z.string().optional().describe('整理したい観点。例: チャット文脈、ノート整理、未分類ノードなど。'),
@@ -1832,7 +1834,7 @@ export const proposeMindmapOrganization = tool({
     maxNoteHeadings: z.number().optional().describe('返すノート/メモ見出し数。通常30、最大80。'),
     maxCandidates: z.number().optional().describe('機械的に拾うまとめ候補数。通常6、最大12。'),
     includeCodexInbox: z.boolean().optional().describe('Codex Inbox配下の未配置/未取り込み扱いのCodexチャット・作業も整理対象に含めるか。ユーザーに確認済みの場合だけtrue。未指定/falseなら現在マインドマップ上にある通常ノードだけを見る。'),
-    includeNoteHeadings: z.boolean().optional().describe('ノート/メモ見出しも整理候補として含めるか。ユーザーが「マインドマップ上だけ」と答えた場合はfalse。未指定なら従来通りtrue。'),
+    includeNoteHeadings: z.boolean().optional().describe('ノート/メモ見出しも整理候補として含めるか。ユーザーが明示した場合だけtrue。未指定/falseなら現在マップ上のノードだけを見る。'),
   }),
   execute: async ({ projectId, focus, maxNodes, maxNoteHeadings, maxCandidates, includeCodexInbox, includeNoteHeadings }) => {
     const supabase = await createClient()
@@ -1842,7 +1844,7 @@ export const proposeMindmapOrganization = tool({
     const nodeLimit = normalizeLimit(maxNodes, 120, 240)
     const noteLimit = normalizeLimit(maxNoteHeadings, 30, 80)
     const candidateLimit = normalizeLimit(maxCandidates, 6, 12)
-    const shouldIncludeNoteHeadings = includeNoteHeadings !== false
+    const shouldIncludeNoteHeadings = includeNoteHeadings === true
 
     const [{ data: project, error: projectError }, { data: context }] = await Promise.all([
       supabase
@@ -1978,6 +1980,114 @@ export const proposeMindmapOrganization = tool({
       candidate_groups: candidateGroups,
       response_harness: buildMindmapOrganizationHarness(),
       message: `「${project.title}」のマインドマップ整理用に、見出し${ordered.length}件とノート/メモ見出し${noteHeadings.length}件を取得しました。`,
+    }
+  },
+})
+
+function looksLikeUuid(value: string | null | undefined) {
+  return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+export const saveMindmapDraft = tool({
+  description:
+    'マップチャットの整理結果を本番tasksへ直接反映せず、プロジェクト全体の最新AI案下書きとして保存する。新規ノード、既存ノード移動、ユーザー明示のタイトル調整、元メモ/チャット紐づきを保存対象にする。',
+  inputSchema: z.object({
+    projectId: z.string().describe('AI案を保存するプロジェクトID'),
+    focus: z.string().optional().describe('整理した観点。例: 優先度順、重複整理、次にやる順'),
+    scope: z.object({
+      includeCodexInbox: z.boolean().optional().describe('Codex Inbox/未配置チャットを含めた場合だけtrue'),
+      includeNoteHeadings: z.boolean().optional().describe('未整理メモ/ノート見出しを含めた場合だけtrue'),
+      note: z.string().optional().describe('整理範囲の補足'),
+    }).optional(),
+    summary: z.object({
+      newNodes: z.number().optional(),
+      movedNodes: z.number().optional(),
+      adjustedNodes: z.number().optional(),
+      text: z.string().optional(),
+    }).optional(),
+    nodes: z.array(z.object({
+      clientKey: z.string().optional().describe('このAI案内だけで使う新規ノード参照キー。例: group-agent-visibility'),
+      parentClientKey: z.string().optional().describe('親が同じAI案内の新規ノードなら、そのclientKeyを入れる'),
+      taskId: z.string().nullable().optional().describe('既存ノードを移動/調整する場合のtasks.id。新規ノードでは未指定'),
+      parentTaskId: z.string().nullable().optional().describe('親が既存ノードならtasks.id。プロジェクト直下ならnull/未指定'),
+      title: z.string().describe('新規ノード名、またはユーザーがAI案上で手動調整した既存ノード名'),
+      isGroup: z.boolean().optional().describe('まとめ/カテゴリノードならtrue'),
+      orderIndex: z.number().optional().describe('同じ親配下の表示順'),
+      changeType: z.enum(['new', 'moved', 'title_adjusted', 'moved_title_adjusted', 'link_adjusted']).optional(),
+      origin: z.enum(['ai', 'user']).optional().describe('AI作成/移動案ならai。ユーザーがAI案上で手動調整したものだけuser'),
+      sourceLinks: z.array(z.object({
+        memoItemId: z.string().optional(),
+        sourceType: z.string().optional(),
+        sourceId: z.string().optional(),
+        label: z.string().optional(),
+      })).optional().describe('元メモ/チャット紐づき。memoItemId + sourceType(wishlist/note) + sourceId があるものは確定時にmemo_node_linksへ保存される'),
+    })).describe('保存する差分ノード。既存ノードのAIタイトル一括変更、削除、状態/メモ/予定変更は入れない。'),
+  }),
+  execute: async ({ projectId, focus, scope, summary, nodes }) => {
+    const supabase = await createClient()
+    const user = await requireAuthedUser(supabase)
+    if (!user) return { success: false, error: '認証エラー' }
+
+    const keyToDraftNodeId = new Map<string, string>()
+    for (const node of nodes) {
+      const key = node.clientKey?.trim()
+      if (!key || node.taskId) continue
+      keyToDraftNodeId.set(key, crypto.randomUUID())
+    }
+
+    const draftNodes: SaveMindmapDraftNodeInput[] = nodes.map(node => {
+      const clientKey = node.clientKey?.trim()
+      const taskId = node.taskId ?? null
+      const parentFromClient = node.parentClientKey ? keyToDraftNodeId.get(node.parentClientKey.trim()) ?? null : null
+      const draftNodeId = taskId
+        ? taskId
+        : (clientKey ? keyToDraftNodeId.get(clientKey) ?? crypto.randomUUID() : crypto.randomUUID())
+      return {
+        draftNodeId,
+        taskId,
+        parentDraftNodeId: parentFromClient ?? (looksLikeUuid(node.parentTaskId ?? null) ? node.parentTaskId ?? null : null),
+        parentTaskId: looksLikeUuid(node.parentTaskId ?? null) ? node.parentTaskId ?? null : null,
+        title: node.title,
+        isGroup: node.isGroup ?? !taskId,
+        orderIndex: node.orderIndex ?? 0,
+        changeType: node.changeType ?? (taskId ? 'moved' : 'new'),
+        origin: node.origin ?? 'ai',
+        sourceLinks: (node.sourceLinks ?? []) as Json,
+        metadata: {
+          clientKey: clientKey ?? null,
+          focus: focus ?? null,
+          savedBy: 'saveMindmapDraft',
+        } as Json,
+      }
+    })
+
+    const draft = await replaceActiveMindmapDraft({
+      supabase,
+      userId: user.id,
+      projectId,
+      scope: {
+        focus: focus ?? null,
+        includeCodexInbox: scope?.includeCodexInbox === true,
+        includeNoteHeadings: scope?.includeNoteHeadings === true,
+        note: scope?.note ?? null,
+      } as Json,
+      summary: summary ? {
+        newNodes: summary.newNodes ?? undefined,
+        movedNodes: summary.movedNodes ?? undefined,
+        adjustedNodes: summary.adjustedNodes ?? undefined,
+        text: summary.text ?? undefined,
+      } as Json : undefined,
+      nodes: draftNodes,
+      createdBy: 'ai',
+    })
+
+    return {
+      success: true,
+      draftId: draft.draft.id,
+      projectId,
+      summary: draft.summary,
+      nodeCount: draft.nodes.length,
+      message: `AI案を保存しました。画面のAI案で確認し、必要なら手動調整してから確定してください。`,
     }
   },
 })

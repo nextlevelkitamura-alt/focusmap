@@ -68,6 +68,25 @@ describe('agent-chat-progress', () => {
     expect(metadata && agentProgressText(metadata)).toBe('メモ一括追加完了')
   })
 
+  test('labels mindmap draft save progress', () => {
+    const message = createAgentProgressMessage({
+      id: 'progress-map-draft',
+      state: 'done',
+      label: agentToolLabel('saveMindmapDraft'),
+      toolName: 'saveMindmapDraft',
+      startedAt: '2026-06-16T12:00:00.000Z',
+      completedAt: '2026-06-16T12:00:01.000Z',
+    })
+
+    const metadata = getAgentProgressMetadata(message)
+    expect(metadata).toMatchObject({
+      state: 'done',
+      label: 'AI案保存',
+      toolName: 'saveMindmapDraft',
+    })
+    expect(metadata && agentProgressText(metadata)).toBe('AI案保存完了')
+  })
+
   test('filters progress messages out of model replay history', () => {
     const userMessage: UIMessage = { id: 'u1', role: 'user', parts: [{ type: 'text', text: '予定を見て' }] }
     const progressMessage = createAgentProgressMessage({

@@ -7,6 +7,7 @@ import type { AgentModelMode } from "@/lib/ai/agent-model-mode"
 import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
+import { MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
 
 export type AgentChatStatus = "idle" | "running" | "completed" | "failed"
 export type AgentChatMode = "general" | "project"
@@ -60,6 +61,7 @@ const MAX_SESSIONS = 50
 const POLL_MS = 3000
 const CALENDAR_MUTATION_TOOLS = new Set(["addCalendarEvent", "updateCalendarEvent", "deleteCalendarEvent"])
 const MEMO_MUTATION_TOOLS = new Set(["bulkAddMemos"])
+const MINDMAP_DRAFT_MUTATION_TOOLS = new Set(["saveMindmapDraft"])
 
 function newId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID()
@@ -167,6 +169,18 @@ function sessionHasCompletedMemoMutation(session: AgentChatSession): boolean {
   })
 }
 
+function sessionHasCompletedMindmapDraftMutation(session: AgentChatSession): boolean {
+  return session.messages.some(message => {
+    const metadata = message.metadata
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+    const record = metadata as Record<string, unknown>
+    return record.focusmapAgentProgress === true &&
+      record.state === "done" &&
+      typeof record.toolName === "string" &&
+      MINDMAP_DRAFT_MUTATION_TOOLS.has(record.toolName)
+  })
+}
+
 function createUserMessage(text: string, files: FileUIPart[]): UIMessage {
   const parts: UIMessage["parts"] = []
   if (text.trim()) parts.push({ type: "text", text: text.trim() })
@@ -203,6 +217,7 @@ export function useAgentChatSessions(scopeKey = "general") {
   const stateRef = useRef(state)
   const calendarMutationNotifiedRef = useRef(new Set<string>())
   const memoMutationNotifiedRef = useRef(new Set<string>())
+  const mindmapDraftMutationNotifiedRef = useRef(new Set<string>())
 
   useEffect(() => {
     stateRef.current = state
@@ -228,10 +243,19 @@ export function useAgentChatSessions(scopeKey = "general") {
     }))
   }, [])
 
+  const notifyMindmapDraftMutationIfNeeded = useCallback((session: AgentChatSession) => {
+    if (!sessionHasCompletedMindmapDraftMutation(session)) return
+    const key = `${session.id}:${session.runCompletedAt ?? session.updatedAt}`
+    if (mindmapDraftMutationNotifiedRef.current.has(key)) return
+    mindmapDraftMutationNotifiedRef.current.add(key)
+    window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
+  }, [])
+
   const refresh = useCallback(async () => {
     const remoteSessions = await fetchSessions(scopeKey)
     remoteSessions.forEach(notifyCalendarMutationIfNeeded)
     remoteSessions.forEach(notifyMemoMutationIfNeeded)
+    remoteSessions.forEach(notifyMindmapDraftMutationIfNeeded)
     setState(prev => {
       const activeSessionId = prev.activeSessionId && remoteSessions.some(session => session.id === prev.activeSessionId)
         ? prev.activeSessionId
@@ -239,7 +263,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       return { sessions: remoteSessions, activeSessionId }
     })
     return remoteSessions
-  }, [notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, scopeKey])
+  }, [notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, notifyMindmapDraftMutationIfNeeded, scopeKey])
 
   useEffect(() => {
     let cancelled = false
@@ -255,6 +279,7 @@ export function useAgentChatSessions(scopeKey = "general") {
           if (cancelled) return
           remoteSessions.forEach(notifyCalendarMutationIfNeeded)
           remoteSessions.forEach(notifyMemoMutationIfNeeded)
+          remoteSessions.forEach(notifyMindmapDraftMutationIfNeeded)
           setState(prev => ({
             sessions: remoteSessions,
             activeSessionId: prev.activeSessionId && remoteSessions.some(session => session.id === prev.activeSessionId)
@@ -269,7 +294,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     return () => {
       cancelled = true
     }
-  }, [notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, scopeKey, storageKey])
+  }, [notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, notifyMindmapDraftMutationIfNeeded, scopeKey, storageKey])
 
   useEffect(() => {
     if (!hydrated || loadedScopeKey !== scopeKey) return
@@ -305,6 +330,7 @@ export function useAgentChatSessions(scopeKey = "general") {
           if (!session) return
           notifyCalendarMutationIfNeeded(session)
           notifyMemoMutationIfNeeded(session)
+          notifyMindmapDraftMutationIfNeeded(session)
           setState(prev => ({
             sessions: upsertSession(prev.sessions, session),
             activeSessionId: prev.activeSessionId ?? session.id,
@@ -316,7 +342,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [hydrated, loadedScopeKey, notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, scopeKey])
+  }, [hydrated, loadedScopeKey, notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, notifyMindmapDraftMutationIfNeeded, scopeKey])
 
   const hasRunningSession = state.sessions.some(session => session.status === "running")
   useEffect(() => {
@@ -473,6 +499,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       if (remoteSession) {
         notifyCalendarMutationIfNeeded(remoteSession)
         notifyMemoMutationIfNeeded(remoteSession)
+        notifyMindmapDraftMutationIfNeeded(remoteSession)
         setState(prev => ({
           sessions: upsertSession(prev.sessions, remoteSession),
           activeSessionId: remoteSession.id,
@@ -498,7 +525,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       })
       throw new Error(message)
     }
-  }, [notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, scopeKey])
+  }, [notifyCalendarMutationIfNeeded, notifyMemoMutationIfNeeded, notifyMindmapDraftMutationIfNeeded, scopeKey])
 
   const activeSession = useMemo(
     () => state.sessions.find(session => session.id === state.activeSessionId) ?? null,
