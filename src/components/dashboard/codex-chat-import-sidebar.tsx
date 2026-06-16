@@ -499,6 +499,7 @@ export function CodexChatImportSidebar({
       return haystack.includes(normalizedQuery)
     })
   }, [chatItems, normalizedQuery])
+  const isFilteringChatItems = normalizedQuery.length > 0
   const selectableChatItems = React.useMemo(() => {
     const byId = new Map<string, CodexChatImportItem>()
     for (const item of chatItems) byId.set(item.id, item)
@@ -1287,10 +1288,25 @@ export function CodexChatImportSidebar({
                 aria-label="チャットを検索"
               />
             </div>
+            <div className="mt-2 flex min-w-0 items-center justify-between gap-2 px-1">
+              <div className="min-w-0 truncate text-xs font-semibold text-zinc-400">Codexチャット履歴</div>
+              <div
+                className="flex shrink-0 items-center gap-1.5"
+                aria-label={`未配置 ${chatItems.length}件${isFilteringChatItems ? `、表示 ${filteredChatItems.length}件` : ""}`}
+              >
+                <span className="inline-flex h-6 items-center rounded-full border border-amber-400/25 bg-amber-400/10 px-2 text-[11px] font-semibold text-amber-200">
+                  未配置 {chatItems.length}件
+                </span>
+                {isFilteringChatItems && (
+                  <span className="inline-flex h-6 items-center rounded-full border border-white/10 bg-white/[0.06] px-2 text-[11px] font-medium text-zinc-300">
+                    表示 {filteredChatItems.length}件
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
-            <div className="mb-2 px-1 text-xs font-semibold text-zinc-400">Codexチャット履歴</div>
             {filteredChatItems.length === 0 ? (
               <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
                 Codexチャット履歴はありません

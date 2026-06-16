@@ -148,6 +148,7 @@ describe("CodexChatImportSidebar", () => {
     expect(buttonContainingText("既存リポ選択")).toBeInTheDocument()
     expect(screen.queryByLabelText("対象リポを選択 focusmap")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
+    expect(screen.getByText("未配置 1件")).toBeInTheDocument()
     const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
     expect(within(row).getByText("Codexスレッド連携UI")).toBeInTheDocument()
     expect(within(row).queryByText("未配置")).not.toBeInTheDocument()
@@ -161,6 +162,33 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByRole("button", { name: "チャットを削除 Codexスレッド連携UI" })).toBeVisible()
     expect(screen.getByRole("button", { name: "AI実行を閉じる" })).toBeInTheDocument()
     expect(screen.queryByText("閉じる")).not.toBeInTheDocument()
+  })
+
+  test("keeps visible counts for unplaced and searched chats", () => {
+    renderSidebar({
+      chatItems: [
+        chatItems[0],
+        {
+          ...chatItems[0],
+          id: "chat-node-2",
+          aiTaskId: "ai-task-2",
+          title: "AI要約の横幅を拡張",
+          snippet: "要約カードを読みやすくする",
+          threadId: "thread-ai-summary",
+          updatedLabel: "7分前",
+        },
+      ],
+    })
+
+    expect(screen.getByText("未配置 2件")).toBeInTheDocument()
+    expect(screen.queryByText("表示 1件")).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("チャットを検索"), { target: { value: "横幅" } })
+
+    expect(screen.getByText("未配置 2件")).toBeInTheDocument()
+    expect(screen.getByText("表示 1件")).toBeInTheDocument()
+    expect(screen.getByText("AI要約の横幅を拡張")).toBeInTheDocument()
+    expect(screen.queryByText("Codexスレッド連携UI")).not.toBeInTheDocument()
   })
 
   test("renders running chats as compact green history cards with a fallback status pill", () => {
