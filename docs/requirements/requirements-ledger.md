@@ -1,6 +1,6 @@
 # Requirements Ledger
 
-Last updated: 2026-05-30
+Last updated: 2026-06-17
 
 | ID | Type | Requirement | Status | Priority | Evidence | Notes |
 |---|---|---|---|---|---|---|
@@ -20,3 +20,4 @@ Last updated: 2026-05-30
 | REQ-014 | product | Google Calendar events can be converted into new unscheduled memos. | deployed | high | `src/app/api/calendar/events/[eventId]/memo/route.ts`; `src/lib/calendar-event-to-memo.ts`; drag/click callers in today timeline and memo board; Cloud Run revision `shikumika-app-00478-cjj`. | Normal-event local smoke was confirmed after applying the audit table. |
 | REQ-015 | product | Recurring Google Calendar event conversion asks whether to delete one occurrence or the whole series. | needs_verification | high | `confirmCalendarEventMemoDeleteScope()` passes `deleteScope` and `recurringEventId` to the conversion API. | Current UI uses browser confirm: OK = series, Cancel = this occurrence. Consider a custom dialog for clearer two-button labels. |
 | REQ-016 | data | Calendar event to memo conversions are auditable after the source event is deleted. | deployed_needs_rls_verification | medium | `calendar_event_memo_conversions` stores memo id, calendar/event ids, delete scope, event snapshot, status, and timestamps; Supabase migration `20260530143000` is applied. | RLS visibility test is still pending. |
+| REQ-017 | product | PC / Mac desktop Todo can be simplified to a calendar-only view that defaults to full-width 3days. | proposed | high | `docs/specs/desktop-todo-calendar-only/requirements.md`; `docs/specs/desktop-todo-calendar-only/mockup-desktop-3days-calendar-only.png`; code orientation: `dashboard-client.tsx`, `desktop-today-panel.tsx`, `today-3days-calendar.tsx`. | Mobile Today stays unchanged. Clarify whether "display only" also disables event editing. |

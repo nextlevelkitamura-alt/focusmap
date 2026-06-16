@@ -1,6 +1,6 @@
 # Delivery Board
 
-Last updated: 2026-05-30
+Last updated: 2026-06-17
 
 | ID | Branch/PR | Feature | Status | Touch Points | Depends On | Deploy Risk | Verification | Owner/Next |
 |---|---|---|---|---|---|---|---|---|
@@ -8,6 +8,7 @@ Last updated: 2026-05-30
 | DEL-002 | branch unknown | MEMO-STRUCTURE | blocked | `supabase/migrations/20260525_create_memo_structure_items.sql`, `src/lib/memo-structure.ts`, memo API routes, wishlist detail UI, mindmap memo links | Supabase migration state, route/RLS tests, depth decision | medium | Pending: route tests, RLS verification, migration verification | Confirm whether to verify on current branch or split to a dedicated branch. |
 | DEL-003 | docs-only local change | Development management docs | ready_for_review | `docs/requirements/*`, `docs/specs/memo-structure/*`, `docs/adr/*` | None beyond owner review | low | `npm test -- --run src/lib/ai/memo-to-mindmap.test.ts src/lib/mindmap-model.test.ts` passed | Commit separately only if explicitly approved. |
 | DEL-004 | `feature/codex-node-relay` / commit `c538292` | CALENDAR-EVENT-TO-MEMO | deployed | `supabase/migrations/20260530143000_calendar_event_memo_conversions.sql`, `src/app/api/calendar/events/[eventId]/memo/route.ts`, today timeline/memo board | Recurring event and RLS verification | medium | `npx tsc --noEmit` passed; targeted eslint 0 errors; targeted test passed; Supabase migration applied; Cloud Run `shikumika-app-00478-cjj` deployed | Verify recurring occurrence/series and RLS visibility. |
+| DEL-005 | local main planned | DESKTOP-TODO-CALENDAR-ONLY | planned | `dashboard-client.tsx`, `desktop-today-panel.tsx`, `today-3days-calendar.tsx` | Owner decision on whether event editing should remain enabled | low | Pending; no verification run by policy | Implement as a small local-main UI commit after approval. |
 
 ## Delivery Gate Result
 
