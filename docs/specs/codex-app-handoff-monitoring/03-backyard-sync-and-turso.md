@@ -22,7 +22,7 @@ Macローカル:
 
 | 状況 | Mac local check | Cloud write/read |
 |---|---:|---:|
-| runner生存 | local process loop | 実行中2秒・アイドル30秒heartbeat upsert |
+| runner生存 | local process loop | 実行中5秒・アイドル30秒heartbeat upsert |
 | running、詳細未表示 | 1秒 | 1秒監視、hash/活動時刻/状態変化時のみsnapshot |
 | detail panel表示中 | 1秒 | active watch + 3秒detail poll |
 | awaiting approval / needs input | 1秒可 | 追加入力・再開を1秒以内に反映 |
@@ -39,8 +39,8 @@ Macローカル:
 - `/api/codex/sync-node` は手動sync now、debug、移行中fallbackに限定し、通常の3秒UI更新や詳細表示だけを理由にsqlite/rollout探索とDB writeを起こさない。
 - `ai_tasks.codex_thread_id` が保存済みのtaskは、`focusmap-agent` がそのthread IDだけを固定監視する。さらに、作成から10分以内で `codex_manual_handoff=true` / `codex_run_state='prompt_waiting'` の未紐付けtaskは、agent専用APIが一時的に返し、Mac agentがCodex state DB の `first_user_message` をhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存する。旧 `~/.codex/state_5.sqlite` を直書きした古いFocusmap Macアプリbundleや常駐プロセスはstale扱いにし、現行resolverでDBを読めていることを確認する前に既知thread missingを `thread_deleted` として書かない。`running` の根拠は、最新の `task_started` の後に `task_complete` / `turn_aborted` がまだ無いことに限定する。`task_complete` / `turn_aborted` は `awaiting_approval`、Codex thread archiveはsource nodeをチェックして `completed` へ進める。thread missing/deleteは完了根拠にせず `awaiting_approval` に留める。ユーザーがノードのチェックを外した場合は `codex_source_task_completion_suppressed=true` を保存し、閉鎖済みthreadの再同期でも自動再チェックせず `awaiting_approval` を維持する。確認待ち後の再開は `awaiting_approval_at` / `last_activity_at` より後の `user_message` または `task_started` だけを根拠にし、thread `updated_at_ms` 単体では `running` へ戻さない。
 - `/api/agents/codex-monitor/tasks` は固定監視対象を返すagent専用APIで、`tasks.deleted_at is null` / `notes.deleted_at is null` / `ideal_goals.status != 'archived'` を満たすsourceだけを返す。source側が削除/アーカイブされたthreadは通常monitor対象から外し、以後は明示sync/debug fallbackでない限り追わない。
-- `focusmap-agent` は既知の監視対象threadを1秒ごとにローカル確認するが、`/api/agents/codex-monitor/tasks` の対象リスト取得は既定10秒キャッシュにする。これによりCodex sqlite/rollout監視は1秒化しつつ、Supabaseの監視対象selectを毎tickへ増やさない。
-- runner heartbeatはTurso `runner_heartbeats` へ実行中2秒・アイドル30秒で1 row upsertする。作業中/待機中の切替時は即時upsertし、正常終了時は可能なら `status='offline'` を1回送る。クラッシュ、強制終了、スリープ時はoffline送信できないため、Web/スマホは `last_seen_at` が90秒以上古い場合もofflineと解釈する。
+- `focusmap-agent` は既知の監視対象threadを1秒ごとにローカル確認するが、`/api/agents/codex-monitor/tasks` の対象リスト取得は既定3秒キャッシュにする。これによりCodex sqlite/rollout監視は1秒化しつつ、Supabaseの監視対象selectを毎tickへ増やさない。
+- runner heartbeatはTurso `runner_heartbeats` へ実行中5秒・アイドル30秒で1 row upsertする。作業中/待機中の切替時は即時upsertし、正常終了時は可能なら `status='offline'` を1回送る。クラッシュ、強制終了、スリープ時はoffline送信できないため、Web/スマホは `last_seen_at` が90秒以上古い場合もofflineと解釈する。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール
@@ -122,7 +122,7 @@ activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定
 
 write budgetの考え方:
 
-- runner heartbeatは実行中2秒・アイドル30秒なら許容。
+- runner heartbeatは実行中5秒・アイドル30秒なら許容。
 - running snapshot 1秒は、hash dedupe前提なら許容。ただし毎tick内容変化するtaskが複数ある場合はwriteが上振れする。
 - detail open中だけ3秒boostを許容。
 - 毎tick progress insertは禁止。
@@ -133,7 +133,7 @@ write budgetの考え方:
 
 | ケース | 月間write概算 | 備考 |
 |---|---:|---|
-| 1 runner heartbeat 2秒で常時active | 1.296M | 重めの上限見積もり。通常はidle30秒が混ざる |
+| 1 runner heartbeat 5秒で常時active | 0.518M | 重めの上限見積もり。通常はidle30秒が混ざる |
 | 1 running task 1秒、常に変化、24h/day | 2.592M | 通常snapshotの重めケース |
 | 5 running tasks 1秒、常に変化、24h/day | 12.96M | 無料枠超過リスク。実際の送信はhash/活動時刻/状態変化時だけに抑える |
 | 5 tasks detail-open 3秒、常に変化、24h/day | 4.32M | 重いが他writeが小さければ10M未満 |
