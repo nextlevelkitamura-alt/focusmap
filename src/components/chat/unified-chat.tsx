@@ -15,6 +15,7 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   ChevronDown,
+  ChevronLeft,
   CheckCircle2,
   FileText,
   Image as ImageIcon,
@@ -182,6 +183,7 @@ const MAX_IMAGE_SIDE = 1600
 const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024
 const CHAT_SLOW_NOTICE_MS = 45_000
 const DEFAULT_VISIBLE_HISTORY_COUNT = 3
+const MAP_CHAT_VISIBLE_HISTORY_COUNT = 3
 const MODEL_MODE_STORAGE_KEY = "focusmap:agent-chat:model-mode"
 
 const MODEL_MODE_OPTIONS: Array<{ value: AgentModelMode; icon: typeof Zap }> = [
@@ -289,6 +291,7 @@ export function UnifiedChat({
   const { state: connectionState } = useAgentConnection()
   const [input, setInput] = useState("")
   const [sidebarOpen, setSidebarOpen] = useState(() => !isMapSidebar)
+  const [mapHistoryOpen, setMapHistoryOpen] = useState(false)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [activeProjectChatId, setActiveProjectChatId] = useState<string | null>(null)
   const [modelMode, setModelMode] = useState<AgentModelMode>(() => loadModelModePreference())
@@ -329,6 +332,11 @@ export function UnifiedChat({
   } = sessions
   const messages = activeSession?.messages ?? []
   const isBusy = activeSession?.status === "running"
+  const mapHistorySessions = useMemo(() => {
+    return [...chatSessions]
+      .filter(session => session.messages.length > 0 || session.title !== "新しいチャット")
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }, [chatSessions])
   const addToolApprovalResponse = useCallback<ApprovalHandler>(() => {
     setRuntimeNotice({ tone: "info", message: "このチャットは裏側で実行中です。確認が必要な操作は返信内で案内します。" })
   }, [])
@@ -342,6 +350,7 @@ export function UnifiedChat({
     setAttachments([])
     setAttachmentError(null)
     setRuntimeNotice(null)
+    setMapHistoryOpen(false)
   }, [chatScopeKey, sessionsHydrated, sessionsLoadedScopeKey])
 
   useEffect(() => {
@@ -364,11 +373,13 @@ export function UnifiedChat({
     setAttachments([])
     setAttachmentError(null)
     setRuntimeNotice(null)
+    setMapHistoryOpen(false)
   }, [onSelectProject, projectChatLaunchKey, projectChatLaunchProjectId, projects, spaceId])
 
   useEffect(() => {
     if (!isMapSidebar) return
     setActiveProjectChatId(projectId)
+    setMapHistoryOpen(false)
   }, [isMapSidebar, projectId])
 
   useEffect(() => {
@@ -411,12 +422,14 @@ export function UnifiedChat({
   const handleSelectGeneralChat = useCallback(() => {
     setActiveProjectChatId(null)
     setMobileHistoryOpen(false)
+    setMapHistoryOpen(false)
   }, [])
 
   const handleSelectProjectChat = useCallback((projectId: string) => {
     setActiveProjectChatId(projectId)
     onSelectProject?.(projectId)
     setMobileHistoryOpen(false)
+    setMapHistoryOpen(false)
   }, [onSelectProject])
 
   useEffect(() => {
@@ -514,6 +527,7 @@ export function UnifiedChat({
     setAttachmentError(null)
     setRuntimeNotice(null)
     setMobileHistoryOpen(false)
+    setMapHistoryOpen(false)
     if (isDesktopViewport()) {
       setTimeout(() => inputRef.current?.focus(), 0)
     }
@@ -522,6 +536,7 @@ export function UnifiedChat({
   const handleSelectSession = (session: AgentChatSession) => {
     selectSession(session.id)
     setMobileHistoryOpen(false)
+    setMapHistoryOpen(false)
   }
 
   const handleDeleteSession = (id: string) => {
@@ -577,7 +592,13 @@ export function UnifiedChat({
   }, [])
 
   useEffect(() => {
-    const handleToggleSidebar = () => setSidebarOpen(value => !value)
+    const handleToggleSidebar = () => {
+      if (isMapSidebar) {
+        setMapHistoryOpen(value => !value)
+        return
+      }
+      setSidebarOpen(value => !value)
+    }
     const handleNewChat = () => handleNewSession()
     window.addEventListener("focusmap:chat:toggle-sidebar", handleToggleSidebar)
     window.addEventListener("focusmap:chat:new", handleNewChat)
@@ -585,7 +606,7 @@ export function UnifiedChat({
       window.removeEventListener("focusmap:chat:toggle-sidebar", handleToggleSidebar)
       window.removeEventListener("focusmap:chat:new", handleNewChat)
     }
-  }, [handleNewSession])
+  }, [handleNewSession, isMapSidebar])
 
   return (
     <div
@@ -595,7 +616,7 @@ export function UnifiedChat({
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
     >
-      {sidebarOpen && (
+      {sidebarOpen && !isMapSidebar && (
         <HistorySidebar
           sessions={chatSessions}
           activeSessionId={activeSessionId}
@@ -644,15 +665,27 @@ export function UnifiedChat({
         </div>
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-6 md:py-8">
-          {activeProjectChat && (
+          {activeProjectChat && !(isMapSidebar && mapHistoryOpen) && (
             <ProjectChatHeader project={activeProjectChat} hasMessages={messages.length > 0} />
           )}
-          {messages.length === 0 ? (
-            <EmptyChat
-              project={activeProjectChat}
-              onSelectStarter={(prompt) => submit(prompt)}
-              disabled={isBusy}
+          {isMapSidebar && mapHistoryOpen ? (
+            <MapChatHistoryList
+              projectTitle={activeProjectChatTitle}
+              sessions={mapHistorySessions}
+              activeSessionId={activeSessionId}
+              onSelect={handleSelectSession}
+              onBack={() => setMapHistoryOpen(false)}
             />
+          ) : messages.length === 0 ? (
+              <EmptyChat
+                project={activeProjectChat}
+                historySessions={isMapSidebar ? mapHistorySessions.slice(0, MAP_CHAT_VISIBLE_HISTORY_COUNT) : []}
+                activeHistorySessionId={activeSessionId}
+                onSelectHistory={handleSelectSession}
+                onShowAllHistory={isMapSidebar && mapHistorySessions.length > MAP_CHAT_VISIBLE_HISTORY_COUNT ? () => setMapHistoryOpen(true) : undefined}
+                onSelectStarter={(prompt) => submit(prompt)}
+                disabled={isBusy}
+              />
           ) : (
             <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pb-6">
               {messages.map(message => (
@@ -1112,18 +1145,37 @@ function ProjectChatHeader({ project, hasMessages }: { project: Project; hasMess
 
 function EmptyChat({
   project,
+  historySessions = [],
+  activeHistorySessionId = null,
+  onSelectHistory,
+  onShowAllHistory,
   onSelectStarter,
   disabled = false,
 }: {
   project: Project | null
+  historySessions?: AgentChatSession[]
+  activeHistorySessionId?: string | null
+  onSelectHistory?: (session: AgentChatSession) => void
+  onShowAllHistory?: () => void
   onSelectStarter: (prompt: string) => void
   disabled?: boolean
 }) {
+  const showHistory = historySessions.length > 0 && typeof onSelectHistory === "function"
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col items-center justify-center px-1 pb-10 pt-4">
       <div className="w-full max-w-[620px] space-y-4">
+        {showHistory && (
+          <MapChatRecentHistory
+            sessions={historySessions}
+            activeSessionId={activeHistorySessionId}
+            onSelect={onSelectHistory!}
+            onShowAll={onShowAllHistory}
+          />
+        )}
+
         <div className="text-center">
-          <h2 className="text-[22px] font-semibold tracking-normal text-zinc-100 md:text-2xl">何を整理しますか？</h2>
+          <h2 className="text-[22px] font-semibold tracking-normal text-zinc-100 md:text-2xl">何をしますか？</h2>
           <p className="mx-auto mt-2 max-w-[520px] text-[13px] leading-6 text-zinc-400">
             {project
               ? "プロジェクト概要・マップ・メモ・AI実行を読んでから会話を始めます。"
@@ -1170,6 +1222,138 @@ function EmptyChat({
         </div>
       </div>
     </div>
+  )
+}
+
+function MapChatRecentHistory({
+  sessions,
+  activeSessionId,
+  onSelect,
+  onShowAll,
+}: {
+  sessions: AgentChatSession[]
+  activeSessionId: string | null
+  onSelect: (session: AgentChatSession) => void
+  onShowAll?: () => void
+}) {
+  return (
+    <section className="rounded-xl border border-[#303030] bg-[#171717]/70 text-left">
+      <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+        <div className="text-[12px] font-semibold text-zinc-300">チャット履歴</div>
+        {onShowAll && (
+          <button
+            type="button"
+            className="min-h-8 rounded-md px-2 text-[11px] font-medium text-zinc-400 transition hover:bg-white/10 hover:text-zinc-100"
+            onClick={onShowAll}
+          >
+            もっと表示する
+          </button>
+        )}
+      </div>
+      <div className="divide-y divide-[#303030] border-t border-[#303030]">
+        {sessions.map(session => (
+          <MapChatHistoryRow
+            key={session.id}
+            session={session}
+            active={session.id === activeSessionId}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function MapChatHistoryList({
+  projectTitle,
+  sessions,
+  activeSessionId,
+  onSelect,
+  onBack,
+}: {
+  projectTitle: string | null
+  sessions: AgentChatSession[]
+  activeSessionId: string | null
+  onSelect: (session: AgentChatSession) => void
+  onBack: () => void
+}) {
+  return (
+    <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col px-1 pb-8 pt-2">
+      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#303030] bg-[#171717]/70">
+        <div className="flex shrink-0 items-center gap-2 border-b border-[#303030] px-3 py-2.5">
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-8 shrink-0 gap-1 rounded-md px-2 text-xs text-zinc-400 hover:bg-white/10 hover:text-white"
+            onClick={onBack}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            戻る
+          </Button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-zinc-100">
+              {projectTitle ? `${projectTitle}のチャット履歴` : "チャット履歴"}
+            </div>
+            <div className="truncate text-[11px] text-zinc-500">履歴を選ぶと、そのチャットを開きます</div>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {sessions.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-zinc-500">履歴はまだありません</p>
+          ) : (
+            <div className="divide-y divide-[#303030]">
+              {sessions.map(session => (
+                <MapChatHistoryRow
+                  key={session.id}
+                  session={session}
+                  active={session.id === activeSessionId}
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MapChatHistoryRow({
+  session,
+  active,
+  onSelect,
+}: {
+  session: AgentChatSession
+  active: boolean
+  onSelect: (session: AgentChatSession) => void
+}) {
+  const statusLabel = session.status === "running"
+    ? "実行中"
+    : session.status === "failed"
+      ? "失敗"
+      : null
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left transition",
+        active ? "bg-blue-500/10 text-blue-100" : "text-zinc-300 hover:bg-white/[0.06] hover:text-white",
+      )}
+      onClick={() => onSelect(session)}
+    >
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{session.title}</span>
+      {statusLabel && (
+        <span className={cn(
+          "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+          session.status === "failed" ? "bg-red-500/10 text-red-300" : "bg-amber-400/10 text-amber-300",
+        )}>
+          {statusLabel}
+        </span>
+      )}
+      <span className="shrink-0 text-[11px] text-zinc-500">{formatDate(session.updatedAt)}</span>
+    </button>
   )
 }
 
