@@ -397,14 +397,17 @@ export function DesktopTodayPanel({
                             </button>
                         )}
                         {calendarRangeMode === 'day' && writableCalendars.length > 0 && (
-                            <label className="mt-1 flex h-8 max-w-[168px] flex-shrink-0 items-center gap-1 rounded-md border border-border/50 bg-background px-1.5 text-[11px] text-muted-foreground">
+                            <label className="mt-1 flex h-8 max-w-[218px] flex-shrink-0 items-center gap-1 rounded-md border border-border/50 bg-background px-1.5 text-[11px] text-muted-foreground">
                                 <CalendarDays className="h-3.5 w-3.5 flex-shrink-0" />
+                                <span className="flex-shrink-0 text-[10px] font-medium text-muted-foreground">
+                                    ノード追加先
+                                </span>
                                 <select
                                     value={selectedMindMapDropCalendarId ?? ""}
                                     onChange={event => setMindMapDropCalendarId(event.target.value || null)}
                                     className="min-w-0 flex-1 bg-transparent text-[11px] font-medium text-foreground outline-none"
-                                    aria-label="ノード予定の追加先カレンダー"
-                                    title="ノード予定の追加先カレンダー"
+                                    aria-label="マップノードを予定化するときの追加先カレンダー"
+                                    title="マップノードを予定化するときの追加先カレンダー"
                                 >
                                     {writableCalendars.map(calendar => (
                                         <option key={calendar.id} value={calendar.id}>

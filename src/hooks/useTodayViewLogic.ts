@@ -453,9 +453,43 @@ export function useTodayViewLogic({
                 ...(updates.description !== undefined ? { description: updates.description } : {}),
             }),
         })
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}))
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data.success === false) {
             throw new Error(data.error?.message || 'Failed to update event')
+        }
+        const effectiveGoogleEventId = typeof data.google_event_id === 'string'
+            ? data.google_event_id
+            : updates.googleEventId
+        const effectiveCalendarId = typeof data.calendar_id === 'string'
+            ? data.calendar_id
+            : updates.calendarId
+        if (effectiveGoogleEventId !== updates.googleEventId || effectiveCalendarId !== updates.calendarId) {
+            setLocalCalendarEvents(prev => prev.map(e =>
+                e.id === event.id ||
+                    (
+                        e.google_event_id === updates.googleEventId &&
+                        (e.calendar_id === updates.originalCalendarId || e.calendar_id === updates.calendarId)
+                    )
+                    ? { ...e, google_event_id: effectiveGoogleEventId, calendar_id: effectiveCalendarId }
+                    : e
+            ))
+            setLocalTasks(prev => prev.map(task =>
+                task.google_event_id === updates.googleEventId
+                    ? { ...task, google_event_id: effectiveGoogleEventId, calendar_id: effectiveCalendarId }
+                    : task
+            ))
+            broadcastCalendarEventDetailUpdate({
+                eventId: event.id,
+                googleEventId: effectiveGoogleEventId,
+                calendarId: effectiveCalendarId,
+                previousCalendarId: updates.originalCalendarId || event.calendar_id,
+                taskId: event.task_id,
+                title: updates.title,
+                startTime: updates.start_time,
+                endTime: updates.end_time,
+                reminders: updates.reminders,
+                ...(updates.description !== undefined ? { description: updates.description } : {}),
+            })
         }
         invalidateCalendarCache()
         broadcastCalendarSync()
@@ -1225,6 +1259,41 @@ export function useTodayViewLogic({
             1,
             Math.round((new Date(updates.end_time).getTime() - new Date(updates.start_time).getTime()) / 60000)
         )
+        const broadcastPreviousEventDetail = () => {
+            if (previousEvent) {
+                broadcastCalendarEventDetailUpdate({
+                    eventId,
+                    googleEventId: previousEvent.google_event_id,
+                    calendarId: previousEvent.calendar_id,
+                    previousCalendarId: updates.calendarId || sourceCalendarId,
+                    taskId: previousEvent.task_id || previousTask?.id,
+                    title: previousEvent.title,
+                    startTime: previousEvent.start_time,
+                    endTime: previousEvent.end_time,
+                    reminders: previousEvent.reminders,
+                    description: previousEvent.description ?? "",
+                })
+                return
+            }
+
+            if (!previousTask?.scheduled_at) return
+            const previousStart = new Date(previousTask.scheduled_at)
+            if (Number.isNaN(previousStart.getTime())) return
+            const previousEnd = new Date(
+                previousStart.getTime() + Math.max(1, previousTask.estimated_time || durationMinutes) * 60000
+            )
+            broadcastCalendarEventDetailUpdate({
+                eventId: previousTask.calendar_event_id || eventId,
+                googleEventId: previousTask.google_event_id || undefined,
+                calendarId: previousTask.calendar_id || undefined,
+                previousCalendarId: updates.calendarId || sourceCalendarId,
+                taskId: previousTask.id,
+                title: previousTask.title,
+                startTime: previousTask.scheduled_at,
+                endTime: previousEnd.toISOString(),
+                description: previousTask.memo ?? "",
+            })
+        }
 
         setLocalCalendarEvents(prev => prev.map(e =>
             e.id === eventId
@@ -1265,7 +1334,10 @@ export function useTodayViewLogic({
         })
 
         if (!updates.googleEventId) {
-            return
+            setLocalCalendarEvents(previousEvents)
+            setLocalTasks(previousTasks)
+            broadcastPreviousEventDetail()
+            throw new Error('Google予定IDがないため保存できません。カレンダーを更新してから再度お試しください。')
         }
 
         try {
@@ -1285,11 +1357,15 @@ export function useTodayViewLogic({
                 }),
             })
             const data = await res.json().catch(() => ({}))
-            if (!res.ok) {
+            if (!res.ok || data.success === false) {
                 throw new Error(data.error?.message || 'Failed to update event')
             }
-            const effectiveGoogleEventId = data.google_event_id || updates.googleEventId
-            const effectiveCalendarId = data.calendar_id || updates.calendarId
+            const effectiveGoogleEventId = typeof data.google_event_id === 'string'
+                ? data.google_event_id
+                : updates.googleEventId
+            const effectiveCalendarId = typeof data.calendar_id === 'string'
+                ? data.calendar_id
+                : updates.calendarId
             if (effectiveGoogleEventId !== updates.googleEventId || effectiveCalendarId !== updates.calendarId) {
                 setLocalCalendarEvents(prev => prev.map(e =>
                     e.google_event_id === updates.googleEventId && (e.calendar_id === sourceCalendarId || e.id === eventId)
@@ -1335,6 +1411,7 @@ export function useTodayViewLogic({
             console.error('[useTodayViewLogic] Failed to update event, rolling back:', err)
             setLocalCalendarEvents(previousEvents)
             setLocalTasks(previousTasks)
+            broadcastPreviousEventDetail()
             throw err
         }
     }, [localCalendarEvents, localTasks, patchCalendarEvent, pushAction])

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MobileEventEditModal } from './mobile-event-edit-modal'
 import type { TimeBlock } from '@/lib/time-block'
@@ -121,7 +121,34 @@ describe('MobileEventEditModal', () => {
     expect(onSaveEvent).toHaveBeenCalledWith('event-cache-1', expect.objectContaining({
       reminders: [15],
     }))
-    expect(onClose).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+  })
+
+  test('Google予定の保存に失敗したら閉じずにエラーを表示する', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onClose = vi.fn()
+    const onSaveEvent = vi.fn(() => Promise.reject(new Error('このカレンダーは閲覧専用のため編集できません')))
+
+    render(
+      <MobileEventEditModal
+        target={calendarEventBlock()}
+        isOpen
+        onClose={onClose}
+        onSaveTask={vi.fn()}
+        onSaveEvent={onSaveEvent}
+        onDeleteEvent={vi.fn()}
+        availableCalendars={[
+          { id: 'calendar-1', name: 'Main' },
+          { id: 'calendar-2', name: 'Work' },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '完了' }))
+
+    expect(onSaveEvent).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('alert')).toHaveTextContent('このカレンダーは閲覧専用のため編集できません')
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   test('削除ボタンは下部固定バーに表示し、確認後に予定削除を呼ぶ', () => {

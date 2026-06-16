@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Calendar as CalendarIcon, ChevronDown, ChevronUp, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronDown, ChevronUp, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import { useMomentumWheel } from "@/hooks/useMomentumWheel"
@@ -75,6 +75,16 @@ function fromDateTimeLocalValue(value: string) {
 
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+function getSaveErrorMessage(error: unknown) {
+    const fallback = "保存できませんでした。Googleカレンダーの権限・認証、または移動先カレンダーを確認してください。"
+    if (!(error instanceof Error)) return fallback
+    const message = error.message.trim()
+    if (!message || message === "Failed to update event" || message === "Failed to update linked Google Calendar event") {
+        return fallback
+    }
+    return message
 }
 
 function CalendarWheelPicker({
@@ -264,10 +274,16 @@ export function MobileEventEditModal({
     const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null)
     const [localChildTasks, setLocalChildTasks] = useState<Task[]>(childTasks)
     const [isDeleteConfirming, setIsDeleteConfirming] = useState(false)
+    const [isSaving, setIsSaving] = useState(false)
+    const [saveError, setSaveError] = useState<string | null>(null)
 
+    const dismissSheet = useCallback(() => {
+        if (isSaving) return
+        onClose()
+    }, [isSaving, onClose])
     const sheetDrag = useBottomSheetDrag<HTMLDivElement>({
-        enabled: isOpen,
-        onDismiss: onClose,
+        enabled: isOpen && !isSaving,
+        onDismiss: dismissSheet,
     })
     const openedAtRef = useRef(0)
     const defaultCalendarId = availableCalendars[0]?.id ?? ''
@@ -290,9 +306,10 @@ export function MobileEventEditModal({
 
     // ゴーストクリック防止付きclose
     const safeClose = useCallback(() => {
+        if (isSaving) return
         if (Date.now() - openedAtRef.current < 400) return
         onClose()
-    }, [onClose])
+    }, [isSaving, onClose])
 
     // Initialize form when target changes
     useEffect(() => {
@@ -307,6 +324,8 @@ export function MobileEventEditModal({
         setLinkedTaskId(target.taskId || null)
         setLocalChildTasks([])
         setIsDeleteConfirming(false)
+        setIsSaving(false)
+        setSaveError(null)
         setIsDurationExpanded(false)
         setIsCustomDurationPickerOpen(false)
         if (target.source === 'task') {
@@ -453,46 +472,53 @@ export function MobileEventEditModal({
         setIsDurationExpanded(false)
     }, [])
 
-    // Save handler — 即座に閉じ、保存はバックグラウンドで実行
-    const handleSave = () => {
+    // Save handler — Google同期の失敗を見逃さないよう、保存完了まで閉じない
+    const handleSave = async () => {
         if (!target || !scheduledDate) return
+        if (isSaving) return
 
-        onClose()
+        setIsSaving(true)
+        setSaveError(null)
 
-        if (target.source === 'task') {
-            onSaveTask(target.taskId!, {
-                title,
-                scheduled_at: scheduledDate.toISOString(),
-                estimated_time: duration,
-                calendar_id: calendarId || undefined,
-                memo: memo || null,
-                reminders: reminder >= 0 ? [reminder] : [],
-            }).catch(err => {
-                console.error('[MobileEventEditModal] Save task error:', err)
-            })
-        } else {
-            const newEnd = new Date(scheduledDate.getTime() + duration * 60000)
+        try {
+            if (target.source === 'task') {
+                await onSaveTask(target.taskId!, {
+                    title,
+                    scheduled_at: scheduledDate.toISOString(),
+                    estimated_time: duration,
+                    calendar_id: calendarId || undefined,
+                    memo: memo || null,
+                    reminders: reminder >= 0 ? [reminder] : [],
+                })
+            } else {
+                const newEnd = new Date(scheduledDate.getTime() + duration * 60000)
 
-            onSaveEvent(target.id, {
-                title,
-                start_time: scheduledDate.toISOString(),
-                end_time: newEnd.toISOString(),
-                googleEventId: target.googleEventId || '',
-                calendarId: calendarId || target.calendarId || '',
-                originalCalendarId: target.calendarId || undefined,
-                reminders: reminder >= 0 ? [reminder] : [],
-                description: eventDescription,
-            }).catch(err => {
-                console.error('[MobileEventEditModal] Save event error:', err)
-            })
-        }
+                await onSaveEvent(target.id, {
+                    title,
+                    start_time: scheduledDate.toISOString(),
+                    end_time: newEnd.toISOString(),
+                    googleEventId: target.googleEventId || '',
+                    calendarId: calendarId || target.calendarId || '',
+                    originalCalendarId: target.calendarId || undefined,
+                    reminders: reminder >= 0 ? [reminder] : [],
+                    description: eventDescription,
+                })
+            }
 
-        // リマインダーのスケジュール（reminder >= 0: 「予定の時刻」(0) もスケジュール対象）
-        if (reminder >= 0 && onScheduleReminder && scheduledDate) {
-            const targetType = target.source === 'task' ? 'task' as const : 'event' as const
-            const targetId = target.source === 'task' ? target.taskId! : target.id
-            const reminderAt = new Date(scheduledDate.getTime() - reminder * 60000)
-            onScheduleReminder(targetType, targetId, reminderAt, title, reminder)
+            // リマインダーのスケジュール（reminder >= 0: 「予定の時刻」(0) もスケジュール対象）
+            if (reminder >= 0 && onScheduleReminder && scheduledDate) {
+                const targetType = target.source === 'task' ? 'task' as const : 'event' as const
+                const targetId = target.source === 'task' ? target.taskId! : target.id
+                const reminderAt = new Date(scheduledDate.getTime() - reminder * 60000)
+                onScheduleReminder(targetType, targetId, reminderAt, title, reminder)
+            }
+
+            onClose()
+        } catch (err) {
+            console.error('[MobileEventEditModal] Save error:', err)
+            setSaveError(getSaveErrorMessage(err))
+        } finally {
+            setIsSaving(false)
         }
     }
 
@@ -558,15 +584,16 @@ export function MobileEventEditModal({
                     <button
                         type="button"
                         onClick={handleSave}
-                        disabled={!title.trim()}
+                        disabled={!title.trim() || isSaving}
                         className={cn(
-                            "absolute right-4 top-1.5 flex h-10 items-center rounded-full px-2 text-sm font-semibold transition-colors",
-                            title.trim()
+                            "absolute right-4 top-1.5 flex h-10 items-center gap-1 rounded-full px-2 text-sm font-semibold transition-colors",
+                            title.trim() && !isSaving
                                 ? "text-sky-300 active:bg-white/10 active:text-sky-200"
                                 : "text-neutral-600"
                         )}
                     >
-                        完了
+                        {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        {isSaving ? "保存中" : "完了"}
                     </button>
                 </div>
 
@@ -575,26 +602,35 @@ export function MobileEventEditModal({
                     className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] no-scrollbar"
                 >
                     <div className="flex min-h-0 flex-col gap-2">
-                    <label className={cn(fieldClass, "relative block pr-9")}>
-                        <span className="pointer-events-none block">
-                            <span className={fieldLabelClass}>
-                                <CalendarIcon className="h-3 w-3" />
-                                日時
+                        {saveError && (
+                            <div
+                                role="alert"
+                                className="flex items-start gap-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs font-medium leading-relaxed text-red-100"
+                            >
+                                <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-red-200" />
+                                <span>{saveError}</span>
+                            </div>
+                        )}
+                        <label className={cn(fieldClass, "relative block pr-9")}>
+                            <span className="pointer-events-none block">
+                                <span className={fieldLabelClass}>
+                                    <CalendarIcon className="h-3 w-3" />
+                                    日時
+                                </span>
+                                <span className={fieldValueClass}>
+                                    {scheduledDateTimeLabel}
+                                    <ChevronDown className="ml-auto h-3.5 w-3.5 text-neutral-400" />
+                                </span>
                             </span>
-                            <span className={fieldValueClass}>
-                                {scheduledDateTimeLabel}
-                                <ChevronDown className="ml-auto h-3.5 w-3.5 text-neutral-400" />
-                            </span>
-                        </span>
-                        <input
-                            type="datetime-local"
-                            step={15 * 60}
-                            value={toDateTimeLocalValue(scheduledDate)}
-                            onChange={(e) => setScheduledDate(fromDateTimeLocalValue(e.target.value))}
-                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                            aria-label="日時"
-                        />
-                    </label>
+                            <input
+                                type="datetime-local"
+                                step={15 * 60}
+                                value={toDateTimeLocalValue(scheduledDate)}
+                                onChange={(e) => setScheduledDate(fromDateTimeLocalValue(e.target.value))}
+                                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                aria-label="日時"
+                            />
+                        </label>
 
                     <div className="grid grid-cols-2 gap-2">
                         <button
