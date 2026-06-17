@@ -11,7 +11,7 @@ import { debug, error as logError, info } from './logger.js';
 
 const execFileAsync = promisify(execFile);
 const SQLITE_BIN = '/usr/bin/sqlite3';
-const MONITOR_LIMIT = 80;
+const MONITOR_LIMIT = 200;
 const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
 const MAX_ACTIVITY_BODY_CHARS = 8_000;
 const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
@@ -19,6 +19,7 @@ const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
+export const RESUME_RUNNING_VISIBILITY_MS = 12_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
@@ -711,7 +712,7 @@ function didResumeAfterCheckpoint(task: AiTask, summary: RolloutSummary): boolea
   return candidates.some(value => value > checkpoint);
 }
 
-export function taskStateForSummary(task: AiTask, summary: RolloutSummary) {
+export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs = Date.now()) {
   const resumed = didResumeAfterCheckpoint(task, summary);
   if (resumed) {
     const resumeMs = Math.max(
@@ -719,7 +720,10 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary) {
       timeMs(summary.latestTaskStartedAt) ?? 0,
     );
     const completedMs = timeMs(summary.latestTaskCompleteAt) ?? 0;
-    if (completedMs >= resumeMs) return { status: 'awaiting_approval' as const, resumed: true };
+    if (completedMs >= resumeMs) {
+      const recentlyResumed = resumeMs > 0 && nowMs - resumeMs <= RESUME_RUNNING_VISIBILITY_MS;
+      return { status: recentlyResumed ? 'running' as const : 'awaiting_approval' as const, resumed: true };
+    }
     return { status: 'running' as const, resumed: true };
   }
   if (wasWaitingForReview(task) && summary.state === 'running') {

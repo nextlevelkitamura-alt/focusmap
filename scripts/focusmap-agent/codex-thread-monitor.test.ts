@@ -16,6 +16,7 @@ import {
   knownCodexThreadIds,
   matchingThreadImportScope,
   parseRollout,
+  RESUME_RUNNING_VISIBILITY_MS,
   taskStateForSummary,
 } from './src/codex-thread-monitor';
 import { AgentApiError } from './src/api-client';
@@ -211,6 +212,33 @@ describe('codex-thread-monitor state detection', () => {
     }), summary);
 
     expect(state).toEqual({ status: 'running', resumed: true });
+  });
+
+  test('keeps a just completed resumed turn running briefly so UI can show the restart', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:01.000Z', { type: 'user_message', message: '最初の依頼' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
+      line('2026-06-08T15:49:14.929Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.264Z', { type: 'user_message', message: '追加で調べて' }),
+      line('2026-06-08T15:49:18.368Z', { type: 'task_complete', last_agent_message: '追加分も完了しました' }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+    const oldAwaitingTask = task({
+      status: 'awaiting_approval',
+      result: {
+        codex_run_state: 'awaiting_approval',
+        last_activity_at: '2026-06-08T15:40:10.000Z',
+        awaiting_approval_at: '2026-06-08T15:40:10.000Z',
+      },
+    });
+    const resumeMs = Date.parse('2026-06-08T15:49:15.264Z');
+
+    expect(taskStateForSummary(oldAwaitingTask, summary, resumeMs + 5_000))
+      .toEqual({ status: 'running', resumed: true });
+    expect(taskStateForSummary(oldAwaitingTask, summary, resumeMs + RESUME_RUNNING_VISIBILITY_MS + 1))
+      .toEqual({ status: 'awaiting_approval', resumed: true });
   });
 
   test('advances awaiting approval checkpoint after a resumed turn completes', () => {
