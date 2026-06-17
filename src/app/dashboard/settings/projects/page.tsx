@@ -16,7 +16,7 @@ export default async function ProjectsSettingsPage() {
   return (
     <SettingsShell
       title="プロジェクト"
-      description="プロジェクト、タグ、リポジトリ、ローカル実行設定をまとめて管理します。"
+      description="AI作業の実行先、repo path、プロジェクト文脈、色の識別を管理します。"
       className="max-w-[1120px]"
     >
       <ProjectSettings

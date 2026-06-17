@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, AlertTriangle } from "lucide-react"
+import { SettingsStatusChip } from "@/components/settings/settings-primitives"
 
 interface ApiKeyRevealDialogProps {
   open: boolean
@@ -61,49 +62,66 @@ PATCH /api/v1/calendar/events/{googleEventId} に start_time/end_time/calendar_i
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>APIキーが作成されました</DialogTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <DialogTitle>APIキーが作成されました</DialogTitle>
+            <SettingsStatusChip tone="danger">一度だけ表示</SettingsStatusChip>
+          </div>
           <DialogDescription>
-            「{keyName}」のAPIキーです。このキーは一度だけ表示されます。
+            「{keyName}」のAPIキーです。閉じる前に安全な場所へ保存してください。
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-3">
-            <code className="flex-1 text-xs break-all font-mono">{rawKey}</code>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0"
-              onClick={handleCopy}
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-green-500" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-
-          <div className="flex items-start gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-3">
-            <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-muted-foreground">
-              このキーを安全な場所に保存してください。ダイアログを閉じると二度と表示できません。
+          <div className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-500/[0.04] p-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-200" />
+            <p className="text-xs leading-5 text-red-100/75">
+              このキーは後から再表示できません。紛失した場合は新しいキーを作成し、古いキーを無効化してください。
             </p>
           </div>
 
-          <div className="space-y-2">
+          <div className="rounded-lg border border-white/[0.08] bg-white/[0.045]">
+            <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] px-3 py-2">
+              <p className="text-sm font-medium text-zinc-100">Secret</p>
+              <SettingsStatusChip tone="muted">sk_focusmap_...</SettingsStatusChip>
+            </div>
+            <div className="flex items-center gap-2 p-3">
+              <code className="flex-1 break-all font-mono text-xs text-zinc-200">{rawKey}</code>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 text-zinc-300 hover:bg-white/[0.07] hover:text-white"
+                onClick={handleCopy}
+              >
+                {copied ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/[0.08] bg-white/[0.045] p-3">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium">Codexに渡すプロンプト</p>
-              <Button variant="outline" size="sm" onClick={handleCopyPrompt}>
+              <div>
+                <p className="text-sm font-medium text-zinc-100">Codexに渡すプロンプト</p>
+                <p className="mt-0.5 text-xs text-zinc-500">権限の使い方とAI案保存のルールを含めています。</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyPrompt}
+                className="min-h-10 shrink-0"
+              >
                 {copiedPrompt ? (
-                  <Check className="mr-2 h-4 w-4 text-green-500" />
+                  <Check className="mr-2 h-4 w-4" />
                 ) : (
                   <Copy className="mr-2 h-4 w-4" />
                 )}
                 コピー
               </Button>
             </div>
-            <pre className="max-h-64 overflow-y-auto rounded-lg bg-muted p-3 text-xs">
+            <pre className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-white/[0.08] bg-black/30 p-3 text-xs leading-5 text-zinc-300">
               <code>{aiPrompt}</code>
             </pre>
           </div>

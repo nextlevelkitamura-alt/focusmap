@@ -10,14 +10,18 @@ export default async function AccessSettingsPage() {
   if (!user) redirect('/login')
 
   return (
-    <SettingsShell title="アクセス" description="APIキーとアカウント情報を管理します。">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+    <SettingsShell
+      title="アクセス/API"
+      description="外部AIに渡すAPIキー、scope、アカウント操作をリスク別に管理します。"
+      className="max-w-[1180px]"
+    >
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section id="api-keys" className="scroll-mt-20">
           <ApiKeySettings />
         </section>
-        <section id="account" className="scroll-mt-20">
+        <aside id="account" className="scroll-mt-20 xl:sticky xl:top-8 xl:self-start">
           <AccountSettings userEmail={user.email} />
-        </section>
+        </aside>
       </div>
     </SettingsShell>
   )

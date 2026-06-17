@@ -110,7 +110,7 @@ export function SettingsShell({ title, description, children, className }: Setti
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-100 md:bg-zinc-100 md:dark:bg-[#080808]">
+    <div className="dark flex h-full min-h-0 flex-1 overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-100 md:bg-zinc-100 md:dark:bg-[#080808]">
       <div className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col md:flex-row">
         <aside className="hidden border-zinc-200 bg-white md:flex md:w-[300px] md:shrink-0 md:flex-col md:border-r dark:border-white/[0.08] dark:bg-[#0d0d0d]">
           <div className="px-4 pb-3 pt-4 md:px-5 md:pb-4 md:pt-6">

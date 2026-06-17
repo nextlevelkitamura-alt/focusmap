@@ -141,6 +141,16 @@ Goals → Projects → TaskGroups → Tasks
 - アイコンは原則として既存の `lucide-react` と共通UIコンポーネントを使い、サイズ・stroke・色の扱いを揃える。プラットフォーム差は配置、密度、safe area、入力方式で吸収し、ブランドの視覚言語は共通デザイントークンを優先する。
 - 削除などの破壊的アクションを下部に置く場合も、太い塗りCTAのように強調しすぎない。モバイルのボトムシートでは高さ44〜48px程度、控えめな余白、細いアウトラインまたは淡い赤のテキスト/アイコンで、既存フォーム入力の密度に合わせる。
 
+### 設定画面
+
+- `/dashboard/settings` は一般設定フォームではなく、AI実行、Google Calendar、APIキー、プロジェクト実行先の状態を先に見る設定トップとして扱う。サイドバーに `概要` の通常カテゴリは置かず、設定タイトル/ヘッダーからトップへ戻す。
+- 設定ナビゲーションは `状態`（AI / 自動化）、`作業環境`（プロジェクト、連携）、`管理`（アクセス/API、外観）に分ける。デスクトップは左サイドバーでローカル検索、選択状態、状態チップ、アカウントメニューを表示し、モバイルは設定トップから各詳細へドリルインする。
+- 設定UIの共通表現は `src/components/settings/settings-primitives.tsx` を起点にし、`SettingsSection`、`SettingRow`、`ConnectionRow`、`SettingsStatusChip`、`DangerZone` で密度・角丸・状態表示を揃える。設定画面は黒/白/グレー中心のControl Centerとして、`SettingsShell` 配下は暗色スコープに固定し、状態は色だけに依存せずラベル、配置、枠、アイコンで伝える。
+- AI / 自動化設定はMac agent、Codex、Codex thread取り込み、カレンダー作成時の確認設定を、実行可否と復旧操作が分かる状態セクションとして見せる。Macアプリ専用操作は `window.focusmapDesktop` の既存bridgeを使い、Webだけでローカル権限を代替しない。
+- プロジェクト設定は `Visual identity`、`Repo execution target`、`Project context`、`Repository auto scan` に分ける。プロジェクト/ワークスペース/タグ色、`projects.repo_path`、プロジェクト説明/context、scan paths の既存APIと楽観更新を維持し、repo picker と scan path editor は下部シートの既存挙動を保つ。
+- 連携設定はGoogle Calendarの接続状態、連携アカウント、同期/再連携、表示カレンダー、取り込み設定を同じ詳細画面で扱う。`useCalendars` / `user_calendars.selected` の既存同期、イベント取得・手動同期・連携解除API契約は変えない。
+- アクセス/API設定はAPIキーを高リスクな外部実行権限として先に見せ、scope、last used、revoke を一覧で確認できるようにする。アカウント削除などの破壊的操作は `DangerZone` に分離し、外観設定はテーマ状態と選択だけを軽量に扱う。
+
 ### 公開LP
 
 - ルートページ `src/app/page.tsx` は、旧B2SMB向けの「AI業務自動化プラットフォーム」訴求ではなく、個人のMac/AIパワーユーザー向けに「マインドマップから自分のAIサブスクを動かす司令地図」として訴求する。

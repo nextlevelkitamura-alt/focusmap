@@ -14,6 +14,12 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import {
+  SettingRow,
+  SettingsSection,
+  SettingsStatusChip,
+  type SettingsStatusTone,
+} from '@/components/settings/settings-primitives';
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch';
 import { cn } from '@/lib/utils';
 
@@ -103,21 +109,6 @@ function formatTime(value: string | null | undefined) {
   return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function statusChip(ok: boolean, label: string) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-7 shrink-0 items-center rounded-full px-3 text-xs font-medium',
-        ok
-          ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/12 dark:text-emerald-300 dark:ring-emerald-400/30'
-          : 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-white/[0.08]',
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
 function StatusRow({
   icon: Icon,
   label,
@@ -132,23 +123,12 @@ function StatusRow({
   ok: boolean;
 }) {
   return (
-    <div className="flex min-h-[64px] items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-white/[0.08] dark:bg-black/30">
-      <span
-        className={cn(
-          'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
-          ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</p>
-          {statusChip(ok, value)}
-        </div>
-        <p className="mt-1 truncate text-xs text-zinc-500">{detail}</p>
-      </div>
-    </div>
+    <SettingRow
+      icon={Icon}
+      title={label}
+      description={detail}
+      status={<SettingsStatusChip tone={ok ? 'ok' : 'attention'}>{value}</SettingsStatusChip>}
+    />
   );
 }
 
@@ -227,10 +207,16 @@ export function AgentStatusBadge() {
 
   if (loading) {
     return (
-      <section className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:text-zinc-400 dark:shadow-none">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        AIエージェント状態を取得中...
-      </section>
+      <SettingsSection
+        title="AI実行状態"
+        description="Macエージェントのheartbeatを30秒ごとに確認します。"
+        trailing={<SettingsStatusChip tone="muted">確認中</SettingsStatusChip>}
+      >
+        <div className="flex min-h-[72px] items-center gap-2 px-4 py-4 text-[13px] text-zinc-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          AIエージェント状態を取得中...
+        </div>
+      </SettingsSection>
     );
   }
 
@@ -242,107 +228,114 @@ export function AgentStatusBadge() {
   const codexServerReady = boolFromMetadata(metadata, 'codex_app_server_ready');
   const codexReady = isOnline && codexInstalled && codexServerReady;
   const hiddenRegistrations = Math.max(0, annotated.length - (primary ? 1 : 0));
+  const primaryTone: SettingsStatusTone = isOnline ? 'ok' : primary ? 'attention' : 'muted';
+  const primaryChip = isOnline ? '接続中' : primary ? '要確認' : '未接続';
 
   return (
-    <section
-      className={cn(
-        'rounded-lg border bg-white p-4 shadow-sm md:p-5 dark:bg-[#1c1c1e] dark:shadow-none',
-        isOnline ? 'border-emerald-200 dark:border-emerald-400/30' : 'border-zinc-200 dark:border-white/[0.08]',
-      )}
+    <SettingsSection
+      title="AI実行状態"
+      description="Macエージェントのheartbeatを30秒ごとに確認します。"
+      trailing={<SettingsStatusChip tone={primaryTone}>{primaryChip}</SettingsStatusChip>}
     >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <span
-            className={cn(
-              'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg',
-              isOnline ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+      <div className="border-b border-white/[0.07] px-4 py-4 md:px-5 md:py-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span
+              className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-md border',
+                isOnline
+                  ? 'border-white/[0.12] bg-white/[0.10] text-zinc-100'
+                  : 'border-white/[0.08] bg-black/20 text-zinc-500',
+              )}
+            >
+              {isOnline ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+            </span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-[18px] font-semibold leading-6 text-zinc-50">
+                  {isOnline ? 'Macエージェント オンライン' : primary ? 'Macエージェント オフライン' : 'Macエージェント未接続'}
+                </h2>
+                <SettingsStatusChip tone={agentState === 'running' ? 'attention' : 'muted'}>
+                  {agentState === 'running' ? '実行中' : isOnline ? '待機中' : '停止'}
+                </SettingsStatusChip>
+              </div>
+              <p className="mt-1 text-[13px] leading-5 text-zinc-500">
+                {primary
+                  ? `${primary.display_name ?? primary.hostname} がFocusmapのAI実行とCodex連携を巡回します。`
+                  : 'まだMacエージェントが登録されていません。'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-1.5"
+              onClick={() => void fetchRunners(true)}
+              disabled={refreshing}
+            >
+              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+              更新
+            </Button>
+            {!primary && (
+              <Button asChild className="h-10 whitespace-nowrap">
+                <Link href="/dashboard/workspace/setup?step=2" prefetch={false}>Macエージェントを導入</Link>
+              </Button>
             )}
-          >
-            {isOnline ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
-          </span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">AI Agent</p>
-            <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-              {isOnline ? 'Macエージェント オンライン' : primary ? 'Macエージェント オフライン' : 'Macエージェント未接続'}
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-              {primary
-                ? `${primary.display_name ?? primary.hostname} がFocusmapのAI実行とCodex連携を巡回します。`
-                : 'まだMacエージェントが登録されていません。'}
-            </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 gap-1.5"
-            onClick={() => void fetchRunners(true)}
-            disabled={refreshing}
-          >
-            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-            更新
-          </Button>
-          {!primary && (
-            <Button asChild className="h-10">
-              <Link href="/dashboard/workspace/setup?step=2">Macエージェントを導入</Link>
-            </Button>
-          )}
-        </div>
+        {error && (
+          <p className="mt-3 rounded-md border border-red-400/25 bg-red-500/10 px-3 py-2 text-[12px] leading-5 text-red-100">
+            取得エラー: {error}
+          </p>
+        )}
       </div>
 
-      {error && (
-        <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-200">
-          取得エラー: {error}
-        </p>
-      )}
+      <StatusRow
+        icon={Clock3}
+        label="最終更新"
+        value={isOnline ? '有効' : '停止'}
+        detail={primary?.last_heartbeat_at ? `${formatTime(primary.last_heartbeat_at)} / ${formatAge(primary.ageMs)}` : 'heartbeatなし'}
+        ok={isOnline}
+      />
+      <StatusRow
+        icon={Activity}
+        label="巡回状態"
+        value={agentState === 'running' ? '実行中' : isOnline ? '待機中' : '停止'}
+        detail={currentTaskId ? `実行中タスク: ${currentTaskId}` : '実行中タスクなし'}
+        ok={isOnline}
+      />
+      <StatusRow
+        icon={Bot}
+        label="Codex連携"
+        value={codexReady ? 'ready' : codexInstalled ? '要確認' : '未導入'}
+        detail={codexReady ? 'Codex Desktop / app-server を確認済み' : codexInstalled ? 'Codexは導入済み。app-server確認待ち' : 'Codex Desktopの導入が必要です'}
+        ok={codexReady}
+      />
+      <StatusRow
+        icon={Laptop}
+        label="表示中のMac"
+        value={primary ? '登録済み' : '未登録'}
+        detail={primary?.hostname ?? 'Macエージェントを導入するとここに表示されます'}
+        ok={Boolean(primary)}
+      />
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <StatusRow
-          icon={Clock3}
-          label="最終更新"
-          value={isOnline ? '有効' : '停止'}
-          detail={primary?.last_heartbeat_at ? `${formatTime(primary.last_heartbeat_at)} / ${formatAge(primary.ageMs)}` : 'heartbeatなし'}
-          ok={isOnline}
-        />
-        <StatusRow
-          icon={Activity}
-          label="巡回状態"
-          value={agentState === 'running' ? '実行中' : isOnline ? '待機中' : '停止'}
-          detail={currentTaskId ? `実行中タスク: ${currentTaskId}` : '実行中タスクなし'}
-          ok={isOnline}
-        />
-        <StatusRow
-          icon={Bot}
-          label="Codex連携"
-          value={codexReady ? 'OK' : codexInstalled ? '要確認' : '未導入'}
-          detail={codexReady ? 'Codex Desktop / app-server を確認済み' : codexInstalled ? 'Codexは導入済み。app-server確認待ち' : 'Codex Desktopの導入が必要です'}
-          ok={codexReady}
-        />
-        <StatusRow
-          icon={Laptop}
-          label="表示中のMac"
-          value={primary ? '登録済み' : '未登録'}
-          detail={primary?.hostname ?? 'Macエージェントを導入するとここに表示されます'}
-          ok={Boolean(primary)}
-        />
-      </div>
-
-      <div className="mt-3 flex flex-col gap-1 text-xs leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-1 border-b border-white/[0.07] px-4 py-3 text-[12px] leading-5 text-zinc-500 last:border-b-0 md:flex-row md:items-center md:justify-between">
         <span>この画面は30秒ごとに自動更新します。</span>
         {hiddenRegistrations > 0 && <span>古い/重複した登録 {hiddenRegistrations}件は通常表示から隠しています。</span>}
       </div>
 
       {!isOnline && primary && (
-        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-100">
+        <div className="border-t border-white/[0.07] bg-white/[0.03] px-4 py-3 text-[12px] leading-5 text-zinc-300">
           <div className="flex items-center gap-1.5 font-medium">
             <TriangleAlert className="h-3.5 w-3.5" />
             Macエージェントから最近の更新が届いていません。
           </div>
-          <p className="mt-1 text-amber-700 dark:text-amber-100/80">Macが起動しているか、Focusmap Macアプリを開いて再接続してください。</p>
+          <p className="mt-1 text-zinc-500">Macが起動しているか、Focusmap Macアプリを開いて再接続してください。</p>
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }

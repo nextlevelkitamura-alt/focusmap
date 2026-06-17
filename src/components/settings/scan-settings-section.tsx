@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from "react"
 import { ChevronRight, FolderSearch, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
+import {
+  SettingsSection,
+  SettingsStatusChip,
+} from "@/components/settings/settings-primitives"
 
 interface ScanSetting {
   hostname: string
@@ -68,46 +72,53 @@ export function ScanSettingsSection() {
   return (
     <>
       <div id="scan-settings">
-        <h3 className="px-4 pt-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-          <FolderSearch className="h-3 w-3" />
-          リポジトリの自動スキャン
-        </h3>
-
-        {isLoading ? (
-          <div className="mx-1 rounded-2xl bg-card flex min-h-[64px] items-center justify-center text-sm text-muted-foreground gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" />読み込み中
-          </div>
-        ) : settings.length === 0 ? (
-          <div className="mx-1 rounded-2xl bg-card px-4 py-4 text-sm text-muted-foreground space-y-1.5">
-            <p className="font-medium">この Mac はまだスキャン未実行</p>
-            <p className="text-[11px] leading-5">
-              Mac でメモから Claude を1回起動するか、task-runner が走ると自動でデフォルト設定が作成されます。
-            </p>
-          </div>
-        ) : (
-          <div className="mx-1 rounded-2xl bg-card overflow-hidden divide-y divide-border/40">
-            {settings.map(s => (
-              <button
-                key={s.hostname}
-                type="button"
-                onClick={() => setEditingHost(s.hostname)}
-                className="w-full flex items-center gap-3 min-h-[56px] px-4 py-2 text-left active:bg-muted/60"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-base font-mono truncate">{s.hostname}</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">
-                    {s.scan_paths.length} パス · 最終スキャン {formatLastScan(s.last_scanned_at)}
-                  </div>
-                </div>
-                <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground/60" />
-              </button>
-            ))}
-          </div>
-        )}
-
-        <p className="px-5 pt-1.5 text-[11px] text-muted-foreground leading-4">
-          Mac の task-runner が指定パス配下を再帰探索（深さ4まで）し、<code className="font-mono">.git</code> を持つフォルダをリポとして登録します。
-        </p>
+        <SettingsSection
+          title="Repository auto scan"
+          description="Mac の task-runner が指定パス配下を探索し、.git を持つフォルダをリポジトリ候補にします。"
+          trailing={
+            <SettingsStatusChip tone={isLoading || settings.length > 0 ? "neutral" : "attention"}>
+              {isLoading ? "同期中" : `${settings.length} hosts`}
+            </SettingsStatusChip>
+          }
+        >
+          {isLoading ? (
+            <div className="flex min-h-[88px] items-center justify-center px-4 py-6 text-[13px] text-zinc-500">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />読み込み中
+            </div>
+          ) : settings.length === 0 ? (
+            <div className="px-4 py-4 text-sm text-zinc-500">
+              <p className="font-medium text-zinc-300">この Mac はまだスキャン未実行</p>
+              <p className="mt-1 text-[12px] leading-5">
+                Mac でメモからAI実行を1回起動するか、task-runner が走ると自動でデフォルト設定が作成されます。
+              </p>
+            </div>
+          ) : (
+            <div>
+              {settings.map(s => (
+                <button
+                  key={s.hostname}
+                  type="button"
+                  onClick={() => setEditingHost(s.hostname)}
+                  className="flex min-h-[64px] w-full items-center gap-3 border-b border-white/[0.07] px-4 py-3 text-left transition hover:bg-white/[0.04] active:bg-white/[0.08] last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-black/20 text-zinc-400">
+                    <FolderSearch className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-[15px] font-medium leading-5 text-zinc-50">{s.hostname}</span>
+                    <span className="mt-1 block truncate text-[12px] leading-5 text-zinc-500">
+                      {s.scan_paths.length} パス / 最終スキャン {formatLastScan(s.last_scanned_at)}
+                    </span>
+                  </span>
+                  <SettingsStatusChip tone={rescanningHost === s.hostname ? "neutral" : "muted"}>
+                    {rescanningHost === s.hostname ? "同期中" : "設定"}
+                  </SettingsStatusChip>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
+                </button>
+              ))}
+            </div>
+          )}
+        </SettingsSection>
       </div>
 
       {/* 編集シート */}
@@ -291,4 +302,3 @@ function ScanPathEditor({
     </div>
   )
 }
-

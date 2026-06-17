@@ -9,8 +9,12 @@ export default async function AppearanceSettingsPage() {
   if (!user) redirect('/login')
 
   return (
-    <SettingsShell title="外観" description="テーマと配色を調整します。">
-      <section id="theme" className="max-w-2xl scroll-mt-20">
+    <SettingsShell
+      title="外観"
+      description="低リスクな表示設定を、他の設定詳細と同じsection/row形式で揃えます。"
+      className="max-w-[860px]"
+    >
+      <section id="theme" className="scroll-mt-20">
         <ThemeSettings />
       </section>
     </SettingsShell>

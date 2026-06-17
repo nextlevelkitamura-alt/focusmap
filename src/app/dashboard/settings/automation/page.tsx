@@ -10,8 +10,8 @@ export default async function AutomationSettingsPage() {
 
   return (
     <SettingsShell
-      title="AI"
-      description="Macエージェントのオンライン状態、巡回更新、Codex連携を確認します。"
+      title="AI / 自動化"
+      description="Macエージェント、Codex、thread取り込み、予定作成時の確認ルールを管理します。"
       className="max-w-[1120px]"
     >
       <AutomationSettings />

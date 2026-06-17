@@ -7,10 +7,18 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { AgentStatusBadge } from "@/components/settings/agent-status-badge"
 import {
+  SaveStateText,
+  SettingRow,
+  SettingsSection,
+  SettingsStatusChip,
+  type SettingsStatusTone,
+} from "@/components/settings/settings-primitives"
+import {
   AGENT_PREF_ASK_CALENDAR_ON_EVENT_CREATE,
   parseAgentCalendarPreferences,
 } from "@/lib/ai/agent-preferences"
 import type { FocusmapDesktopAutomationStatus } from "@/lib/external-auth-launch"
+import { cn } from "@/lib/utils"
 
 interface SpaceOption {
   id: string
@@ -25,6 +33,10 @@ function formatStatusTime(value: string | null | undefined) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "未取得"
   return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+}
+
+function connectionTone(ok: boolean, fallback: SettingsStatusTone = "attention"): SettingsStatusTone {
+  return ok ? "ok" : fallback
 }
 
 function agentDetail(status: FocusmapDesktopAutomationStatus | null) {
@@ -152,112 +164,109 @@ function MacCodexConnectionPanel() {
     }
   }
 
+  const agentReady = Boolean(status?.agent.ready)
+  const codexReady = Boolean(status?.codex.ready)
+
   if (!bridgeAvailable && !loading) return null
 
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${connected ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}>
-            {connected ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
-          </span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-medium uppercase text-zinc-500">Mac App Control</p>
-            <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
-              {connected ? "Macアプリ操作は接続中" : "Macアプリ操作は要確認"}
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-              このパネルはFocusmap Macアプリ内だけで表示します。AIエージェントの再接続とCodex導入を操作できます。
-            </p>
-            {status?.keepAwake?.active && (
-              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
-                Macアプリのバックグラウンド停止を抑制中です。
+    <SettingsSection
+      title="Mac App Control"
+      description="Focusmap Macアプリ内の接続/復旧、Codex導入、thread取り込み診断を操作します。"
+      trailing={<SettingsStatusChip tone={connectionTone(connected, loading ? "muted" : "attention")}>{loading ? "確認中" : connected ? "接続中" : "要確認"}</SettingsStatusChip>}
+    >
+      <div className="border-b border-white/[0.07] px-4 py-4 md:px-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-md border",
+                connected ? "border-white/[0.12] bg-white/[0.10] text-zinc-100" : "border-white/[0.08] bg-black/20 text-zinc-500",
+              )}
+            >
+              {connected ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+            </span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-[18px] font-semibold leading-6 text-zinc-50">
+                  {connected ? "Macアプリ操作は接続中" : "Macアプリ操作は要確認"}
+                </h2>
+                {status?.keepAwake?.active && <SettingsStatusChip tone="ok">バックグラウンド維持</SettingsStatusChip>}
+              </div>
+              <p className="mt-1 text-[13px] leading-5 text-zinc-500">
+                Macが必要なAI実行、Codex app-server、直接開始thread取り込みはこの接続を使います。
               </p>
-            )}
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap gap-2">
-          {codexNeedsInstall && (
+          <div className="flex flex-wrap gap-2">
+            {codexNeedsInstall && (
+              <Button
+                variant="outline"
+                className="h-10 gap-1.5"
+                onClick={() => void openCodexInstall()}
+                disabled={!bridgeAvailable || action !== null}
+              >
+                <DownloadCloud className="h-4 w-4" />
+                {action === "install" ? "起動中..." : "Codexを入れる"}
+              </Button>
+            )}
             <Button
-              variant="outline"
-              className="h-11 gap-1.5"
-              onClick={() => void openCodexInstall()}
+              className="h-10 gap-1.5"
+              onClick={() => void runDesktopAction("connect")}
               disabled={!bridgeAvailable || action !== null}
             >
-              <DownloadCloud className="h-4 w-4" />
-              {action === "install" ? "起動中..." : "Codexを入れる"}
+              <Power className="h-4 w-4" />
+              {action === "connect" ? "接続中..." : "接続/復旧"}
             </Button>
-          )}
-          <Button
-            className="h-11 gap-1.5"
-            onClick={() => void runDesktopAction("connect")}
-            disabled={!bridgeAvailable || action !== null}
-          >
-            <Power className="h-4 w-4" />
-            {action === "connect" ? "接続中..." : "接続/復旧"}
-          </Button>
-          <Button
-            variant="outline"
-            className="h-11 gap-1.5"
-            onClick={() => void runDesktopAction("disconnect")}
-            disabled={!bridgeAvailable || !canDisconnect || action !== null}
-          >
-            <PowerOff className="h-4 w-4" />
-            {action === "disconnect" ? "切断中..." : "切断"}
-          </Button>
-          <Button
-            variant="outline"
-            className="h-11 gap-1.5"
-            onClick={() => void runDesktopAction("refresh")}
-            disabled={!bridgeAvailable || action !== null}
-          >
-            <RefreshCw className={`h-4 w-4 ${action === "refresh" || loading ? "animate-spin" : ""}`} />
-            診断更新
-          </Button>
+            <Button
+              variant="outline"
+              className="h-10 gap-1.5"
+              onClick={() => void runDesktopAction("disconnect")}
+              disabled={!bridgeAvailable || !canDisconnect || action !== null}
+            >
+              <PowerOff className="h-4 w-4" />
+              {action === "disconnect" ? "切断中..." : "切断"}
+            </Button>
+            <Button
+              variant="outline"
+              className="h-10 gap-1.5"
+              onClick={() => void runDesktopAction("refresh")}
+              disabled={!bridgeAvailable || action !== null}
+            >
+              <RefreshCw className={cn("h-4 w-4", (action === "refresh" || loading) && "animate-spin")} />
+              診断更新
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            <Workflow className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
-            Macエージェント
-            <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-black/25 dark:text-zinc-300">
-              {status?.agent.ready ? "接続中" : "要確認"}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-zinc-500">{agentDetail(status)}</p>
-        </div>
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            <Bot className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
-            Codex
-            <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-black/25 dark:text-zinc-300">
-              {codexNeedsInstall ? "要インストール" : status?.codex.ready ? "接続中" : "要確認"}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-zinc-500">{codexDetail(status)}</p>
-        </div>
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/30">
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            <Inbox className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
-            Codex thread取り込み
-            <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-black/25 dark:text-zinc-300">
-              {codexThreadImportReady ? "対応済み" : status?.codex.threadImportApi?.checked ? "未反映" : "未確認"}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-zinc-500">{codexImportDetail(status)}</p>
-        </div>
-      </div>
+      <SettingRow
+        icon={Workflow}
+        title="Macエージェント"
+        description={agentDetail(status)}
+        status={<SettingsStatusChip tone={connectionTone(agentReady)}>{agentReady ? "接続中" : "要確認"}</SettingsStatusChip>}
+      />
+      <SettingRow
+        icon={Bot}
+        title="Codex"
+        description={codexDetail(status)}
+        status={<SettingsStatusChip tone={connectionTone(codexReady, codexNeedsInstall ? "attention" : "muted")}>{codexNeedsInstall ? "要インストール" : codexReady ? "ready" : "要確認"}</SettingsStatusChip>}
+      />
+      <SettingRow
+        icon={Inbox}
+        title="Codex thread取り込み"
+        description={codexImportDetail(status)}
+        status={<SettingsStatusChip tone={connectionTone(codexThreadImportReady, status?.codex.threadImportApi?.checked ? "attention" : "muted")}>{codexThreadImportReady ? "対応済み" : status?.codex.threadImportApi?.checked ? "未反映" : "未確認"}</SettingsStatusChip>}
+      />
 
-      <div className="mt-3 flex flex-col gap-2 text-xs leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-2 px-4 py-3 text-[12px] leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">
         <span>
           最終診断: {formatStatusTime(status?.timestamp)} / 自動確認: {status?.supervisor?.enabled ? "有効" : "停止"}
         </span>
-        {message && <span className="text-zinc-700 dark:text-zinc-300">{message}</span>}
+        {message && <span className="text-zinc-300">{message}</span>}
       </div>
-    </section>
+    </SettingsSection>
   )
 }
 
@@ -321,45 +330,53 @@ function FocusmapLiteInstallPanel() {
   }
 
   return (
-    <div className="grid gap-3">
-      <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-end">
-        <label className="grid gap-1 text-xs text-zinc-600 dark:text-zinc-400">
-          Workspace
-          <select
-            value={spaceId}
-            onChange={event => setSpaceId(event.target.value)}
-            className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-950 outline-none focus:ring-1 focus:ring-blue-400 dark:border-white/[0.08] dark:bg-black/40 dark:text-zinc-100"
-          >
-            {spaces.length === 0 ? (
-              <option value="">Workspaceを読み込み中</option>
-            ) : spaces.map(space => (
-              <option key={space.id} value={space.id}>{space.title ?? space.name ?? space.id}</option>
-            ))}
-          </select>
-        </label>
-        <Button className="h-10 gap-1.5" onClick={issueToken} disabled={loading || !spaceId}>
-          <DownloadCloud className="h-4 w-4" />
-          {loading ? "発行中..." : "導入コマンドを発行"}
-        </Button>
-      </div>
-
-      {command && (
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-white/[0.08] dark:bg-black/40">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Macのターミナルで1回だけ実行</span>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={copyCommand}>
-              {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
-              {copied ? "コピー済み" : "コピー"}
-            </Button>
-          </div>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-zinc-100 p-3 font-mono text-xs leading-5 text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-            {command}
-          </pre>
+    <>
+      <SettingRow
+        icon={DownloadCloud}
+        title="Macエージェントを導入/再設定"
+        description="WorkspaceごとにFocusmap Lite用の導入コマンドを発行します。"
+        status={<SettingsStatusChip tone="attention">Macが必要</SettingsStatusChip>}
+      />
+      <div className="space-y-3 px-4 py-4">
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <label className="grid gap-1 text-[12px] text-zinc-500">
+            Workspace
+            <select
+              value={spaceId}
+              onChange={event => setSpaceId(event.target.value)}
+              className="h-10 rounded-md border border-white/[0.08] bg-black/30 px-3 text-[13px] text-zinc-100 outline-none focus:ring-1 focus:ring-white/35"
+            >
+              {spaces.length === 0 ? (
+                <option value="">Workspaceを読み込み中</option>
+              ) : spaces.map(space => (
+                <option key={space.id} value={space.id}>{space.title ?? space.name ?? space.id}</option>
+              ))}
+            </select>
+          </label>
+          <Button className="h-10 gap-1.5" onClick={issueToken} disabled={loading || !spaceId}>
+            <DownloadCloud className="h-4 w-4" />
+            {loading ? "発行中..." : "導入コマンドを発行"}
+          </Button>
         </div>
-      )}
 
-      {message && <p className="text-xs leading-5 text-zinc-600 dark:text-zinc-400">{message}</p>}
-    </div>
+        {command && (
+          <div className="rounded-md border border-white/[0.08] bg-black/30 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-[12px] font-medium text-zinc-300">Macのターミナルで1回だけ実行</span>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={copyCommand}>
+                {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+                {copied ? "コピー済み" : "コピー"}
+              </Button>
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-black/40 p-3 font-mono text-[12px] leading-5 text-zinc-200">
+              {command}
+            </pre>
+          </div>
+        )}
+
+        {message && <p className="text-[12px] leading-5 text-zinc-500">{message}</p>}
+      </div>
+    </>
   )
 }
 
@@ -367,6 +384,7 @@ function AiCalendarBehaviorSettings() {
   const [askCalendar, setAskCalendar] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle")
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -394,6 +412,7 @@ function AiCalendarBehaviorSettings() {
     const previous = askCalendar
     setAskCalendar(nextValue)
     setSaving(true)
+    setSaveState("saving")
     setMessage(null)
 
     try {
@@ -413,29 +432,29 @@ function AiCalendarBehaviorSettings() {
       setMessage(nextValue
         ? "予定を入れる前に、毎回カレンダーを確認します。"
         : "予定作成時はデフォルトカレンダーを使える状態に戻しました。")
+      setSaveState("saved")
     } catch (error) {
       setAskCalendar(previous)
       setMessage(error instanceof Error ? error.message : "AI設定を保存できませんでした")
+      setSaveState("failed")
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
-          <CalendarCheck className="h-5 w-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-medium uppercase text-zinc-500">Calendar behavior</p>
-          <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">予定作成時の確認</h2>
-          <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-            チャットから予定を作る前に、AIが追加先カレンダーを毎回確認します。
-          </p>
-        </div>
-        {loading ? (
-          <Loader2 className="mt-2 h-5 w-5 shrink-0 animate-spin text-zinc-400" />
+    <SettingsSection
+      title="予定作成"
+      description="チャットから予定を作る時の確認ルールです。"
+      trailing={<SaveStateText state={saveState} />}
+    >
+      <SettingRow
+        icon={CalendarCheck}
+        title="毎回カレンダーを聞く"
+        description="時間と予定名だけを伝えた場合も、AIが登録先カレンダーを確認します。"
+        status={<SettingsStatusChip tone={loading ? "muted" : askCalendar ? "ok" : "muted"}>{loading ? "取得中" : askCalendar ? "ON" : "OFF"}</SettingsStatusChip>}
+        control={loading ? (
+          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-zinc-500" />
         ) : (
           <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 rounded-md px-1">
             <span className="sr-only">予定作成時に毎回カレンダーを聞く</span>
@@ -447,12 +466,12 @@ function AiCalendarBehaviorSettings() {
             />
           </label>
         )}
+      />
+      <div className="border-b border-white/[0.07] px-4 py-3 text-[12px] leading-5 text-zinc-500 last:border-b-0">
+        ONにすると、AIは予定を登録する前に「どのカレンダーに入れますか？」と聞きます。予定登録後は、必要なら予定詳細も追記できます。
       </div>
-      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600 dark:border-white/[0.08] dark:bg-black/30 dark:text-zinc-400">
-        ONにすると、時間と予定名だけを伝えた場合でも、AIは予定を登録する前に「どのカレンダーに入れますか？」と聞きます。予定登録後は、必要なら予定詳細も追記できます。
-      </div>
-      {message && <p className="mt-3 text-xs leading-5 text-zinc-600 dark:text-zinc-400">{message}</p>}
-    </section>
+      {message && <p className="px-4 py-3 text-[12px] leading-5 text-zinc-500">{message}</p>}
+    </SettingsSection>
   )
 }
 
@@ -463,39 +482,42 @@ export function AutomationSettings() {
 
       <MacCodexConnectionPanel />
 
-      <AiCalendarBehaviorSettings />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.55fr)]">
+        <AiCalendarBehaviorSettings />
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-white/[0.08] dark:bg-[#1c1c1e] dark:shadow-none md:p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">AIへ依頼</h2>
-            <p className="mt-1 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-              メモやノードから依頼を作り、Macエージェントが巡回してCodexへつなぎます。
-            </p>
-          </div>
-          <Button asChild className="h-10 gap-1.5">
-            <Link
-              href="/dashboard"
-              prefetch={false}
-              onClick={() => {
-                try { localStorage.setItem("focusmap:activeView", "ai") } catch {}
-              }}
-            >
-              <Play className="h-4 w-4" />
-              チャットを開く
-            </Link>
-          </Button>
-        </div>
+        <SettingsSection
+          title="AIへ依頼"
+          description="メモやノードから依頼を作り、Macエージェントが巡回してCodexへつなぎます。"
+        >
+          <SettingRow
+            icon={Play}
+            title="チャットを開く"
+            description="通常会話とAI実行依頼は同じチャット画面に集約されています。"
+            status={<SettingsStatusChip tone="neutral">dashboard</SettingsStatusChip>}
+            control={(
+              <Button asChild className="h-10 gap-1.5 whitespace-nowrap">
+                <Link
+                  href="/dashboard"
+                  prefetch={false}
+                  onClick={() => {
+                    try { localStorage.setItem("focusmap:activeView", "ai") } catch {}
+                  }}
+                >
+                  <Play className="h-4 w-4" />
+                  開く
+                </Link>
+              </Button>
+            )}
+          />
+        </SettingsSection>
+      </div>
 
-        <details className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700 dark:border-white/[0.08] dark:bg-black/30 dark:text-zinc-300">
-          <summary className="cursor-pointer select-none font-medium text-zinc-950 dark:text-zinc-100">
-            Macエージェントを導入/再設定
-          </summary>
-          <div className="mt-3">
-            <FocusmapLiteInstallPanel />
-          </div>
-        </details>
-      </section>
+      <SettingsSection
+        title="導入/再設定"
+        description="Mac側のFocusmap Liteを入れ直す時だけ使います。通常の復旧は上の接続/復旧を使います。"
+      >
+        <FocusmapLiteInstallPanel />
+      </SettingsSection>
     </div>
   )
 }

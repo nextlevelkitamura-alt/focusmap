@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { Check, ChevronRight, FolderGit2, Loader2, RefreshCw, Search, X } from "lucide-react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,10 @@ interface RepoPickerProps {
   triggerVariant?: "row" | "button"
   /** triggerVariant="row" のときの行ラベル */
   rowLabel?: string
+  /** triggerVariant="row" のときの補助説明 */
+  rowDescription?: string
+  /** triggerVariant="row" のときの状態表示 */
+  rowStatus?: ReactNode
 }
 
 function formatRelative(iso: string | null): string {
@@ -45,6 +49,8 @@ export function RepoPicker({
   disabled,
   triggerVariant = "button",
   rowLabel = "リポジトリ",
+  rowDescription,
+  rowStatus,
 }: RepoPickerProps) {
   const { repos, isLoading, refresh, requestRescan } = useAvailableRepos()
   const [open, setOpen] = useState(false)
@@ -114,19 +120,29 @@ export function RepoPicker({
       onClick={() => !disabled && setOpen(true)}
       disabled={disabled || saving}
       className={cn(
-        "w-full flex items-center gap-3 min-h-[56px] px-4 py-2 text-left active:bg-muted/60 disabled:opacity-50",
+        "w-full flex min-h-[64px] flex-col gap-2 px-4 py-3 text-left transition hover:bg-white/[0.04] active:bg-white/[0.08] disabled:opacity-50 sm:flex-row sm:items-center",
         className,
       )}
     >
-      <span className="text-base">{rowLabel}</span>
-      <span className="flex-1 min-w-0" />
-      <span className={cn(
-        "text-base text-right max-w-[60%] truncate",
-        selectedRepo ? "text-muted-foreground" : "text-muted-foreground/60",
-      )}>
-        {displayValue}
+      <span className="flex min-w-0 flex-1 items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-black/20 text-zinc-400">
+          <FolderGit2 className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium leading-5 text-zinc-50">{rowLabel}</span>
+          {rowDescription ? <span className="mt-1 block truncate text-[12px] leading-5 text-zinc-500">{rowDescription}</span> : null}
+        </span>
       </span>
-      <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground/60" />
+      <span className="flex min-w-0 items-center gap-2 pl-11 sm:pl-0">
+        {rowStatus}
+        <span className={cn(
+          "max-w-[220px] truncate text-right text-[13px]",
+          selectedRepo || value ? "text-zinc-400" : "text-zinc-600",
+        )}>
+          {displayValue}
+        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
+      </span>
     </button>
   ) : (
     <Button

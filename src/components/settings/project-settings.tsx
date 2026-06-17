@@ -1,13 +1,18 @@
 "use client"
 
 import { useMemo, useState, type ReactNode } from "react"
-import { ChevronDown, FileText, FolderKanban, Layers, Loader2, Pipette, Tags, Terminal } from "lucide-react"
+import { ChevronDown, ChevronRight, FileText, FolderKanban, Layers, Loader2, Pipette, Tags } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useTagColors } from "@/hooks/useTagColors"
 import { COLOR_PRESETS, DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
 import { RepoPicker } from "./repo-picker"
 import { ScanSettingsSection } from "./scan-settings-section"
 import { ProjectContextChatDialog } from "@/components/projects/project-context-chat-dialog"
+import {
+  SettingsEmptyState,
+  SettingsSection,
+  SettingsStatusChip,
+} from "@/components/settings/settings-primitives"
 
 interface ProjectSettingsProps {
   initialProjects: Project[]
@@ -23,6 +28,9 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
 
   const sortedProjects = useMemo(() => [...projects].sort((a, b) => a.title.localeCompare(b.title, "ja")), [projects])
   const sortedSpaces = useMemo(() => [...spaces].sort((a, b) => a.title.localeCompare(b.title, "ja")), [spaces])
+  const linkedRepoCount = useMemo(() => sortedProjects.filter(project => project.repo_path?.trim()).length, [sortedProjects])
+  const describedProjectCount = useMemo(() => sortedProjects.filter(project => project.description?.trim()).length, [sortedProjects])
+  const visualIdentityCount = sortedProjects.length + sortedSpaces.length + tags.length
 
   const updateProjectColor = async (project: Project, color: string) => {
     const normalized = normalizeColor(color, DEFAULT_PROJECT_COLOR)
@@ -79,133 +87,159 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
   }
 
   return (
-    <div className="space-y-6">
-    <div id="project-colors" className="rounded-lg border bg-card p-4">
-      <div className="mb-4">
-        <h3 className="text-base font-semibold">プロジェクトとタグ</h3>
-        <p className="mt-1 text-sm text-muted-foreground">プロジェクト、ワークスペース、タグの色を管理します。</p>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-3">
-        <ColorList
-          title="プロジェクト"
-          icon={<FolderKanban className="h-4 w-4" />}
-          items={sortedProjects.map(project => ({
-            id: project.id,
-            label: project.title,
-            color: normalizeColor(project.color_theme, DEFAULT_PROJECT_COLOR),
-            saving: savingKey === `project:${project.id}`,
-            onChange: color => updateProjectColor(project, color),
-          }))}
-          empty="プロジェクトがありません"
-        />
-
-        <ColorList
-          title="ワークスペース"
-          icon={<Layers className="h-4 w-4" />}
-          items={sortedSpaces.map(space => ({
-            id: space.id,
-            label: space.title,
-            color: normalizeColor(space.color, DEFAULT_SPACE_COLOR),
-            saving: savingKey === `space:${space.id}`,
-            onChange: color => updateSpaceColor(space, color),
-          }))}
-          empty="ワークスペースがありません"
-        />
-
-        <ColorList
-          title="タグ"
-          icon={<Tags className="h-4 w-4" />}
-          items={tags.map(tag => ({
-            id: tag.name,
-            label: tag.name,
-            color: getTagColor(tag.name, tagColors),
-            saving: savingKey === `tag:${tag.name}`,
-            onChange: color => updateTagColor(tag.name, color),
-          }))}
-          empty={isLoadingTags ? "読み込み中..." : "タグがありません"}
-        />
-      </div>
-    </div>
-
-    <div id="project-repos">
-      {/* iOS 設定スタイル: セクションヘッダー */}
-      <h3 className="px-4 pt-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-        <Terminal className="h-3 w-3" />
-        プロジェクトのリポジトリ
-      </h3>
-      {sortedProjects.length === 0 ? (
-        <div className="mx-1 rounded-2xl bg-card flex min-h-[64px] items-center justify-center text-sm text-muted-foreground">
-          プロジェクトがありません
-        </div>
-      ) : (
-        <div className="mx-1 rounded-2xl bg-card overflow-hidden divide-y divide-border/40">
-          {sortedProjects.map(project => (
-            <RepoPicker
-              key={project.id}
-              value={project.repo_path ?? null}
-              onChange={(path) => updateProjectRepoPath(project, path ?? "")}
-              allowCustom={false}
-              triggerVariant="row"
-              rowLabel={project.title}
-              disabled={savingKey === `project-repo:${project.id}`}
+    <div className="space-y-8">
+      <div id="project-colors">
+        <SettingsSection
+          title="Visual identity"
+          description="プロジェクト、ワークスペース、タグを必要な識別だけに絞って表示します。"
+          trailing={<SettingsStatusChip tone="muted">{visualIdentityCount} items</SettingsStatusChip>}
+        >
+          <div className="grid divide-y divide-white/[0.07] xl:grid-cols-3 xl:divide-x xl:divide-y-0">
+            <ColorList
+              title="プロジェクト"
+              icon={<FolderKanban className="h-4 w-4" />}
+              items={sortedProjects.map(project => ({
+                id: project.id,
+                label: project.title,
+                color: normalizeColor(project.color_theme, DEFAULT_PROJECT_COLOR),
+                saving: savingKey === `project:${project.id}`,
+                onChange: color => updateProjectColor(project, color),
+              }))}
+              empty="プロジェクトがありません"
             />
-          ))}
-        </div>
+
+            <ColorList
+              title="ワークスペース"
+              icon={<Layers className="h-4 w-4" />}
+              items={sortedSpaces.map(space => ({
+                id: space.id,
+                label: space.title,
+                color: normalizeColor(space.color, DEFAULT_SPACE_COLOR),
+                saving: savingKey === `space:${space.id}`,
+                onChange: color => updateSpaceColor(space, color),
+              }))}
+              empty="ワークスペースがありません"
+            />
+
+            <ColorList
+              title="タグ"
+              icon={<Tags className="h-4 w-4" />}
+              items={tags.map(tag => ({
+                id: tag.name,
+                label: tag.name,
+                color: getTagColor(tag.name, tagColors),
+                saving: savingKey === `tag:${tag.name}`,
+                onChange: color => updateTagColor(tag.name, color),
+              }))}
+              empty={isLoadingTags ? "読み込み中..." : "タグがありません"}
+            />
+          </div>
+        </SettingsSection>
+      </div>
+
+      <div id="project-repos">
+        <SettingsSection
+          title="Repo execution target"
+          description="AI実行やCodex取り込みで使うローカルrepo pathをプロジェクトごとに紐づけます。"
+          trailing={
+            <SettingsStatusChip tone={linkedRepoCount === sortedProjects.length && sortedProjects.length > 0 ? "ok" : "attention"}>
+              {linkedRepoCount}/{sortedProjects.length} linked
+            </SettingsStatusChip>
+          }
+        >
+          {sortedProjects.length === 0 ? (
+            <SettingsEmptyState>プロジェクトがありません</SettingsEmptyState>
+          ) : (
+            <div>
+              {sortedProjects.map(project => {
+                const isSavingRepo = savingKey === `project-repo:${project.id}`
+                const hasRepo = Boolean(project.repo_path?.trim())
+                return (
+                  <div key={project.id} className="border-b border-white/[0.07] last:border-b-0">
+                    <RepoPicker
+                      value={project.repo_path ?? null}
+                      onChange={(path) => updateProjectRepoPath(project, path ?? "")}
+                      allowCustom={false}
+                      triggerVariant="row"
+                      rowLabel={project.title}
+                      rowDescription="メモ・マップ・Codex threadの実行先"
+                      rowStatus={
+                        <SettingsStatusChip tone={isSavingRepo ? "neutral" : hasRepo ? "ok" : "attention"}>
+                          {isSavingRepo ? "保存中" : hasRepo ? "接続中" : "未設定"}
+                        </SettingsStatusChip>
+                      }
+                      disabled={isSavingRepo}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </SettingsSection>
+      </div>
+
+      <div id="project-descriptions">
+        <SettingsSection
+          title="Project context"
+          description="AIがプロジェクトの目的、制約、現在地を読めるように説明/contextを整えます。"
+          trailing={
+            <SettingsStatusChip tone={describedProjectCount === sortedProjects.length && sortedProjects.length > 0 ? "ok" : "attention"}>
+              {describedProjectCount}/{sortedProjects.length} ready
+            </SettingsStatusChip>
+          }
+        >
+          {sortedProjects.length === 0 ? (
+            <SettingsEmptyState>プロジェクトがありません</SettingsEmptyState>
+          ) : (
+            <div>
+              {sortedProjects.map(project => {
+                const description = project.description?.trim()
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => setDescProject(project)}
+                    className="flex min-h-[64px] w-full items-center gap-3 border-b border-white/[0.07] px-4 py-3 text-left transition hover:bg-white/[0.04] active:bg-white/[0.08] last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-black/20 text-zinc-400">
+                      <FileText className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-[15px] font-medium leading-5 text-zinc-50">{project.title}</span>
+                        <SettingsStatusChip tone={description ? "ok" : "attention"}>
+                          {description ? "OK" : "未設定"}
+                        </SettingsStatusChip>
+                      </span>
+                      <span className="mt-1 block truncate text-[12px] leading-5 text-zinc-500">
+                        {description || "説明がありません。チャットで追加できます。"}
+                      </span>
+                    </span>
+                    <span className="hidden shrink-0 text-[12px] text-zinc-500 sm:inline">チャットで更新</span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </SettingsSection>
+      </div>
+
+      <ScanSettingsSection />
+
+      {descProject && (
+        <ProjectContextChatDialog
+          open={!!descProject}
+          projectId={descProject.id}
+          projectTitle={descProject.title}
+          initialDescription={descProject.description ?? ""}
+          onClose={() => setDescProject(null)}
+          onUpdated={(description) => {
+            setProjects(prev => prev.map(p => p.id === descProject.id ? { ...p, description } : p))
+            setDescProject(prev => prev ? { ...prev, description } : prev)
+          }}
+        />
       )}
-      <p className="px-5 pt-1.5 text-[11px] text-muted-foreground leading-4">
-        メモの「Claude で実行」ボタンを押すと、プロジェクトに紐付くこのリポジトリで Claude Code が起動します。
-      </p>
-    </div>
-
-    <div id="project-descriptions">
-      <h3 className="px-4 pt-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-        <FileText className="h-3 w-3" />
-        プロジェクトの説明
-      </h3>
-      {sortedProjects.length === 0 ? (
-        <div className="mx-1 rounded-2xl bg-card flex min-h-[64px] items-center justify-center text-sm text-muted-foreground">
-          プロジェクトがありません
-        </div>
-      ) : (
-        <div className="mx-1 rounded-2xl bg-card overflow-hidden divide-y divide-border/40">
-          {sortedProjects.map(project => (
-            <button
-              key={project.id}
-              onClick={() => setDescProject(project)}
-              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium truncate">{project.title}</div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {project.description?.trim() || "説明がありません — タップして追加"}
-                </div>
-              </div>
-              <ChevronDown className="h-4 w-4 -rotate-90 text-muted-foreground shrink-0" />
-            </button>
-          ))}
-        </div>
-      )}
-      <p className="px-5 pt-1.5 text-[11px] text-muted-foreground leading-4">
-        AIがプロジェクトを理解し、メモを正しく振り分けるための説明です。チャットで伝えると育ちます。
-      </p>
-    </div>
-
-    <ScanSettingsSection />
-
-    {descProject && (
-      <ProjectContextChatDialog
-        open={!!descProject}
-        projectId={descProject.id}
-        projectTitle={descProject.title}
-        initialDescription={descProject.description ?? ""}
-        onClose={() => setDescProject(null)}
-        onUpdated={(description) => {
-          setProjects(prev => prev.map(p => p.id === descProject.id ? { ...p, description } : p))
-          setDescProject(prev => prev ? { ...prev, description } : prev)
-        }}
-      />
-    )}
     </div>
   )
 }
@@ -228,20 +262,20 @@ function ColorList({
   empty: string
 }) {
   return (
-    <section className="min-w-0 rounded-md border bg-background/40 p-3">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+    <section className="min-w-0 p-4">
+      <div className="mb-3 flex items-center gap-2 text-[13px] font-medium text-zinc-300">
         {icon}
         {title}
       </div>
       {items.length === 0 ? (
-        <div className="flex min-h-20 items-center justify-center text-xs text-muted-foreground">{empty}</div>
+        <div className="flex min-h-20 items-center justify-center rounded-md border border-white/[0.07] bg-black/15 px-3 text-center text-[12px] text-zinc-500">{empty}</div>
       ) : (
         <div className="space-y-2">
           {items.map(item => (
-            <div key={item.id} className="flex min-h-12 flex-wrap items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-muted/40">
-              <span className="h-4 w-4 shrink-0 rounded-full border" style={{ backgroundColor: item.color }} />
-              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-              {item.saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            <div key={item.id} className="flex min-h-12 flex-wrap items-center gap-2 rounded-md border border-transparent px-1.5 py-1.5 transition hover:border-white/[0.08] hover:bg-white/[0.035]">
+              <span className="h-4 w-4 shrink-0 rounded-full border border-white/20" style={{ backgroundColor: item.color }} />
+              <span className="min-w-0 flex-1 truncate text-sm text-zinc-100">{item.label}</span>
+              {item.saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
               <ColorControl
                 color={item.color}
                 label={item.label}
@@ -277,7 +311,7 @@ function ColorControl({
           onChange={event => {
             if (event.target.value !== "custom") onChange(event.target.value)
           }}
-          className="h-8 w-[112px] appearance-none rounded-md border bg-background pl-7 pr-7 text-xs outline-none focus:ring-1 focus:ring-primary"
+          className="h-8 w-[112px] appearance-none rounded-md border border-white/[0.10] bg-black/20 pl-7 pr-7 text-xs text-zinc-100 outline-none focus:ring-1 focus:ring-white/35"
           aria-label={`${label}のプリセット色`}
         >
           {COLOR_PRESETS.map(preset => (
@@ -285,10 +319,10 @@ function ColorControl({
           ))}
           <option value="custom">カスタム</option>
         </select>
-        <span className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border" style={{ backgroundColor: normalized }} />
-        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <span className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border border-white/20" style={{ backgroundColor: normalized }} />
+        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
       </div>
-      <label className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-md border bg-background text-muted-foreground hover:text-foreground">
+      <label className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-md border border-white/[0.10] bg-black/20 text-zinc-500 transition hover:text-zinc-100">
         <Pipette className="h-3.5 w-3.5" />
         <input
           type="color"

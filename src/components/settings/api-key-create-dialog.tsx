@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { API_SCOPES, API_SCOPE_PRESETS, DEFAULT_SCOPES } from "@/lib/api-scopes"
+import { SettingsStatusChip } from "@/components/settings/settings-primitives"
+import { cn } from "@/lib/utils"
 
 interface ApiKeyCreateDialogProps {
   open: boolean
@@ -21,6 +23,12 @@ interface ApiKeyCreateDialogProps {
   onCreated: (name: string, scopes: string[]) => void
   isLoading: boolean
 }
+
+const riskLabel = {
+  low: "read",
+  medium: "write",
+  high: "危険",
+} as const
 
 export function ApiKeyCreateDialog({
   open,
@@ -68,7 +76,7 @@ export function ApiKeyCreateDialog({
         <DialogHeader>
           <DialogTitle>新しいAPIキーを作成</DialogTitle>
           <DialogDescription>
-            名前とアクセス権限を設定してください。
+            外部AIへ渡す用途ごとにキーを分け、必要なscopeだけを付与します。
           </DialogDescription>
         </DialogHeader>
 
@@ -92,13 +100,16 @@ export function ApiKeyCreateDialog({
                   type="button"
                   className={`rounded-lg border p-3 text-left transition-colors ${
                     selectedPreset === preset.id
-                      ? "border-primary bg-primary/5"
-                      : "hover:bg-muted/50"
+                      ? "border-white/35 bg-white/[0.08]"
+                      : "border-white/[0.10] bg-white/[0.03] hover:bg-white/[0.06]"
                   }`}
                   onClick={() => handleSelectPreset(preset.id)}
                 >
-                  <p className="text-sm font-medium">{preset.label}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{preset.description}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">{preset.label}</p>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">{preset.scopes.length} scopes</span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{preset.description}</p>
                 </button>
               ))}
             </div>
@@ -112,9 +123,25 @@ export function ApiKeyCreateDialog({
                   <p className="text-xs font-medium text-muted-foreground">{category}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {scopes.map(scope => (
-                      <div key={scope.id} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                      <div
+                        key={scope.id}
+                        className={cn(
+                          "flex min-h-[58px] items-center justify-between gap-3 rounded-lg border px-3 py-2",
+                          selectedScopes.includes(scope.id)
+                            ? "border-white/[0.20] bg-white/[0.06]"
+                            : "border-white/[0.08]",
+                        )}
+                      >
                         <div className="min-w-0">
-                          <p className="text-sm">{scope.label}</p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="text-sm">{scope.label}</p>
+                            <SettingsStatusChip
+                              tone={scope.risk === "high" ? "danger" : scope.risk === "medium" ? "neutral" : "muted"}
+                              className="min-h-5 px-2 text-[10px]"
+                            >
+                              {riskLabel[scope.risk ?? "low"]}
+                            </SettingsStatusChip>
+                          </div>
                           <p className="truncate text-[11px] text-muted-foreground">{scope.description}</p>
                         </div>
                         <Switch
@@ -135,7 +162,7 @@ export function ApiKeyCreateDialog({
             キャンセル
           </Button>
           <Button onClick={handleSubmit} disabled={isLoading || selectedScopes.length === 0}>
-            {isLoading ? "作成中..." : "作成"}
+            {isLoading ? "作成中..." : "作成して一度だけ表示"}
           </Button>
         </DialogFooter>
       </DialogContent>
