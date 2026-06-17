@@ -171,7 +171,7 @@ export function Header({
     return (
         <header
             className={cn(
-            "relative h-14 border-b items-center justify-between px-4 bg-background z-50 flex-shrink-0",
+            "relative h-14 border-b items-center justify-between px-4 bg-background z-[90] flex-shrink-0",
             isDesktopShell && "h-[52px] border-white/10 bg-background/95 pl-[76px] pr-5 shadow-[0_1px_0_rgba(255,255,255,0.04)]",
             desktopFlexClass,
             forceDesktopDashboard && "min-w-[1120px]",
@@ -269,6 +269,7 @@ export function Header({
                     {viewTabs.map(tab => (
                         <Button
                             key={tab.id}
+                            type="button"
                             variant={activeView === tab.id ? "secondary" : "ghost"}
                             size="sm"
                             className={cn(

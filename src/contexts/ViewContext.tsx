@@ -1,6 +1,6 @@
 "use client"
 
-import React, { createContext, useContext, useState, useCallback, useEffect, startTransition } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
 export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'automation' | 'ideal' | 'long-term' | 'ai-todos' | 'settings'
 
@@ -53,9 +53,7 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
 
     const setActiveView = useCallback((view: DashboardView) => {
         try { localStorage.setItem(STORAGE_KEY, view) } catch {}
-        startTransition(() => {
-            setActiveViewState(view)
-        })
+        setActiveViewState(view)
     }, [])
 
     return (

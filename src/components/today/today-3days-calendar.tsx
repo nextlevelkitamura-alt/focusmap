@@ -73,6 +73,7 @@ interface PointerDragGesture {
   sourceKey: string
   pointerId: number
   pointerType: string
+  captureTarget: HTMLDivElement | null
   startClientX: number
   startClientY: number
   lastClientX: number
@@ -420,6 +421,9 @@ export function Today3DaysCalendar({
   const clearPointerGesture = useCallback(() => {
     const gesture = pointerGestureRef.current
     if (gesture?.longPressTimer) clearTimeout(gesture.longPressTimer)
+    if (gesture?.captureTarget?.hasPointerCapture?.(gesture.pointerId)) {
+      gesture.captureTarget.releasePointerCapture(gesture.pointerId)
+    }
     pointerGestureRef.current = null
     cleanupPointerListenersRef.current?.()
     cleanupPointerListenersRef.current = null
@@ -470,11 +474,13 @@ export function Today3DaysCalendar({
     completePointerDrag(true)
 
     const rect = gridRef.current.getBoundingClientRect()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     const gesture: PointerDragGesture = {
       item,
       sourceKey,
       pointerId: event.pointerId,
       pointerType: event.pointerType,
+      captureTarget: event.currentTarget,
       startClientX: event.clientX,
       startClientY: event.clientY,
       lastClientX: event.clientX,
@@ -552,6 +558,19 @@ export function Today3DaysCalendar({
 
   useEffect(() => {
     return () => completePointerDrag(true)
+  }, [completePointerDrag])
+
+  useEffect(() => {
+    const cancelActiveDrag = () => completePointerDrag(true)
+    const cancelWhenHidden = () => {
+      if (document.visibilityState !== "visible") cancelActiveDrag()
+    }
+    window.addEventListener("blur", cancelActiveDrag)
+    document.addEventListener("visibilitychange", cancelWhenHidden)
+    return () => {
+      window.removeEventListener("blur", cancelActiveDrag)
+      document.removeEventListener("visibilitychange", cancelWhenHidden)
+    }
   }, [completePointerDrag])
 
   return (
