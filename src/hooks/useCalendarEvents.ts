@@ -277,6 +277,13 @@ function sortEventsByStartTime(events: CalendarEvent[]): CalendarEvent[] {
   );
 }
 
+function filterEventsByCalendarIds(events: CalendarEvent[], calendarIds?: string[]): CalendarEvent[] {
+  if (!calendarIds) return events;
+  if (calendarIds.length === 0) return [];
+  const visibleCalendarIds = new Set(calendarIds);
+  return events.filter(event => visibleCalendarIds.has(event.calendar_id));
+}
+
 function parseSyncedAt(value: unknown): Date {
   if (typeof value !== 'string') return new Date();
   const parsed = new Date(value);
@@ -521,6 +528,13 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     options.calendarIds ? [...options.calendarIds].sort().join(',') : '',
     [options.calendarIds]
   );
+  const scopedCalendarIds = useMemo(
+    () => options.calendarIds ? [...options.calendarIds].sort() : undefined,
+    // calendarIdsKey is the stable primitive representation used throughout
+    // this hook to avoid refetch loops from rebuilt arrays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [calendarIdsKey]
+  );
 
   // Stable key for timeMin/timeMax to prevent unnecessary refetches
   const timeRangeKey = useMemo(() =>
@@ -536,7 +550,9 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   const initialCacheEntry = options.enabled === false ? null : getUsableCacheEntry(cacheKey);
 
   const [events, setEventsState] = useState<CalendarEvent[]>(() => initialCacheEntry?.events ?? []);
-  const [isLoading, setIsLoading] = useState(() => options.enabled !== false && !initialCacheEntry);
+  const [isLoading, setIsLoading] = useState(() => (
+    options.enabled !== false && scopedCalendarIds?.length !== 0 && !initialCacheEntry
+  ));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => initialCacheEntry?.syncedAt ?? null);
@@ -549,7 +565,10 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       const next = typeof update === 'function'
         ? (update as (previous: CalendarEvent[]) => CalendarEvent[])(prev)
         : update;
-      const dedupedNext = dedupeCalendarEventsForDisplay(next);
+      const dedupedNext = filterEventsByCalendarIds(
+        dedupeCalendarEventsForDisplay(next),
+        scopedCalendarIds
+      );
       const existing = getUsableCacheEntry(cacheKey);
       writeCacheEntry(cacheKey, {
         events: dedupedNext,
@@ -559,7 +578,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       });
       return dedupedNext;
     });
-  }, [cacheKey]);
+  }, [cacheKey, scopedCalendarIds]);
 
   const setEvents = useCallback((update: SetStateAction<CalendarEvent[]>) => {
     commitEvents(update);
@@ -570,7 +589,19 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     forceSyncOrOptions: boolean | { forceSync?: boolean; silent?: boolean } = false
   ) => {
     if (options.enabled === false) {
+      setEventsState([]);
+      setLastSyncedAt(null);
       setIsLoading(false);
+      return;
+    }
+    if (scopedCalendarIds?.length === 0) {
+      const emptyEntry = createCacheEntry([], new Date());
+      writeCacheEntry(cacheKey, emptyEntry);
+      setEventsState([]);
+      setLastSyncedAt(emptyEntry.syncedAt);
+      setIsLoading(false);
+      setIsRefreshing(false);
+      setError(null);
       return;
     }
 
@@ -594,7 +625,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       const entry = await fetchEventsShared(
         options.timeMin,
         options.timeMax,
-        options.calendarIds,
+        scopedCalendarIds,
         forceSync
       );
       commitEvents(prev => mergeRecentOptimisticEvents(entry.events, prev), entry);
@@ -625,19 +656,31 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   // calendarIds is often rebuilt as a new array with the same values, so use
   // stable primitive keys to prevent refetch loops.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRangeKey, calendarIdsKey, cacheKey, options.enabled, commitEvents]);
+  }, [timeRangeKey, calendarIdsKey, cacheKey, options.enabled, scopedCalendarIds, commitEvents]);
 
   // Initial fetch + calendarIds/timeMin/timeMax change detection. If a cached
   // entry exists, render it immediately and refresh only in the background.
   useEffect(() => {
     if (options.enabled === false) {
+      setEventsState([]);
+      setLastSyncedAt(null);
       setIsLoading(false);
       setIsRefreshing(false);
       return;
     }
+    if (scopedCalendarIds?.length === 0) {
+      const emptyEntry = createCacheEntry([], new Date());
+      writeCacheEntry(cacheKey, emptyEntry);
+      setEventsState([]);
+      setLastSyncedAt(emptyEntry.syncedAt);
+      setIsLoading(false);
+      setIsRefreshing(false);
+      setError(null);
+      return;
+    }
     const cached = getUsableCacheEntry(cacheKey);
     if (cached) {
-      setEventsState(cached.events);
+      setEventsState(filterEventsByCalendarIds(cached.events, scopedCalendarIds));
       setLastSyncedAt(cached.syncedAt);
       setIsLoading(false);
       if (shouldRevalidate(cached)) {
@@ -646,10 +689,10 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       return;
     }
 
-    setEventsState([]);
+    setEventsState(prev => filterEventsByCalendarIds(prev, scopedCalendarIds));
     setLastSyncedAt(null);
     fetchEvents(false);
-  }, [cacheKey, fetchEvents, options.enabled]);
+  }, [cacheKey, fetchEvents, options.enabled, scopedCalendarIds]);
 
   // Auto-sync while visible. Default is 120s with +/-25% jitter to avoid
   // synchronized Calendar API traffic spikes.
@@ -726,8 +769,8 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       const end = new Date(event.end_time);
       if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
       if (!(end > options.timeMin && start < options.timeMax)) return false;
-      if (options.calendarIds && options.calendarIds.length > 0) {
-        return options.calendarIds.includes(event.calendar_id);
+      if (scopedCalendarIds) {
+        return scopedCalendarIds.includes(event.calendar_id);
       }
       return true;
     };
@@ -784,7 +827,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   // See fetchEvents deps above: the stable keys intentionally stand in for the
   // Date objects and calendarIds array.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRangeKey, calendarIdsKey, options.enabled]);
+  }, [timeRangeKey, calendarIdsKey, options.enabled, scopedCalendarIds]);
 
   // Manual sync (force refresh)
   const syncNow = useCallback((options?: { silent?: boolean }) => {

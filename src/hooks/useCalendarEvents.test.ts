@@ -607,7 +607,7 @@ describe('useCalendarEvents', () => {
       expect(result.current.events[0].title).toBe('Cal1 Event')
 
       // calendarIds を変更
-      mockFetchSuccess([createMockEvent({ title: 'Cal2 Event' })])
+      mockFetchSuccess([createMockEvent({ title: 'Cal2 Event', calendar_id: 'cal-2' })])
 
       await act(async () => {
         rerender({
@@ -619,6 +619,76 @@ describe('useCalendarEvents', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(2)
       expect(result.current.events[0].title).toBe('Cal2 Event')
+    })
+
+    test('calendarIds が空配列に変わったら前回イベントを即座に消す', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([createMockEvent({ title: 'Cal1 Event', calendar_id: 'cal-1' })])
+
+      const { result, rerender } = renderHook(
+        (props) => useCalendarEvents(props),
+        {
+          initialProps: {
+            ...baseOptions,
+            calendarIds: ['cal-1'],
+          },
+        }
+      )
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(result.current.events).toHaveLength(1)
+
+      await act(async () => {
+        rerender({
+          ...baseOptions,
+          calendarIds: [],
+        })
+        await vi.runAllTimersAsync()
+      })
+
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(result.current.events).toEqual([])
+      expect(result.current.isLoading).toBe(false)
+    })
+
+    test('calendarIds 変更直後は前回イベントから選択外カレンダーを先に落とす', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([
+        createMockEvent({ id: 'evt-1', google_event_id: 'gevt-1', title: 'Cal1 Event', calendar_id: 'cal-1' }),
+        createMockEvent({ id: 'evt-2', google_event_id: 'gevt-2', title: 'Cal2 Event', calendar_id: 'cal-2' }),
+      ])
+
+      const { result, rerender } = renderHook(
+        (props) => useCalendarEvents(props),
+        {
+          initialProps: {
+            ...baseOptions,
+            calendarIds: ['cal-1', 'cal-2'],
+          },
+        }
+      )
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(result.current.events.map(event => event.calendar_id)).toEqual(['cal-1', 'cal-2'])
+
+      mockFetch.mockReturnValueOnce(new Promise(() => {}))
+
+      await act(async () => {
+        rerender({
+          ...baseOptions,
+          calendarIds: ['cal-1'],
+        })
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(result.current.events.map(event => event.calendar_id)).toEqual(['cal-1'])
     })
   })
 })

@@ -70,6 +70,7 @@ export function useTodayViewLogic({
     onDeleteTask: onDeleteTaskProp,
 }: UseTodayViewLogicOptions) {
     const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
+    const selectedCalendarIdSet = useMemo(() => new Set(selectedCalendarIds), [selectedCalendarIds])
     const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, getHabitsForDate, isCompletedForDate, isLoading: habitsLoading } = useHabits()
     const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
@@ -115,8 +116,12 @@ export function useTodayViewLogic({
     }, [allTasks])
 
     const visibleTasks = useMemo(
-        () => dedupeGoogleEventTasks(localTasks),
-        [localTasks]
+        () => dedupeGoogleEventTasks(localTasks).filter(task => {
+            if (calendarsLoading) return true
+            if (!task.calendar_id) return true
+            return selectedCalendarIdSet.has(task.calendar_id)
+        }),
+        [calendarsLoading, localTasks, selectedCalendarIdSet]
     )
 
     // Shared date context (desktop: sync both panels; mobile: null → use local state)
@@ -211,7 +216,7 @@ export function useTodayViewLogic({
     const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
         timeMin: fetchWindow.min,
         timeMax: fetchWindow.max,
-        enabled: !calendarsLoading && selectedCalendarIds.length > 0,
+        enabled: !calendarsLoading,
         calendarIds: selectedCalendarIds,
     })
 

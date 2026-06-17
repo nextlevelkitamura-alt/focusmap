@@ -88,9 +88,25 @@ let cachedSelectedCalendarIds = cachedCalendars
 let cacheTimestamp = storedCalendarList?.cachedAt ?? 0;
 let inflight: Promise<UserCalendar[]> | null = null;
 let inflightForceSync = false;
+const pendingSelectionOverrides = new Map<string, boolean>();
 
 function notifyListeners(calendars: UserCalendar[]) {
   listeners.forEach(fn => fn(calendars));
+}
+
+function applyPendingSelectionOverrides(calendars: UserCalendar[]): UserCalendar[] {
+  if (pendingSelectionOverrides.size === 0) return calendars;
+  return calendars.map(calendar => (
+    pendingSelectionOverrides.has(calendar.id)
+      ? { ...calendar, selected: pendingSelectionOverrides.get(calendar.id)! }
+      : calendar
+  ));
+}
+
+function clearPendingSelectionOverride(id: string, selected: boolean) {
+  if (pendingSelectionOverrides.get(id) === selected) {
+    pendingSelectionOverrides.delete(id);
+  }
 }
 
 async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]> {
@@ -127,7 +143,7 @@ async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]>
         data = await response.json();
       }
 
-      const calendars = data.calendars || [];
+      const calendars = applyPendingSelectionOverrides(data.calendars || []);
       cachedCalendars = calendars;
       cachedSelectedCalendarIds = calendars
         .filter(cal => cal.selected)
@@ -218,6 +234,8 @@ export function useCalendars() {
 
   // カレンダーの表示/非表示を切り替え
   const toggleCalendar = useCallback(async (id: string, selected: boolean) => {
+    pendingSelectionOverrides.set(id, selected);
+
     // Optimistic Update (local + cache)
     const updateFn = (cals: UserCalendar[]) => cals.map(cal =>
       cal.id === id ? { ...cal, selected } : cal
@@ -243,7 +261,9 @@ export function useCalendars() {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to toggle calendar');
       }
+      clearPendingSelectionOverride(id, selected);
     } catch (err) {
+      clearPendingSelectionOverride(id, selected);
       // Rollback (local + cache)
       const rollbackFn = (cals: UserCalendar[]) => cals.map(cal =>
         cal.id === id ? { ...cal, selected: !selected } : cal
@@ -265,6 +285,7 @@ export function useCalendars() {
   // 全選択/全解除
   const toggleAll = useCallback(async (selected: boolean) => {
     const prevCalendars = cachedCalendars ? [...cachedCalendars] : calendars;
+    prevCalendars.forEach(calendar => pendingSelectionOverrides.set(calendar.id, selected));
 
     // Optimistic Update (local + cache)
     const updateFn = (cals: UserCalendar[]) => cals.map(cal => ({ ...cal, selected }));
@@ -288,7 +309,9 @@ export function useCalendars() {
           })
         )
       );
+      prevCalendars.forEach(calendar => clearPendingSelectionOverride(calendar.id, selected));
     } catch (err) {
+      prevCalendars.forEach(calendar => clearPendingSelectionOverride(calendar.id, selected));
       // Rollback
       fetchCalendars(true);
       setError(err as Error);

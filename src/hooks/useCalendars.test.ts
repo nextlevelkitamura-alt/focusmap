@@ -278,6 +278,65 @@ describe('useCalendars - toggleCalendar', () => {
     })
   })
 
+  test('背景のforceSync応答が未完了のトグル状態を上書きしない', async () => {
+    const calendars = [createCalendar({ id: 'cal-1', selected: true })]
+    localStorageMock.setItem('focusmap:calendars:list', JSON.stringify({
+      calendars,
+      cachedAt: Date.now(),
+    }))
+
+    let resolveForceSync: () => void
+    let resolvePatch: () => void
+    mockFetch
+      .mockReturnValueOnce(
+        new Promise<unknown>(resolve => {
+          resolveForceSync = () => resolve({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            json: () => Promise.resolve({ calendars }),
+          })
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise<unknown>(resolve => {
+          resolvePatch = () => resolve({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            json: () => Promise.resolve({}),
+          })
+        })
+      )
+
+    const useCalendars = await importHook()
+    const { result } = renderHook(() => useCalendars())
+
+    expect(result.current.calendars[0].selected).toBe(true)
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(mockFetch).toHaveBeenCalledWith('/api/calendars?forceSync=true')
+
+    act(() => {
+      result.current.toggleCalendar('cal-1', false)
+    })
+
+    expect(result.current.calendars[0].selected).toBe(false)
+
+    await act(async () => {
+      resolveForceSync!()
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+
+    expect(result.current.calendars[0].selected).toBe(false)
+    expect(result.current.selectedCalendarIds).toEqual([])
+
+    await act(async () => {
+      resolvePatch!()
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+  })
+
   test('APIエラー時にロールバックする', async () => {
     const calendars = [createCalendar({ id: 'cal-1', selected: true })]
     mockFetchSuccess(calendars)
