@@ -134,6 +134,11 @@ export interface CodexThreadImportPayload {
   first_user_message?: string | null;
   cwd?: string | null;
   updated_at_ms?: number | null;
+  codex_run_state?: 'running' | 'awaiting_approval';
+  codex_review_reason?: string | null;
+  current_step?: string | null;
+  last_activity_at?: string | null;
+  awaiting_approval_at?: string | null;
   scope_project_id?: string | null;
   scope_repo_path?: string | null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -66,7 +66,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60_000);
   });
 
-  test('prefers the current Codex sqlite state DB path over the legacy root path', () => {
+  test('prefers the freshest default Codex state DB path', () => {
     const originalConfiguredPath = process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
     delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
     const home = mkdtempSync(join(tmpdir(), 'focusmap-codex-state-'));
@@ -78,8 +78,12 @@ describe('codex-thread-monitor state detection', () => {
       const sqlitePath = join(sqliteDir, 'state_5.sqlite');
       writeFileSync(legacyPath, '');
       writeFileSync(sqlitePath, '');
+      const oldDate = new Date('2026-06-01T00:00:00.000Z');
+      const newDate = new Date('2026-06-02T00:00:00.000Z');
+      utimesSync(sqlitePath, oldDate, oldDate);
+      utimesSync(legacyPath, newDate, newDate);
 
-      expect(codexStateDbPath(home)).toBe(sqlitePath);
+      expect(codexStateDbPath(home)).toBe(legacyPath);
     } finally {
       if (originalConfiguredPath === undefined) delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH;
       else process.env.FOCUSMAP_CODEX_STATE_DB_PATH = originalConfiguredPath;

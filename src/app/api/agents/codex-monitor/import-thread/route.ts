@@ -19,6 +19,11 @@ export type ImportedCodexThread = {
   first_user_message?: string | null
   cwd?: string | null
   updated_at_ms?: number | null
+  codex_run_state?: 'running' | 'awaiting_approval' | null
+  codex_review_reason?: string | null
+  current_step?: string | null
+  last_activity_at?: string | null
+  awaiting_approval_at?: string | null
   scope_project_id?: string | null
   scope_repo_path?: string | null
 }
@@ -90,6 +95,11 @@ function parseThread(input: unknown): ImportedCodexThread | null {
     first_user_message: compactString(record.first_user_message, MAX_PROMPT_CHARS),
     cwd: compactString(record.cwd, 500),
     updated_at_ms: updatedAtMs,
+    codex_run_state: record.codex_run_state === 'awaiting_approval' ? 'awaiting_approval' : 'running',
+    codex_review_reason: compactString(record.codex_review_reason, 120),
+    current_step: compactString(record.current_step, 500),
+    last_activity_at: compactString(record.last_activity_at, 120),
+    awaiting_approval_at: compactString(record.awaiting_approval_at, 120),
     scope_project_id: compactString(record.scope_project_id, 120),
     scope_repo_path: compactString(record.scope_repo_path, 500),
   }
@@ -151,20 +161,47 @@ export function threadUpdatedAtIso(thread: ImportedCodexThread, fallback = new D
   return fallback.toISOString()
 }
 
+function importedThreadRunState(thread: ImportedCodexThread): 'running' | 'awaiting_approval' {
+  return thread.codex_run_state === 'awaiting_approval' ? 'awaiting_approval' : 'running'
+}
+
+function importedThreadStatus(thread: ImportedCodexThread): 'running' | 'awaiting_approval' {
+  return importedThreadRunState(thread)
+}
+
+function importedThreadCurrentStep(thread: ImportedCodexThread) {
+  const runState = importedThreadRunState(thread)
+  return compactString(thread.current_step, 500) ??
+    (runState === 'running'
+      ? 'Codex.appで実行中'
+      : 'Codex セッションは確認待ちです')
+}
+
+function importedThreadLastActivityAt(thread: ImportedCodexThread, nowIso: string) {
+  return compactString(thread.last_activity_at, 120) ?? threadUpdatedAtIso(thread, new Date(nowIso))
+}
+
 export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: string, nowIso: string) {
-  const lastActivityAt = threadUpdatedAtIso(thread, new Date(nowIso))
+  const runState = importedThreadRunState(thread)
+  const lastActivityAt = importedThreadLastActivityAt(thread, nowIso)
+  const awaitingApprovalAt = compactString(thread.awaiting_approval_at, 120) ??
+    (runState === 'awaiting_approval' ? lastActivityAt : undefined)
   return {
     executor: 'codex_app',
     codex_manual_handoff: false,
     codex_external_origin: 'codex_app_thread_import',
     codex_thread_id: thread.id,
     codex_thread_url: `codex://threads/${thread.id}`,
-    codex_run_state: 'running',
-    codex_review_reason: 'external_thread_import',
+    codex_run_state: runState,
+    codex_review_reason: compactString(thread.codex_review_reason, 120) ??
+      (runState === 'running' ? 'external_thread_import' : 'completed'),
     codex_source_task_id: sourceTaskId,
-    current_step: 'Codex.appで開始されたスレッドを取り込みました',
-    message: 'Codex.appで直接開始されたスレッドをFocusmapへ取り込みました。',
+    current_step: importedThreadCurrentStep(thread),
+    message: runState === 'running'
+      ? 'Codex.appで直接開始されたスレッドをFocusmapへ取り込みました。'
+      : 'Codex.appで直接開始されたスレッドを確認待ちとして取り込みました。',
     last_activity_at: lastActivityAt,
+    awaiting_approval_at: awaitingApprovalAt,
     steps: [
       {
         key: 'thread_imported',
@@ -190,7 +227,10 @@ export function linkedManualHandoffThreadResult(
 ) {
   const current = isRecord(task.result) ? task.result : {}
   const currentMeta = isRecord(current.meta) ? current.meta : {}
-  const lastActivityAt = threadUpdatedAtIso(thread, new Date(nowIso))
+  const runState = importedThreadRunState(thread)
+  const lastActivityAt = importedThreadLastActivityAt(thread, nowIso)
+  const awaitingApprovalAt = compactString(thread.awaiting_approval_at, 120) ??
+    (runState === 'awaiting_approval' ? lastActivityAt : undefined)
   const sourceTaskId = compactString(task.source_task_id, 120)
   return {
     ...current,
@@ -198,12 +238,16 @@ export function linkedManualHandoffThreadResult(
     codex_manual_handoff: true,
     codex_thread_id: thread.id,
     codex_thread_url: `codex://threads/${thread.id}`,
-    codex_run_state: 'running',
-    codex_review_reason: 'manual_handoff_thread_detected',
+    codex_run_state: runState,
+    codex_review_reason: compactString(thread.codex_review_reason, 120) ??
+      (runState === 'running' ? 'manual_handoff_thread_detected' : 'completed'),
     codex_source_task_id: sourceTaskId,
-    current_step: 'Codex.appで実行中',
-    message: 'Focusmapから送ったCodexスレッドを検出しました。',
+    current_step: importedThreadCurrentStep(thread),
+    message: runState === 'running'
+      ? 'Focusmapから送ったCodexスレッドを検出しました。'
+      : 'Focusmapから送ったCodexスレッドを確認待ちとして検出しました。',
     last_activity_at: lastActivityAt,
+    awaiting_approval_at: awaitingApprovalAt,
     meta: {
       ...currentMeta,
       linked_by: 'codex-monitor-import-thread',
@@ -465,14 +509,16 @@ async function linkManualHandoffThread(
   const nowIso = new Date().toISOString()
   const sourceTaskId = compactString(task.source_task_id, 120)
   const result = linkedManualHandoffThreadResult(thread, task, nowIso)
+  const status = importedThreadStatus(thread)
   const startedAt = compactString(task.started_at, 80) ?? nowIso
   const cwd = compactString(task.cwd, 500) ?? thread.cwd ?? null
 
   const { error: taskError } = await supabase
     .from('ai_tasks')
     .update({
-      status: 'running',
+      status,
       started_at: startedAt,
+      completed_at: status === 'awaiting_approval' ? (result.awaiting_approval_at ?? result.last_activity_at ?? nowIso) : null,
       codex_thread_id: thread.id,
       cwd,
       result,
@@ -486,7 +532,7 @@ async function linkManualHandoffThread(
       .from('tasks')
       .update({
         codex_thread_id: thread.id,
-        codex_status: 'running',
+        codex_status: status,
         codex_work_dir: cwd,
         updated_at: nowIso,
       })
@@ -499,12 +545,12 @@ async function linkManualHandoffThread(
   if (isTursoConfigured()) {
     try {
       await upsertTursoAiTask({
-        id: task.id,
-        user_id: task.user_id,
-        space_id: task.space_id,
-        status: 'running',
-        executor: 'codex_app',
-        dispatch_mode: 'manual',
+          id: task.id,
+          user_id: task.user_id,
+          space_id: task.space_id,
+          status,
+          executor: 'codex_app',
+          dispatch_mode: 'manual',
         source_type: sourceTaskId ? 'mindmap' : null,
         source_id: sourceTaskId,
         codex_thread_id: thread.id,
@@ -603,7 +649,7 @@ export async function POST(request: NextRequest) {
           source: 'codex_app_thread',
           memo: memoFromImportedThread(thread),
           codex_thread_id: thread.id,
-          codex_status: 'running',
+          codex_status: importedThreadStatus(thread),
           codex_work_dir: thread.cwd ?? null,
         })
         .select('id')
@@ -614,6 +660,7 @@ export async function POST(request: NextRequest) {
 
     const nowIso = new Date().toISOString()
     const result = importedThreadResult(thread, taskId, nowIso)
+    const status = importedThreadStatus(thread)
     const { data: aiTask, error: aiTaskError } = await supabase
       .from('ai_tasks')
       .insert({
@@ -623,8 +670,9 @@ export async function POST(request: NextRequest) {
         skill_id: null,
         approval_type: 'auto',
         parent_task_id: null,
-        status: 'running',
+        status,
         started_at: nowIso,
+        completed_at: status === 'awaiting_approval' ? (result.awaiting_approval_at ?? result.last_activity_at ?? nowIso) : null,
         cwd: thread.cwd ?? null,
         executor: 'codex_app',
         run_visibility: project.space_id ? 'space' : 'private',
@@ -644,7 +692,7 @@ export async function POST(request: NextRequest) {
           user_id: token.user_id,
           space_id: project.space_id,
           title: titleFromImportedThread(thread),
-          status: 'running',
+          status,
           executor: 'codex_app',
           dispatch_mode: 'manual',
           source_type: 'mindmap',

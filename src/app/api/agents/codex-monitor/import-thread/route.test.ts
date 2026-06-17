@@ -107,7 +107,24 @@ describe('codex orphan thread import helpers', () => {
     expect(result.codex_thread_id).toBe(thread.id)
     expect(result.codex_source_task_id).toBe('source-task-1')
     expect(result.codex_review_reason).toBe('external_thread_import')
+    expect(result.codex_run_state).toBe('running')
     expect(result.last_activity_at).toBe('2026-06-10T10:00:00.000Z')
+  })
+
+  test('stores completed imported threads as awaiting approval immediately', () => {
+    const result = importedThreadResult({
+      ...thread,
+      codex_run_state: 'awaiting_approval',
+      codex_review_reason: 'completed',
+      current_step: 'Codexが実行完了し確認待ちです',
+      last_activity_at: '2026-06-10T10:03:00.000Z',
+    }, 'source-task-1', '2026-06-10T10:04:00.000Z')
+
+    expect(result.codex_run_state).toBe('awaiting_approval')
+    expect(result.codex_review_reason).toBe('completed')
+    expect(result.current_step).toBe('Codexが実行完了し確認待ちです')
+    expect(result.last_activity_at).toBe('2026-06-10T10:03:00.000Z')
+    expect(result.awaiting_approval_at).toBe('2026-06-10T10:03:00.000Z')
   })
 
   test('builds task memo with thread metadata, first request, and preview', () => {
@@ -222,6 +239,28 @@ describe('codex orphan thread import helpers', () => {
     expect(linkedResult.codex_handoff_token).toBe('FM-token')
     expect(linkedResult.codex_thread_id).toBe(thread.id)
     expect(linkedResult.codex_run_state).toBe('running')
+    expect(linkedResult.codex_source_task_id).toBe('mindmap-node-1')
+  })
+
+  test('keeps manual handoff linked completed thread in awaiting approval', () => {
+    const linkedResult = linkedManualHandoffThreadResult({
+      ...thread,
+      codex_run_state: 'awaiting_approval',
+      codex_review_reason: 'completed',
+      current_step: 'Codexが実行完了し確認待ちです',
+      last_activity_at: '2026-06-10T10:03:00.000Z',
+    }, {
+      result: {
+        codex_manual_handoff: true,
+        codex_handoff_token: 'FM-token',
+        codex_run_state: 'prompt_waiting',
+      },
+      source_task_id: 'mindmap-node-1',
+    }, '2026-06-10T10:04:00.000Z')
+
+    expect(linkedResult.codex_run_state).toBe('awaiting_approval')
+    expect(linkedResult.codex_review_reason).toBe('completed')
+    expect(linkedResult.awaiting_approval_at).toBe('2026-06-10T10:03:00.000Z')
     expect(linkedResult.codex_source_task_id).toBe('mindmap-node-1')
   })
 })

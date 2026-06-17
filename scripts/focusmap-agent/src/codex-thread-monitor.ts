@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -140,13 +140,44 @@ function sleep(ms: number): Promise<void> {
 
 export function codexStateDbPath(homeDir = homedir()): string | null {
   const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim();
+  if (configured && existsSync(configured)) return configured;
+
   const candidates = [
-    configured,
     join(homeDir, '.codex', 'sqlite', 'state_5.sqlite'),
     join(homeDir, '.codex', 'state_5.sqlite'),
   ].filter((value): value is string => !!value);
 
-  return candidates.find(candidate => existsSync(candidate)) ?? null;
+  return candidates
+    .filter(candidate => existsSync(candidate))
+    .map(candidate => ({ candidate, score: codexStateDbFreshnessScore(candidate) }))
+    .sort((a, b) => b.score - a.score)[0]?.candidate ?? null;
+}
+
+function codexStateDbFreshnessScore(dbPath: string): number {
+  const latestThreadUpdatedAt = latestCodexThreadUpdatedAtMs(dbPath);
+  if (latestThreadUpdatedAt > 0) return latestThreadUpdatedAt;
+  try {
+    return statSync(dbPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function latestCodexThreadUpdatedAtMs(dbPath: string): number {
+  try {
+    const stdout = execFileSync(
+      SQLITE_BIN,
+      [
+        dbPath,
+        "SELECT COALESCE(MAX(updated_at_ms), MAX(updated_at) * 1000, 0) FROM threads;",
+      ],
+      { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const value = Number(String(stdout).trim());
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -558,7 +589,11 @@ export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiE
   return error instanceof AgentApiError && (error.status === 404 || error.status === 405);
 }
 
-function importPayloadFromThread(row: CodexThreadRow, scope: CodexThreadImportScope | null = null): CodexThreadImportPayload {
+function importPayloadFromThread(
+  row: CodexThreadRow,
+  scope: CodexThreadImportScope | null = null,
+  summary: RolloutSummary | null = null,
+): CodexThreadImportPayload {
   return {
     id: row.id,
     title: row.title ?? null,
@@ -566,6 +601,13 @@ function importPayloadFromThread(row: CodexThreadRow, scope: CodexThreadImportSc
     first_user_message: row.first_user_message ?? null,
     cwd: row.cwd ?? null,
     updated_at_ms: row.updated_at_ms ?? row.created_at_ms ?? null,
+    codex_run_state: summary?.state ?? (row.archived ? 'awaiting_approval' : 'running'),
+    codex_review_reason: summary?.reviewReason ?? (row.archived ? 'archived' : 'external_thread_import'),
+    current_step: summary?.currentStep ?? null,
+    last_activity_at: summary?.lastActivityAt ?? timestampToIso(row.updated_at_ms ?? row.created_at_ms) ?? null,
+    awaiting_approval_at: summary?.state === 'awaiting_approval'
+      ? (summary.lastActivityAt ?? timestampToIso(row.updated_at_ms ?? row.created_at_ms) ?? null)
+      : null,
     scope_project_id: scope?.project_id ?? null,
     scope_repo_path: scope?.repo_path ?? null,
   };
@@ -1000,7 +1042,8 @@ async function importOrphanThreads(
     orphanImportCache.set(row.id, now);
 
     try {
-      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row, matchingScope));
+      const summary = parseRollout(await readRollout(row), row);
+      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row, matchingScope, summary));
       if (result.imported) {
         imported += 1;
         knownThreadIds.add(row.id);

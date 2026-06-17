@@ -294,6 +294,14 @@ function processRunning(pattern) {
   });
 }
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function agentProcessPattern() {
+  return `${escapeRegex(AGENT_CLI)}.*\\bstart\\b`;
+}
+
 function commandExists(command) {
   return new Promise((resolve) => {
     execFile('/usr/bin/env', ['which', command], {
@@ -908,12 +916,40 @@ async function openPathFromBridge(_event, targetPath) {
   return errorMessage ? { ok: false, error: errorMessage } : { ok: true };
 }
 
-function codexStateDbPath() {
+async function codexStateDbPath() {
   const candidates = [
     path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
     path.join(os.homedir(), '.codex', 'state_5.sqlite'),
-  ];
-  return candidates.find(candidate => fs.existsSync(candidate)) || null;
+  ].filter(candidate => fs.existsSync(candidate));
+
+  const scored = await Promise.all(candidates.map(async candidate => ({
+    candidate,
+    score: await codexStateDbFreshnessScore(candidate),
+  })));
+  return scored.sort((a, b) => b.score - a.score)[0]?.candidate || null;
+}
+
+async function codexStateDbFreshnessScore(dbPath) {
+  const latestThreadUpdatedAt = await latestCodexThreadUpdatedAtMs(dbPath);
+  if (latestThreadUpdatedAt > 0) return latestThreadUpdatedAt;
+  try {
+    return fs.statSync(dbPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function latestCodexThreadUpdatedAtMs(dbPath) {
+  try {
+    const stdout = await execFileText('/usr/bin/sqlite3', [
+      dbPath,
+      "SELECT COALESCE(MAX(updated_at_ms), MAX(updated_at) * 1000, 0) FROM threads;",
+    ], { timeout: 2500 });
+    const value = Number(String(stdout).trim());
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function normalizeLocalPath(value) {
@@ -921,7 +957,7 @@ function normalizeLocalPath(value) {
 }
 
 async function listCodexReposFromBridge() {
-  const dbPath = codexStateDbPath();
+  const dbPath = await codexStateDbPath();
   if (!dbPath) return { ok: false, repos: [], error: 'Codex state DB が見つかりません' };
 
   const sql = [
@@ -1759,7 +1795,7 @@ async function launchCodexFromBridge(_event, payload) {
 
 async function startAgent() {
   if (isChildRunning(managedProcesses.agent)) return { ok: true, message: 'agentは起動済みです' };
-  const externalAgentRunning = await processRunning('focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start').catch(() => false);
+  const externalAgentRunning = await processRunning(agentProcessPattern()).catch(() => false);
   if (externalAgentRunning) {
     return { ok: true, message: '既存のfocusmap-agentを利用します', external: true };
   }
@@ -1777,7 +1813,7 @@ async function startAgent() {
   }
 
   const agentApiUrl = preferredAgentApiUrl();
-  if (agentApiUrl?.startsWith(APP_ORIGIN)) await ensureFocusmapApp();
+  if (isLocalAppOrigin() && agentApiUrl?.startsWith(APP_ORIGIN)) await ensureFocusmapApp();
 
   const nodeRuntime = packagedNodeCommand();
   const env = {
@@ -1916,6 +1952,15 @@ async function ensureAutomationServices(reason, options = {}) {
   ensureKeepAwake();
 
   try {
+    results.agent = await startAgent();
+    log('agent', results.agent.message);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    results.agent = serviceResult(false, message);
+    log('agent', message);
+  }
+
+  try {
     await ensureFocusmapApp();
     results.app = serviceResult(
       true,
@@ -1926,13 +1971,6 @@ async function ensureAutomationServices(reason, options = {}) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     results.app = serviceResult(false, message);
-  }
-
-  try {
-    results.agent = await startAgent();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    results.agent = serviceResult(false, message);
   }
 
   try {
@@ -2002,11 +2040,13 @@ function stopAutomationSupervisor() {
 }
 
 async function getAutomationStatus() {
-  const [appReady, codexReady, codexCommandAvailable, externalAgentRunning] = await Promise.all([
+  const anyAgentProcessPattern = 'focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start';
+  const [appReady, codexReady, codexCommandAvailable, externalAgentRunning, anyExternalAgentRunning] = await Promise.all([
     desktopHealthReady(800).catch(() => false),
     tcpReady('127.0.0.1', 7878, 500),
     commandExists('codex'),
-    processRunning('focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start').catch(() => false),
+    processRunning(agentProcessPattern()).catch(() => false),
+    processRunning(anyAgentProcessPattern).catch(() => false),
   ]);
   const codexThreadImportApi = await codexThreadImportApiStatus(appReady, 1200).catch((error) => ({
     ready: false,
@@ -2049,6 +2089,7 @@ async function getAutomationStatus() {
       ready: agentReady,
       managed: agentManaged,
       external: externalAgentRunning,
+      externalStale: Boolean(anyExternalAgentRunning && !agentManaged && !externalAgentRunning),
       configured: fs.existsSync(CONFIG_PATH),
       available: fs.existsSync(AGENT_CLI),
       configPath: CONFIG_PATH,
@@ -2310,9 +2351,9 @@ app.whenReady().then(async () => {
     app.dock.show();
   }
   buildMenu();
+  if (desktopAutoConnectEnabled()) startAutomationSupervisor('app-ready');
   try {
     await createMainWindow();
-    if (desktopAutoConnectEnabled()) startAutomationSupervisor('app-ready');
   } catch (error) {
     log('app', error instanceof Error ? error.message : String(error));
   }
