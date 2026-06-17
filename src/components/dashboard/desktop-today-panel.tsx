@@ -651,6 +651,9 @@ export function DesktopTodayPanel({
                         onScrollPositionChange={handleTimelineScrollPositionChange}
                         onDateSelect={handleRangeDateSelect}
                         onItemTap={handleItemTap}
+                        currentTime={currentTime}
+                        onToggleTask={toggleTask}
+                        onToggleEvent={toggleEventCompletion}
                         showOverflowChips={show3DayOverflowChips}
                     />
                 ) : calendarRangeMode === 'month' ? (

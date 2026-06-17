@@ -4,11 +4,12 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
-import { ChevronRight, X } from "lucide-react"
+import { CheckSquare, ChevronRight, Square, X } from "lucide-react"
 import type { Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import type { TimeBlock } from "@/lib/time-block"
 import { buildTimeBlocksForDay } from "@/lib/today-range-blocks"
+import { calculateTodayTimelineLayout, type TodayTimelineLayoutPosition } from "@/lib/today-timeline-layout"
 import { cn } from "@/lib/utils"
 
 const START_HOUR = 0
@@ -33,6 +34,9 @@ interface Today3DaysCalendarProps {
   onScrollPositionChange?: (scrollTop: number) => void
   onDateSelect?: (date: Date) => void
   onItemTap?: (item: TimeBlock) => void
+  currentTime?: Date
+  onToggleTask?: (taskId: string) => void
+  onToggleEvent?: (eventId: string) => void
   showOverflowChips?: boolean
 }
 
@@ -43,11 +47,7 @@ interface OverflowGroup {
   end: Date
 }
 
-interface ConflictLayoutItem {
-  item: TimeBlock
-  column: number
-  totalColumns: number
-}
+type ConflictLayoutItem = TimeBlock & TodayTimelineLayoutPosition
 
 interface ConflictCluster {
   visible: ConflictLayoutItem[]
@@ -77,20 +77,6 @@ function topForDate(date: Date, displayDay: Date): number {
   return ((clamp(min, START_HOUR * 60, END_HOUR * 60) - START_HOUR * 60) / 60) * HOUR_HEIGHT
 }
 
-function topForStart(item: TimeBlock): number {
-  return topForDate(item.startTime, item.startTime)
-}
-
-function topForEnd(item: TimeBlock): number {
-  return topForDate(item.endTime, item.startTime)
-}
-
-function heightFor(item: TimeBlock): number {
-  const start = topForStart(item)
-  const end = topForEnd(item)
-  return Math.max(end - start, 58)
-}
-
 function isHexColor(value?: string): value is string {
   return /^#[0-9a-fA-F]{6}$/.test(value ?? "")
 }
@@ -111,19 +97,12 @@ function eventStyle(color?: string): CSSProperties {
   }
 }
 
-function visualBottomFor(item: TimeBlock): number {
-  return topForStart(item) + heightFor(item) + 4
+function itemKey(item: TimeBlock): string {
+  return `${item.source}-${item.id}`
 }
 
-function visuallyOverlaps(a: TimeBlock, b: TimeBlock): boolean {
-  return topForStart(a) < visualBottomFor(b) && visualBottomFor(a) > topForStart(b)
-}
-
-function firstAvailableColumn(item: TimeBlock, columns: TimeBlock[][]): number {
-  for (let column = 0; column < columns.length; column += 1) {
-    if (!columns[column].some((existing) => visuallyOverlaps(item, existing))) return column
-  }
-  return columns.length
+function clusterEndMs(items: TimeBlock[]): number {
+  return Math.max(...items.map((item) => item.endTime.getTime()))
 }
 
 function buildConflictClusters(items: TimeBlock[], showOverflowChips: boolean): ConflictCluster[] {
@@ -132,42 +111,47 @@ function buildConflictClusters(items: TimeBlock[], showOverflowChips: boolean): 
     if (start !== 0) return start
     return (b.endTime.getTime() - b.startTime.getTime()) - (a.endTime.getTime() - a.startTime.getTime())
   })
+  const positioned = calculateTodayTimelineLayout(sorted, {
+    totalHeight: TOTAL_HEIGHT,
+    minHeight: HOUR_HEIGHT * 0.4,
+  })
+  const positionedByKey = new Map(positioned.map((item) => [itemKey(item), item]))
   const groups: TimeBlock[][] = []
   let current: TimeBlock[] = []
-  let clusterEnd = 0
+  let clusterEnd = Number.NEGATIVE_INFINITY
 
   for (const item of sorted) {
-    const start = topForStart(item)
-    const end = visualBottomFor(item)
+    const start = item.startTime.getTime()
     if (current.length === 0 || start < clusterEnd) {
       current.push(item)
-      clusterEnd = Math.max(clusterEnd, end)
+      clusterEnd = clusterEndMs(current)
     } else {
       groups.push(current)
       current = [item]
-      clusterEnd = end
+      clusterEnd = item.endTime.getTime()
     }
   }
   if (current.length > 0) groups.push(current)
 
   return groups.map((group) => {
-    const columns: TimeBlock[][] = []
-    const assignments = group.map((item) => {
-      const column = firstAvailableColumn(item, columns)
-      if (!columns[column]) columns[column] = []
-      columns[column].push(item)
-      return { item, column }
-    })
-    const visibleColumnLimit = showOverflowChips ? 2 : Math.max(columns.length, 1)
-    const totalColumns = Math.min(Math.max(columns.length, 1), visibleColumnLimit)
+    const assignments = group
+      .map((item) => positionedByKey.get(itemKey(item)))
+      .filter((item): item is ConflictLayoutItem => Boolean(item))
+    const maxColumns = Math.max(...assignments.map((assignment) => assignment.totalColumns), 1)
+    const visibleColumnLimit = showOverflowChips ? 2 : maxColumns
 
     return {
       visible: assignments
         .filter((assignment) => assignment.column < visibleColumnLimit)
-        .map((assignment) => ({ ...assignment, totalColumns })),
+        .map((assignment) => {
+          if (!showOverflowChips) return assignment
+          const totalColumns = Math.min(assignment.totalColumns, visibleColumnLimit)
+          const columnSpan = Math.min(assignment.columnSpan, visibleColumnLimit - assignment.column)
+          return { ...assignment, totalColumns, columnSpan }
+        }),
       hidden: assignments
         .filter((assignment) => showOverflowChips && assignment.column >= visibleColumnLimit)
-        .map((assignment) => assignment.item),
+        .map((assignment) => assignment),
       start: new Date(Math.min(...group.map((item) => item.startTime.getTime()))),
       end: new Date(Math.max(...group.map((item) => item.endTime.getTime()))),
     }
@@ -188,8 +172,8 @@ function overlapsVisibleRange(item: TimeBlock): boolean {
 }
 
 function eventPositionStyle(layout: ConflictLayoutItem): CSSProperties {
-  const top = topForStart(layout.item)
-  const height = heightFor(layout.item)
+  const top = layout.top
+  const height = layout.height
 
   if (layout.totalColumns <= 1) {
     return {
@@ -201,20 +185,21 @@ function eventPositionStyle(layout: ConflictLayoutItem): CSSProperties {
   }
 
   const columnWidth = 100 / layout.totalColumns
+  const span = Math.max(1, layout.columnSpan ?? 1)
   return {
     top,
     height,
     left: `calc(${columnWidth * layout.column}% + 4px)`,
-    width: `calc(${columnWidth}% - 8px)`,
+    width: `calc(${columnWidth * span}% - 8px)`,
   }
 }
 
 function overflowChipStyle(cluster: ConflictCluster, chipTop: number): CSSProperties {
   const anchor = cluster.visible.find((layout) => layout.column === 1) ?? cluster.visible[0]
-  const anchorTop = anchor ? topForStart(anchor.item) : chipTop
-  const anchorHeight = anchor ? heightFor(anchor.item) : 58
+  const anchorTop = anchor ? anchor.top : chipTop
+  const anchorHeight = anchor ? anchor.height : 58
   const titleBottom = anchor
-    ? anchorTop + 4 + titleLineCount(anchor.item) * CARD_LINE_HEIGHT + CHIP_TITLE_GAP
+    ? anchorTop + 4 + titleLineCount(anchor) * CARD_LINE_HEIGHT + CHIP_TITLE_GAP
     : chipTop
   const top = clamp(titleBottom, anchorTop + 12, anchorTop + anchorHeight + 6)
 
@@ -231,10 +216,10 @@ function overflowChipStyle(cluster: ConflictCluster, chipTop: number): CSSProper
   }
 }
 
-function titleLineCount(item: TimeBlock): number {
+function titleLineCount(item: ConflictLayoutItem): number {
   return Math.max(
     1,
-    Math.min(4, Math.floor((heightFor(item) - CARD_VERTICAL_PADDING - CARD_TEXT_SAFE_BUFFER) / CARD_LINE_HEIGHT)),
+    Math.min(4, Math.floor((item.height - CARD_VERTICAL_PADDING - CARD_TEXT_SAFE_BUFFER) / CARD_LINE_HEIGHT)),
   )
 }
 
@@ -248,6 +233,9 @@ export function Today3DaysCalendar({
   onScrollPositionChange,
   onDateSelect,
   onItemTap,
+  currentTime = new Date(),
+  onToggleTask,
+  onToggleEvent,
   showOverflowChips = true,
 }: Today3DaysCalendarProps) {
   const [overflowGroup, setOverflowGroup] = useState<OverflowGroup | null>(null)
@@ -283,17 +271,19 @@ export function Today3DaysCalendar({
           className="grid h-8 border-b border-border/40 bg-background shadow-[0_1px_0_rgba(255,255,255,0.04)]"
           style={{ gridTemplateColumns: GRID_COLUMNS }}
         >
-          <div className="border-r border-border/30 bg-background" />
+          <div className="border-r border-border/60 bg-background" />
           {days.map((day) => {
             const isSunday = day.getDay() === 0
+            const isToday = startOfLocalDay(day).getTime() === startOfLocalDay(currentTime).getTime()
             return (
               <button
                 type="button"
                 key={day.toISOString()}
                 onClick={() => onDateSelect?.(day)}
                 className={cn(
-                  "border-r border-border/30 bg-background px-1.5 text-center text-[11px] font-semibold active:bg-muted/30",
-                  isSunday ? "text-red-300/90" : "text-muted-foreground",
+                  "border-r border-border/60 bg-muted/15 px-1.5 text-center text-[11px] font-semibold active:bg-muted/30",
+                  isToday && "bg-primary/10",
+                  isToday ? "text-primary" : isSunday ? "text-red-300/90" : "text-muted-foreground",
                 )}
                 aria-label={`${format(day, "M/d(E)", { locale: ja })}をDayで表示`}
               >
@@ -323,7 +313,15 @@ export function Today3DaysCalendar({
           {days.map((day, dayIndex) => {
             const clusters = buildConflictClusters(dayBlocks[dayIndex], showOverflowChips)
             return (
-              <div key={day.toISOString()} className="relative border-r border-border/30">
+              <div
+                key={day.toISOString()}
+                className={cn(
+                  "relative border-r border-border/60",
+                  dayIndex > 0 && "border-l border-border/50",
+                  dayIndex % 2 === 1 ? "bg-muted/[0.035]" : "bg-background"
+                )}
+                style={dayIndex > 0 ? { boxShadow: "inset 1px 0 rgba(255,255,255,0.06)" } : undefined}
+              >
                 {Array.from({ length: END_HOUR - START_HOUR }, (_, index) => (
                   <div
                     key={index}
@@ -353,35 +351,75 @@ export function Today3DaysCalendar({
                   const chipTop = clamp(topForDate(hiddenStart, cluster.start), clusterTop + 3, clusterTop + Math.max(3, clusterHeight - 28))
                   return (
                     <Fragment key={`${day.toISOString()}-${clusterIndex}-${cluster.start.getTime()}`}>
-                      {cluster.visible.map((layout) => (
-                        <button
-                          key={`${layout.item.source}-${layout.item.id}`}
-                          type="button"
-                          onClick={() => onItemTap?.(layout.item)}
-                          className="absolute z-10 flex min-w-0 items-start justify-start overflow-hidden rounded-md border-l-[3px] text-left align-top shadow-sm active:opacity-80"
-                          style={{
-                            ...eventStyle(layout.item.color),
-                            ...eventPositionStyle(layout),
-                            paddingLeft: 4,
-                            paddingRight: 4,
-                            paddingTop: 4,
-                            paddingBottom: 4,
-                          }}
-                        >
-                          <span
-                            className="m-0 block w-full min-w-0 self-start overflow-hidden whitespace-normal text-left text-[10px] font-semibold leading-[12px] text-foreground"
+                      {cluster.visible.map((layout) => {
+                        const toggleItem = layout.originalTask && onToggleTask
+                          ? () => onToggleTask(layout.originalTask!.id)
+                          : layout.originalEvent && onToggleEvent && layout.originalEvent.sync_status !== "pending"
+                            ? () => onToggleEvent(layout.id)
+                            : undefined
+                        const isDone = layout.isCompleted
+                        const isNow = currentTime >= layout.startTime && currentTime < layout.endTime
+                        return (
+                          <div
+                            key={itemKey(layout)}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onItemTap?.(layout)}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter" && event.key !== " ") return
+                              event.preventDefault()
+                              onItemTap?.(layout)
+                            }}
+                            className={cn(
+                              "absolute z-10 flex min-w-0 items-start justify-start gap-1.5 overflow-hidden rounded-md border-l-[3px] text-left align-top shadow-sm outline-none active:opacity-80",
+                              "focus-visible:ring-2 focus-visible:ring-primary/80",
+                              isNow && "ring-1 ring-primary/50",
+                              isDone && "opacity-55"
+                            )}
                             style={{
-                              display: "-webkit-box",
-                              overflowWrap: "anywhere",
-                              wordBreak: "break-word",
-                              WebkitBoxOrient: "vertical",
-                              WebkitLineClamp: titleLineCount(layout.item),
+                              ...eventStyle(layout.color),
+                              ...eventPositionStyle(layout),
+                              paddingLeft: 4,
+                              paddingRight: 4,
+                              paddingTop: 4,
+                              paddingBottom: 4,
                             }}
                           >
-                            {layout.item.title}
-                          </span>
-                        </button>
-                      ))}
+                            {toggleItem && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  toggleItem()
+                                }}
+                                className="no-tap-highlight -m-2 grid h-8 w-8 flex-shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-background/30 active:bg-background/40 focus-visible:ring-2 focus-visible:ring-primary/80"
+                                aria-label={isDone ? `${layout.title}を未完了に戻す` : `${layout.title}を完了にする`}
+                              >
+                                {isDone ? (
+                                  <CheckSquare className="h-3.5 w-3.5 text-primary" />
+                                ) : (
+                                  <Square className="h-3.5 w-3.5" style={{ color: layout.color }} />
+                                )}
+                              </button>
+                            )}
+                            <span
+                              className={cn(
+                                "m-0 block min-w-0 flex-1 self-start overflow-hidden whitespace-normal text-left text-[10px] font-semibold leading-[12px] text-foreground",
+                                isDone && "line-through text-muted-foreground"
+                              )}
+                              style={{
+                                display: "-webkit-box",
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
+                                WebkitBoxOrient: "vertical",
+                                WebkitLineClamp: titleLineCount(layout),
+                              }}
+                            >
+                              {layout.title}
+                            </span>
+                          </div>
+                        )
+                      })}
                       {hasHidden && (
                         <button
                           type="button"
