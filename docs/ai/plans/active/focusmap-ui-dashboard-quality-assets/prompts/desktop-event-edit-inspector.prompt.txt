@@ -1,0 +1,7 @@
+Create a polished product UI mockup image for Focusmap, 16:9 desktop Mac app window, dark compact operational theme.
+
+Scene: Desktop Todo dashboard in 3days calendar with one event clicked. The main 3-day calendar remains visible on the left, taking about 70 percent of the width. A selected event card in Thu 6/18 is highlighted with a restrained blue outline and a small selected glow. Keep time gutter and three day columns visible behind the detail UI.
+
+Right side: a compact right inspector panel, width about 392px, not a modal and not a bottom sheet. Panel background neutral/zinc 950, 1px white/10 border, 8px radius. Header shows a calendar color dot, the event time summary, close icon, and title "Focusmap設計レビュー". Below are dense editable rows and fields: タイトル, 日付, 開始, 終了, 所要時間, カレンダー, 通知, メモ, サブタスク. Include a small inline "保存中" or "保存済み" state near the action area. Put a subtle destructive section at the bottom: "予定を削除" with low emphasis red.
+
+Style: Focusmap dark compact operational UI, lucide-style icons, small radii, compact 11-14px typography, no marketing hero, no giant form, no full-screen overlay. The design must prove "overview plus detail": users can edit while still seeing the entire 3days calendar context.

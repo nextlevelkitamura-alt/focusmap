@@ -1,0 +1,7 @@
+Create a polished product UI mockup image for Focusmap, 16:9 desktop Mac app window, dark runtime error recovery state.
+
+Scene: The app has hit a dashboard client-side exception, but it does not show a white generic error page. Instead it shows a Focusmap-owned dark recovery UI. Background near #050505 with a faint cached dashboard skeleton: subtle 3days calendar grid and dim sidebar/nav shapes, not distracting.
+
+Center/right compact recovery panel: dark neutral/zinc 950, 1px white/10 border, 8px radius, no large card-heavy marketing feel. Header includes a small Focusmap mark or minimal icon and title in Japanese: "画面を復旧できませんでした". Supporting copy: "再読み込みするか、ブラウザで開いて診断情報を共有してください。" Actions: primary "再読み込み", secondary "ブラウザで開く", tertiary "診断をコピー". Include a tiny diagnostic row with muted text like "client-side exception / dashboard".
+
+Style: same Focusmap dark compact operational theme, lucide-style icons, restrained blue primary, amber warning accent, no white page, no decorative gradient orbs, no hero illustration. It should feel trustworthy and recoverable, like a mature app failure state.

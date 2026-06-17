@@ -1,0 +1,7 @@
+Create a polished product UI mockup image for Focusmap mobile, portrait smartphone screen around 390x844, dark compact operational theme.
+
+Scene: Mobile Todo calendar with the same event "Focusmap設計レビュー" being edited. Underlying schedule is dimly visible behind a bottom sheet. Bottom navigation remains visible or implied with Japanese tabs: Todo, メモ, マップ, チャット, 設定. Active Todo uses restrained blue #58a6ff. Safe-area spacing is respected.
+
+Main UI: a bottom sheet or drill-in panel around 88dvh with a small drag handle, rounded top corners about 16px, dark neutral/zinc 950 background, 1px white/10 border. The sheet is one-purpose: edit one event. Fields are stacked with 44px tap targets: タイトル, 日付, 開始, 終了, 所要時間, カレンダー, 通知, メモ, サブタスク. Include compact action buttons "完了" and subtle "削除". Show a small inline save/error state area, not a desktop inspector.
+
+Important: do not cram the desktop right inspector into mobile. Do not use a giant desktop calendar. No decorative gradients, no hero section, no oversized explanatory text. It should feel like the same Focusmap app as desktop, but with mobile-native one-handed editing.

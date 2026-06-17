@@ -1,0 +1,7 @@
+Create a polished product UI mockup image for Focusmap, 16:9 desktop Mac app window, dark compact operational theme.
+
+Scene: Desktop Todo dashboard in 3days calendar normal state. Show a mature productivity app, not a marketing page. Use a hiddenInset Mac titlebar feeling with subtle traffic-light spacing, dark background near #050505, compact header navigation with Japanese tabs: Todo, メモ, マップ, チャット, 設定. Active tab is Todo with a restrained blue accent around #58a6ff. Use lucide-style thin line icons, 16-20px.
+
+Main content: a dense 3-day calendar from left to right with columns for Wed 6/17, Thu 6/18, Fri 6/19. Left time gutter from 08:00 to 18:00. Three equal day columns, thin 1px borders, subtle grid lines, compact typography 11-14px. Use multiple overlapping event cards with subdued calendar colors, small 6-8px radius, readable Japanese labels such as 採用MTG, Focusmap設計, 仕様レビュー, リサーチ, 実装確認. Show overlapping lanes fully visible, not collapsed into huge cards. Add compact controls: previous/next arrows, "3days" segmented control, calendar selector, small "AI実行" button.
+
+Important: no giant form, no full-width mobile sheet, no decorative gradient orbs, no hero section, no large empty whitespace. The UI should feel like Apple Calendar / Google Calendar / Notion-level mature, but with Focusmap dark compact DNA.
