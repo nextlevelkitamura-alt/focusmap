@@ -56,6 +56,28 @@ Implementation changes: none
 - Gate E, integration complete: not started.
 - Gate F, push/deploy: not approved and not requested.
 
+## User Feedback Revision: Existing UI Baseline
+
+User feedback on 2026-06-18:
+
+- The right-side detail/editing direction is good.
+- The earlier desktop mockups changed the UI too much from the current Focusmap look.
+- Revised desktop mockups should use the attached current UI screenshot as the base:
+  - black dotted canvas
+  - compact top pill navigation
+  - amber/yellow selected card outlines
+  - small radii and dense spacing
+  - current right-side panel density
+- Tapping/clicking a schedule item should open detail editing from the right side.
+- Desktop should not look like a generic calendar app, and should not use a mobile bottom sheet.
+
+Revised mockups added:
+
+- `docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-todo-normal.png`
+- `docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-event-right-drawer.png`
+
+This revision supersedes the earlier generic desktop calendar-like visual direction. The retained product rule is still the same: desktop uses overview plus right-side detail; mobile uses a bottom sheet or drill-in. The revised visual baseline is now the current Focusmap map/right-panel UI, not Apple/Google-style calendar chrome.
+
 ## Current UI Evaluation
 
 ### Overall Score
@@ -371,6 +393,15 @@ Required images:
    - White-screen/client-exception recovery UI.
    - Proves dark brand-owned failure state.
 
+Revised existing-UI-baseline images:
+
+5. `existing-style-desktop-todo-normal.png`
+   - Desktop normal state based on the current Focusmap screenshot.
+   - Proves the UI stays close to the current black dotted canvas and amber card language.
+6. `existing-style-desktop-event-right-drawer.png`
+   - Desktop schedule item clicked with a right-side editing drawer.
+   - Proves the editing surface feels like the current Focusmap right panel, not a separate app design.
+
 Prompt files:
 
 - `docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/prompts/desktop-3days-calendar-normal.prompt.txt`
@@ -460,9 +491,9 @@ Allowed file ownership draft for Chat 2:
 
 User decisions needed before broad implementation:
 
-1. Approve the right-inspector direction for desktop event editing.
-2. Decide whether medium desktop widths should use a persistent narrow inspector or anchored popover.
-3. Decide whether English `Day / 3days / Month` labels should remain or become Japanese.
+1. Approve the existing-UI-baseline right drawer direction for desktop event editing.
+2. Decide whether the right drawer should replace the current right panel content or stack as a temporary slide-over on top of it.
+3. Decide whether medium desktop widths should use the same right drawer or an anchored popover.
 4. Decide whether P0 error recovery should be implemented immediately before any visual redesign.
 
 ## Next Chat Handoff
@@ -476,8 +507,8 @@ Focusmap dashboard UI quality planを実装タスクへ分解し、P0復旧UIと
 貼るもの:
 
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality.md`
-- `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/desktop-3days-calendar-normal.png`
-- `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/desktop-event-edit-inspector.png`
+- `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-todo-normal.png`
+- `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-event-right-drawer.png`
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/mobile-event-edit-bottom-sheet.png`
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/dark-recovery-ui.png`
 
@@ -501,9 +532,10 @@ You are the Implementation Orchestrator. Do not implement code in this chat unle
 
 Priorities:
 1. P0: eliminate dashboard white screen / client-side exception fallback by adding a dark Focusmap runtime recovery UI.
-2. P1: replace desktop event editing mobile bottom sheet with a right inspector or near-card popover while keeping the 3days calendar visible.
+2. P1: replace desktop event editing mobile bottom sheet with a right-side drawer that visually matches the current Focusmap side panel and keeps the current canvas/calendar context visible.
 3. Preserve mobile bottom sheet editing, safe area, 44px tap targets, and existing mobile navigation.
-4. Preserve Focusmap visual DNA: dark compact operational UI, lucide icons, small radius on desktop controls, subdued calendar colors, clear status language.
+4. Use the `existing-style-*` mockups as the desktop visual baseline. Do not implement the earlier generic Apple/Google-style calendar mockup direction.
+5. Preserve Focusmap visual DNA: black dotted canvas, compact pill navigation, amber/yellow selected outlines, lucide icons, small radius on desktop controls, dense right panel, and clear status language.
 
 Must follow:
 - Do not run npm test/lint/build, Playwright, Browser, curl, or git diff --check unless the user explicitly asks.

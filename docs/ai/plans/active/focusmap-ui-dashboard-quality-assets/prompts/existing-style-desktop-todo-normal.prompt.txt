@@ -1,0 +1,5 @@
+Use the attached Focusmap screenshot as the visual reference. Create a 2x-scale, high-fidelity UI mockup that stays close to the existing Focusmap interface: black Mac app window, compact top pill navigation, dotted map/canvas texture, amber/yellow selected outlines, small rounded corners, muted gray controls, and dense information layout.
+
+Scene: Focusmap desktop dashboard in Todo/schedule mode before selecting a schedule item. Preserve the current app personality from the screenshot: black canvas, subtle dotted grid, compact map-like cards connected from a center node, amber status pills such as 確認待ち, and the same top navigation structure. Do not switch to a generic Apple/Google calendar visual style.
+
+Show the schedule items as Focusmap-style compact cards on the existing canvas, with Todo active in the top navigation. Keep the right side closed/collapsed in the normal state. The image should prove that the revised design is based on the current Focusmap UI, not a different dashboard product.

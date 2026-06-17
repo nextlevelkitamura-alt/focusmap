@@ -1,0 +1,5 @@
+Use the attached Focusmap screenshot as the visual reference. Create a 2x-scale, high-fidelity UI mockup that stays very close to the existing Focusmap interface: black Mac app window, compact top pill navigation, dotted map/canvas texture, amber/yellow selected outlines, dense right-side panel, small rounded corners, muted gray controls, green online/sync state, and subdued borders.
+
+Scene: Focusmap desktop dashboard in Todo/schedule mode. A schedule item has been tapped/clicked. From the right edge, a compact right drawer slides in, visually matching the current right panel from the screenshot. The drawer edits the selected schedule item with fields: title, date, start/end, calendar, memo, subtasks, status, and delete.
+
+Important: this should feel like the existing Focusmap right sidebar evolved for schedule editing, not a new app. Keep the main canvas/schedule visible behind it. No full-screen modal, no mobile bottom sheet on desktop, no large bright cards, no decorative gradients, and no generic calendar-app redesign.
