@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS ai_task_progress (
 CREATE INDEX IF NOT EXISTS idx_turso_ai_task_progress_task_created
   ON ai_task_progress(task_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_turso_ai_task_progress_task_user_created_id
+  ON ai_task_progress(task_id, user_id, created_at DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_turso_ai_task_progress_user_created
   ON ai_task_progress(user_id, created_at DESC);
 
@@ -69,6 +72,9 @@ CREATE TABLE IF NOT EXISTS ai_task_events (
 
 CREATE INDEX IF NOT EXISTS idx_turso_ai_task_events_task_created
   ON ai_task_events(task_id, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_turso_ai_task_events_task_user_created_id
+  ON ai_task_events(task_id, user_id, created_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_turso_ai_task_events_user_type_created
   ON ai_task_events(user_id, event_type, created_at DESC);

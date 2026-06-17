@@ -134,6 +134,8 @@ export interface CodexThreadImportPayload {
   first_user_message?: string | null;
   cwd?: string | null;
   updated_at_ms?: number | null;
+  scope_project_id?: string | null;
+  scope_repo_path?: string | null;
 }
 
 export interface CodexThreadImportScope {

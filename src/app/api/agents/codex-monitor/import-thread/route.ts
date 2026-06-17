@@ -19,6 +19,8 @@ export type ImportedCodexThread = {
   first_user_message?: string | null
   cwd?: string | null
   updated_at_ms?: number | null
+  scope_project_id?: string | null
+  scope_repo_path?: string | null
 }
 
 type TargetProject = {
@@ -88,6 +90,8 @@ function parseThread(input: unknown): ImportedCodexThread | null {
     first_user_message: compactString(record.first_user_message, MAX_PROMPT_CHARS),
     cwd: compactString(record.cwd, 500),
     updated_at_ms: updatedAtMs,
+    scope_project_id: compactString(record.scope_project_id, 120),
+    scope_repo_path: compactString(record.scope_repo_path, 500),
   }
 }
 
@@ -174,6 +178,7 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
       thread_title: thread.title ?? null,
       thread_preview_chars: thread.preview?.length ?? 0,
       cwd: thread.cwd ?? null,
+      scope_repo_path: thread.scope_repo_path ?? null,
     },
   }
 }
@@ -261,10 +266,14 @@ export function isThreadWithinProjectImportScope(
   thread: ImportedCodexThread,
   project: TargetProject,
   fallbackNowMs = Date.now(),
+  allowAgentMatchedScope = false,
 ) {
   const cwd = compactString(thread.cwd, 500)
   const repoPath = compactString(project.repo_path, 500)
-  if (!cwd || !repoPath || cwd !== repoPath) return false
+  const scopeRepoPath = compactString(thread.scope_repo_path, 500)
+  const pathMatches = !!cwd && !!repoPath && cwd === repoPath
+  const agentScopeMatches = allowAgentMatchedScope && !!scopeRepoPath && !!repoPath && scopeRepoPath === repoPath
+  if (!pathMatches && !agentScopeMatches) return false
 
   const enabledSinceMs = timeMs(project.codex_thread_import_enabled_since)
   if (enabledSinceMs === null) return true
@@ -279,6 +288,30 @@ async function findEnabledImportProject(
   thread: ImportedCodexThread,
 ): Promise<{ project: TargetProject | null; reason?: string }> {
   const cwd = compactString(thread.cwd, 500)
+  const scopeProjectId = compactString(thread.scope_project_id, 120)
+  const scopeRepoPath = compactString(thread.scope_repo_path, 500)
+
+  if (scopeProjectId && scopeRepoPath) {
+    let scopedQuery = supabase
+      .from('projects')
+      .select('id, space_id, title, repo_path, codex_thread_import_enabled_since, created_at')
+      .eq('id', scopeProjectId)
+      .eq('user_id', token.user_id)
+      .neq('status', 'archived')
+      .eq('repo_path', scopeRepoPath)
+      .eq('codex_thread_import_enabled', true)
+      .limit(1)
+
+    if (token.space_id) scopedQuery = scopedQuery.eq('space_id', token.space_id)
+
+    const { data, error } = await scopedQuery
+    if (error) throw error
+    const project = (Array.isArray(data) ? data : [])
+      .map(row => row as TargetProject)
+      .find(candidate => isThreadWithinProjectImportScope(thread, candidate, Date.now(), true))
+    if (project) return { project }
+  }
+
   if (!cwd) return { project: null, reason: 'missing_cwd' }
 
   let query = supabase

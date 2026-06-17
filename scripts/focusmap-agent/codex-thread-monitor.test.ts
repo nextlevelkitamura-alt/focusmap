@@ -390,6 +390,10 @@ describe('codex-thread-monitor state detection', () => {
     });
 
     expect(isFocusmapManualHandoffThread(row, [handoffTask] as never)).toBe(true);
+    expect(isFocusmapManualHandoffThread({
+      ...row,
+      cwd: '/Users/me/project-worktree',
+    }, [handoffTask] as never, new Map([['/Users/me/project-worktree', importScopes[0]!]]))).toBe(true);
     expect(isOrphanThreadImportCandidate(
       row,
       new Set(),
@@ -419,6 +423,12 @@ describe('codex-thread-monitor state detection', () => {
     expect(matchingThreadImportScope({ cwd: '/Users/me/project' }, scopes, updatedMs)?.project_id).toBe('project-1');
     expect(matchingThreadImportScope({ cwd: '/Users/me/project' }, scopes, Date.parse('2026-06-10T09:00:00.000Z'))).toBeNull();
     expect(matchingThreadImportScope({ cwd: '/Users/me/other' }, scopes, updatedMs)).toBeNull();
+    expect(matchingThreadImportScope(
+      { cwd: '/Users/me/project-worktree' },
+      scopes,
+      updatedMs,
+      new Map([['/Users/me/project-worktree', scopes[0]!]]),
+    )?.project_id).toBe('project-1');
   });
 
   test('treats missing orphan import endpoint as temporarily unavailable', () => {

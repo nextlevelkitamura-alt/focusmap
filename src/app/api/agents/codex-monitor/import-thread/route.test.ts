@@ -150,6 +150,30 @@ describe('codex orphan thread import helpers', () => {
       repo_path: '/Users/me/other',
       codex_thread_import_enabled_since: '2026-06-10T09:59:00.000Z',
     })).toBe(false)
+
+    expect(isThreadWithinProjectImportScope({
+      ...thread,
+      cwd: '/Users/me/project-worktree',
+      scope_project_id: 'project-1',
+      scope_repo_path: '/Users/me/project',
+    }, {
+      id: 'project-1',
+      space_id: 'space-1',
+      repo_path: '/Users/me/project',
+      codex_thread_import_enabled_since: '2026-06-10T09:59:00.000Z',
+    }, Date.now(), true)).toBe(true)
+
+    expect(isThreadWithinProjectImportScope({
+      ...thread,
+      cwd: '/Users/me/project-worktree',
+      scope_project_id: 'project-1',
+      scope_repo_path: '/Users/me/project',
+    }, {
+      id: 'project-1',
+      space_id: 'space-1',
+      repo_path: '/Users/me/other',
+      codex_thread_import_enabled_since: '2026-06-10T09:59:00.000Z',
+    }, Date.now(), true)).toBe(false)
   })
 
   test('matches Focusmap manual handoff tasks so repo import can skip them', () => {

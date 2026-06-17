@@ -31,6 +31,8 @@ const PROMPT_MATCH_PREFIX_CHARS = 500;
 const MIN_PROMPT_MATCH_CHARS = 120;
 let orphanImportApiUnavailableUntil = 0;
 let importScopesApiUnavailableUntil = 0;
+const WORKTREE_PATH_CACHE_TTL_MS = 30_000;
+const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }>();
 
 type CodexThreadRow = {
   id: string;
@@ -190,6 +192,10 @@ function looksLikeQuestion(value: string): boolean {
 
 function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+function normalizeLocalPath(value: string | null | undefined): string {
+  return value?.trim().replace(/\/+$/, '') ?? '';
 }
 
 async function sqliteJson<T>(dbPath: string, sql: string): Promise<T[]> {
@@ -409,10 +415,20 @@ function isThreadNearManualHandoffTime(row: CodexThreadRow, task: AiTask): boole
     threadMs - taskMs <= FOCUSMAP_HANDOFF_THREAD_WINDOW_MS;
 }
 
-export function isFocusmapManualHandoffThread(row: CodexThreadRow, tasks: AiTask[]): boolean {
+function cwdMatchesTask(rowCwd: string, taskCwd: string, cwdScopeMap?: Map<string, CodexThreadImportScope>): boolean {
+  if (rowCwd === taskCwd) return true;
+  const scope = cwdScopeMap?.get(rowCwd);
+  return normalizeLocalPath(scope?.repo_path) === taskCwd;
+}
+
+export function isFocusmapManualHandoffThread(
+  row: CodexThreadRow,
+  tasks: AiTask[],
+  cwdScopeMap?: Map<string, CodexThreadImportScope>,
+): boolean {
   const firstUserMessage = compactText(row.first_user_message ?? '', 8_000);
   if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return false;
-  const rowCwd = row.cwd?.trim() ?? '';
+  const rowCwd = normalizeLocalPath(row.cwd);
 
   return tasks.some(task => {
     if (task.executor !== 'codex_app') return false;
@@ -420,8 +436,8 @@ export function isFocusmapManualHandoffThread(row: CodexThreadRow, tasks: AiTask
     if (taskThreadId(task)) return false;
     const result = taskResult(task);
     if (result.codex_manual_handoff !== true) return false;
-    const taskCwd = task.cwd?.trim() ?? '';
-    if (rowCwd && taskCwd && rowCwd !== taskCwd) return false;
+    const taskCwd = normalizeLocalPath(task.cwd);
+    if (rowCwd && taskCwd && !cwdMatchesTask(rowCwd, taskCwd, cwdScopeMap)) return false;
     if (!isThreadNearManualHandoffTime(row, task)) return false;
     return promptsLikelyMatch(task.prompt, firstUserMessage);
   });
@@ -434,13 +450,14 @@ export function isOrphanThreadImportCandidate(
   nowMs = Date.now(),
   windowMs = ORPHAN_IMPORT_WINDOW_MS,
   focusmapTasks: AiTask[] = [],
+  cwdScopeMap?: Map<string, CodexThreadImportScope>,
 ): boolean {
   if (!row.id || knownThreadIds.has(row.id)) return false;
   if (boolValue(row.archived)) return false;
-  if (isFocusmapManualHandoffThread(row, focusmapTasks)) return false;
+  if (isFocusmapManualHandoffThread(row, focusmapTasks, cwdScopeMap)) return false;
   const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
   if (updatedMs <= 0) return false;
-  const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs);
+  const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap);
   if (!matchingScope) return false;
   if (!matchingScope.enabled_since && nowMs - updatedMs > windowMs) return false;
   const firstUserMessage = compactText(row.first_user_message ?? '', 400);
@@ -448,18 +465,26 @@ export function isOrphanThreadImportCandidate(
   return true;
 }
 
+function importScopeEnabledAt(scope: CodexThreadImportScope, updatedMs: number): boolean {
+  const enabledSinceMs = timeMs(scope.enabled_since);
+  return enabledSinceMs === null || updatedMs >= enabledSinceMs;
+}
+
 export function matchingThreadImportScope(
   row: Pick<CodexThreadRow, 'cwd'>,
   importScopes: CodexThreadImportScope[],
   updatedMs = Date.now(),
+  cwdScopeMap?: Map<string, CodexThreadImportScope>,
 ): CodexThreadImportScope | null {
-  const cwd = row.cwd?.trim();
+  const cwd = normalizeLocalPath(row.cwd);
   if (!cwd) return null;
+  const aliasedScope = cwdScopeMap?.get(cwd);
+  if (aliasedScope && importScopeEnabledAt(aliasedScope, updatedMs)) return aliasedScope;
+
   for (const scope of importScopes) {
-    const repoPath = scope.repo_path?.trim();
+    const repoPath = normalizeLocalPath(scope.repo_path);
     if (!repoPath || repoPath !== cwd) continue;
-    const enabledSinceMs = timeMs(scope.enabled_since);
-    if (enabledSinceMs !== null && updatedMs < enabledSinceMs) continue;
+    if (!importScopeEnabledAt(scope, updatedMs)) continue;
     return scope;
   }
   return null;
@@ -469,7 +494,7 @@ export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiE
   return error instanceof AgentApiError && (error.status === 404 || error.status === 405);
 }
 
-function importPayloadFromThread(row: CodexThreadRow): CodexThreadImportPayload {
+function importPayloadFromThread(row: CodexThreadRow, scope: CodexThreadImportScope | null = null): CodexThreadImportPayload {
   return {
     id: row.id,
     title: row.title ?? null,
@@ -477,6 +502,8 @@ function importPayloadFromThread(row: CodexThreadRow): CodexThreadImportPayload 
     first_user_message: row.first_user_message ?? null,
     cwd: row.cwd ?? null,
     updated_at_ms: row.updated_at_ms ?? row.created_at_ms ?? null,
+    scope_project_id: scope?.project_id ?? null,
+    scope_repo_path: scope?.repo_path ?? null,
   };
 }
 
@@ -744,7 +771,54 @@ async function readRollout(row: CodexThreadRow): Promise<string> {
 }
 
 function importScopeRepoPaths(importScopes: CodexThreadImportScope[]): string[] {
-  return Array.from(new Set(importScopes.map(scope => scope.repo_path?.trim()).filter(Boolean)));
+  return Array.from(new Set(importScopes.map(scope => normalizeLocalPath(scope.repo_path)).filter(Boolean)));
+}
+
+function parseGitWorktreePaths(output: string): string[] {
+  return output
+    .split('\n')
+    .map(line => line.startsWith('worktree ') ? normalizeLocalPath(line.slice('worktree '.length)) : '')
+    .filter(Boolean);
+}
+
+async function gitWorktreePaths(repoPath: string): Promise<string[]> {
+  const normalizedRepoPath = normalizeLocalPath(repoPath);
+  if (!normalizedRepoPath) return [];
+  const cached = worktreePathCache.get(normalizedRepoPath);
+  const now = Date.now();
+  if (cached && now < cached.expiresAt) return cached.paths;
+
+  const paths = new Set<string>([normalizedRepoPath]);
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', normalizedRepoPath, 'worktree', 'list', '--porcelain'],
+      { timeout: 3_000 },
+    );
+    for (const path of parseGitWorktreePaths(stdout)) paths.add(path);
+  } catch {
+    debug(`codex import scope worktree lookup skipped repo=${normalizedRepoPath}`);
+  }
+
+  const result = [...paths];
+  worktreePathCache.set(normalizedRepoPath, {
+    expiresAt: now + WORKTREE_PATH_CACHE_TTL_MS,
+    paths: result,
+  });
+  return result;
+}
+
+async function importScopeCwdMap(importScopes: CodexThreadImportScope[]): Promise<Map<string, CodexThreadImportScope>> {
+  const entries = new Map<string, CodexThreadImportScope>();
+  for (const scope of importScopes) {
+    const repoPath = normalizeLocalPath(scope.repo_path);
+    if (!repoPath) continue;
+    const paths = await gitWorktreePaths(repoPath);
+    for (const path of paths) {
+      if (!entries.has(path)) entries.set(path, scope);
+    }
+  }
+  return entries;
 }
 
 async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: string[] = []): Promise<CodexThreadRow[]> {
@@ -801,7 +875,8 @@ async function importOrphanThreads(
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
   if (importScopes.length === 0) return 0;
-  const repoPaths = importScopeRepoPaths(importScopes);
+  const cwdScopeMap = await importScopeCwdMap(importScopes);
+  const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
   if (repoPaths.length === 0) return 0;
   const knownThreadIds = knownCodexThreadIds(tasks);
   const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now), repoPaths);
@@ -809,13 +884,16 @@ async function importOrphanThreads(
 
   for (const row of rows) {
     if (imported >= ORPHAN_IMPORT_LIMIT) break;
-    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now, ORPHAN_IMPORT_WINDOW_MS, tasks)) continue;
+    const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
+    const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap);
+    if (!matchingScope) continue;
+    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now, ORPHAN_IMPORT_WINDOW_MS, tasks, cwdScopeMap)) continue;
     const cachedAt = orphanImportCache.get(row.id) ?? 0;
     if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;
     orphanImportCache.set(row.id, now);
 
     try {
-      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row));
+      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row, matchingScope));
       if (result.imported) {
         imported += 1;
         knownThreadIds.add(row.id);
@@ -1023,6 +1101,7 @@ export function startCodexThreadMonitorLoop(
         targetsLoaded = true;
         nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
       }
+      await importOrphanThreads(api, runnerId, dbPath, tasks, importScopes);
       for (const task of tasks) {
         try {
           const result = await syncOneTask(api, runnerId, dbPath, task);
@@ -1034,7 +1113,6 @@ export function startCodexThreadMonitorLoop(
           logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
         }
       }
-      await importOrphanThreads(api, runnerId, dbPath, tasks, importScopes);
     } catch (error) {
       logError('codex monitor loop error', error instanceof Error ? error.message : error);
     } finally {
