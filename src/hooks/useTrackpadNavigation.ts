@@ -9,6 +9,7 @@ interface UseTrackpadNavigationOptions {
     threshold?: number           // px of deltaX accumulated before triggering
     debounceMs?: number          // cooldown between triggers
     gestureIdleMs?: number       // pause length that ends one trackpad gesture
+    postNavigateLockMs?: number  // keep momentum from one physical scroll from navigating again
     enabled?: boolean
 }
 
@@ -29,11 +30,13 @@ export function useTrackpadNavigation({
     threshold = 48,
     debounceMs = 70,
     gestureIdleMs = 70,
+    postNavigateLockMs = TINY_TAIL_TRACK_MS,
     enabled = true,
 }: UseTrackpadNavigationOptions) {
     const accumulatedDeltaX = useRef(0)
     const activeDirection = useRef<1 | -1 | 0>(0)
     const lastTriggerTime = useRef(Number.NEGATIVE_INFINITY)
+    const lastTriggerDirection = useRef<1 | -1 | 0>(0)
     const lastWheelTime = useRef(Number.NEGATIVE_INFINITY)
     const hasTriggeredInGesture = useRef(false)
     const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -57,6 +60,10 @@ export function useTrackpadNavigation({
             const gapSinceWheel = now - lastWheelTime.current
             const isDirectionChange = activeDirection.current !== 0 && activeDirection.current !== direction
             const isNewGestureAfterIdle = gapSinceWheel >= gestureIdleMs || isDirectionChange
+            const isOppositeDirectionAfterIdle =
+                gapSinceWheel >= gestureIdleMs &&
+                lastTriggerDirection.current !== 0 &&
+                lastTriggerDirection.current !== direction
             const cooldownElapsed = now - lastTriggerTime.current >= debounceMs
             const tailLockDelta = Math.max(16, threshold * TAIL_LOCK_DELTA_RATIO)
 
@@ -69,6 +76,8 @@ export function useTrackpadNavigation({
                     activeDirection.current = 0
                 }, gestureIdleMs)
             }
+            const isPostNavigateMomentum =
+                now - lastTriggerTime.current <= postNavigateLockMs && !isOppositeDirectionAfterIdle
 
             // Tiny horizontal tail still belongs to the same physical scroll.
             // Track it while locked so one long scroll cannot split into days.
@@ -84,6 +93,11 @@ export function useTrackpadNavigation({
 
             e.preventDefault()
 
+            if (isPostNavigateMomentum) {
+                rememberWheelActivity()
+                return
+            }
+
             if (isNewGestureAfterIdle) {
                 accumulatedDeltaX.current = 0
                 hasTriggeredInGesture.current = false
@@ -92,6 +106,7 @@ export function useTrackpadNavigation({
 
             if (hasTriggeredInGesture.current) {
                 const shouldExtendLock =
+                    now - lastTriggerTime.current <= postNavigateLockMs ||
                     absX >= tailLockDelta ||
                     now - lastTriggerTime.current <= TINY_TAIL_TRACK_MS
                 if (shouldExtendLock) rememberWheelActivity()
@@ -123,6 +138,7 @@ export function useTrackpadNavigation({
                 accumulatedDeltaX.current = 0
                 hasTriggeredInGesture.current = true
                 lastTriggerTime.current = now
+                lastTriggerDirection.current = direction
             }
         }
 
@@ -132,5 +148,5 @@ export function useTrackpadNavigation({
             container.removeEventListener('wheel', handleWheel)
             if (resetTimer.current) clearTimeout(resetTimer.current)
         }
-    }, [containerRef, onNavigateLeft, onNavigateRight, threshold, debounceMs, gestureIdleMs, enabled])
+    }, [containerRef, onNavigateLeft, onNavigateRight, threshold, debounceMs, gestureIdleMs, postNavigateLockMs, enabled])
 }

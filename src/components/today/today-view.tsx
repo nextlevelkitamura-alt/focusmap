@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } fr
 import { Task, Project, Space } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
-    List, Flame, Play, Pause, Loader2, Sparkles
+    List, Flame, Play, Pause, Loader2, Sparkles, ChevronLeft, ChevronRight
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -390,9 +390,27 @@ export function TodayView({
                 )}
                 <div className="flex min-h-10 items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                        <h1 className="min-w-0 truncate whitespace-nowrap text-left text-[21px] font-bold leading-tight text-neutral-50">
-                            {rangeHeader.title}
-                        </h1>
+                        <div className="flex min-w-0 items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={handleRangeSwipeRight}
+                                className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-neutral-400 active:bg-white/[0.08] active:text-neutral-50"
+                                aria-label={calendarRangeMode === 'month' ? "前の月へ" : "前の日へ"}
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <h1 className="min-w-0 truncate whitespace-nowrap text-left text-[21px] font-bold leading-tight text-neutral-50">
+                                {rangeHeader.title}
+                            </h1>
+                            <button
+                                type="button"
+                                onClick={handleRangeSwipeLeft}
+                                className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-neutral-400 active:bg-white/[0.08] active:text-neutral-50"
+                                aria-label={calendarRangeMode === 'month' ? "次の月へ" : "次の日へ"}
+                            >
+                                <ChevronRight className="h-4 w-4" />
+                            </button>
+                        </div>
                         {headerMetaText && (
                             <p className="mt-0.5 flex min-h-[15px] min-w-0 items-center gap-1.5 truncate whitespace-nowrap text-[11px] font-medium text-neutral-400">
                                 {logic.eventsLoading && mobilePane === 'schedule' && <Loader2 className="h-3 w-3 shrink-0 animate-spin" />}

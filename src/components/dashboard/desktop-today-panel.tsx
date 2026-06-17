@@ -197,6 +197,7 @@ export function DesktopTodayPanel({
         containerRef: panelRef,
         onNavigateLeft: handleRangeNavigateLeft,
         onNavigateRight: handleRangeNavigateRight,
+        postNavigateLockMs: 340,
     })
 
     const defaultQuickCreateCalendarId =
@@ -297,16 +298,14 @@ export function DesktopTodayPanel({
                 <div className="flex items-start justify-between gap-2 px-3 py-1.5">
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 min-w-0">
-                            {calendarRangeMode === 'day' && (
-                                <button
-                                    type="button"
-                                    onClick={goToPrevDay}
-                                    className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                    aria-label="前の日へ"
-                                >
-                                    <ChevronLeft className="h-4 w-4" />
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                onClick={handleRangeNavigateRight}
+                                className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                                aria-label={calendarRangeMode === 'month' ? "前の月へ" : "前の日へ"}
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                            </button>
                             <button
                                 type="button"
                                 onClick={() => setCalendarOpen(prev => !prev)}
@@ -318,16 +317,14 @@ export function DesktopTodayPanel({
                             >
                                 <span className="block truncate">{rangeHeader.title}</span>
                             </button>
-                            {calendarRangeMode === 'day' && (
-                                <button
-                                    type="button"
-                                    onClick={goToNextDay}
-                                    className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                    aria-label="次の日へ"
-                                >
-                                    <ChevronRight className="h-4 w-4" />
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                onClick={handleRangeNavigateLeft}
+                                className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                                aria-label={calendarRangeMode === 'month' ? "次の月へ" : "次の日へ"}
+                            >
+                                <ChevronRight className="h-4 w-4" />
+                            </button>
                         </div>
                         <p className="mt-1 flex min-h-[14px] min-w-0 items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground">
                             {calendarRangeMode === 'day' && isToday && (

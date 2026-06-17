@@ -50,6 +50,13 @@ describe('useTrackpadNavigation', () => {
       wheel(element, 60, 4)
     })
 
+    expect(onNavigateLeft).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      vi.advanceTimersByTime(105)
+      wheel(element, 60, 4)
+    })
+
     expect(onNavigateLeft).toHaveBeenCalledTimes(2)
   })
 
@@ -84,7 +91,7 @@ describe('useTrackpadNavigation', () => {
     expect(onNavigateRight).not.toHaveBeenCalled()
   })
 
-  test('allows another flick after only small inertial tail remains', () => {
+  test('allows another flick after the post-navigation momentum lock ends', () => {
     const element = document.createElement('div')
     const containerRef = { current: element } as RefObject<HTMLDivElement | null>
     const onNavigateLeft = vi.fn()
@@ -105,7 +112,7 @@ describe('useTrackpadNavigation', () => {
       wheel(element, 60, 4)
       vi.advanceTimersByTime(25)
       wheel(element, 12, 4)
-      vi.advanceTimersByTime(80)
+      vi.advanceTimersByTime(155)
       wheel(element, 60, 4)
     })
 
@@ -271,7 +278,7 @@ describe('useTrackpadNavigation', () => {
     expect(onNavigateRight).not.toHaveBeenCalled()
   })
 
-  test('accepts the next separate scroll burst after about 0.2 seconds', () => {
+  test('accepts the next separate scroll burst after post-navigation momentum ends', () => {
     const element = document.createElement('div')
     const containerRef = { current: element } as RefObject<HTMLDivElement | null>
     const onNavigateLeft = vi.fn()
@@ -290,7 +297,7 @@ describe('useTrackpadNavigation', () => {
 
     act(() => {
       wheel(element, 60, 4)
-      vi.advanceTimersByTime(100)
+      vi.advanceTimersByTime(180)
       wheel(element, 60, 4)
     })
 
@@ -357,7 +364,7 @@ describe('useTrackpadNavigation', () => {
     expect(onNavigateRight).toHaveBeenCalledTimes(1)
   })
 
-  test('allows the next horizontal gesture shortly after the previous one ends', () => {
+  test('allows the next horizontal gesture after post-navigation momentum ends', () => {
     const element = document.createElement('div')
     const containerRef = { current: element } as RefObject<HTMLDivElement | null>
     const onNavigateLeft = vi.fn()
@@ -374,7 +381,7 @@ describe('useTrackpadNavigation', () => {
 
     act(() => {
       wheel(element, 60, 4)
-      vi.advanceTimersByTime(100)
+      vi.advanceTimersByTime(180)
       wheel(element, 60, 4)
     })
 
