@@ -71,6 +71,10 @@ export function useTodayViewLogic({
 }: UseTodayViewLogicOptions) {
     const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
     const selectedCalendarIdSet = useMemo(() => new Set(selectedCalendarIds), [selectedCalendarIds])
+    const eventFetchCalendarIds = useMemo(() => {
+        const allCalendarIds = calendars.map(calendar => calendar.google_calendar_id)
+        return allCalendarIds.length > 0 ? allCalendarIds : selectedCalendarIds
+    }, [calendars, selectedCalendarIds])
     const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, getHabitsForDate, isCompletedForDate, isLoading: habitsLoading } = useHabits()
     const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
@@ -213,12 +217,18 @@ export function useTodayViewLogic({
     }, [selectedDate])
 
     // Fetch calendar events (1ヶ月分を一括取得)
-    const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
+    const { events: fetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
         timeMin: fetchWindow.min,
         timeMax: fetchWindow.max,
-        enabled: !calendarsLoading,
-        calendarIds: selectedCalendarIds,
+        enabled: !calendarsLoading && eventFetchCalendarIds.length > 0,
+        calendarIds: eventFetchCalendarIds,
     })
+
+    const allFetchedEvents = useMemo(() => {
+        if (calendarsLoading) return fetchedEvents
+        if (selectedCalendarIds.length === 0) return []
+        return fetchedEvents.filter(event => selectedCalendarIdSet.has(event.calendar_id))
+    }, [calendarsLoading, fetchedEvents, selectedCalendarIdSet, selectedCalendarIds.length])
 
     const completeSyncFeedback = useCallback(() => {
         if (syncDoneTimerRef.current) clearTimeout(syncDoneTimerRef.current)
