@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activityMessages,
+  awaitingApprovalAtForSummary,
   codexStateDbPath,
   codexThreadGeneratedTitle,
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
@@ -201,6 +202,46 @@ describe('codex-thread-monitor state detection', () => {
     }), summary);
 
     expect(state).toEqual({ status: 'running', resumed: true });
+  });
+
+  test('advances awaiting approval checkpoint after a resumed turn completes', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:01.000Z', { type: 'user_message', message: '最初の依頼' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
+      line('2026-06-08T15:49:14.929Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.264Z', { type: 'user_message', message: '追加で調べて' }),
+      line('2026-06-08T15:50:18.368Z', { type: 'task_complete', last_agent_message: '追加分も完了しました' }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+    const oldResult = {
+      codex_run_state: 'awaiting_approval',
+      last_activity_at: '2026-06-08T15:40:10.000Z',
+      awaiting_approval_at: '2026-06-08T15:40:10.000Z',
+    };
+    const oldAwaitingTask = task({
+      status: 'awaiting_approval',
+      result: oldResult,
+    });
+    const state = taskStateForSummary(oldAwaitingTask, summary);
+    const nextAwaitingApprovalAt = awaitingApprovalAtForSummary(
+      oldResult,
+      summary,
+      '2026-06-08T15:50:20.000Z',
+    );
+    const nextState = taskStateForSummary(task({
+      status: 'awaiting_approval',
+      result: {
+        codex_run_state: 'awaiting_approval',
+        last_activity_at: '2026-06-08T15:50:18.368Z',
+        awaiting_approval_at: nextAwaitingApprovalAt,
+      },
+    }), summary);
+
+    expect(state).toEqual({ status: 'awaiting_approval', resumed: true });
+    expect(nextAwaitingApprovalAt).toBe('2026-06-08T15:50:18.368Z');
+    expect(nextState).toEqual({ status: 'awaiting_approval', resumed: false });
   });
 
   test('does not return an awaiting task to running from thread updated_at alone', () => {

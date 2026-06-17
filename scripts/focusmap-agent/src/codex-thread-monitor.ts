@@ -595,6 +595,25 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary) {
   return { status: summary.state === 'awaiting_approval' ? 'awaiting_approval' as const : 'running' as const, resumed: false };
 }
 
+export function awaitingApprovalAtForSummary(
+  result: Record<string, unknown>,
+  summary: RolloutSummary,
+  nowIso: string,
+): string {
+  const previous = typeof result.awaiting_approval_at === 'string'
+    ? result.awaiting_approval_at
+    : null;
+  const latestCompleteAt = summary.latestTaskCompleteAt;
+  if (latestCompleteAt) {
+    const previousMs = timeMs(previous);
+    const completeMs = timeMs(latestCompleteAt);
+    if (completeMs !== null && (previousMs === null || completeMs > previousMs)) {
+      return latestCompleteAt;
+    }
+  }
+  return previous ?? nowIso;
+}
+
 type ActivitySyncBatch = {
   messages: AgentActivityMessage[];
   syncedSequence: number | null;
@@ -701,7 +720,7 @@ function resultSnapshot(
     current_step: summary.currentStep,
     last_activity_at: lastActivityAt,
     awaiting_approval_at: status === 'awaiting_approval'
-      ? (typeof result.awaiting_approval_at === 'string' ? result.awaiting_approval_at : nowIso)
+      ? awaitingApprovalAtForSummary(result, summary, nowIso)
       : undefined,
     codex_visible_messages: activityBatch.messages.slice(-MAX_ACTIVITY_MESSAGES_PER_UPDATE),
     codex_activity_synced_sequence: activityBatch.syncedSequence ?? previousSyncedSequence,
@@ -952,6 +971,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     previousState !== nextResult.codex_run_state ||
     previousResult.current_step !== nextResult.current_step ||
     previousResult.last_activity_at !== nextResult.last_activity_at ||
+    previousResult.awaiting_approval_at !== nextResult.awaiting_approval_at ||
     previousResult.codex_review_reason !== nextResult.codex_review_reason;
   await api.updateTaskState(runnerId, task.id, status, {
     result: nextResult,
