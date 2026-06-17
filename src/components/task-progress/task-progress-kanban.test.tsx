@@ -324,8 +324,8 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
   })
 
-  test('スマホCodexシートは外部ボタンからAIチャット履歴を開き配置選択へ進める', async () => {
-    const onPlaceImportItem = vi.fn()
+  test('スマホCodexシートはAIチャット履歴カードを上方向ドラッグで配置へ進める', async () => {
+    const onMobileImportDrag = vi.fn()
     const onOpenTask = vi.fn()
     const importItem = {
       id: 'chat-node-1',
@@ -351,7 +351,7 @@ describe('TaskProgressKanban', () => {
         pollIntervalMs={3000}
         onRefresh={vi.fn()}
         onOpenTask={onOpenTask}
-        onPlaceImportItem={onPlaceImportItem}
+        onMobileImportDrag={onMobileImportDrag}
       />
     )
 
@@ -368,7 +368,7 @@ describe('TaskProgressKanban', () => {
         pollIntervalMs={3000}
         onRefresh={vi.fn()}
         onOpenTask={onOpenTask}
-        onPlaceImportItem={onPlaceImportItem}
+        onMobileImportDrag={onMobileImportDrag}
       />
     )
 
@@ -380,11 +380,63 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Codexチャットを開く/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '履歴を見る' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '配置先を選ぶ' })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '配置先を選ぶ' }))
+    const row = screen.getByLabelText('「チャットがアーカイブされたのか」のチャットを見る')
+    fireEvent.pointerDown(row, { pointerId: 8, pointerType: 'touch', button: 0, clientX: 180, clientY: 520 })
+    fireEvent.pointerMove(window, { pointerId: 8, pointerType: 'touch', clientX: 176, clientY: 480 })
+    fireEvent.pointerUp(window, { pointerId: 8, pointerType: 'touch', clientX: 174, clientY: 450 })
 
-    expect(onPlaceImportItem).toHaveBeenCalledWith('chat-node-1')
+    expect(onMobileImportDrag).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'start',
+      item: importItem,
+      clientY: 480,
+    }))
+    expect(onMobileImportDrag).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'end',
+      item: importItem,
+      clientY: 450,
+    }))
     expect(onOpenTask).not.toHaveBeenCalled()
+  })
+
+  test('スマホAIチャット履歴カードから履歴を削除できる', async () => {
+    const onDeleteSourceTask = vi.fn().mockResolvedValue(undefined)
+    const importItem = {
+      id: 'chat-node-delete',
+      aiTaskId: 'ai-task-delete',
+      title: '削除するCodex履歴',
+      snippet: '不要な履歴',
+      repoPath: '/Users/me/focusmap',
+      threadId: 'thread-delete',
+      status: 'awaiting_approval',
+      statusLabel: '確認待ち',
+      updatedLabel: '最終 6/12 08:10',
+      updatedAtIso: '2026-06-12T08:10:00.000Z',
+    }
+
+    const renderKanban = (mobileOpenSignal: number) => (
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={mobileOpenSignal}
+        mobileImportItems={[importItem]}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+        onDeleteSourceTask={onDeleteSourceTask}
+      />
+    )
+    const { rerender } = render(renderKanban(0))
+    rerender(renderKanban(1))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'AIチャット履歴を削除 削除するCodex履歴' }))
+
+    await waitFor(() => {
+      expect(onDeleteSourceTask).toHaveBeenCalledWith('chat-node-delete')
+    })
   })
 
   test('スマホAIチャット履歴はステータス横スクロールタブで絞り込める', async () => {

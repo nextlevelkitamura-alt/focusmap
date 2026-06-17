@@ -12,6 +12,7 @@ import {
   Clock,
   ExternalLink,
   FolderGit2,
+  GripVertical,
   Loader2,
   RefreshCw,
   Trash2,
@@ -51,6 +52,8 @@ const HEARTBEAT_POLL_INTERVAL_MS = 30_000
 const HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS = 750
 const MOBILE_LANE_SWIPE_MIN_DISTANCE = 48
 const MOBILE_LANE_SWIPE_MAX_OFF_AXIS = 72
+const MOBILE_IMPORT_DRAG_START_DISTANCE = 10
+const MOBILE_IMPORT_DRAG_MIN_UPWARD_DISTANCE = 6
 const DESKTOP_BOARD_HEIGHT_STORAGE_KEY = "focusmap:codex-kanban:desktop-height"
 const DESKTOP_BOARD_DEFAULT_HEIGHT_PX = 260
 const DESKTOP_BOARD_MIN_HEIGHT_PX = 180
@@ -96,6 +99,13 @@ export type TaskProgressImportItem = {
   placed?: boolean
   updatedLabel: string
   updatedAtIso?: string | null
+}
+
+export type TaskProgressImportDragEvent = {
+  phase: "start" | "move" | "end" | "cancel"
+  item: TaskProgressImportItem
+  clientX: number
+  clientY: number
 }
 
 export type TaskProgressImportRepoOption = {
@@ -148,7 +158,7 @@ type TaskProgressKanbanProps = {
   pollIntervalMs: number
   onRefresh: () => void | Promise<void>
   onOpenTask: (task: TaskProgressSnapshotTask) => void
-  onPlaceImportItem?: (taskId: string) => void
+  onMobileImportDrag?: (event: TaskProgressImportDragEvent) => void
   onRunSourceTask?: (taskId: string) => void
   onToggleSourceTaskComplete?: (taskId: string, done: boolean) => void | Promise<void>
   onDeleteSourceTask?: (taskId: string) => void | Promise<void>
@@ -1151,7 +1161,7 @@ export function TaskProgressKanban({
   error,
   onRefresh,
   onOpenTask,
-  onPlaceImportItem,
+  onMobileImportDrag,
   onRunSourceTask,
   onToggleSourceTaskComplete,
   onDeleteSourceTask,
@@ -1168,6 +1178,14 @@ export function TaskProgressKanban({
   const [sourceTaskStatusOverrides, setSourceTaskStatusOverrides] = useState<Map<string, string>>(new Map())
   const [hiddenSourceTaskIds, setHiddenSourceTaskIds] = useState<Set<string>>(new Set())
   const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const mobileImportDragSessionRef = useRef<{
+    pointerId: number
+    item: TaskProgressImportItem
+    startX: number
+    startY: number
+    dragging: boolean
+  } | null>(null)
+  const suppressMobileImportClickUntilRef = useRef(0)
   const lastDesktopOpenSignalRef = useRef<number | undefined>(desktopOpenSignal)
   const lastMobileOpenSignalRef = useRef<number | undefined>(mobileOpenSignal)
   const desktopResizeCleanupRef = useRef<(() => void) | null>(null)
@@ -1259,30 +1277,34 @@ export function TaskProgressKanban({
   }, [lanes])
   const total = counts.running + counts.review + counts.connection_failed + counts.done
 
+  const visibleMobileImportItems = useMemo(
+    () => mobileImportItems.filter(item => !hiddenSourceTaskIds.has(item.id)),
+    [hiddenSourceTaskIds, mobileImportItems],
+  )
   const mobileImportFilterCounts = useMemo(() => {
     const next: Record<MobileImportHistoryFilterId, number> = {
-      all: mobileImportItems.length,
+      all: visibleMobileImportItems.length,
       review: 0,
       running: 0,
       done: 0,
       connection_failed: 0,
     }
-    for (const item of mobileImportItems) {
+    for (const item of visibleMobileImportItems) {
       const uiStatus = getCodexMonitorUiStatus(item.status ?? "awaiting_approval")
       if (uiStatus === "unsent") continue
       next[uiStatus] += 1
     }
     return next
-  }, [mobileImportItems])
+  }, [visibleMobileImportItems])
 
   const filteredMobileImportItems = useMemo(() => {
-    if (activeMobileImportFilter === "all") return mobileImportItems
-    return mobileImportItems.filter(item => getCodexMonitorUiStatus(item.status ?? "awaiting_approval") === activeMobileImportFilter)
-  }, [activeMobileImportFilter, mobileImportItems])
+    if (activeMobileImportFilter === "all") return visibleMobileImportItems
+    return visibleMobileImportItems.filter(item => getCodexMonitorUiStatus(item.status ?? "awaiting_approval") === activeMobileImportFilter)
+  }, [activeMobileImportFilter, visibleMobileImportItems])
   const activeMobileImportDetailItem = useMemo(() => {
     if (!activeMobileImportDetailId) return null
-    return mobileImportItems.find(item => item.id === activeMobileImportDetailId) ?? null
-  }, [activeMobileImportDetailId, mobileImportItems])
+    return visibleMobileImportItems.find(item => item.id === activeMobileImportDetailId) ?? null
+  }, [activeMobileImportDetailId, visibleMobileImportItems])
   const activeMobileImportDetail = activeMobileImportDetailItem
     ? mobileImportDetailsById[activeMobileImportDetailItem.id] ?? null
     : null
@@ -1299,9 +1321,9 @@ export function TaskProgressKanban({
 
   useEffect(() => {
     if (!activeMobileImportDetailId) return
-    if (mobileImportItems.some(item => item.id === activeMobileImportDetailId)) return
+    if (visibleMobileImportItems.some(item => item.id === activeMobileImportDetailId)) return
     setActiveMobileImportDetailId(null)
-  }, [activeMobileImportDetailId, mobileImportItems])
+  }, [activeMobileImportDetailId, visibleMobileImportItems])
 
   useEffect(() => {
     if (!activeMobileImportDetailItem) return
@@ -1407,7 +1429,7 @@ export function TaskProgressKanban({
   }, [onDeleteSourceTask])
 
   const openMobileKanban = useCallback((tab?: MobileCodexSheetTab) => {
-    const nextTab = tab ?? (mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
+    const nextTab = tab ?? (visibleMobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
     setActiveMobileTab(nextTab)
     setActiveMobileImportDetailId(null)
     if (nextTab === "import") {
@@ -1426,7 +1448,7 @@ export function TaskProgressKanban({
       return LANES.find(lane => counts[lane.id] > 0)?.id ?? current
     })
     setMobileOpen(true)
-  }, [counts, hasMobileImportRepoControl, mobileImportFilterCounts.done, mobileImportFilterCounts.review, mobileImportFilterCounts.running, mobileImportItems.length])
+  }, [counts, hasMobileImportRepoControl, mobileImportFilterCounts.done, mobileImportFilterCounts.review, mobileImportFilterCounts.running, visibleMobileImportItems.length])
 
   useEffect(() => {
     if (!isMobile) return
@@ -1434,16 +1456,91 @@ export function TaskProgressKanban({
     if (lastMobileOpenSignalRef.current === mobileOpenSignal) return
     lastMobileOpenSignalRef.current = mobileOpenSignal
     const timeoutId = window.setTimeout(() => {
-      openMobileKanban(mobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
+      openMobileKanban(visibleMobileImportItems.length > 0 || hasMobileImportRepoControl ? "import" : "board")
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [hasMobileImportRepoControl, isMobile, mobileImportItems.length, mobileOpenSignal, openMobileKanban])
+  }, [hasMobileImportRepoControl, isMobile, mobileOpenSignal, openMobileKanban, visibleMobileImportItems.length])
 
-  const handlePlaceImportItem = useCallback((taskId: string) => {
-    onPlaceImportItem?.(taskId)
-    setActiveMobileImportDetailId(null)
-    setMobileOpen(false)
-  }, [onPlaceImportItem])
+  const handleMobileImportPointerDown = useCallback((
+    item: TaskProgressImportItem,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    if (!onMobileImportDrag) return
+    if (event.pointerType === "mouse" || event.button !== 0) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return
+
+    const session = {
+      pointerId: event.pointerId,
+      item,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+    }
+    mobileImportDragSessionRef.current = session
+
+    const emit = (phase: TaskProgressImportDragEvent["phase"], pointerEvent: PointerEvent) => {
+      onMobileImportDrag({
+        phase,
+        item,
+        clientX: pointerEvent.clientX,
+        clientY: pointerEvent.clientY,
+      })
+    }
+
+    let handlePointerMove: (pointerEvent: PointerEvent) => void
+    let handlePointerUp: (pointerEvent: PointerEvent) => void
+    let handlePointerCancel: (pointerEvent: PointerEvent) => void
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", handlePointerUp)
+      window.removeEventListener("pointercancel", handlePointerCancel)
+      mobileImportDragSessionRef.current = null
+    }
+
+    handlePointerMove = (pointerEvent: PointerEvent) => {
+      const current = mobileImportDragSessionRef.current
+      if (!current || current.pointerId !== pointerEvent.pointerId) return
+
+      const deltaX = pointerEvent.clientX - current.startX
+      const deltaY = pointerEvent.clientY - current.startY
+      const distance = Math.hypot(deltaX, deltaY)
+      if (!current.dragging) {
+        if (distance < MOBILE_IMPORT_DRAG_START_DISTANCE) return
+        if (deltaY > -MOBILE_IMPORT_DRAG_MIN_UPWARD_DISTANCE) return
+        current.dragging = true
+        suppressMobileImportClickUntilRef.current = Date.now() + 700
+        setActiveMobileImportDetailId(null)
+        setMobileOpen(false)
+        emit("start", pointerEvent)
+      } else {
+        emit("move", pointerEvent)
+      }
+      pointerEvent.preventDefault()
+    }
+
+    handlePointerUp = (pointerEvent: PointerEvent) => {
+      const current = mobileImportDragSessionRef.current
+      const wasDragging = Boolean(current?.dragging && current.pointerId === pointerEvent.pointerId)
+      cleanup()
+      if (!wasDragging) return
+      suppressMobileImportClickUntilRef.current = Date.now() + 700
+      emit("end", pointerEvent)
+      pointerEvent.preventDefault()
+    }
+
+    handlePointerCancel = (pointerEvent: PointerEvent) => {
+      const current = mobileImportDragSessionRef.current
+      const wasDragging = Boolean(current?.dragging && current.pointerId === pointerEvent.pointerId)
+      cleanup()
+      if (wasDragging) emit("cancel", pointerEvent)
+    }
+
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", handlePointerUp)
+    window.addEventListener("pointercancel", handlePointerCancel)
+  }, [onMobileImportDrag])
 
   const handleOpenImportItem = useCallback((item: TaskProgressImportItem) => {
     const aiTaskId = item.aiTaskId?.trim()
@@ -1731,7 +1828,7 @@ export function TaskProgressKanban({
                   {mobileImportRepoControl && (
                     <MobileImportRepoControls control={mobileImportRepoControl} runnerState={runnerState} />
                   )}
-                  {mobileImportItems.length === 0 ? (
+                  {visibleMobileImportItems.length === 0 ? (
                     <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
                       {mobileImportRepoControl && !normalizeRepoPath(mobileImportRepoControl.selectedRepoPath)
                         ? "リポを選択すると取り込みチャットを表示します"
@@ -1746,6 +1843,7 @@ export function TaskProgressKanban({
                     const uiStatus = getCodexMonitorUiStatus(visualStatus)
                     const canOpenDetail = Boolean(item.aiTaskId)
                     const openImportDetail = () => {
+                      if (Date.now() < suppressMobileImportClickUntilRef.current) return
                       if (canOpenDetail) handleOpenImportItem(item)
                     }
                     return (
@@ -1755,9 +1853,10 @@ export function TaskProgressKanban({
                         tabIndex={canOpenDetail ? 0 : undefined}
                         className={cn(
                           "relative overflow-visible rounded-lg border p-2.5 pl-4 transition-all duration-150",
-                          canOpenDetail && "cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring active:scale-[0.99]",
+                          (canOpenDetail || onMobileImportDrag) && "cursor-grab focus:outline-none focus:ring-2 focus:ring-ring active:scale-[0.99]",
                           codexMonitorCardClass(visualStatus),
                         )}
+                        onPointerDown={event => handleMobileImportPointerDown(item, event)}
                         onClick={openImportDetail}
                         onKeyDown={event => {
                           if (!canOpenDetail) return
@@ -1770,23 +1869,35 @@ export function TaskProgressKanban({
                         {uiStatus === "running" && <CodexMonitorRunningOutline />}
                         <span className={cn("absolute bottom-3 left-0 top-3 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
                         <div className="flex min-w-0 items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="line-clamp-2 text-sm font-semibold leading-snug">{item.title}</div>
-                            {item.snippet && (
-                              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                                {item.snippet}
-                              </div>
+                          <div className="flex min-w-0 flex-1 items-start gap-1.5">
+                            {onMobileImportDrag && (
+                              <span
+                                className="mt-0.5 inline-flex h-8 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500"
+                                aria-hidden="true"
+                              >
+                                <GripVertical className="h-4 w-4" />
+                              </span>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="line-clamp-2 text-sm font-semibold leading-snug">{item.title}</div>
+                              {item.snippet && (
+                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                                  {item.snippet}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-start gap-1">
+                            {(item.statusLabel || visualStatus) && (
+                              <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold", codexMonitorToneClass(visualStatus))}>
+                                {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                                {item.statusLabel ?? codexMonitorUiLabel(visualStatus)}
+                              </span>
+                            )}
+                            {canOpenDetail && (
+                              <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
                             )}
                           </div>
-                          {(item.statusLabel || visualStatus) && (
-                            <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold", codexMonitorToneClass(visualStatus))}>
-                              {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
-                              {item.statusLabel ?? codexMonitorUiLabel(visualStatus)}
-                            </span>
-                          )}
-                          {canOpenDetail && (
-                            <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                          )}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                           {item.placementLabel && (
@@ -1804,32 +1915,39 @@ export function TaskProgressKanban({
                           )}
                           <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
                         </div>
-                        <div className="mt-2 grid grid-cols-1 gap-1.5">
-                          {canOpenDetail && (
-                            <button
-                              type="button"
-                              className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-amber-400/50 bg-amber-500/10 px-3 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
-                              onClick={event => {
-                                event.stopPropagation()
-                                handleOpenImportItem(item)
-                              }}
-                            >
-                              履歴を見る
-                            </button>
-                          )}
-                          {onPlaceImportItem && (
-                            <button
-                              type="button"
-                              className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
-                              onClick={event => {
-                                event.stopPropagation()
-                                handlePlaceImportItem(item.id)
-                              }}
-                            >
-                              配置先を選ぶ
-                            </button>
-                          )}
-                        </div>
+                        {(canOpenDetail || onDeleteSourceTask) && (
+                          <div className="mt-2 flex items-center gap-1.5">
+                            {canOpenDetail && (
+                              <button
+                                type="button"
+                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-md border border-amber-400/50 bg-amber-500/10 px-3 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+                                onPointerDown={event => event.stopPropagation()}
+                                onClick={event => {
+                                  event.stopPropagation()
+                                  handleOpenImportItem(item)
+                                }}
+                              >
+                                履歴を見る
+                              </button>
+                            )}
+                            {onDeleteSourceTask && (
+                              <button
+                                type="button"
+                                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-red-400/30 bg-red-500/10 text-red-700 transition-colors hover:bg-red-500/15 focus:outline-none focus:ring-2 focus:ring-red-300 dark:text-red-300"
+                                aria-label={`AIチャット履歴を削除 ${item.title}`}
+                                title="削除"
+                                onPointerDown={event => event.stopPropagation()}
+                                onClick={event => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  void handleDeleteSourceTask(item.id)
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   })}

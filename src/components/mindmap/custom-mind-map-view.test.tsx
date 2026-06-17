@@ -1282,7 +1282,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.queryByText("未配置のCodexチャット")).not.toBeInTheDocument()
   })
 
-  test("shows a running Codex import on the mobile map immediately after choosing a destination", async () => {
+  test("shows a running Codex import on the mobile map immediately after dragging it onto a node", async () => {
     const rootTask = makeTask({
       id: "root-1",
       title: "Root task",
@@ -1342,8 +1342,33 @@ describe("CustomMindMapView keyboard operations", () => {
       />
     )
 
-    fireEvent.click(await screen.findByRole("button", { name: "配置先を選ぶ" }))
-    fireEvent.click(getNode("Root task", "root-1"))
+    const rootPoint = getNodeClientPoint(getNode("Root task", "root-1"))
+    const importCard = await screen.findByLabelText("「実行中Codexチャット」のチャットを見る")
+
+    fireEvent.pointerDown(importCard, {
+      pointerId: 9,
+      pointerType: "touch",
+      button: 0,
+      clientX: rootPoint.clientX,
+      clientY: rootPoint.clientY + 240,
+    })
+    fireEvent.pointerMove(window, {
+      pointerId: 9,
+      pointerType: "touch",
+      clientX: rootPoint.clientX,
+      clientY: rootPoint.clientY,
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-codex-chat-import-drag-ghost")).toHaveTextContent("実行中Codexチャット")
+    })
+
+    fireEvent.pointerUp(window, {
+      pointerId: 9,
+      pointerType: "touch",
+      clientX: rootPoint.clientX,
+      clientY: rootPoint.clientY,
+    })
 
     await waitFor(() => {
       expect(onUpdateTask).toHaveBeenCalledWith("chat-node-1", {

@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodexNodePanel } from "@/components/codex/codex-node-panel"
-import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
+import { CustomMindMapView, type CustomMindMapImportedChatDragEvent } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
-import { TaskProgressKanban, type TaskProgressImportItem, type TaskProgressImportRepoOption } from "@/components/task-progress/task-progress-kanban"
+import { TaskProgressKanban, type TaskProgressImportDragEvent, type TaskProgressImportItem, type TaskProgressImportRepoOption } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state"
 import {
     CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS,
@@ -31,7 +31,7 @@ const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiti
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input"])
 
 type OptimisticCodexPlacement = {
-    parentTaskId: string
+    parentTaskId: string | null
     projectId: string
 }
 
@@ -119,9 +119,10 @@ export function MobileMindMap({
     const [codexImportRepoPathOverride, setCodexImportRepoPathOverride] = useState<string | null | undefined>(undefined)
     const [isCodexThreadImportSaving, setIsCodexThreadImportSaving] = useState(false)
     const [hiddenCodexChatImportIds, setHiddenCodexChatImportIds] = useState<Set<string>>(() => new Set())
-    const [placingCodexImportTaskId, setPlacingCodexImportTaskId] = useState<string | null>(null)
+    const [mobileCodexImportDragEvent, setMobileCodexImportDragEvent] = useState<CustomMindMapImportedChatDragEvent | null>(null)
     const [optimisticCodexPlacements, setOptimisticCodexPlacements] = useState<Record<string, OptimisticCodexPlacement>>({})
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
+    const mobileCodexImportDragSequenceRef = useRef(0)
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
     const currentMapTaskIds = useMemo(() => {
@@ -151,13 +152,26 @@ export function MobileMindMap({
             deleted_at: null,
         }
     }, [optimisticCodexPlacements])
-    const mapGroups = useMemo(
-        () => groups.map(applyOptimisticCodexPlacement),
-        [applyOptimisticCodexPlacement, groups],
-    )
+    const mapGroups = useMemo(() => {
+        const next = groups.map(applyOptimisticCodexPlacement)
+        for (const [taskId, placement] of Object.entries(optimisticCodexPlacements)) {
+            if (placement.parentTaskId !== null) continue
+            if (currentMapTaskIds.has(taskId)) continue
+            const task = allTasksById.get(taskId)
+            if (!task || task.deleted_at != null) continue
+            next.push({
+                ...task,
+                parent_task_id: null,
+                project_id: placement.projectId,
+                deleted_at: null,
+            })
+        }
+        return next
+    }, [allTasksById, applyOptimisticCodexPlacement, currentMapTaskIds, groups, optimisticCodexPlacements])
     const mapTasks = useMemo(() => {
         const next = tasks.map(applyOptimisticCodexPlacement)
         for (const [taskId, placement] of Object.entries(optimisticCodexPlacements)) {
+            if (placement.parentTaskId === null) continue
             if (currentMapTaskIds.has(taskId)) continue
             const task = allTasksById.get(taskId)
             if (!task || task.deleted_at != null) continue
@@ -213,7 +227,7 @@ export function MobileMindMap({
         setCodexRepoPathOverride(undefined)
         setCodexImportRepoPathOverride(undefined)
         setHiddenCodexChatImportIds(new Set())
-        setPlacingCodexImportTaskId(null)
+        setMobileCodexImportDragEvent(null)
         setOptimisticCodexPlacements({})
     }, [project.id, project.space_id])
 
@@ -819,53 +833,130 @@ export function MobileMindMap({
         return false
     }, [taskMap])
 
-    const handleBeginPlaceCodexImportItem = useCallback((taskId: string) => {
-        setPlacingCodexImportTaskId(taskId)
+    const handleMobileImportDrag = useCallback((event: TaskProgressImportDragEvent) => {
+        mobileCodexImportDragSequenceRef.current += 1
+        setMobileCodexImportDragEvent({
+            sequence: mobileCodexImportDragSequenceRef.current,
+            phase: event.phase,
+            taskId: event.item.id,
+            title: event.item.title,
+            snippet: event.item.snippet,
+            clientX: event.clientX,
+            clientY: event.clientY,
+        })
     }, [])
 
-    const handlePlaceCodexImportOnNode = useCallback(async (targetId: string) => {
-        const taskId = placingCodexImportTaskId
-        if (!taskId || (!onUpdateTask && !onKanbanUpdateTask)) return
+    const handleDropCodexImportNode = useCallback(async ({
+        taskId,
+        targetId,
+        position,
+    }: {
+        taskId: string
+        targetId: string
+        position: MobileCustomDropPosition
+    }) => {
+        if (!onUpdateTask && !onKanbanUpdateTask) return
+        const importedTask = repoScopedTasksById.get(taskId) ?? allTasksById.get(taskId) ?? taskMap.get(taskId)
+        if (!importedTask) return
         if (taskId === targetId) return
-        if (isDescendant(taskId, targetId)) return
 
-        setPlacingCodexImportTaskId(null)
-        setTaskCollapsed(targetId, false)
+        const targetTask = targetId === "project-root"
+            ? null
+            : taskMap.get(targetId) ?? allTasksById.get(targetId) ?? null
+        if (targetId !== "project-root" && !targetTask) return
+        if (targetTask && isDescendant(taskId, targetTask.id)) return
+
+        const parentTaskId = targetId === "project-root"
+            ? null
+            : position === "as-child"
+                ? targetId
+                : targetTask?.parent_task_id ?? null
+
+        const updates: Partial<Task> = {
+            parent_task_id: parentTaskId,
+            project_id: project.id,
+        }
+
+        const siblingOrderUpdates = (() => {
+            if (!targetTask || position === "as-child") return [] as Array<{ id: string; order_index: number }>
+            const candidates = new Map<string, Task>()
+            for (const task of allMindMapTasks) {
+                if (task?.id) candidates.set(task.id, task)
+            }
+            const siblings = Array.from(candidates.values())
+                .filter(task => task.id !== taskId && (task.parent_task_id ?? null) === parentTaskId)
+                .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+            const targetIndex = siblings.findIndex(task => task.id === targetTask.id)
+            if (targetIndex < 0) return [] as Array<{ id: string; order_index: number }>
+            const insertAt = position === "above" ? targetIndex : targetIndex + 1
+            const reordered = [
+                ...siblings.slice(0, insertAt),
+                { ...importedTask, parent_task_id: parentTaskId },
+                ...siblings.slice(insertAt),
+            ]
+            return reordered.flatMap((task, index) => {
+                if (task.id === taskId || (task.order_index ?? 0) !== index) {
+                    return [{ id: task.id, order_index: index }]
+                }
+                return []
+            })
+        })()
+        const importedOrderUpdate = siblingOrderUpdates.find(update => update.id === taskId)
+        if (importedOrderUpdate) updates.order_index = importedOrderUpdate.order_index
+
+        if (parentTaskId) setTaskCollapsed(parentTaskId, false)
+        setHiddenCodexChatImportIds(prev => {
+            const next = new Set(prev)
+            next.add(taskId)
+            return next
+        })
         setOptimisticCodexPlacements(prev => ({
             ...prev,
             [taskId]: {
-                parentTaskId: targetId,
+                parentTaskId,
                 projectId: project.id,
             },
         }))
 
         try {
-            await updateTaskForCodexScope(taskId, {
-                parent_task_id: targetId,
-                project_id: project.id,
-            })
+            await updateTaskForCodexScope(taskId, updates)
+            for (const orderUpdate of siblingOrderUpdates) {
+                if (orderUpdate.id === taskId) continue
+                await updateTaskForCodexScope(orderUpdate.id, { order_index: orderUpdate.order_index })
+            }
             setSelectedNodeId(taskId)
             setSelectedNodeIds(new Set([taskId]))
         } catch (error) {
+            setHiddenCodexChatImportIds(prev => {
+                const next = new Set(prev)
+                next.delete(taskId)
+                return next
+            })
             setOptimisticCodexPlacements(prev => {
                 if (!prev[taskId]) return prev
                 const next = { ...prev }
                 delete next[taskId]
                 return next
             })
-            setPlacingCodexImportTaskId(taskId)
             console.error("[MobileMindMap] Failed to place imported Codex chat:", error)
         }
-    }, [isDescendant, onKanbanUpdateTask, onUpdateTask, placingCodexImportTaskId, project.id, setTaskCollapsed, updateTaskForCodexScope])
+    }, [
+        allMindMapTasks,
+        allTasksById,
+        isDescendant,
+        onKanbanUpdateTask,
+        onUpdateTask,
+        project.id,
+        repoScopedTasksById,
+        setTaskCollapsed,
+        taskMap,
+        updateTaskForCodexScope,
+    ])
 
     const handleSelectNode = useCallback((nodeId: string | null) => {
-        if (nodeId && placingCodexImportTaskId && taskMap.has(nodeId)) {
-            void handlePlaceCodexImportOnNode(nodeId)
-            return
-        }
         setSelectedNodeId(nodeId)
         setSelectedNodeIds(nodeId && taskMap.has(nodeId) ? new Set([nodeId]) : new Set())
-    }, [handlePlaceCodexImportOnNode, placingCodexImportTaskId, taskMap])
+    }, [taskMap])
 
     const handleSelectNodes = useCallback((nodeIds: string[], primaryNodeId: string | null) => {
         const next = new Set(nodeIds.filter(nodeId => taskMap.has(nodeId)))
@@ -1034,14 +1125,65 @@ export function MobileMindMap({
         })
     }, [calculateDeleteFocus, onDeleteGroup, onDeleteTask, selectSingleTask, taskMap])
 
+    const collectCodexImportTaskTreeIds = useCallback((taskId: string) => {
+        const childrenByParent = new Map<string, Task[]>()
+        for (const task of repoScopedTasksById.values()) {
+            if (!task.parent_task_id) continue
+            const children = childrenByParent.get(task.parent_task_id) ?? []
+            children.push(task)
+            childrenByParent.set(task.parent_task_id, children)
+        }
+        const ids = [taskId]
+        const collect = (parentId: string) => {
+            for (const child of childrenByParent.get(parentId) ?? []) {
+                ids.push(child.id)
+                collect(child.id)
+            }
+        }
+        collect(taskId)
+        return ids
+    }, [repoScopedTasksById])
+
     const handleDeleteTaskFromKanban = useCallback(async (taskId: string) => {
         const sourceTask = fallbackSourceTasksByIdForCodex.get(taskId)
-        if (sourceTask?.project_id && sourceTask.project_id !== project.id && onKanbanDeleteTask) {
-            await onKanbanDeleteTask(taskId)
-            return
+        const hiddenIds = collectCodexImportTaskTreeIds(taskId)
+        setHiddenCodexChatImportIds(prev => {
+            const next = new Set(prev)
+            for (const id of hiddenIds) next.add(id)
+            return next
+        })
+
+        try {
+            if (sourceTask?.project_id && sourceTask.project_id !== project.id && onKanbanDeleteTask) {
+                await onKanbanDeleteTask(taskId)
+                return
+            }
+            if (sourceTask && !sourceTask.parent_task_id && onDeleteGroup) {
+                await onDeleteGroup(taskId)
+                return
+            }
+            if (sourceTask && onDeleteTask) {
+                await onDeleteTask(taskId)
+                return
+            }
+            await handleDeleteNode(taskId)
+        } catch (error) {
+            setHiddenCodexChatImportIds(prev => {
+                const next = new Set(prev)
+                for (const id of hiddenIds) next.delete(id)
+                return next
+            })
+            console.error("[MobileMindMap] Failed to delete Codex task:", error)
         }
-        await handleDeleteNode(taskId)
-    }, [fallbackSourceTasksByIdForCodex, handleDeleteNode, onKanbanDeleteTask, project.id])
+    }, [
+        collectCodexImportTaskTreeIds,
+        fallbackSourceTasksByIdForCodex,
+        handleDeleteNode,
+        onDeleteGroup,
+        onDeleteTask,
+        onKanbanDeleteTask,
+        project.id,
+    ])
 
     const handleSaveTitle = useCallback(async (taskId: string, title: string) => {
         const trimmed = title.trim()
@@ -1122,7 +1264,6 @@ export function MobileMindMap({
                 onSelectNodes={handleSelectNodes}
                 onToggleCollapse={handleToggleCollapse}
                 pendingEditNodeId={pendingEditNodeId}
-                mobilePlacementMode={!!placingCodexImportTaskId}
                 onAddRootNode={handleAddRootNode}
                 onAddChildNode={handleAddChildNode}
                 onAddSiblingNode={handleAddSiblingNode}
@@ -1150,6 +1291,11 @@ export function MobileMindMap({
                 taskProgressByNodeId={taskProgressByNodeId}
                 onOpenTaskProgress={handleOpenTaskProgress}
                 onMoveTask={handleMoveTask}
+                importedChatDragTitle={mobileCodexImportDragEvent?.phase === "start" || mobileCodexImportDragEvent?.phase === "move"
+                    ? mobileCodexImportDragEvent.title ?? null
+                    : null}
+                mobileImportedChatDragEvent={mobileCodexImportDragEvent}
+                onDropImportedChatNode={handleDropCodexImportNode}
             />
             <TaskProgressKanban
                 tasks={taskProgressDisplayTasks}
@@ -1186,24 +1332,8 @@ export function MobileMindMap({
                     onToggleImport: toggleSelectedRepoImport,
                     onRefreshRepos: handleRefreshAvailableRepos,
                 }}
-                onPlaceImportItem={handleBeginPlaceCodexImportItem}
+                onMobileImportDrag={handleMobileImportDrag}
             />
-            {placingCodexImportTaskId && (
-                <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top)+72px)] z-50 rounded-lg border bg-background/95 px-3 py-2 text-xs shadow-lg backdrop-blur">
-                    <div className="flex items-center justify-between gap-2">
-                        <span className="min-w-0 flex-1 text-muted-foreground">
-                            配置先のノードをタップ
-                        </span>
-                        <button
-                            type="button"
-                            className="min-h-9 shrink-0 rounded-md px-2 text-xs font-semibold text-primary"
-                            onClick={() => setPlacingCodexImportTaskId(null)}
-                        >
-                            キャンセル
-                        </button>
-                    </div>
-                </div>
-            )}
             <TaskProgressDetailPanel
                 open={!!taskProgressPanelTask}
                 task={taskProgressPanelTask}
