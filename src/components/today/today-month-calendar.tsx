@@ -12,12 +12,17 @@ import { cn } from "@/lib/utils"
 const MAX_VISIBLE_ENTRIES = 4
 const MOBILE_MAX_VISIBLE_ENTRIES = 4
 const MOBILE_MAX_VISIBLE_ENTRIES_DENSE = 4
+const DESKTOP_EXPANDED_MAX_VISIBLE_ENTRIES = 5
+const DESKTOP_EXPANDED_MAX_VISIBLE_ENTRIES_DENSE = 4
 const MONTH_ENTRY_FONT_SIZE = 8
 const MONTH_ENTRY_LINE_HEIGHT = 12
 const MONTH_DAY_NUMBER_FONT_SIZE = 8
 const MOBILE_MONTH_ENTRY_FONT_SIZE = 9
 const MOBILE_MONTH_ENTRY_LINE_HEIGHT = 14
 const MOBILE_MONTH_DAY_NUMBER_FONT_SIZE = 10
+const DESKTOP_EXPANDED_MONTH_ENTRY_FONT_SIZE = 10
+const DESKTOP_EXPANDED_MONTH_ENTRY_LINE_HEIGHT = 16
+const DESKTOP_EXPANDED_MONTH_DAY_NUMBER_FONT_SIZE = 11
 
 interface TodayMonthCalendarProps {
   selectedDate: Date
@@ -26,7 +31,7 @@ interface TodayMonthCalendarProps {
   calendarColorMap?: Map<string, string>
   eventsLoading: boolean
   onDateSelect: (date: Date) => void
-  variant?: "default" | "mobile"
+  variant?: "default" | "mobile" | "desktop-expanded"
 }
 
 interface MonthEntry {
@@ -46,16 +51,28 @@ function isHexColor(value?: string): value is string {
   return /^#[0-9a-fA-F]{6}$/.test(value ?? "")
 }
 
-function entryStyle(color?: string, variant: "default" | "mobile" = "default"): CSSProperties {
+function entryStyle(color?: string, variant: "default" | "mobile" | "desktop-expanded" = "default"): CSSProperties {
   const isMobile = variant === "mobile"
+  const isDesktopExpanded = variant === "desktop-expanded"
+  const isLarge = isMobile || isDesktopExpanded
+  const entryFontSize = isDesktopExpanded
+    ? DESKTOP_EXPANDED_MONTH_ENTRY_FONT_SIZE
+    : isMobile
+      ? MOBILE_MONTH_ENTRY_FONT_SIZE
+      : MONTH_ENTRY_FONT_SIZE
+  const entryLineHeight = isDesktopExpanded
+    ? DESKTOP_EXPANDED_MONTH_ENTRY_LINE_HEIGHT
+    : isMobile
+      ? MOBILE_MONTH_ENTRY_LINE_HEIGHT
+      : MONTH_ENTRY_LINE_HEIGHT
 
   if (!isHexColor(color)) {
     return {
       borderLeftColor: "#8fd77a",
-      backgroundColor: isMobile ? "rgba(25, 74, 68, 0.82)" : "rgba(63, 70, 65, 0.72)",
-      color: isMobile ? "#eef8f4" : undefined,
-      fontSize: isMobile ? MOBILE_MONTH_ENTRY_FONT_SIZE : MONTH_ENTRY_FONT_SIZE,
-      lineHeight: `${isMobile ? MOBILE_MONTH_ENTRY_LINE_HEIGHT : MONTH_ENTRY_LINE_HEIGHT}px`,
+      backgroundColor: isLarge ? "rgba(25, 74, 68, 0.82)" : "rgba(63, 70, 65, 0.72)",
+      color: isLarge ? "#eef8f4" : undefined,
+      fontSize: entryFontSize,
+      lineHeight: `${entryLineHeight}px`,
       textOverflow: "clip",
     }
   }
@@ -64,10 +81,10 @@ function entryStyle(color?: string, variant: "default" | "mobile" = "default"): 
   const b = parseInt(color.slice(5, 7), 16)
   return {
     borderLeftColor: color,
-    backgroundColor: `rgba(${r}, ${g}, ${b}, ${isMobile ? 0.34 : 0.24})`,
-    color: isMobile ? "#f4fbf7" : undefined,
-    fontSize: isMobile ? MOBILE_MONTH_ENTRY_FONT_SIZE : MONTH_ENTRY_FONT_SIZE,
-    lineHeight: `${isMobile ? MOBILE_MONTH_ENTRY_LINE_HEIGHT : MONTH_ENTRY_LINE_HEIGHT}px`,
+    backgroundColor: `rgba(${r}, ${g}, ${b}, ${isLarge ? 0.34 : 0.24})`,
+    color: isLarge ? "#f4fbf7" : undefined,
+    fontSize: entryFontSize,
+    lineHeight: `${entryLineHeight}px`,
     textOverflow: "clip",
   }
 }
@@ -122,23 +139,29 @@ export function TodayMonthCalendar({
     return map
   }, [calendarColorMap, days, events, tasks])
   const isMobile = variant === "mobile"
+  const isDesktopExpanded = variant === "desktop-expanded"
+  const isLargeMonth = isMobile || isDesktopExpanded
   const visibleEntryLimit = isMobile
     ? rows <= 5
       ? MOBILE_MAX_VISIBLE_ENTRIES
       : MOBILE_MAX_VISIBLE_ENTRIES_DENSE
+    : isDesktopExpanded
+      ? rows <= 5
+        ? DESKTOP_EXPANDED_MAX_VISIBLE_ENTRIES
+        : DESKTOP_EXPANDED_MAX_VISIBLE_ENTRIES_DENSE
     : MAX_VISIBLE_ENTRIES
 
   return (
     <div
       className={cn(
         "flex h-full min-h-0 flex-col overflow-hidden",
-        isMobile ? "bg-[#050708] text-neutral-100" : "bg-background px-1 pb-1 pt-0.5",
+        isLargeMonth ? "bg-[#050708] text-neutral-100" : "bg-background px-1 pb-1 pt-0.5",
       )}
     >
       <div
         className={cn(
           "grid flex-shrink-0 grid-cols-7 border-b",
-          isMobile ? "h-8 border-white/15 bg-[#090b0d]" : "border-border/30 bg-background/95",
+          isLargeMonth ? "h-8 border-white/15 bg-[#090b0d]" : "border-border/30 bg-background/95",
         )}
       >
         {["月", "火", "水", "木", "金", "土", "日"].map((label) => (
@@ -146,12 +169,12 @@ export function TodayMonthCalendar({
             key={label}
             className={cn(
               "text-center font-semibold",
-              isMobile ? "grid place-items-center text-[10px]" : "py-1.5 text-[10px]",
+              isLargeMonth ? "grid place-items-center text-[10px]" : "py-1.5 text-[10px]",
               label === "日"
-                ? isMobile
+                ? isLargeMonth
                   ? "text-[#ff7373]"
                   : "text-red-300/90"
-                : isMobile
+                : isLargeMonth
                   ? "text-neutral-400"
                   : "text-muted-foreground",
             )}
@@ -162,12 +185,12 @@ export function TodayMonthCalendar({
       </div>
 
       {eventsLoading && Array.from(entriesByDay.values()).every((entries) => entries.length === 0) ? (
-        <div className={cn("flex flex-1 items-center justify-center text-sm", isMobile ? "text-neutral-400" : "text-muted-foreground")}>読み込み中...</div>
+        <div className={cn("flex flex-1 items-center justify-center text-sm", isLargeMonth ? "text-neutral-400" : "text-muted-foreground")}>読み込み中...</div>
       ) : (
         <div
           className={cn(
             "grid min-h-0 flex-1 grid-cols-7 overflow-hidden border-l",
-            isMobile ? "border-white/15" : "border-border/20",
+            isLargeMonth ? "border-white/15" : "border-border/20",
           )}
           style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
         >
@@ -195,42 +218,51 @@ export function TodayMonthCalendar({
                   }
                 }}
                 className={cn(
-                  "min-w-0 overflow-hidden border-b border-r text-left outline-none",
-                  isMobile
+                  "flex min-w-0 flex-col overflow-hidden border-b border-r text-left outline-none",
+                  isLargeMonth
                     ? "border-white/15 px-[2px] pb-1 pt-1 active:bg-white/[0.06]"
                     : "border-border/20 px-[5px] pb-1 pt-1 active:bg-muted/30",
-                  !isCurrentMonth && (isMobile ? "opacity-38" : "opacity-35"),
+                  isDesktopExpanded && "px-1.5 pb-1.5 pt-1.5",
+                  !isCurrentMonth && (isLargeMonth ? "opacity-38" : "opacity-35"),
                   isMobile && isSelected && "bg-white/[0.035] ring-1 ring-inset ring-white/80 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_0_14px_rgba(255,255,255,0.12)]",
-                  !isMobile && isToday && "bg-white/[0.035] ring-1 ring-inset ring-white/80 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.24),0_0_12px_rgba(255,255,255,0.16)]",
+                  isDesktopExpanded && isSelected && "bg-white/[0.035] ring-1 ring-inset ring-white/70 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14),0_0_12px_rgba(255,255,255,0.10)]",
+                  !isLargeMonth && isToday && "bg-white/[0.035] ring-1 ring-inset ring-white/80 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.24),0_0_12px_rgba(255,255,255,0.16)]",
                 )}
                 style={{ contain: "paint" }}
               >
-                <div className="mb-0.5 flex items-start justify-between gap-1">
+                <div className={cn("mb-0.5 flex flex-shrink-0 items-start justify-between gap-1", isDesktopExpanded && "mb-1")}>
                   <span
                     className={cn(
                       "grid place-items-center font-bold",
-                      isMobile ? "h-3.5 min-w-3.5 rounded-full px-0.5" : "h-3.5 min-w-3.5 rounded px-0.5",
+                      isLargeMonth ? "h-3.5 min-w-3.5 rounded-full px-0.5" : "h-3.5 min-w-3.5 rounded px-0.5",
+                      isDesktopExpanded && "h-4 min-w-4",
                       isSunday || isHoliday
-                        ? isMobile
+                        ? isLargeMonth
                           ? "text-[#ff7373]"
                           : "text-red-300"
-                        : isMobile
+                        : isLargeMonth
                           ? "text-neutral-100"
                           : "text-muted-foreground",
                       isMobile && isToday && !isSelected && "text-[#74cfb2]",
                       isMobile && isSelected && "bg-[#74cfb2] text-[#05100d]",
-                      !isMobile && isToday && "bg-white/15 text-white",
+                      isDesktopExpanded && isToday && !isSelected && "text-[#74cfb2]",
+                      isDesktopExpanded && isSelected && "bg-[#74cfb2] text-[#05100d]",
+                      !isLargeMonth && isToday && "bg-white/15 text-white",
                     )}
                     style={{
-                      fontSize: isMobile ? MOBILE_MONTH_DAY_NUMBER_FONT_SIZE : MONTH_DAY_NUMBER_FONT_SIZE,
-                      lineHeight: isMobile ? "10px" : "10px",
+                      fontSize: isDesktopExpanded
+                        ? DESKTOP_EXPANDED_MONTH_DAY_NUMBER_FONT_SIZE
+                        : isMobile
+                          ? MOBILE_MONTH_DAY_NUMBER_FONT_SIZE
+                          : MONTH_DAY_NUMBER_FONT_SIZE,
+                      lineHeight: isDesktopExpanded ? "12px" : "10px",
                     }}
                   >
                     {format(day, "d")}
                   </span>
                 </div>
 
-                <div className="space-y-0.5">
+                <div className="min-h-0 flex-1 space-y-0.5 overflow-hidden">
                   {visibleEntries.map((entry) => (
                     <div
                       key={entry.id}
@@ -238,6 +270,8 @@ export function TodayMonthCalendar({
                         "block w-full max-w-full overflow-hidden whitespace-nowrap border-l font-medium",
                         isMobile
                           ? "h-3.5 rounded-[2px] px-[2px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
+                          : isDesktopExpanded
+                            ? "h-4 rounded-[3px] px-1.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]"
                           : "h-3 rounded-[2px] px-[4px] text-foreground/80",
                       )}
                       style={entryStyle(entry.color, variant)}
@@ -251,12 +285,22 @@ export function TodayMonthCalendar({
                         "block w-full max-w-full overflow-hidden whitespace-nowrap font-semibold",
                         isMobile
                           ? "h-3.5 rounded-[2px] px-[2px] text-neutral-300"
+                          : isDesktopExpanded
+                            ? "h-4 rounded-[3px] px-1.5 text-neutral-300"
                           : "h-3 rounded-[2px] bg-muted/55 px-[4px] text-muted-foreground",
                       )}
                       style={{
-                        backgroundColor: isMobile ? "transparent" : undefined,
-                        fontSize: isMobile ? MOBILE_MONTH_ENTRY_FONT_SIZE : MONTH_ENTRY_FONT_SIZE,
-                        lineHeight: `${isMobile ? MOBILE_MONTH_ENTRY_LINE_HEIGHT : MONTH_ENTRY_LINE_HEIGHT}px`,
+                        backgroundColor: isLargeMonth ? "transparent" : undefined,
+                        fontSize: isDesktopExpanded
+                          ? DESKTOP_EXPANDED_MONTH_ENTRY_FONT_SIZE
+                          : isMobile
+                            ? MOBILE_MONTH_ENTRY_FONT_SIZE
+                            : MONTH_ENTRY_FONT_SIZE,
+                        lineHeight: `${isDesktopExpanded
+                          ? DESKTOP_EXPANDED_MONTH_ENTRY_LINE_HEIGHT
+                          : isMobile
+                            ? MOBILE_MONTH_ENTRY_LINE_HEIGHT
+                            : MONTH_ENTRY_LINE_HEIGHT}px`,
                         textOverflow: "clip",
                       }}
                     >

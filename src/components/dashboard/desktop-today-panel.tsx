@@ -664,6 +664,7 @@ export function DesktopTodayPanel({
                         calendarColorMap={stableCalendarColorMap}
                         eventsLoading={eventsLoading}
                         onDateSelect={handleRangeDateSelect}
+                        variant="desktop-expanded"
                     />
                 ) : effectiveTimelineMode === 'calendar' ? (
                     <TodayTimelineCalendar
