@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Focusmap Codex履歴 Report View Mockup</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f0f0f;
+      --surface: #171717;
+      --surface-2: #1f1f1f;
+      --surface-3: #262626;
+      --line: #303030;
+      --line-soft: #262626;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --faint: #71717a;
+      --green: #34d399;
+      --green-soft: rgba(52, 211, 153, 0.12);
+      --amber: #fbbf24;
+      --amber-soft: rgba(251, 191, 36, 0.12);
+      --blue: #38bdf8;
+      --blue-soft: rgba(56, 189, 248, 0.12);
+      --red: #f87171;
+      --red-soft: rgba(248, 113, 113, 0.12);
+      --radius: 8px;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        var(--bg);
+      background-size: 18px 18px;
+      color: var(--text);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+      min-height: 100vh;
+    }
+
+    .map {
+      min-width: 0;
+      padding: 18px 20px;
+      border-right: 1px solid var(--line);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 44px;
+      border-bottom: 1px solid var(--line-soft);
+      margin: -18px -20px 18px;
+      padding: 8px 14px;
+      background: rgba(18, 18, 18, 0.92);
+    }
+
+    .topbar-left,
+    .topbar-right,
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .select-pill,
+    .tab,
+    .icon-button,
+    .status-pill,
+    .metric-pill {
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+
+    .select-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 220px;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.13);
+    }
+
+    .tab {
+      padding: 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .tab.active {
+      background: #f5f5f5;
+      color: #111;
+      border-color: #f5f5f5;
+    }
+
+    .icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      padding: 0;
+      color: var(--muted);
+    }
+
+    .workspace {
+      display: grid;
+      place-items: center;
+      min-height: calc(100vh - 82px);
+    }
+
+    .branch {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: min(720px, 100%);
+      transform: translateY(-4vh);
+    }
+
+    .node {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #f5f5f5;
+      color: #111;
+      padding: 13px 16px;
+      font-size: 13px;
+      font-weight: 750;
+      min-width: 150px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+    }
+
+    .connector {
+      height: 1px;
+      width: 48px;
+      background: #555;
+      position: relative;
+    }
+
+    .stack {
+      display: grid;
+      gap: 10px;
+      min-width: 220px;
+    }
+
+    .task-node {
+      min-height: 48px;
+      border: 1px solid rgba(251, 191, 36, 0.78);
+      border-radius: var(--radius);
+      background: rgba(251, 191, 36, 0.06);
+      color: var(--text);
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 9px;
+      font-size: 12px;
+      font-weight: 650;
+      box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.08);
+    }
+
+    .check {
+      width: 14px;
+      height: 14px;
+      border: 1px solid rgba(251, 191, 36, 0.9);
+      border-radius: 3px;
+    }
+
+    .badge {
+      justify-self: end;
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      border-radius: 99px;
+      color: #fde68a;
+      background: rgba(251, 191, 36, 0.1);
+      padding: 2px 6px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--surface);
+    }
+
+    .detail-header {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 14px 12px;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .back {
+      width: 34px;
+      min-height: 34px;
+      border: 0;
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--muted);
+      font-size: 20px;
+    }
+
+    .title-block {
+      min-width: 0;
+      flex: 1;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.35;
+      font-weight: 750;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .status-pill,
+    .metric-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 0 8px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .status-pill.review {
+      border-color: rgba(251, 191, 36, 0.42);
+      background: var(--amber-soft);
+      color: #fde68a;
+    }
+
+    .status-pill.done {
+      border-color: rgba(52, 211, 153, 0.42);
+      background: var(--green-soft);
+      color: #bbf7d0;
+    }
+
+    .thread-link {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid rgba(52, 211, 153, 0.45);
+      border-radius: var(--radius);
+      background: var(--green-soft);
+      color: #bbf7d0;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 750;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .summary {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      margin-bottom: 8px;
+    }
+
+    .summary-grid {
+      display: grid;
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: var(--line-soft);
+    }
+
+    .summary-row {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 10px;
+      min-height: 44px;
+      align-items: start;
+      padding: 9px 10px;
+      background: var(--surface);
+    }
+
+    .summary-row dt {
+      margin: 0;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 750;
+      line-height: 1.6;
+    }
+
+    .summary-row dd {
+      margin: 0;
+      color: #d4d4d8;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .sidebar-body {
+      min-height: 0;
+      flex: 1;
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .mock-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .mock-tab {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .mock-tab.active {
+      background: #f5f5f5;
+      border-color: #f5f5f5;
+      color: #111;
+    }
+
+    .report-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .note {
+      border: 1px dashed #3a3a3a;
+      border-radius: var(--radius);
+      background: #111;
+      padding: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .message {
+      display: grid;
+      gap: 7px;
+    }
+
+    .message.user {
+      justify-items: end;
+    }
+
+    .bubble {
+      max-width: 88%;
+      border-radius: 16px;
+      padding: 11px 13px;
+      font-size: 14px;
+      line-height: 1.75;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user .bubble {
+      background: #f5f5f5;
+      color: #111;
+      border-top-right-radius: 6px;
+      font-weight: 650;
+    }
+
+    .assistant .bubble {
+      max-width: 100%;
+      padding-left: 0;
+      padding-right: 0;
+      background: transparent;
+      color: #f4f4f5;
+    }
+
+    .message-label {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .folded-prompt {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #111;
+      padding: 0 10px;
+    }
+
+    .folded-prompt span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #d4d4d8;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .folded-prompt button {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      padding: 0 8px;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .before {
+      display: grid;
+      gap: 7px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #111;
+    }
+
+    .log-line {
+      min-height: 32px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      padding: 7px 9px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .log-line.dim {
+      color: #666;
+      text-decoration: line-through;
+    }
+
+    .data-panel {
+      border-top: 1px solid var(--line);
+      background: #121212;
+      padding: 14px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .flow-step {
+      min-height: 104px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      padding: 10px;
+    }
+
+    .flow-step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .flow-step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+    }
+
+    .packet {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #0c0c0c;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.65;
+      color: #d4d4d8;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .callout-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .callout {
+      min-height: 72px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      padding: 9px;
+    }
+
+    .callout strong {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .callout p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 960px) {
+      .page {
+        grid-template-columns: 1fr;
+      }
+
+      .map {
+        display: none;
+      }
+
+      .sidebar {
+        min-height: 100vh;
+      }
+
+      .flow,
+      .callout-row {
+        grid-template-columns: 1fr;
+      }
+
+      .summary-row {
+        grid-template-columns: 84px minmax(0, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="map" aria-label="マップ背景">
+      <header class="topbar">
+        <div class="topbar-left">
+          <span class="select-pill">全体</span>
+          <span class="select-pill"><span class="dot"></span> Focus map制作</span>
+        </div>
+        <div class="tabs" aria-label="メインビュー">
+          <button class="tab">Todo</button>
+          <button class="tab">メモ</button>
+          <button class="tab active">マップ</button>
+          <button class="tab">チャット</button>
+        </div>
+        <div class="topbar-right">
+          <button class="icon-button" aria-label="AI実行">⌘</button>
+          <button class="icon-button" aria-label="チャット">○</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <div class="branch" aria-hidden="true">
+          <div class="node">Focus map制作</div>
+          <div class="connector"></div>
+          <div class="stack">
+            <div class="task-node"><span class="check"></span><span>アプリの修正</span><span class="badge">6</span></div>
+            <div class="task-node"><span class="check"></span><span>チャット履歴の要約を整理</span><span class="badge">確認待ち</span></div>
+            <div class="task-node"><span class="check"></span><span>必要な情報だけ送る設計</span><span class="badge">AI案</span></div>
+            <div class="task-node"><span class="check"></span><span>モックアップを確認</span><span class="badge">次</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="sidebar" aria-label="Codexチャット履歴 詳細モック">
+      <header class="detail-header">
+        <div class="header-row">
+          <button class="back" aria-label="一覧へ戻る">‹</button>
+          <div class="title-block">
+            <h1>AIチャット履歴を「作業後報告」中心に整理</h1>
+            <div class="meta-row">
+              <span class="status-pill review">確認待ち</span>
+              <span class="metric-pill">focusmap</span>
+              <span class="metric-pill">6時間前</span>
+            </div>
+          </div>
+          <a class="thread-link" href="#" aria-label="Codexで開く">↗ Codexで開く</a>
+        </div>
+
+        <section class="summary" aria-label="AI要約">
+          <div class="section-label">
+            <span>AI要約</span>
+            <span>送信量 約1.6KB</span>
+          </div>
+          <dl class="summary-grid">
+            <div class="summary-row">
+              <dt>実行したこと</dt>
+              <dd>チャット履歴を途中経過ではなく、依頼と作業後報告で読める形にする案を整理</dd>
+            </div>
+            <div class="summary-row">
+              <dt>現状</dt>
+              <dd>raw履歴は残し、画面とAI要約にはReport Viewだけ使う方針が妥当</dd>
+            </div>
+            <div class="summary-row">
+              <dt>確認すること</dt>
+              <dd>履歴本文に依頼文を常時出すか、折りたたみで十分かを決める</dd>
+            </div>
+          </dl>
+        </section>
+      </header>
+
+      <div class="sidebar-body">
+        <div class="mock-tabs" role="tablist" aria-label="比較">
+          <button class="mock-tab active" role="tab" aria-selected="true">提案後</button>
+          <button class="mock-tab" role="tab" aria-selected="false">今の見え方</button>
+        </div>
+
+        <section class="report-stack" aria-label="提案後のチャット履歴">
+          <div class="note">
+            ここでは途中の「起動待ち」「curl確認」「amendします」のような作業ログを本文に出さない。必要ならCodex側の全文へ移動する。
+          </div>
+
+          <div class="folded-prompt">
+            <span>送信した依頼: Chat 2へ渡す入力値だけ返して。worker用promptは作らないで。</span>
+            <button type="button">展開</button>
+          </div>
+
+          <div class="message assistant">
+            <div class="message-label">作業後の報告</div>
+            <div class="bubble">Chat 1完了。
+
+企画書: docs/ai/plans/active/settings-ui-redesign.md
+モックアップ/画像生成プロンプト: docs/ai/plans/active/settings-ui-redesign-assets
+推奨UI案: Direction A「Focusmap Control Center」
+
+まだユーザー判断が必要な点:
+- 「一般」を「概要」へ改名してよいか
+- スペース共有を今回含めるか
+- サイドバー検索をPhase 1で入れるか
+- APIキーを当面「アクセス/API」に置くか
+
+Chat 1 commit hash: e6fb5fd</div>
+          </div>
+
+          <section class="before" aria-label="今は出しすぎている途中ログ例">
+            <div class="section-label"><span>今はこの種類を本文から除外</span><span>rawには保持</span></div>
+            <div class="log-line dim">ステージ済みは外部AI API一式に揃っています。この内容でコミットします。</div>
+            <div class="log-line dim">3001は空いています。npm run dev:desktop を3001で起動して確認します。</div>
+            <div class="log-line dim">開発サーバーの起動待ちです。NextがreadyになったらAPIだけcurlで確認します。</div>
+            <div class="log-line dim">検証ログの修正だけをステージして、直前のコミットへamendします。</div>
+          </section>
+        </section>
+      </div>
+
+      <section class="data-panel" aria-label="データ送信の流れ">
+        <div class="section-label">
+          <span>必要なものだけ送る流れ</span>
+          <span>Raw → Report → Summary</span>
+        </div>
+        <div class="flow">
+          <div class="flow-step">
+            <strong>1. 全履歴を保管</strong>
+            <p>Mac agentがCodexの会話・状態をDBへ保存。ここは監査用なので途中ログも残す。</p>
+          </div>
+          <div class="flow-step">
+            <strong>2. Report Viewを作る</strong>
+            <p>送信依頼、最終報告、質問、失敗だけを抽出。progress/status/systemは落とす。</p>
+          </div>
+          <div class="flow-step">
+            <strong>3. 画面へ表示</strong>
+            <p>履歴詳細には作業後報告を中心に表示。依頼文は折りたたみ。</p>
+          </div>
+          <div class="flow-step">
+            <strong>4. AI要約へ送信</strong>
+            <p>要約AIにはReport Viewだけ送る。rawログや画面情報は送らない。</p>
+          </div>
+        </div>
+
+        <pre class="packet">{
+  "title": "AIチャット履歴を整理",
+  "status": "awaiting_approval",
+  "request": "Chat 2へ渡す入力値だけ返して...",
+  "finalReport": "Chat 1完了。企画書: ... 推奨UI案: ... 判断が必要な点: ...",
+  "decisionNeeded": ["依頼文を折りたたみでよいか"],
+  "dropped": ["progress", "status", "system", "tool logs"]
+}</pre>
+
+        <div class="callout-row">
+          <div class="callout">
+            <strong>制限チャットでも読める</strong>
+            <p>長い作業ログではなく、数行の依頼と最終報告だけなので文脈を圧迫しにくい。</p>
+          </div>
+          <div class="callout">
+            <strong>必要なら深掘り</strong>
+            <p>全文確認はCodexで開く。普段のFocusmap画面には判断材料だけ出す。</p>
+          </div>
+          <div class="callout">
+            <strong>監査性は落とさない</strong>
+            <p>raw activityはDBに残すため、表示を減らしても後から追跡できる。</p>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>
