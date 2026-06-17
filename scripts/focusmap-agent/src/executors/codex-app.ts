@@ -85,15 +85,27 @@ function codexActivityKindForText(text: string): AgentActivityMessage['kind'] {
 async function isCodexAppServerReady(timeoutMs = 800): Promise<boolean> {
   return new Promise((resolve) => {
     const ws = new WebSocket(WS_URL);
+    let settled = false;
     const timer = setTimeout(() => finish(false), timeoutMs);
     function finish(ready: boolean) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      ws.removeAllListeners();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      ws.off('open', handleOpen);
+      ws.off('error', handleError);
+      ws.on('error', () => undefined);
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+      if (ws.readyState === WebSocket.CONNECTING) ws.terminate();
       resolve(ready);
     }
-    ws.once('open', () => finish(true));
-    ws.once('error', () => finish(false));
+    function handleOpen() {
+      finish(true);
+    }
+    function handleError() {
+      finish(false);
+    }
+    ws.once('open', handleOpen);
+    ws.once('error', handleError);
   });
 }
 
