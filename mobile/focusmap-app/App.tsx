@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import * as Clipboard from "expo-clipboard";
+import * as SplashScreen from "expo-splash-screen";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -70,6 +71,8 @@ const APP_RESUME_SCRIPT = `
   return true;
 })();
 `;
+
+void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 type FocusmapExternalOpenerModule = {
   openUniversalLink?: (url: string) => Promise<boolean>;
@@ -399,6 +402,10 @@ export default function App() {
   const [isRecoveringWebContent, setIsRecoveringWebContent] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
   const [startupSnapshot, setStartupSnapshot] = useState<StartupSnapshot | null>(null);
+
+  useEffect(() => {
+    SplashScreen.hide();
+  }, []);
 
   const markWebContentPresented = useCallback(() => {
     hasPresentedWebContentRef.current = true;
