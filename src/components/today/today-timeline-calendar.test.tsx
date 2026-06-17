@@ -193,6 +193,43 @@ describe('TodayTimelineCalendar drag scroll control', () => {
     expect(scroll.style.touchAction).toBe('')
   })
 
+  test('マップノードをカレンダー外へ戻すと予定化プレビューを消す', () => {
+    const onMindMapNodeDrop = vi.fn()
+    renderCalendar({ onMindMapNodeDrop })
+    const payload: MindMapNodeCalendarDragPayload = {
+      taskId: 'task-1',
+      title: 'マップノード',
+      durationMinutes: 90,
+      calendarId: null,
+    }
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(MINDMAP_NODE_DRAG_EVENT, {
+        detail: { phase: 'move', clientX: 120, clientY: 398, payload },
+      }))
+    })
+
+    expect(screen.getByText('ドロップでノードを予定化')).toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('hidden')
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(MINDMAP_NODE_DRAG_EVENT, {
+        detail: { phase: 'move', clientX: 20, clientY: 398, payload },
+      }))
+    })
+
+    expect(screen.queryByText('ドロップでノードを予定化')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('')
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(MINDMAP_NODE_DRAG_EVENT, {
+        detail: { phase: 'end', clientX: 20, clientY: 398, payload },
+      }))
+    })
+
+    expect(onMindMapNodeDrop).not.toHaveBeenCalled()
+  })
+
   test('既存予定/タスクのタッチD&Dは端で低速スクロールし、解除時にロックを戻す', () => {
     const onDragDrop = vi.fn()
     const { container, scroll } = renderCalendar({

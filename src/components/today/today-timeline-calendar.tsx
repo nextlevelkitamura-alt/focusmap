@@ -274,7 +274,6 @@ export function TodayTimelineCalendar({
         payload: MindMapNodeCalendarDragPayload
         startTime: Date | null
     } | null>(null)
-    const mindMapNodeDragEnteredCalendarRef = useRef(false)
     const processedMindMapNodeDropsRef = useRef<Map<string, number>>(new Map())
     const [scheduledMemoIndex, setScheduledMemoIndex] = useState<Record<string, ScheduledMemoIndexEntry>>({})
     const [returningScheduledMemo, setReturningScheduledMemo] = useState<ScheduledMemoDragPayload | null>(null)
@@ -491,7 +490,6 @@ export function TodayTimelineCalendar({
 
     useEffect(() => {
         const clearMindMapNodeDrag = () => {
-            mindMapNodeDragEnteredCalendarRef.current = false
             stopTimelineDragAutoScroll()
             unlockTimelineDragScroll("mindmap-node")
             setMindMapNodeDragOver(null)
@@ -509,24 +507,21 @@ export function TodayTimelineCalendar({
 
             const start = computeSnappedStartFromY(detail.clientY)
             const overCalendar = isPointInsideCalendarGrid(detail.clientX, detail.clientY)
-            if (overCalendar) {
-                mindMapNodeDragEnteredCalendarRef.current = true
+            if (!overCalendar) {
+                clearMindMapNodeDrag()
+                return
             }
-            if (overCalendar || mindMapNodeDragEnteredCalendarRef.current) {
-                lockTimelineDragScroll("mindmap-node")
-            }
-            setMindMapNodeDragOverlay(overCalendar || mindMapNodeDragEnteredCalendarRef.current
-                ? {
-                    clientX: detail.clientX,
-                    clientY: detail.clientY,
-                    overCalendar,
-                    payload: detail.payload,
-                    startTime: overCalendar ? start : null,
-                }
-                : null
-            )
 
-            if (overCalendar && start) {
+            lockTimelineDragScroll("mindmap-node")
+            setMindMapNodeDragOverlay({
+                clientX: detail.clientX,
+                clientY: detail.clientY,
+                overCalendar: true,
+                payload: detail.payload,
+                startTime: start,
+            })
+
+            if (start) {
                 const updatePreview = (clientY: number) => {
                     const previewStart = computeSnappedStartFromY(clientY)
                     if (!previewStart) return
@@ -551,7 +546,7 @@ export function TodayTimelineCalendar({
             }
 
             if (detail.phase === "end") {
-                if (overCalendar && start) {
+                if (start) {
                     const now = Date.now()
                     const dropKey = `${detail.payload.taskId}:${start.toISOString()}`
                     for (const [key, timestamp] of processedMindMapNodeDropsRef.current) {
@@ -573,7 +568,15 @@ export function TodayTimelineCalendar({
         }
 
         window.addEventListener(MINDMAP_NODE_DRAG_EVENT, handleMindMapNodeDrag)
-        return () => window.removeEventListener(MINDMAP_NODE_DRAG_EVENT, handleMindMapNodeDrag)
+        window.addEventListener("pointerup", clearMindMapNodeDrag)
+        window.addEventListener("pointercancel", clearMindMapNodeDrag)
+        window.addEventListener("blur", clearMindMapNodeDrag)
+        return () => {
+            window.removeEventListener(MINDMAP_NODE_DRAG_EVENT, handleMindMapNodeDrag)
+            window.removeEventListener("pointerup", clearMindMapNodeDrag)
+            window.removeEventListener("pointercancel", clearMindMapNodeDrag)
+            window.removeEventListener("blur", clearMindMapNodeDrag)
+        }
     }, [
         computeSnappedStartFromY,
         isPointInsideCalendarGrid,
