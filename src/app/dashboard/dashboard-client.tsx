@@ -1771,7 +1771,7 @@ export function DashboardClient({
                                     selectedSpaceId={selectedSpaceId}
                                     onOpenTodayMemoSchedule={openTodayMemoSchedule}
                                     isCalendarSplitVisible={false}
-                                    compactComposer
+                                    desktopBoardVariant="split"
                                     onMindmapUpdated={refreshFromServer}
                                 />
                             </div>

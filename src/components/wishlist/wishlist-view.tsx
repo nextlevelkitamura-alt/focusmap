@@ -1388,6 +1388,7 @@ export function WishlistView({
   onProjectDeleted,
   onSpaceSaved,
   compactComposer = false,
+  desktopBoardVariant = "default",
   mindmapMemoFocus = null,
   onLinkedTaskStatusChange,
   onMindmapUpdated,
@@ -1406,6 +1407,7 @@ export function WishlistView({
   onProjectDeleted?: (projectId: string) => void | Promise<void>
   onSpaceSaved?: (space: Space) => void
   compactComposer?: boolean
+  desktopBoardVariant?: "default" | "split"
   mindmapMemoFocus?: { taskId: string; requestKey: number } | null
   onLinkedTaskStatusChange?: (taskId: string, status: string) => Promise<void> | void
   onMindmapUpdated?: () => Promise<void> | void
@@ -3567,6 +3569,7 @@ export function WishlistView({
   const hasIntakeText = intakeText.trim().length > 0
   const disableMemoAdd = isRecording || isAnalyzing || isTranscribing
   const useDesktopMemoBoard = !compactComposer && !isMobileMemoLayout && !linkedMemoFocus
+  const isSplitDesktopMemoBoard = useDesktopMemoBoard && desktopBoardVariant === "split"
   const desktopDraftHasBody = desktopDraftDescription.trim().length > 0
   const desktopDraftCanSave = desktopDraftTitle.trim().length > 0 || desktopDraftHasBody
   const desktopDraftDurationLabel = desktopDraftUsesCustomDuration
@@ -4113,9 +4116,13 @@ export function WishlistView({
             <div
               className={cn(
                 "grid h-full min-h-0 gap-3",
-                desktopComposerOpen
-                  ? "lg:grid-cols-[minmax(0,1fr)_minmax(19rem,22rem)] xl:grid-cols-[minmax(0,1fr)_22rem]"
-                  : "grid-cols-1",
+                isSplitDesktopMemoBoard
+                  ? desktopComposerOpen
+                    ? "grid-cols-[minmax(0,1fr)_minmax(17rem,19rem)]"
+                    : "grid-cols-1"
+                  : desktopComposerOpen
+                    ? "lg:grid-cols-[minmax(0,1fr)_minmax(19rem,22rem)] xl:grid-cols-[minmax(0,1fr)_22rem]"
+                    : "grid-cols-1",
               )}
             >
               {desktopComposerOpen && (
@@ -4443,7 +4450,10 @@ export function WishlistView({
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
               >
-                <div className="order-1 flex h-full min-h-0 min-w-0 flex-col gap-2">
+                <div className={cn(
+                  "order-1 flex h-full min-h-0 min-w-0 flex-col gap-2",
+                  isSplitDesktopMemoBoard && "overflow-x-auto overflow-y-hidden pb-1",
+                )}>
                   {intakeError && !isAnalyzing && (
                     <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                       <span>{intakeError}</span>
@@ -4458,9 +4468,11 @@ export function WishlistView({
                   )}
                   <div className={cn(
                     "grid min-h-0 flex-1 gap-3",
-                    desktopComposerOpen
-                      ? "lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]"
-                      : "lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)_minmax(16rem,1fr)] xl:grid-cols-[minmax(0,3.2fr)_minmax(17rem,1fr)_minmax(17rem,1fr)]",
+                    isSplitDesktopMemoBoard
+                      ? "min-w-[38.5rem] grid-cols-[minmax(13rem,1.25fr)_minmax(12rem,1fr)_minmax(12rem,1fr)]"
+                      : desktopComposerOpen
+                        ? "lg:grid-cols-[minmax(0,2.6fr)_minmax(15rem,1fr)_minmax(15rem,1fr)] xl:grid-cols-[minmax(0,3fr)_minmax(16rem,1.15fr)_minmax(16rem,1.15fr)]"
+                        : "lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)_minmax(16rem,1fr)] xl:grid-cols-[minmax(0,3.2fr)_minmax(17rem,1fr)_minmax(17rem,1fr)]",
                   )}>
                   <MemoSection
                     columnKey="unsorted"
@@ -4476,7 +4488,7 @@ export function WishlistView({
                     nativeMemoDrag={isCalendarSplitVisible}
                     nativeMemoDragForItem={item => isCalendarSplitVisible && getColumn(item, todayRange.start, todayRange.end) === "unsorted"}
                     className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3"
-                    listClassName={desktopComposerOpen ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3"}
+                    listClassName={isSplitDesktopMemoBoard ? undefined : desktopComposerOpen ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3"}
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
                     onToggleSelect={toggleMemoSelection}
