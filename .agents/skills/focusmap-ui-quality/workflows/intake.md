@@ -22,12 +22,14 @@ UI作業の入口で、調査だけか、実装まで進めるか、並列化す
 4. 守るべき既存要素を先に書く。
    - 色、フォント、角丸、lucide、密度、既存コンポーネント、既存導線。
 5. 作業レベルを決める。
-   - readonly調査
-   - UI憲法/仕様作成
-   - 実装計画
-   - 単独実装
-   - 並列worker実装
-   - Integration
+   - `fast-triage`: 白画面、例外、操作不能などのP0/P1修復。
+   - `evaluate`: screenshot/appshot/route/codeの評価。
+   - `design-pack`: 調査、企画、UI受け入れ条件、モックアップ。
+   - `ui-runbook`: Chat 1とChat 2で広いUI改善を進める。
+   - `split`: 実装workerへの分解。
+   - `worker`: 割り当て済み範囲の実装。
+   - `test-review`: readonlyレビュー。
+   - `integrate`: worker成果の統合。
 6. ユーザーが検証コマンドの実行を明示しているか確認する。
    - 明示がなければ、テスト、lint、build、Playwright、ブラウザ確認、`git diff --check` は実行しない。
 
@@ -39,3 +41,4 @@ UI作業の入口で、調査だけか、実装まで進めるか、並列化す
 - P0/P1疑い
 - 次に使うworkflow
 - 並列化するならworker候補
+- ユーザーに貼ってもらう `Next Chat Handoff` が必要か
