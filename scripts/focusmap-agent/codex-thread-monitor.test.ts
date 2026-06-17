@@ -7,6 +7,7 @@ import {
   awaitingApprovalAtForSummary,
   codexStateDbPath,
   codexThreadGeneratedTitle,
+  DEFAULT_RECONCILE_INTERVAL_MS,
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   hasPendingArchiveRequest,
   isFocusmapManualHandoffThread,
@@ -59,6 +60,10 @@ function task(overrides: Record<string, unknown> = {}) {
 describe('codex-thread-monitor state detection', () => {
   test('refreshes monitor targets within three seconds by default', () => {
     expect(DEFAULT_TARGET_REFRESH_INTERVAL_MS).toBe(3_000);
+  });
+
+  test('reconciles missing Codex threads once a minute by default', () => {
+    expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60_000);
   });
 
   test('prefers the current Codex sqlite state DB path over the legacy root path', () => {

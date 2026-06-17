@@ -18,6 +18,7 @@ const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
 const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
+export const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
@@ -69,6 +70,8 @@ type RolloutSummary = {
   latestAgentMessage: string | null;
   visibleMessages: VisibleMessage[];
 };
+
+type OrphanImportMode = 'hot' | 'reconcile';
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -837,13 +840,29 @@ async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: str
   );
 }
 
-function orphanImportSinceMs(importScopes: CodexThreadImportScope[], now = Date.now()): number {
+function orphanImportSinceMs(
+  importScopes: CodexThreadImportScope[],
+  now = Date.now(),
+  mode: OrphanImportMode = 'reconcile',
+): number {
   const windowSinceMs = Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS);
+  if (mode === 'hot') return windowSinceMs;
   const scopeSinceMs = importScopes
     .map(scope => timeMs(scope.enabled_since))
     .filter((value): value is number => value !== null && value > 0);
   if (scopeSinceMs.length === 0) return windowSinceMs;
   return Math.max(0, Math.min(windowSinceMs, ...scopeSinceMs));
+}
+
+function importScopeSignature(importScopes: CodexThreadImportScope[]): string {
+  return importScopes
+    .map(scope => [
+      scope.project_id,
+      normalizeLocalPath(scope.repo_path),
+      scope.enabled_since ?? '',
+    ].join(':'))
+    .sort()
+    .join('|');
 }
 
 async function listThreadImportScopes(
@@ -871,6 +890,7 @@ async function importOrphanThreads(
   dbPath: string,
   tasks: AiTask[],
   importScopes: CodexThreadImportScope[],
+  mode: OrphanImportMode = 'hot',
 ): Promise<number> {
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
@@ -879,7 +899,7 @@ async function importOrphanThreads(
   const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
   if (repoPaths.length === 0) return 0;
   const knownThreadIds = knownCodexThreadIds(tasks);
-  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now), repoPaths);
+  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now, mode), repoPaths);
   let imported = 0;
 
   for (const row of rows) {
@@ -1073,10 +1093,13 @@ export function startCodexThreadMonitorLoop(
   runnerId: string,
   intervalMs = 1_000,
   targetRefreshIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
+  reconcileIntervalMs = DEFAULT_RECONCILE_INTERVAL_MS,
 ): NodeJS.Timeout {
   let running = false;
   let targetsLoaded = false;
   let nextTargetRefreshAt = 0;
+  let nextReconcileAt = 0;
+  let currentImportScopeSignature = '';
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
   let dbPath: string | null = null;
@@ -1092,16 +1115,35 @@ export function startCodexThreadMonitorLoop(
     try {
       const now = Date.now();
       if (!targetsLoaded || now >= nextTargetRefreshAt) {
+        const wasTargetsLoaded = targetsLoaded;
         const [nextTasks, nextImportScopes] = await Promise.all([
           api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT),
           listThreadImportScopes(api, runnerId),
         ]);
+        const nextImportScopeSignature = importScopeSignature(nextImportScopes);
+        if (!wasTargetsLoaded || nextImportScopeSignature !== currentImportScopeSignature) {
+          nextReconcileAt = 0;
+          currentImportScopeSignature = nextImportScopeSignature;
+        }
         tasks = nextTasks;
         importScopes = nextImportScopes;
         targetsLoaded = true;
         nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
       }
-      await importOrphanThreads(api, runnerId, dbPath, tasks, importScopes);
+      const shouldReconcile = importScopes.length > 0 &&
+        (nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
+      const imported = await importOrphanThreads(
+        api,
+        runnerId,
+        dbPath,
+        tasks,
+        importScopes,
+        shouldReconcile ? 'reconcile' : 'hot',
+      );
+      if (shouldReconcile) {
+        nextReconcileAt = Date.now() + reconcileIntervalMs;
+        debug(`codex orphan reconcile completed imported=${imported} next_in=${Math.round(reconcileIntervalMs / 1000)}s`);
+      }
       for (const task of tasks) {
         try {
           const result = await syncOneTask(api, runnerId, dbPath, task);
