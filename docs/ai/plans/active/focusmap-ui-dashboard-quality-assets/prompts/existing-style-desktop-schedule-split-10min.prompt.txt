@@ -1,0 +1,5 @@
+Create a 2x-scale Focusmap UI mockup, staying close to the existing screenshot: black Mac app window, dotted canvas, compact top pill navigation, amber/yellow selected outlines, dense right side panel, muted gray controls, small 6-10px radius.
+
+Scene: Desktop Focusmap Todo/schedule canvas. A schedule card is selected, and the user is hovering/clicking inside the card at a 10-minute split point. Show a thin vertical split guide inside the selected amber-outlined card, aligned to the 10-minute position, with a small near-card popover saying `10:20で分割` and `ここで分割`.
+
+The right drawer is open from the right side and visually matches the current Focusmap side panel. In the drawer, show the selected schedule details plus a compact `予定分割` section with 10-minute chips and a before/after preview. Keep the main canvas visible. No full-screen modal, no mobile bottom sheet on desktop, no generic calendar style.

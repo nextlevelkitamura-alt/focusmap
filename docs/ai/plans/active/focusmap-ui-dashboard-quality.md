@@ -78,6 +78,29 @@ Revised mockups added:
 
 This revision supersedes the earlier generic desktop calendar-like visual direction. The retained product rule is still the same: desktop uses overview plus right-side detail; mobile uses a bottom sheet or drill-in. The revised visual baseline is now the current Focusmap map/right-panel UI, not Apple/Google-style calendar chrome.
 
+## User Feedback Revision: Schedule Split Timing
+
+User feedback after the existing-UI-baseline mockups:
+
+- Schedule split should appear at the timing point inside the selected schedule, not as a permanent large control.
+- For Desktop, the primary split affordance should appear near the selected schedule card at a 10-minute increment, such as `10:20で分割`.
+- The right drawer may support the split with chips and before/after preview, but the interaction should still feel anchored to the schedule card.
+- For Mobile, hover/precision affordances are inappropriate. Use an explicit `予定を分割` mode inside the bottom sheet or drill-in, with 10-minute choices and a clear preview.
+
+Additional revised mockups added:
+
+- `docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-schedule-split-10min.png`
+- `docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-mobile-schedule-split-10min.png`
+
+Schedule split acceptance:
+
+- Desktop: split UI appears only after selecting a schedule item and interacting with a specific time position.
+- Desktop: a near-card popover or inline affordance names the exact split time.
+- Desktop: right drawer can show supporting controls, selected time chips, and before/after preview.
+- Mobile: split is entered intentionally from the event edit sheet; it is not a tiny hover control.
+- Mobile: 10-minute choices, selected time, before/after segments, and confirmation action are visible.
+- Both: split preview uses Focusmap amber state language and keeps destructive/irreversible actions separate.
+
 ## Current UI Evaluation
 
 ### Overall Score
@@ -401,6 +424,12 @@ Revised existing-UI-baseline images:
 6. `existing-style-desktop-event-right-drawer.png`
    - Desktop schedule item clicked with a right-side editing drawer.
    - Proves the editing surface feels like the current Focusmap right panel, not a separate app design.
+7. `existing-style-desktop-schedule-split-10min.png`
+   - Desktop schedule split at a 10-minute point inside the selected schedule card.
+   - Proves the split affordance appears at the timing point while the right drawer supports preview/confirmation.
+8. `existing-style-mobile-schedule-split-10min.png`
+   - Mobile schedule split mode inside a bottom sheet.
+   - Proves mobile uses deliberate drill-in/bottom-sheet selection rather than precision hover controls.
 
 Prompt files:
 
@@ -509,6 +538,8 @@ Focusmap dashboard UI quality planを実装タスクへ分解し、P0復旧UIと
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality.md`
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-todo-normal.png`
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-event-right-drawer.png`
+- `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-desktop-schedule-split-10min.png`
+- `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/existing-style-mobile-schedule-split-10min.png`
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/mobile-event-edit-bottom-sheet.png`
 - `/Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main/docs/ai/plans/active/focusmap-ui-dashboard-quality-assets/dark-recovery-ui.png`
 
@@ -533,9 +564,10 @@ You are the Implementation Orchestrator. Do not implement code in this chat unle
 Priorities:
 1. P0: eliminate dashboard white screen / client-side exception fallback by adding a dark Focusmap runtime recovery UI.
 2. P1: replace desktop event editing mobile bottom sheet with a right-side drawer that visually matches the current Focusmap side panel and keeps the current canvas/calendar context visible.
-3. Preserve mobile bottom sheet editing, safe area, 44px tap targets, and existing mobile navigation.
-4. Use the `existing-style-*` mockups as the desktop visual baseline. Do not implement the earlier generic Apple/Google-style calendar mockup direction.
-5. Preserve Focusmap visual DNA: black dotted canvas, compact pill navigation, amber/yellow selected outlines, lucide icons, small radius on desktop controls, dense right panel, and clear status language.
+3. Add schedule split behavior using the `existing-style-*-schedule-split-10min` mockups: Desktop shows the split affordance at the selected card's 10-minute timing point; Mobile uses an explicit bottom-sheet split mode.
+4. Preserve mobile bottom sheet editing, safe area, 44px tap targets, and existing mobile navigation.
+5. Use the `existing-style-*` mockups as the desktop visual baseline. Do not implement the earlier generic Apple/Google-style calendar mockup direction.
+6. Preserve Focusmap visual DNA: black dotted canvas, compact pill navigation, amber/yellow selected outlines, lucide icons, small radius on desktop controls, dense right panel, and clear status language.
 
 Must follow:
 - Do not run npm test/lint/build, Playwright, Browser, curl, or git diff --check unless the user explicitly asks.

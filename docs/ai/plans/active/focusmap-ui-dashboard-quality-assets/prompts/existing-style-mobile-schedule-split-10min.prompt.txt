@@ -1,0 +1,5 @@
+Create a 2x-scale Focusmap mobile UI mockup, using the same black compact visual language as the existing Focusmap screenshot: dark background, amber selected state, dense controls, small rounded corners, lucide-style icons, no decorative gradients.
+
+Scene: Mobile Focusmap event editing bottom sheet in deliberate schedule-split mode. The selected event is `整理 tarso送受信方針` from 10:00 to 10:45. The user tapped `予定を分割` inside the edit sheet, so the sheet shows a time ruler with 10-minute choices: 10:10, 10:20, 10:30, 10:40. Highlight 10:20 in amber.
+
+Show a before/after split preview: front segment 10:00-10:20 and back segment 10:20-10:45. Primary action button says `10:20で分割する`. Underlying schedule/canvas is dimmed, bottom nav is visible, safe area respected. Do not show tiny hover-only controls on mobile; this is a mobile-native drill-in/bottom-sheet split mode.
