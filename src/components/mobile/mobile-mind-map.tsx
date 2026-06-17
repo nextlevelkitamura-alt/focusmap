@@ -52,6 +52,40 @@ function repoNameFromPath(value: string | null | undefined) {
     return normalized.split(/[\\/]/).filter(Boolean).pop() || normalized
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null
+}
+
+function stringValue(value: unknown) {
+    return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function codexScopeRepoPathFromAiTask(aiTask: AiTask | null | undefined) {
+    const result = recordValue(aiTask?.result)
+    const meta = recordValue(result?.meta)
+    return normalizeRepoPath(
+        stringValue(meta?.scope_repo_path) ||
+        stringValue(result?.scope_repo_path) ||
+        null,
+    )
+}
+
+function codexThreadMatchesSelectedRepo(
+    task: Task,
+    aiTask: AiTask | null | undefined,
+    taskProject: Project | null | undefined,
+    selectedRepoPath: string | null | undefined,
+) {
+    const selected = normalizeRepoPath(selectedRepoPath)
+    if (!selected) return false
+    const taskWorkDir = normalizeRepoPath(task.codex_work_dir ?? aiTask?.cwd ?? null)
+    if (taskWorkDir === selected) return true
+    if (codexScopeRepoPathFromAiTask(aiTask) === selected) return true
+    return normalizeRepoPath(taskProject?.repo_path) === selected
+}
+
 function shouldUseTaskProgressFixture() {
     if (typeof window === "undefined") return false
     const params = new URLSearchParams(window.location.search)
@@ -373,6 +407,7 @@ export function MobileMindMap({
         () => new Map(repoScopedCodexTaskNodes.map(task => [task.id, task])),
         [repoScopedCodexTaskNodes],
     )
+    const projectById = useMemo(() => new Map(kanbanProjects.map(candidate => [candidate.id, candidate])), [kanbanProjects])
     const fallbackSourceTasksByIdForCodex = useMemo(() => {
         const map = new Map<string, Task>()
         for (const task of repoScopedCodexTaskNodes) map.set(task.id, task)
@@ -672,11 +707,13 @@ export function MobileMindMap({
         return repoScopedCodexTaskNodes
             .filter(task => task.source === "codex_app_thread" && task.deleted_at == null)
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
-            .filter(task => normalizeRepoPath(task.codex_work_dir) === selectedCodexImportRepoPath)
             .flatMap(task => {
                 const placedTask = applyOptimisticCodexPlacement(task)
                 const progressTask = taskProgressByNodeId[task.id]
                 const codexRun = codexRunByNodeId[task.id]
+                const aiTask = getBySourceId(task.id)
+                const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null
+                if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return []
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === "unsent") return []
                 if (codexRun?.state === "prompt_waiting") return []
                 const parentTask = placedTask.parent_task_id ? repoScopedTasksById.get(placedTask.parent_task_id) ?? taskMap.get(placedTask.parent_task_id) ?? null : null
@@ -708,7 +745,9 @@ export function MobileMindMap({
         codexInboxGroupIds,
         codexRunByNodeId,
         applyOptimisticCodexPlacement,
+        getBySourceId,
         hiddenCodexChatImportIds,
+        projectById,
         repoScopedCodexTaskNodes,
         repoScopedTasksById,
         selectedCodexImportRepoPath,

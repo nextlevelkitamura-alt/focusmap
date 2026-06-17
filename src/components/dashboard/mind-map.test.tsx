@@ -332,12 +332,18 @@ describe("MindMap controls", () => {
     expect(onUpdateTask).toHaveBeenCalledWith("root-1", { mindmap_collapsed: true })
   })
 
-  test("shows repo-scoped unplaced chats from another project and moves them into the current map", async () => {
+  test("shows parent-repo scoped worktree chats from another project and moves them into the current map", async () => {
     const onKanbanUpdateTask = vi.fn().mockResolvedValue(undefined)
     const otherProject = {
       id: "project-2",
       title: "仕事",
       repo_path: "/Users/me/focusmap",
+      codex_thread_import_enabled: true,
+    } as Project
+    const unrelatedProject = {
+      id: "project-3",
+      title: "別リポ",
+      repo_path: "/Users/me/other",
       codex_thread_import_enabled: true,
     } as Project
     const inboxGroup = {
@@ -347,6 +353,13 @@ describe("MindMap controls", () => {
       project_id: "project-2",
       source: "codex_inbox",
     } as Task
+    const unrelatedInboxGroup = {
+      ...task,
+      id: "inbox-2",
+      title: "Codex Inbox",
+      project_id: "project-3",
+      source: "codex_inbox",
+    } as Task
     const importedChat = {
       ...task,
       id: "chat-node-1",
@@ -354,7 +367,18 @@ describe("MindMap controls", () => {
       project_id: "project-2",
       parent_task_id: "inbox-1",
       source: "codex_app_thread",
-      codex_work_dir: "/Users/me/focusmap",
+      codex_work_dir: "/Users/me/focusmap-codex-reconcile-main",
+      deleted_at: null,
+      updated_at: "2026-06-11T00:00:00.000Z",
+    } as Task
+    const unrelatedChat = {
+      ...task,
+      id: "chat-node-other",
+      title: "別リポの相談",
+      project_id: "project-3",
+      parent_task_id: "inbox-2",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/other-worktree",
       deleted_at: null,
       updated_at: "2026-06-11T00:00:00.000Z",
     } as Task
@@ -380,10 +404,10 @@ describe("MindMap controls", () => {
     render(
       <MindMap
         project={project}
-        projects={[project, otherProject]}
+        projects={[project, otherProject, unrelatedProject]}
         groups={[task]}
         tasks={[]}
-        allTasks={[task, inboxGroup, importedChat, placedParent, placedChat]}
+        allTasks={[task, inboxGroup, importedChat, unrelatedInboxGroup, unrelatedChat, placedParent, placedChat]}
         onKanbanUpdateTask={onKanbanUpdateTask}
       />
     )
@@ -394,6 +418,7 @@ describe("MindMap controls", () => {
     })
     expect(screen.getByText("SNS運用の相談")).toBeInTheDocument()
     expect(screen.getByText("未配置")).toBeInTheDocument()
+    expect(screen.queryByText("別リポの相談")).not.toBeInTheDocument()
     expect(screen.queryByText("配置済みの相談")).not.toBeInTheDocument()
     expect(screen.queryByText("配置済み: 既存の親")).not.toBeInTheDocument()
 

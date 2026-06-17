@@ -43,6 +43,7 @@ Macローカル:
 - runner heartbeatはTurso `runner_heartbeats` へ実行中5秒・アイドル30秒で1 row upsertする。作業中/待機中の切替時は即時upsertし、正常終了時は可能なら `status='offline'` を1回送る。クラッシュ、強制終了、スリープ時はoffline送信できないため、Web/スマホは `last_seen_at` が90秒以上古い場合もofflineと解釈する。
 - Codexチャット取り込みのrepo選択は、通常UIではCodex Desktop state DBの `threads.cwd` から得たCodexプロジェクト候補だけを新規選択対象にする。保存済み `projects.repo_path` が候補外の場合は自動削除せず、`Codex候補外` として解除だけ可能にする。Finderは任意フォルダー選択ではなく、選択中repoを開く操作に限定する。
 - runner heartbeat metadataにはCodex取り込み診断を載せる。`codex_thread_import` に `state_db_found`、`last_scope_refresh_at`、`last_scope_refresh_error`、`scopes[{ project_id, repo_path, enabled_since, cwd_paths }]`、`last_reconcile_at`、`next_reconcile_at`、`last_reconcile_imported`、`last_error` を入れ、互換用に `codex_import_scope_repo_paths`、`codex_import_scope_cwd_paths`、`codex_last_scope_refresh_at`、`codex_last_reconcile_at` も残す。UIはMac onlineだけで監視成功とみなさず、選択repoがheartbeat metadataのscopeへ入っている時だけ `agent反映済み` と表示する。
+- チャット取り込み一覧のrepo照合は `tasks.codex_work_dir` 完全一致だけにしない。`ai_tasks.result.meta.scope_repo_path` と対象projectの `repo_path` も選択repoと照合し、親repoを選んだ時はそのrepoのworktree pathで開始されたCodex threadも同じ履歴一覧へ表示する。実際のworktree pathは `codex_work_dir` に残し、親repo分類はscope/project側で判断する。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール

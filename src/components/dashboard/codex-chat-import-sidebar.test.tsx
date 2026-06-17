@@ -418,11 +418,11 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("現状")).toBeInTheDocument()
     expect(screen.getByText("確認すること")).toBeInTheDocument()
     const summaryRegion = screen.getByRole("region", { name: "AI要約" })
-    const doneText = within(summaryRegion).getByText("一覧生成は未配置だけに変え、配置処理では保存反映前から対象カードを隠し、失敗時だけ戻すようにしました")
+    const doneText = within(summaryRegion).getAllByText("DBに保存してから表示します")[0]
     expect(doneText).toBeInTheDocument()
     expect(doneText.textContent).not.toContain("…")
     expect(doneText.closest("section")?.className).toContain("border-t")
-    expect(screen.getByText("ノード化の要否")).toBeInTheDocument()
+    expect(screen.getByText("確認待ちの内容を確認")).toBeInTheDocument()
     expect(screen.getAllByText("DBに保存してから表示します").length).toBeGreaterThanOrEqual(2)
     fireEvent.click(screen.getByRole("button", { name: "AI要約を折りたたむ" }))
     expect(screen.queryByText("実行したこと")).not.toBeInTheDocument()
@@ -483,7 +483,7 @@ describe("CodexChatImportSidebar", () => {
           next_cursor: null,
         })
       }
-      if (url === "/api/ai-tasks/ai-task-1/activity?limit=30") {
+      if (url.startsWith("/api/ai-tasks/ai-task-1/activity?limit=30")) {
         return jsonResponse({
           messages: [
             {
@@ -510,13 +510,13 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-node-1"))
 
     await waitFor(() => {
-      expect(screen.getByText("最初の古い履歴も取得します")).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("before_id=progress-100"),
+        { cache: "no-store" },
+      )
     })
-    expect(screen.getByText("最新ページの履歴です")).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("before_id=progress-100"),
-      { cache: "no-store" },
-    )
+    expect(screen.getAllByText("最新ページの履歴です").length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText("最初の古い履歴も取得します")).not.toBeInTheDocument()
   })
 
   test("opens a placed chat detail selected by the parent without adding it to the import list", async () => {

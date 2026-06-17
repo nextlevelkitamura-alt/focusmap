@@ -131,6 +131,44 @@ function chatImportTimeMs(value: string | null | undefined) {
     return Number.isFinite(ms) ? ms : 0;
 }
 
+function normalizeRepoPath(value: string | null | undefined) {
+    return (value ?? '').trim().replace(/\/+$/, '');
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function stringValue(value: unknown) {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function codexScopeRepoPathFromAiTask(aiTask: AiTask | null | undefined) {
+    const result = recordValue(aiTask?.result);
+    const meta = recordValue(result?.meta);
+    return normalizeRepoPath(
+        stringValue(meta?.scope_repo_path) ||
+        stringValue(result?.scope_repo_path) ||
+        null,
+    );
+}
+
+function codexThreadMatchesSelectedRepo(
+    task: Task,
+    aiTask: AiTask | null | undefined,
+    taskProject: Project | null | undefined,
+    selectedRepoPath: string | null | undefined,
+) {
+    const selected = normalizeRepoPath(selectedRepoPath);
+    if (!selected) return true;
+    const taskWorkDir = normalizeRepoPath(task.codex_work_dir ?? aiTask?.cwd ?? null);
+    if (taskWorkDir === selected) return true;
+    if (codexScopeRepoPathFromAiTask(aiTask) === selected) return true;
+    return normalizeRepoPath(taskProject?.repo_path) === selected;
+}
+
 function compareCodexChatImportItems(a: CodexChatImportItem, b: CodexChatImportItem) {
     const aRunning = getCodexMonitorUiStatus(a.status ?? null) === 'running' ? 0 : 1;
     const bRunning = getCodexMonitorUiStatus(b.status ?? null) === 'running' ? 0 : 1;
@@ -688,7 +726,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         isCodexThreadImportSaving,
         patchProject,
         project,
-        projectRepoPath,
         selectedCodexImportRepoPath,
         selectedRepoImportEnabled,
     ]);
@@ -1005,11 +1042,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         return repoScopedCodexTaskNodes
             .filter(task => task.source === 'codex_app_thread' && task.deleted_at == null)
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
-            .filter(task => !selectedCodexImportRepoPath || (task.codex_work_dir ?? '').trim() === selectedCodexImportRepoPath)
             .flatMap(task => {
                 const progressTask = taskProgressByNodeId[task.id];
                 const codexRun = codexRunByNodeId[task.id];
                 const aiTask = aiTasksBySourceId.get(task.id) ?? null;
+                const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null;
+                if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return [];
                 const aiResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
                     ? aiTask.result as Record<string, unknown>
                     : {};
@@ -1058,6 +1096,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         codexRunByNodeId,
         hiddenCodexChatImportIds,
         projectTitleById,
+        projectById,
         repoScopedCodexTaskNodes,
         selectedCodexImportRepoPath,
         taskProgressByNodeId,
