@@ -67,15 +67,8 @@ type CodexChatImportSidebarProps = {
   onOpenBoard?: () => void
 }
 
-type DesktopFolderPickerResult = {
-  ok?: boolean
-  path?: string
-  canceled?: boolean
-  error?: string
-}
-
 type FocusmapDesktopFolderBridge = {
-  chooseFolder?: () => Promise<DesktopFolderPickerResult>
+  openPath?: (path: string) => Promise<{ ok?: boolean; error?: string }>
   openExternal?: (url: string) => Promise<unknown>
 }
 
@@ -116,19 +109,74 @@ function repoNameFromPath(value: string | null | undefined) {
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized
 }
 
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map(item => readString(item)).filter((item): item is string => !!item)
+    : []
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+type CodexThreadImportScopeStatus = {
+  projectId: string | null
+  repoPath: string
+  cwdPaths: string[]
+}
+
+function readCodexThreadImportScopes(metadata: Record<string, unknown> | null): CodexThreadImportScopeStatus[] {
+  if (!metadata) return []
+  const nested = readRecord(metadata.codex_thread_import)
+  const scopes = Array.isArray(nested?.scopes) ? nested.scopes : null
+  if (scopes) {
+    return scopes.map(scope => {
+      const record = readRecord(scope)
+      const repoPath = normalizeRepoPath(readString(record?.repo_path) ?? "")
+      if (!repoPath) return null
+      return {
+        projectId: readString(record?.project_id),
+        repoPath,
+        cwdPaths: readStringArray(record?.cwd_paths).map(normalizeRepoPath).filter(Boolean),
+      }
+    }).filter((scope): scope is CodexThreadImportScopeStatus => !!scope)
+  }
+  return readStringArray(metadata.codex_import_scope_repo_paths)
+    .map(path => normalizeRepoPath(path))
+    .filter(Boolean)
+    .map(repoPath => ({ projectId: null, repoPath, cwdPaths: [repoPath] }))
+}
+
+function readCodexThreadImportMetadata(metadata: Record<string, unknown> | null) {
+  const nested = readRecord(metadata?.codex_thread_import)
+  return {
+    stateDbFound: typeof nested?.state_db_found === "boolean"
+      ? nested.state_db_found
+      : typeof metadata?.codex_monitor_db_available === "boolean"
+        ? metadata.codex_monitor_db_available
+        : null,
+    lastScopeRefreshAt: readString(nested?.last_scope_refresh_at) ?? readString(metadata?.codex_last_scope_refresh_at),
+    lastScopeRefreshError: readString(nested?.last_scope_refresh_error) ?? readString(metadata?.codex_last_scope_refresh_error),
+    lastReconcileAt: readString(nested?.last_reconcile_at) ?? readString(metadata?.codex_last_reconcile_at),
+    lastReconcileImported: readNumber(nested?.last_reconcile_imported) ?? readNumber(metadata?.codex_last_reconcile_imported),
+    lastError: readString(nested?.last_error) ?? readString(metadata?.codex_monitor_last_error),
+    scopes: readCodexThreadImportScopes(metadata),
+  }
+}
+
 function focusmapDesktopFolderBridge() {
   if (typeof window === "undefined") return null
   return (window as Window & { focusmapDesktop?: FocusmapDesktopFolderBridge }).focusmapDesktop ?? null
-}
-
-function canUseServerFolderPicker() {
-  if (typeof window === "undefined") return false
-  const { hostname } = window.location
-  return hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".trycloudflare.com")
 }
 
 function readTaskDetailText(data: unknown, fallback: string | null) {
@@ -482,12 +530,44 @@ export function CodexChatImportSidebar({
 
   const currentRepoPath = normalizeRepoPath(selectedRepoPath ?? "")
   const hasRepoPath = currentRepoPath.length > 0
+  const codexRepos = React.useMemo(() => repos.filter(repo => repo.source === "codex"), [repos])
+  const currentRepo = repos.find(repo => normalizeRepoPath(repo.absolute_path) === currentRepoPath) ?? null
+  const currentCodexRepo = codexRepos.find(repo => normalizeRepoPath(repo.absolute_path) === currentRepoPath) ?? null
+  const currentRepoIsCodexProject = !!currentCodexRepo
+  const currentRepoIsCandidateOnly = hasRepoPath && !currentRepoIsCodexProject
+  const importMetadata = React.useMemo(
+    () => readCodexThreadImportMetadata(codexRunnerStatus.metadata),
+    [codexRunnerStatus.metadata],
+  )
+  const currentImportScope = React.useMemo(() => (
+    importMetadata.scopes.find(scope => scope.repoPath === currentRepoPath) ?? null
+  ), [currentRepoPath, importMetadata.scopes])
+  const currentRepoAgentScopeMatched = !!currentImportScope
+  const currentRepoWorktreeCount = currentImportScope
+    ? new Set(currentImportScope.cwdPaths.map(normalizeRepoPath).filter(Boolean)).size
+    : 0
+  const agentStatusLabel = !codexRunnerStatus.ready
+    ? "agent未接続"
+    : importMetadata.stateDbFound === false
+      ? "Codex DB未検出"
+      : currentRepoAgentScopeMatched
+        ? "agent反映済み"
+        : importEnabled && hasRepoPath
+          ? "agent反映待ち"
+          : "監視OFF"
+  const agentStatusTone = currentRepoAgentScopeMatched
+    ? "bg-emerald-400/10 text-emerald-300"
+    : importEnabled && hasRepoPath && codexRunnerStatus.ready
+      ? "bg-amber-400/10 text-amber-200"
+      : "bg-white/[0.06] text-zinc-400"
+  const lastScopeRefreshLabel = formatActivityTime(importMetadata.lastScopeRefreshAt)
+  const lastReconcileLabel = formatActivityTime(importMetadata.lastReconcileAt)
   const isBusy = importPending || pickerPending
   const runnerUnavailable = !codexRunnerStatus.ready
   const runnerUnavailableMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
     ? "Macの通信状態を確認中です。確認後にリポ監視を切り替えられます"
     : "Macがオンラインではありません。Focusmap Macを起動するとリポ監視を切り替えられます"
-  const currentRepoLabel = repos.find(repo => repo.absolute_path === currentRepoPath)?.display_name || repoNameFromPath(currentRepoPath)
+  const currentRepoLabel = currentRepo?.display_name || repoNameFromPath(currentRepoPath)
   const normalizedQuery = query.trim().toLowerCase()
   const filteredChatItems = React.useMemo(() => {
     if (!normalizedQuery) return chatItems
@@ -593,48 +673,35 @@ export function CodexChatImportSidebar({
     }
   }, [onSelectRepoPath])
 
-  const chooseFolder = React.useCallback(async () => {
+  const openRepoInFinder = React.useCallback(async () => {
+    if (!currentRepoPath) {
+      setRepoError("先にCodexプロジェクトを選択してください")
+      return
+    }
     setPickerPending(true)
     setRepoError(null)
     try {
       const bridge = focusmapDesktopFolderBridge()
-      if (bridge?.chooseFolder) {
-        const data = await bridge.chooseFolder()
-        if (data?.canceled) return
-        if (!data?.ok || typeof data.path !== "string") {
-          setRepoError(data?.error || "Finderでリポフォルダを選択できませんでした")
-          return
-        }
-        const normalized = normalizeRepoPath(data.path)
-        await selectRepoPath(normalized || null)
+      if (bridge?.openPath) {
+        const data = await bridge.openPath(currentRepoPath)
+        if (!data?.ok) setRepoError(data?.error || "Finderで選択中リポを開けませんでした")
         return
       }
-
-      if (!canUseServerFolderPicker()) {
-        setRepoError("Finder選択はMacアプリ更新後に利用できます。候補から選択してください")
-        return
-      }
-
-      const res = await fetch("/api/codex/choose-folder")
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        if (data?.error && data.error !== "canceled") setRepoError(String(data.error))
-        return
-      }
-      if (typeof data?.path === "string") {
-        const normalized = normalizeRepoPath(data.path)
-        await selectRepoPath(normalized || null)
-      }
+      setRepoError("Finder表示はMacアプリ更新後に利用できます。リポ選択はCodexプロジェクト候補から行ってください")
     } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "Finderを開けませんでした")
+      setRepoError(error instanceof Error ? error.message : "Finderで選択中リポを開けませんでした")
     } finally {
       setPickerPending(false)
     }
-  }, [selectRepoPath])
+  }, [currentRepoPath])
 
   const handleToggleImport = React.useCallback(async () => {
     if (!hasRepoPath || isBusy) {
       if (!hasRepoPath) setRepoError("対象リポを選択してからONにできます")
+      return
+    }
+    if (!importEnabled && currentRepoIsCandidateOnly) {
+      setRepoError("Codexプロジェクト候補から選び直すと監視ONにできます")
       return
     }
     if (runnerUnavailable) {
@@ -647,7 +714,7 @@ export function CodexChatImportSidebar({
     } catch (error) {
       setRepoError(error instanceof Error ? error.message : "取り込み設定を更新できませんでした")
     }
-  }, [hasRepoPath, isBusy, onToggleImport, runnerUnavailable, runnerUnavailableMessage])
+  }, [currentRepoIsCandidateOnly, hasRepoPath, importEnabled, isBusy, onToggleImport, runnerUnavailable, runnerUnavailableMessage])
 
   const handleRefreshRepos = React.useCallback(async () => {
     setRepoError(null)
@@ -973,9 +1040,6 @@ export function CodexChatImportSidebar({
           <div className="flex items-center gap-2 rounded-lg border border-[#2d2d2d] bg-[#111111] px-2.5 py-2">
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="shrink-0 text-xs font-semibold text-zinc-200">リポ監視</span>
-              <span className="min-w-0 truncate text-[11px] text-zinc-500" title={hasRepoPath ? currentRepoPath : undefined}>
-                {hasRepoPath ? currentRepoLabel : "リポ未選択"}
-              </span>
               {hasRepoPath && importOwnerLabel && (
                 <span className="max-w-[96px] shrink-0 truncate rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400" title={importOwnerLabel}>
                   監視: {importOwnerLabel}
@@ -999,9 +1063,9 @@ export function CodexChatImportSidebar({
             <Switch
               checked={importEnabled && hasRepoPath}
               onCheckedChange={() => void handleToggleImport()}
-              disabled={!hasRepoPath || isBusy || runnerUnavailable}
+              disabled={!hasRepoPath || isBusy || runnerUnavailable || (!importEnabled && currentRepoIsCandidateOnly)}
               aria-label="リポ監視"
-              title={runnerUnavailable ? runnerUnavailableMessage : undefined}
+              title={runnerUnavailable ? runnerUnavailableMessage : currentRepoIsCandidateOnly ? "Codexプロジェクト候補から選び直すとONにできます" : undefined}
               className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
             />
             <Button
@@ -1017,6 +1081,64 @@ export function CodexChatImportSidebar({
             </Button>
           </div>
 
+          <div className="rounded-lg border border-[#2d2d2d] bg-[#101010] px-2.5 py-2">
+            <div className="flex min-w-0 items-start gap-2">
+              <FolderGit2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500" />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="shrink-0 text-[10px] font-medium text-zinc-500">選択中</span>
+                  <span className="min-w-0 truncate text-xs font-semibold text-zinc-100" title={hasRepoPath ? currentRepoPath : undefined}>
+                    {hasRepoPath ? currentRepoLabel : "Codexプロジェクト未選択"}
+                  </span>
+                  {hasRepoPath && (
+                    <span className={cn(
+                      "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                      currentRepoIsCodexProject
+                        ? "bg-sky-400/10 text-sky-200"
+                        : "bg-amber-400/10 text-amber-200",
+                    )}>
+                      {currentRepoIsCodexProject ? "Codexプロジェクト" : "Codex候補外"}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 min-w-0 truncate text-[10px] text-zinc-500" title={hasRepoPath ? currentRepoPath : undefined}>
+                  {hasRepoPath ? currentRepoPath : "Codex側に表示されているプロジェクトから選択してください"}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                    importEnabled && hasRepoPath ? "bg-emerald-400/10 text-emerald-300" : "bg-white/[0.06] text-zinc-400",
+                  )}>
+                    {importEnabled && hasRepoPath ? "監視ON" : "監視OFF"}
+                  </span>
+                  <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", agentStatusTone)}>
+                    {agentStatusLabel}
+                  </span>
+                  {currentRepoWorktreeCount > 1 && (
+                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                      worktree含む
+                    </span>
+                  )}
+                  {lastScopeRefreshLabel && (
+                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
+                      scope {lastScopeRefreshLabel}
+                    </span>
+                  )}
+                  {lastReconcileLabel && (
+                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
+                      照合 {lastReconcileLabel}{typeof importMetadata.lastReconcileImported === "number" ? ` / ${importMetadata.lastReconcileImported}件` : ""}
+                    </span>
+                  )}
+                </div>
+                {(importMetadata.lastScopeRefreshError || importMetadata.lastError) && (
+                  <div className="mt-1 truncate text-[10px] text-amber-200" title={importMetadata.lastScopeRefreshError ?? importMetadata.lastError ?? undefined}>
+                    {importMetadata.lastScopeRefreshError ?? importMetadata.lastError}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="relative">
             <div className="flex items-center gap-1.5">
               <Button
@@ -1030,17 +1152,17 @@ export function CodexChatImportSidebar({
                 aria-controls="codex-repo-picker"
               >
                 <FolderGit2 className="h-3.5 w-3.5" />
-                <span className="ml-1.5 text-xs">既存リポ選択</span>
+                <span className="ml-1.5 text-xs">Codexプロジェクトから選択</span>
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 className="h-8 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
-                onClick={chooseFolder}
-                disabled={isBusy}
-                aria-label="Finderでリポフォルダを選択"
-                title="Finderでリポフォルダを選択"
+                onClick={openRepoInFinder}
+                disabled={isBusy || !hasRepoPath}
+                aria-label="選択中リポをFinderで開く"
+                title="選択中リポをFinderで開く"
               >
                 {pickerPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
                 <span className="ml-1.5 text-xs">Finder</span>
@@ -1076,12 +1198,12 @@ export function CodexChatImportSidebar({
                 id="codex-repo-picker"
                 className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
               >
-                {repos.length === 0 ? (
+                {codexRepos.length === 0 ? (
                   <div className="px-2 py-3 text-center text-xs text-zinc-500">
-                    リポ候補がありません
+                    Codexプロジェクト候補がありません
                   </div>
                 ) : (
-                  repos.slice(0, 8).map(repo => {
+                  codexRepos.slice(0, 8).map(repo => {
                     const selected = currentRepoPath === repo.absolute_path
                     return (
                       <button
@@ -1101,7 +1223,7 @@ export function CodexChatImportSidebar({
                           {repo.display_name || repoNameFromPath(repo.absolute_path)}
                         </span>
                         <span className="shrink-0 text-[10px] text-zinc-500">
-                          {repo.source === "codex" ? "codex" : "agent"}
+                          Codex
                         </span>
                         {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
                       </button>

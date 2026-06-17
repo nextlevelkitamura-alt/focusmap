@@ -21,7 +21,7 @@ import { loadConfig, ConfigError } from './config.js';
 import { sendOfflineHeartbeat, upsertRunner, startHeartbeatLoop } from './heartbeat.js';
 import { startClaimLoop } from './claim.js';
 import { startCommandLoop } from './command-loop.js';
-import { startCodexThreadMonitorLoop } from './codex-thread-monitor.js';
+import { getCodexThreadMonitorHeartbeatMetadata, startCodexThreadMonitorLoop } from './codex-thread-monitor.js';
 import { executeTask } from './executor.js';
 import { AgentApiClient } from './api-client.js';
 import { info, error as logError } from './logger.js';
@@ -92,6 +92,7 @@ async function main(): Promise<void> {
     HEARTBEAT_INTERVAL_MS,
     () => currentTaskId,
     IDLE_HEARTBEAT_INTERVAL_MS,
+    getCodexThreadMonitorHeartbeatMetadata,
   );
 
   // 6. Claim ループ (15s by default)

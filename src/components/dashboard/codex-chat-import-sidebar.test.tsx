@@ -17,6 +17,7 @@ vi.mock("@/hooks/useAvailableRepos", () => ({
         display_name: "focusmap",
         last_git_commit_at: null,
         last_seen_at: "2026-06-11T00:00:00.000Z",
+        source: "codex",
       },
     ],
     isLoading: false,
@@ -31,6 +32,22 @@ vi.mock("@/hooks/useCodexRunnerStatus", () => ({
     ready: runnerStatusMock.ready,
     loading: false,
     checked: true,
+    metadata: {
+      codex_thread_import: {
+        state_db_found: true,
+        last_scope_refresh_at: "2026-06-17T00:00:00.000Z",
+        last_reconcile_at: "2026-06-17T00:00:00.000Z",
+        last_reconcile_imported: 0,
+        scopes: [
+          {
+            project_id: "project-1",
+            repo_path: "/Users/me/focusmap",
+            enabled_since: "2026-06-11T00:00:00.000Z",
+            cwd_paths: ["/Users/me/focusmap", "/Users/me/focusmap-worktree"],
+          },
+        ],
+      },
+    },
   }),
 }))
 
@@ -141,11 +158,15 @@ afterEach(() => {
 
 describe("CodexChatImportSidebar", () => {
   test("renders chat import wording, repo monitor switch, selected repo, and unplaced chats", () => {
+    runnerStatusMock.ready = true
     renderSidebar()
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.getByLabelText("リポ監視")).toBeChecked()
-    expect(buttonContainingText("既存リポ選択")).toBeInTheDocument()
+    expect(buttonContainingText("Codexプロジェクトから選択")).toBeInTheDocument()
+    expect(screen.getByText("選択中")).toBeInTheDocument()
+    expect(screen.getByText("Codexプロジェクト")).toBeInTheDocument()
+    expect(screen.getByText("agent反映済み")).toBeInTheDocument()
     expect(screen.queryByLabelText("対象リポを選択 focusmap")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("プロジェクトのリポフォルダ")).not.toBeInTheDocument()
     expect(screen.getByText("未配置 1件")).toBeInTheDocument()
@@ -275,10 +296,10 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("ドラッグしてノードへ配置")).toBeInTheDocument()
   })
 
-  test("selects a repo from Focusmap agent repo candidates", async () => {
+  test("selects a repo from Codex project candidates", async () => {
     const { onSelectRepoPath } = renderSidebar()
 
-    fireEvent.click(buttonContainingText("既存リポ選択"))
+    fireEvent.click(buttonContainingText("Codexプロジェクトから選択"))
     fireEvent.click(screen.getByLabelText("対象リポを選択 focusmap"))
 
     await waitFor(() => {
@@ -383,8 +404,8 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByRole("button", { name: "戻る" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "一覧へ戻る" }).className).toContain("hover:bg-white")
     expect(screen.queryByRole("switch", { name: "リポ監視" })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /既存リポ選択/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Finderでリポフォルダを選択" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Codexプロジェクトから選択/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "選択中リポをFinderで開く" })).not.toBeInTheDocument()
     expect(screen.queryByLabelText("チャットを検索")).not.toBeInTheDocument()
     expect(screen.queryByText("AIチャット履歴")).not.toBeInTheDocument()
     expect(screen.getByText("確認待ち")).toBeInTheDocument()
@@ -645,39 +666,31 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByRole("button", { name: "履歴へ戻す" })).not.toBeInTheDocument()
   })
 
-  test("selects a repo folder picked from Finder immediately", async () => {
+  test("opens the selected repo in Finder through the Mac app bridge", async () => {
     const { onSelectRepoPath } = renderSidebar()
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ path: "/Users/me/new-repo/" }),
-    }))
-
-    fireEvent.click(screen.getByRole("button", { name: "Finderでリポフォルダを選択" }))
-
-    await waitFor(() => {
-      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/new-repo")
-    })
-  })
-
-  test("uses the Focusmap Mac app folder picker before falling back to the server API", async () => {
-    const { onSelectRepoPath } = renderSidebar()
-    const chooseFolder = vi.fn().mockResolvedValue({
-      ok: true,
-      path: "/Users/me/mac-picked-repo/",
-    })
+    const openPath = vi.fn().mockResolvedValue({ ok: true })
     Object.defineProperty(window, "focusmapDesktop", {
       configurable: true,
-      value: { chooseFolder },
+      value: { openPath },
     })
+
+    fireEvent.click(screen.getByRole("button", { name: "選択中リポをFinderで開く" }))
+
+    await waitFor(() => {
+      expect(openPath).toHaveBeenCalledWith("/Users/me/focusmap")
+    })
+    expect(onSelectRepoPath).not.toHaveBeenCalled()
+  })
+
+  test("does not fall back to arbitrary folder selection when Finder bridge is unavailable", async () => {
+    const { onSelectRepoPath } = renderSidebar()
     const fetchMock = vi.fn()
     vi.stubGlobal("fetch", fetchMock)
 
-    fireEvent.click(screen.getByRole("button", { name: "Finderでリポフォルダを選択" }))
+    fireEvent.click(screen.getByRole("button", { name: "選択中リポをFinderで開く" }))
 
-    await waitFor(() => {
-      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/mac-picked-repo")
-    })
-    expect(chooseFolder).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText(/Finder表示はMacアプリ更新後/)).toBeInTheDocument()
+    expect(onSelectRepoPath).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

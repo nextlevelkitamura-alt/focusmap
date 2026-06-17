@@ -35,6 +35,67 @@ let importScopesApiUnavailableUntil = 0;
 const WORKTREE_PATH_CACHE_TTL_MS = 30_000;
 const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }>();
 
+type CodexThreadImportScopeHeartbeat = {
+  project_id: string;
+  repo_path: string;
+  enabled_since: string | null;
+  cwd_paths: string[];
+};
+
+type CodexThreadMonitorHeartbeatState = {
+  state_db_found: boolean;
+  state_db_path: string | null;
+  last_tick_at: string | null;
+  last_scope_refresh_at: string | null;
+  last_scope_refresh_error: string | null;
+  scopes: CodexThreadImportScopeHeartbeat[];
+  last_reconcile_at: string | null;
+  next_reconcile_at: string | null;
+  last_reconcile_imported: number | null;
+  last_error: string | null;
+};
+
+const codexThreadMonitorHeartbeatState: CodexThreadMonitorHeartbeatState = {
+  state_db_found: false,
+  state_db_path: null,
+  last_tick_at: null,
+  last_scope_refresh_at: null,
+  last_scope_refresh_error: null,
+  scopes: [],
+  last_reconcile_at: null,
+  next_reconcile_at: null,
+  last_reconcile_imported: null,
+  last_error: null,
+};
+
+function updateCodexThreadMonitorHeartbeatState(patch: Partial<CodexThreadMonitorHeartbeatState>): void {
+  Object.assign(codexThreadMonitorHeartbeatState, patch);
+}
+
+function codexThreadImportScopeMetadataFlat() {
+  const scopes = codexThreadMonitorHeartbeatState.scopes;
+  return {
+    codex_monitor_db_available: codexThreadMonitorHeartbeatState.state_db_found,
+    codex_monitor_db_path: codexThreadMonitorHeartbeatState.state_db_path,
+    codex_import_scopes_count: scopes.length,
+    codex_import_scope_repo_paths: scopes.map(scope => scope.repo_path),
+    codex_import_scope_cwd_paths: Array.from(new Set(scopes.flatMap(scope => scope.cwd_paths))),
+    codex_last_scope_refresh_at: codexThreadMonitorHeartbeatState.last_scope_refresh_at,
+    codex_last_scope_refresh_error: codexThreadMonitorHeartbeatState.last_scope_refresh_error,
+    codex_last_reconcile_at: codexThreadMonitorHeartbeatState.last_reconcile_at,
+    codex_next_reconcile_at: codexThreadMonitorHeartbeatState.next_reconcile_at,
+    codex_last_reconcile_imported: codexThreadMonitorHeartbeatState.last_reconcile_imported,
+    codex_monitor_last_error: codexThreadMonitorHeartbeatState.last_error,
+  };
+}
+
+export function getCodexThreadMonitorHeartbeatMetadata(): Record<string, unknown> {
+  return {
+    ...codexThreadImportScopeMetadataFlat(),
+    codex_thread_import: { ...codexThreadMonitorHeartbeatState },
+  };
+}
+
 type CodexThreadRow = {
   id: string;
   title?: string | null;
@@ -824,6 +885,22 @@ async function importScopeCwdMap(importScopes: CodexThreadImportScope[]): Promis
   return entries;
 }
 
+async function importScopeHeartbeatScopes(importScopes: CodexThreadImportScope[]): Promise<CodexThreadImportScopeHeartbeat[]> {
+  const results: CodexThreadImportScopeHeartbeat[] = [];
+  for (const scope of importScopes) {
+    const repoPath = normalizeLocalPath(scope.repo_path);
+    const projectId = typeof scope.project_id === 'string' ? scope.project_id.trim() : '';
+    if (!repoPath || !projectId) continue;
+    results.push({
+      project_id: projectId,
+      repo_path: repoPath,
+      enabled_since: typeof scope.enabled_since === 'string' ? scope.enabled_since : null,
+      cwd_paths: await gitWorktreePaths(repoPath),
+    });
+  }
+  return results;
+}
+
 async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: string[] = []): Promise<CodexThreadRow[]> {
   const cwdCondition = repoPaths.length > 0
     ? ` AND cwd IN (${repoPaths.map(sqlString).join(', ')})`
@@ -876,9 +953,19 @@ async function listThreadImportScopes(
   } catch (error) {
     if (isOrphanImportApiUnavailable(error)) {
       importScopesApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+      updateCodexThreadMonitorHeartbeatState({
+        last_scope_refresh_at: new Date().toISOString(),
+        last_scope_refresh_error: `api_unavailable:${error.status}`,
+        scopes: [],
+      });
       info(`codex import scopes API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
       return [];
     }
+    updateCodexThreadMonitorHeartbeatState({
+      last_scope_refresh_at: new Date().toISOString(),
+      last_scope_refresh_error: error instanceof Error ? error.message : String(error),
+      scopes: [],
+    });
     logError('codex import scopes refresh failed', error instanceof Error ? error.message : error);
     return [];
   }
@@ -1108,18 +1195,30 @@ export function startCodexThreadMonitorLoop(
     if (running) return;
     dbPath = codexStateDbPath();
     if (!dbPath || !existsSync(dbPath)) {
+      updateCodexThreadMonitorHeartbeatState({
+        state_db_found: false,
+        state_db_path: dbPath,
+        last_tick_at: new Date().toISOString(),
+      });
       return;
     }
 
     running = true;
     try {
       const now = Date.now();
+      updateCodexThreadMonitorHeartbeatState({
+        state_db_found: true,
+        state_db_path: dbPath,
+        last_tick_at: new Date(now).toISOString(),
+        last_error: null,
+      });
       if (!targetsLoaded || now >= nextTargetRefreshAt) {
         const wasTargetsLoaded = targetsLoaded;
         const [nextTasks, nextImportScopes] = await Promise.all([
           api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT),
           listThreadImportScopes(api, runnerId),
         ]);
+        const scopeHeartbeat = await importScopeHeartbeatScopes(nextImportScopes);
         const nextImportScopeSignature = importScopeSignature(nextImportScopes);
         if (!wasTargetsLoaded || nextImportScopeSignature !== currentImportScopeSignature) {
           nextReconcileAt = 0;
@@ -1129,6 +1228,11 @@ export function startCodexThreadMonitorLoop(
         importScopes = nextImportScopes;
         targetsLoaded = true;
         nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
+        updateCodexThreadMonitorHeartbeatState({
+          last_scope_refresh_at: new Date().toISOString(),
+          last_scope_refresh_error: null,
+          scopes: scopeHeartbeat,
+        });
       }
       const shouldReconcile = importScopes.length > 0 &&
         (nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
@@ -1142,6 +1246,11 @@ export function startCodexThreadMonitorLoop(
       );
       if (shouldReconcile) {
         nextReconcileAt = Date.now() + reconcileIntervalMs;
+        updateCodexThreadMonitorHeartbeatState({
+          last_reconcile_at: new Date().toISOString(),
+          next_reconcile_at: new Date(nextReconcileAt).toISOString(),
+          last_reconcile_imported: imported,
+        });
         debug(`codex orphan reconcile completed imported=${imported} next_in=${Math.round(reconcileIntervalMs / 1000)}s`);
       }
       for (const task of tasks) {
@@ -1156,6 +1265,9 @@ export function startCodexThreadMonitorLoop(
         }
       }
     } catch (error) {
+      updateCodexThreadMonitorHeartbeatState({
+        last_error: error instanceof Error ? error.message : String(error),
+      });
       logError('codex monitor loop error', error instanceof Error ? error.message : error);
     } finally {
       running = false;

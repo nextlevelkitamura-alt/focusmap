@@ -896,6 +896,18 @@ async function chooseFolderFromBridge() {
   return { ok: true, path: result.filePaths[0].replace(/\/+$/, '') };
 }
 
+async function openPathFromBridge(_event, targetPath) {
+  const normalizedPath = normalizeLocalPath(targetPath);
+  if (!normalizedPath || !path.isAbsolute(normalizedPath)) {
+    return { ok: false, error: 'invalid_path' };
+  }
+  if (!fs.existsSync(normalizedPath)) {
+    return { ok: false, error: 'path_not_found' };
+  }
+  const errorMessage = await shell.openPath(normalizedPath);
+  return errorMessage ? { ok: false, error: errorMessage } : { ok: true };
+}
+
 function codexStateDbPath() {
   const candidates = [
     path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
@@ -2269,6 +2281,7 @@ handleDesktopIpc('focusmap-desktop:getAutomationStatus', getAutomationStatus);
 handleDesktopIpc('focusmap-desktop:connectAutomation', connectAutomation);
 handleDesktopIpc('focusmap-desktop:disconnectAutomation', disconnectAutomation);
 handleDesktopIpc('focusmap-desktop:chooseFolder', chooseFolderFromBridge);
+handleDesktopIpc('focusmap-desktop:openPath', openPathFromBridge);
 handleDesktopIpc('focusmap-desktop:listCodexRepos', listCodexReposFromBridge);
 handleDesktopIpc('focusmap-desktop:copyText', copyTextFromBridge);
 handleDesktopIpc('focusmap-desktop:copyCodexImage', copyCodexImageFromBridge);

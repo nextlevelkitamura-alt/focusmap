@@ -70,6 +70,7 @@ export function startHeartbeatLoop(
   activeIntervalMs = 10_000,
   getCurrentTaskId: () => string | null = () => null,
   idleIntervalMs = activeIntervalMs,
+  getExtraMetadata: () => Record<string, unknown> = () => ({}),
 ): NodeJS.Timeout {
   const tickIntervalMs = Math.max(1_000, Math.min(activeIntervalMs, idleIntervalMs));
   let nextAllowedAt = 0;
@@ -88,7 +89,7 @@ export function startHeartbeatLoop(
     const stateChanged = currentTaskId !== lastTaskId;
     if (!stateChanged && now < nextHeartbeatAt) return;
     try {
-      await sendRunnerHeartbeat(api, config, runnerId, 'online', currentTaskId);
+      await sendRunnerHeartbeat(api, config, runnerId, 'online', currentTaskId, getExtraMetadata());
       if (now - lastFullRegistrationAt >= fullRegistrationIntervalMs) {
         await upsertRunner(api, config);
         lastFullRegistrationAt = now;

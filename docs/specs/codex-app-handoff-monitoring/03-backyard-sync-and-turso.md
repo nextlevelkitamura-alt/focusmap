@@ -41,6 +41,8 @@ Macローカル:
 - `/api/agents/codex-monitor/tasks` は固定監視対象を返すagent専用APIで、`tasks.deleted_at is null` / `notes.deleted_at is null` / `ideal_goals.status != 'archived'` を満たすsourceだけを返す。source側が削除/アーカイブされたthreadは通常monitor対象から外し、以後は明示sync/debug fallbackでない限り追わない。
 - `focusmap-agent` は既知の監視対象threadを1秒ごとにローカル確認するが、`/api/agents/codex-monitor/tasks` の対象リスト取得は既定3秒キャッシュにする。これによりCodex sqlite/rollout監視は1秒化しつつ、Supabaseの監視対象selectを毎tickへ増やさない。
 - runner heartbeatはTurso `runner_heartbeats` へ実行中5秒・アイドル30秒で1 row upsertする。作業中/待機中の切替時は即時upsertし、正常終了時は可能なら `status='offline'` を1回送る。クラッシュ、強制終了、スリープ時はoffline送信できないため、Web/スマホは `last_seen_at` が90秒以上古い場合もofflineと解釈する。
+- Codexチャット取り込みのrepo選択は、通常UIではCodex Desktop state DBの `threads.cwd` から得たCodexプロジェクト候補だけを新規選択対象にする。保存済み `projects.repo_path` が候補外の場合は自動削除せず、`Codex候補外` として解除だけ可能にする。Finderは任意フォルダー選択ではなく、選択中repoを開く操作に限定する。
+- runner heartbeat metadataにはCodex取り込み診断を載せる。`codex_thread_import` に `state_db_found`、`last_scope_refresh_at`、`last_scope_refresh_error`、`scopes[{ project_id, repo_path, enabled_since, cwd_paths }]`、`last_reconcile_at`、`next_reconcile_at`、`last_reconcile_imported`、`last_error` を入れ、互換用に `codex_import_scope_repo_paths`、`codex_import_scope_cwd_paths`、`codex_last_scope_refresh_at`、`codex_last_reconcile_at` も残す。UIはMac onlineだけで監視成功とみなさず、選択repoがheartbeat metadataのscopeへ入っている時だけ `agent反映済み` と表示する。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール

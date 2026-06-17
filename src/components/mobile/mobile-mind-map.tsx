@@ -267,6 +267,9 @@ export function MobileMindMap({
     ), [projectsForSelectedImportRepo])
     const selectedRepoImportEnabled = selectedRepoImportProjects.length > 0 ||
         (projectRepoPath === selectedCodexImportRepoPath && codexThreadImportEnabled)
+    const selectedImportRepoIsCodexCandidate = useMemo(() => (
+        availableRepos.some(repo => repo.source === "codex" && normalizeRepoPath(repo.absolute_path) === selectedCodexImportRepoPath)
+    ), [availableRepos, selectedCodexImportRepoPath])
     const selectedRepoImportOwnerLabel = selectedRepoImportProjects
         .map(candidate => candidate.title)
         .filter(Boolean)
@@ -296,6 +299,7 @@ export function MobileMindMap({
 
     const toggleSelectedRepoImport = useCallback(async () => {
         if (!project.id || !selectedCodexImportRepoPath || isCodexThreadImportSaving) return
+        if (!selectedRepoImportEnabled && !selectedImportRepoIsCodexCandidate) return
         const previousImportOverride = codexThreadImportOverride
         const previousRepoOverride = codexRepoPathOverride
         setIsCodexThreadImportSaving(true)
@@ -332,6 +336,7 @@ export function MobileMindMap({
         project,
         projectRepoPath,
         selectedCodexImportRepoPath,
+        selectedImportRepoIsCodexCandidate,
         selectedRepoImportEnabled,
         selectedRepoImportProjects,
     ])
@@ -732,19 +737,13 @@ export function MobileMindMap({
             })
         }
 
-        for (const repo of availableRepos) {
+        for (const repo of availableRepos.filter(repo => repo.source === "codex")) {
             put(repo.absolute_path, repo.display_name, repo.hostname)
-        }
-        for (const candidate of kanbanProjects) {
-            put(candidate.repo_path, repoNameFromPath(candidate.repo_path), candidate.title)
-        }
-        for (const task of repoScopedCodexTaskNodes) {
-            put(task.codex_work_dir, repoNameFromPath(task.codex_work_dir), "取り込み済み")
         }
         put(selectedCodexImportRepoPath, repoNameFromPath(selectedCodexImportRepoPath), "選択中")
 
         return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, "ja"))
-    }, [availableRepos, kanbanProjects, repoScopedCodexTaskNodes, selectedCodexImportRepoPath])
+    }, [availableRepos, selectedCodexImportRepoPath])
 
     const selectedCodexImportRepoLabel = useMemo(() => {
         if (!selectedCodexImportRepoPath) return null

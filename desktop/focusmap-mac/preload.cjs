@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('focusmapDesktop', {
   connectAutomation: () => ipcRenderer.invoke('focusmap-desktop:connectAutomation'),
   disconnectAutomation: () => ipcRenderer.invoke('focusmap-desktop:disconnectAutomation'),
   chooseFolder: () => ipcRenderer.invoke('focusmap-desktop:chooseFolder'),
+  openPath: (targetPath) => ipcRenderer.invoke('focusmap-desktop:openPath', targetPath),
   listCodexRepos: () => ipcRenderer.invoke('focusmap-desktop:listCodexRepos'),
   copyText: (text) => ipcRenderer.invoke('focusmap-desktop:copyText', text),
   copyCodexImage: (payload) => ipcRenderer.invoke('focusmap-desktop:copyCodexImage', payload),

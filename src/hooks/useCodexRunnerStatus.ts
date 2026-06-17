@@ -12,6 +12,8 @@ type RunnerHeartbeat = {
   last_seen_at?: string | null
   last_heartbeat_at?: string | null
   updated_at?: string | null
+  metadata?: Record<string, unknown> | null
+  metadata_json?: Record<string, unknown> | null
 }
 
 export type CodexRunnerStatus = {
@@ -19,6 +21,7 @@ export type CodexRunnerStatus = {
   loading: boolean
   ready: boolean
   lastSeenAt: string | null
+  metadata: Record<string, unknown> | null
   refresh: () => Promise<void> | undefined
 }
 
@@ -28,6 +31,15 @@ function isPageVisible() {
 
 function heartbeatSeenAt(heartbeat: RunnerHeartbeat) {
   return heartbeat.last_seen_at || heartbeat.last_heartbeat_at || heartbeat.updated_at || null
+}
+
+function heartbeatMetadata(heartbeat: RunnerHeartbeat | null | undefined) {
+  if (!heartbeat) return null
+  return heartbeat.metadata_json && typeof heartbeat.metadata_json === "object"
+    ? heartbeat.metadata_json
+    : heartbeat.metadata && typeof heartbeat.metadata === "object"
+      ? heartbeat.metadata
+      : null
 }
 
 function latestHeartbeat(heartbeats: RunnerHeartbeat[]) {
@@ -52,6 +64,7 @@ export function useCodexRunnerStatus(enabled = true): CodexRunnerStatus {
     loading: enabled,
     ready: false,
     lastSeenAt: null,
+    metadata: null,
   })
 
   const refresh = useCallback(() => {
@@ -73,6 +86,7 @@ export function useCodexRunnerStatus(enabled = true): CodexRunnerStatus {
           loading: false,
           ready: isOnlineCodexRunnerHeartbeat(latest?.heartbeat),
           lastSeenAt: latest?.seenAt ?? null,
+          metadata: heartbeatMetadata(latest?.heartbeat),
         })
       } catch {
         setState(previous => ({
@@ -80,6 +94,7 @@ export function useCodexRunnerStatus(enabled = true): CodexRunnerStatus {
           checked: true,
           loading: false,
           ready: false,
+          metadata: null,
         }))
       } finally {
         refreshInFlightRef.current = null
@@ -92,7 +107,7 @@ export function useCodexRunnerStatus(enabled = true): CodexRunnerStatus {
 
   useEffect(() => {
     if (!enabled) {
-      setState({ checked: false, loading: false, ready: false, lastSeenAt: null })
+      setState({ checked: false, loading: false, ready: false, lastSeenAt: null, metadata: null })
       return
     }
 
