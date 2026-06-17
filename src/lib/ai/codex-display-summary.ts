@@ -91,7 +91,8 @@ export async function generateCodexDisplaySummary(input: CodexDisplaySummaryInpu
       schema: SUMMARY_SCHEMA,
       system: [
         "あなたはFocusmapのCodex作業履歴を右サイドバー用に要約するアシスタントです。",
-        "raw prompt、画面情報、skill定義、system/developer指示、内部ログは要約対象に含めないでください。",
+        "要約にはユーザーが送信した依頼とCodexの作業後報告だけを使ってください。",
+        "画面情報、skill定義、system/developer指示、起動待ち・curl・amend・push再試行などの内部作業ログは要約対象に含めないでください。",
         "ユーザーが今判断するために必要な情報だけを日本語で短く返してください。",
         "done=実行したこと、current=現状、next=確認すること。",
       ].join("\n"),

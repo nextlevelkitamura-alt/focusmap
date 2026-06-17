@@ -1,4 +1,5 @@
 import { sanitizeCodexDisplayText } from "@/lib/codex-display-sanitize"
+import { codexReportViewSummaryMessages } from "@/lib/codex-report-view"
 
 export type CodexDisplaySummaryMessage = {
   role?: string | null
@@ -70,18 +71,20 @@ function statusNext(status: string | null | undefined, statusLabel: string | nul
 }
 
 export function normalizeCodexDisplaySummaryInput(input: CodexDisplaySummaryInput): CodexDisplaySummaryInput {
+  const messages = input.messages.flatMap(message => {
+    const body = sanitizeCodexDisplayText(message.body, {
+      maxChars: 1_600,
+      fallback: "",
+    }).text
+    return body ? [{ ...message, body }] : []
+  })
+
   return {
     ...input,
     title: compactLine(input.title, 120),
     snippet: compactLine(input.snippet, 600) || null,
-    detailText: compactLine(input.detailText, 1_200) || null,
-    messages: input.messages.flatMap(message => {
-      const body = sanitizeCodexDisplayText(message.body, {
-        maxChars: 1_600,
-        fallback: "",
-      }).text
-      return body ? [{ ...message, body }] : []
-    }),
+    detailText: null,
+    messages: codexReportViewSummaryMessages(messages),
   }
 }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 import { sanitizeCodexDisplayText } from '@/lib/codex-display-sanitize'
+import { codexReportViewMessages } from '@/lib/codex-report-view'
 import { isTursoConfigured } from '@/lib/turso/client'
 import { getTursoTaskForAuth, listTaskEvents, listTaskProgressPage } from '@/lib/turso/codex-monitoring'
 
@@ -255,6 +256,7 @@ export async function GET(
   const { user } = auth
   const limit = parseLimit(req.nextUrl.searchParams.get('limit'))
   const before = parseBefore(req)
+  const reportMode = req.nextUrl.searchParams.get('mode') === 'report'
 
   if (isTursoConfigured()) {
     try {
@@ -284,17 +286,18 @@ export async function GET(
             created_at: item.created_at,
           }))
         const promptMessage = before ? null : taskPromptMessage(task)
-        const messages = visibleActivityMessages([
+        const visibleMessages = visibleActivityMessages([
           ...(promptMessage && !hasUserSentMessage([...progressMessages, ...eventMessages]) ? [promptMessage] : []),
           ...progressMessages,
           ...eventMessages,
         ]).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        const messages = reportMode ? codexReportViewMessages(visibleMessages) : visibleMessages
         const oldestProgress = progress.at(-1)
         const nextCursor = progress.length >= limit && oldestProgress
           ? { created_at: oldestProgress.created_at, id: oldestProgress.id }
           : null
 
-        if (before || messages.some(message => !String(message.id).startsWith('prompt:'))) {
+        if (reportMode ? messages.length > 0 : before || messages.some(message => !String(message.id).startsWith('prompt:'))) {
           return NextResponse.json({
             source: 'turso',
             messages,
@@ -338,7 +341,11 @@ export async function GET(
     if (isMissingOptionalActivityTable(error)) {
       return NextResponse.json({
         source: 'ai_tasks.result',
-        messages: before ? [] : fallbackMessagesFromTask(task),
+        messages: before
+          ? []
+          : reportMode
+            ? codexReportViewMessages(fallbackMessagesFromTask(task))
+            : fallbackMessagesFromTask(task),
         has_more: false,
         next_cursor: null,
       })
@@ -351,11 +358,12 @@ export async function GET(
   const activityMessages = [...(data ?? [])].reverse()
   const resultFallbackMessages = fallbackMessagesFromTask(task)
     .filter(message => !String(message.id).startsWith('prompt:'))
-  const messages = visibleActivityMessages([
+  const visibleMessages = visibleActivityMessages([
     ...(promptMessage && !hasUserSentMessage(activityMessages) ? [promptMessage] : []),
     ...activityMessages,
     ...(!before && activityMessages.length === 0 ? resultFallbackMessages : []),
   ])
+  const messages = reportMode ? codexReportViewMessages(visibleMessages) : visibleMessages
   const oldestActivity = data?.at(-1) as { id?: string; created_at?: string } | undefined
   const nextCursor = (data?.length ?? 0) >= limit && oldestActivity?.created_at
     ? { created_at: oldestActivity.created_at, id: oldestActivity.id ?? null }

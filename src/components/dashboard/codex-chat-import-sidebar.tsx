@@ -19,6 +19,7 @@ import {
   encodeCodexChatImportDragPayload,
 } from "@/lib/codex-chat-import-dnd"
 import { sanitizeCodexDisplayText } from "@/lib/codex-display-sanitize"
+import { codexReportViewMessages, codexReportViewSummaryMessages } from "@/lib/codex-report-view"
 import {
   codexMonitorAccentClass,
   codexMonitorCardClass,
@@ -337,15 +338,14 @@ function isStatusActivityMessage(message: AiTaskActivityMessage) {
 function codexSummaryInput(
   item: CodexChatImportItem,
   messages: AiTaskActivityMessage[],
-  detailText: string | null | undefined,
 ): CodexDisplaySummaryInput {
   return {
     title: item.title,
     status: item.status ?? null,
     statusLabel: item.statusLabel ?? null,
     snippet: item.snippet,
-    detailText: detailText ?? null,
-    messages: visibleActivityMessages(messages).map(message => ({
+    detailText: null,
+    messages: codexReportViewSummaryMessages(visibleActivityMessages(messages)).map(message => ({
       role: message.role,
       kind: message.kind,
       body: message.body,
@@ -541,7 +541,7 @@ export function CodexChatImportSidebar({
     aiTaskId: string,
     cursor: { created_at: string; id: string | null } | null = null,
   ) => {
-    const params = new URLSearchParams({ limit: String(ACTIVITY_DETAIL_PAGE_LIMIT) })
+    const params = new URLSearchParams({ limit: String(ACTIVITY_DETAIL_PAGE_LIMIT), mode: "report" })
     if (cursor) {
       params.set("before_created_at", cursor.created_at)
       if (cursor.id) params.set("before_id", cursor.id)
@@ -824,13 +824,13 @@ export function CodexChatImportSidebar({
   }, [loadChatDetail, selectedChatItem])
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
-  const selectedMessages = visibleActivityMessages(selectedDetail?.messages ?? [])
+  const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
   const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
-    return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [], selectedDetail?.text)
-  }, [selectedChatItem, selectedDetail?.messages, selectedDetail?.text])
+    return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [])
+  }, [selectedChatItem, selectedDetail?.messages])
   const selectedSummarySignature = React.useMemo(() => {
     return selectedSummaryInput ? codexDisplaySummarySignature(selectedSummaryInput) : null
   }, [selectedSummaryInput])

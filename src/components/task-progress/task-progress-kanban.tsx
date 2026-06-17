@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import { codexReportViewMessages } from "@/lib/codex-report-view"
 import {
   codexMonitorAccentClass,
   codexMonitorCardClass,
@@ -1367,7 +1368,7 @@ export function TaskProgressKanban({
           return
         }
 
-        const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`, { cache: "no-store" })
+        const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity?mode=report`, { cache: "no-store" })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) {
           const message = typeof (data as { error?: unknown }).error === "string"
@@ -1375,7 +1376,7 @@ export function TaskProgressKanban({
             : "チャット内容を取得できません"
           throw new Error(message)
         }
-        const messages = normalizeActivityMessages(data)
+        const messages = codexReportViewMessages(normalizeActivityMessages(data))
         if (cancelled) return
         setMobileImportDetailsById(previous => ({
           ...previous,
