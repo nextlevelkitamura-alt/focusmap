@@ -113,6 +113,7 @@ type CodexNodeState = {
 const PADDING = 72;
 const DRAG_START_THRESHOLD = 6;
 const DROP_TARGET_MAX_DISTANCE = 190;
+const MOBILE_EXTERNAL_IMPORT_DROP_TARGET_MAX_DISTANCE = 260;
 const WHEEL_PAN_SENSITIVITY = 1;
 const WHEEL_ZOOM_SENSITIVITY = 0.0035;
 const TOUCH_PINCH_SENSITIVITY = 1;
@@ -2075,6 +2076,7 @@ export function CustomMindMapView({
     const getExternalImportDropTarget = useCallback((clientX: number, clientY: number): CustomDropTarget | null => {
         const point = getStagePoint(clientX, clientY);
         if (!point) return null;
+        const maxDistance = isMobile ? MOBILE_EXTERNAL_IMPORT_DROP_TARGET_MAX_DISTANCE : DROP_TARGET_MAX_DISTANCE;
 
         let best: { node: MindMapModelNode; distance: number; position: CustomDropPosition } | null = null;
         for (const candidate of positionedNodes) {
@@ -2088,7 +2090,7 @@ export function CustomMindMapView({
             const clampedX = Math.max(left, Math.min(point.x, right));
             const clampedY = Math.max(top, Math.min(point.y, bottom));
             const distance = Math.hypot(clampedX - point.x, clampedY - point.y);
-            if (distance > DROP_TARGET_MAX_DISTANCE) continue;
+            if (distance > maxDistance) continue;
 
             let position: CustomDropPosition = "as-child";
             if (candidate.kind === "task") {
@@ -2109,7 +2111,7 @@ export function CustomMindMapView({
         }
 
         return best ? { nodeId: best.node.id, position: best.position } : null;
-    }, [getStagePoint, positionedNodes]);
+    }, [getStagePoint, isMobile, positionedNodes]);
 
     const handleSelectTaskNode = useCallback((nodeId: string, options?: { additive: boolean }) => {
         if (Date.now() < suppressPaneClickUntilRef.current) return false;
@@ -3426,6 +3428,9 @@ export function CustomMindMapView({
         }
         : null;
     const activeImportedChatDragTitle = importedChatDragTitle ?? mobileExternalImportDrag?.title ?? null;
+    const externalImportDropHint = externalImportDropTarget
+        ? importDropLabel(externalImportDropTarget.position)
+        : "空白に新しい枝";
     const externalImportPreview = useMemo<ExternalImportDropPreview | null>(() => {
         if (!externalImportDragOverMap || externalImportDropTarget?.position !== "as-child") return null;
         const target = nodeById.get(externalImportDropTarget.nodeId);
@@ -3751,23 +3756,28 @@ export function CustomMindMapView({
                             </span>
                             <span className="min-w-0 flex-1">
                                 <span className="block truncate font-semibold text-foreground">{activeImportedChatDragTitle?.trim() || "Codexチャット"}</span>
-                                <span className="block truncate text-[11px] text-muted-foreground">上/下端で隣、中央で子ノード、空白で新しい枝</span>
+                                <span className="block truncate text-[11px] text-muted-foreground">
+                                    {isMobile ? "指を離すと配置" : "dropで配置"} / {externalImportDropHint}
+                                </span>
                             </span>
                         </div>
                     </>
                 )}
                 {mobileExternalImportDrag && (
                     <div
-                        className="pointer-events-none fixed z-[80] flex max-w-[220px] items-center gap-1.5 rounded-lg border border-amber-300/70 bg-[#171513]/95 px-2.5 py-2 text-[12px] font-semibold text-amber-50 shadow-2xl shadow-black/40"
+                        className="pointer-events-none fixed z-[80] flex max-w-[240px] items-center gap-2 rounded-lg border border-amber-300/70 bg-[#171513]/95 px-2.5 py-2 text-[12px] font-semibold text-amber-50 shadow-2xl shadow-black/40"
                         style={{
                             left: mobileExternalImportDrag.clientX,
                             top: mobileExternalImportDrag.clientY,
-                            transform: "translate3d(14px, 12px, 0)",
+                            transform: "translate3d(18px, -56px, 0)",
                         }}
                         data-testid="mobile-codex-chat-import-drag-ghost"
                     >
                         <GitBranch className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-                        <span className="min-w-0 truncate">{mobileExternalImportDrag.title?.trim() || "Codexチャット"}</span>
+                        <span className="min-w-0">
+                            <span className="block truncate">{mobileExternalImportDrag.title?.trim() || "Codexチャット"}</span>
+                            <span className="block truncate text-[10px] font-medium text-amber-200/75">{externalImportDropHint}</span>
+                        </span>
                     </div>
                 )}
                 {isMobile && floatingEditNode && floatingEditViewportStyle && (

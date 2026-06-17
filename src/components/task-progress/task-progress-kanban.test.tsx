@@ -324,7 +324,7 @@ describe('TaskProgressKanban', () => {
     expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
   })
 
-  test('スマホCodexシートはAIチャット履歴カードを上方向ドラッグで配置へ進める', async () => {
+  test('スマホCodexシートはAIチャット履歴カードを長押しドラッグで配置へ進める', async () => {
     const onMobileImportDrag = vi.fn()
     const onOpenTask = vi.fn()
     const importItem = {
@@ -383,14 +383,22 @@ describe('TaskProgressKanban', () => {
     expect(screen.queryByRole('button', { name: '配置先を選ぶ' })).not.toBeInTheDocument()
 
     const row = screen.getByLabelText('「チャットがアーカイブされたのか」のチャットを見る')
-    fireEvent.pointerDown(row, { pointerId: 8, pointerType: 'touch', button: 0, clientX: 180, clientY: 520 })
-    fireEvent.pointerMove(window, { pointerId: 8, pointerType: 'touch', clientX: 176, clientY: 480 })
-    fireEvent.pointerUp(window, { pointerId: 8, pointerType: 'touch', clientX: 174, clientY: 450 })
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerDown(row, { pointerId: 8, pointerType: 'touch', button: 0, clientX: 180, clientY: 520 })
+      act(() => {
+        vi.advanceTimersByTime(650)
+      })
+      fireEvent.pointerMove(window, { pointerId: 8, pointerType: 'touch', clientX: 176, clientY: 480 })
+      fireEvent.pointerUp(window, { pointerId: 8, pointerType: 'touch', clientX: 174, clientY: 450 })
+    } finally {
+      vi.useRealTimers()
+    }
 
     expect(onMobileImportDrag).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'start',
       item: importItem,
-      clientY: 480,
+      clientY: 520,
     }))
     expect(onMobileImportDrag).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'end',

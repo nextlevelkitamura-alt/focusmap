@@ -52,8 +52,8 @@ const HEARTBEAT_POLL_INTERVAL_MS = 30_000
 const HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS = 750
 const MOBILE_LANE_SWIPE_MIN_DISTANCE = 48
 const MOBILE_LANE_SWIPE_MAX_OFF_AXIS = 72
-const MOBILE_IMPORT_DRAG_START_DISTANCE = 10
-const MOBILE_IMPORT_DRAG_MIN_UPWARD_DISTANCE = 6
+const MOBILE_IMPORT_DRAG_ARM_DELAY_MS = 650
+const MOBILE_IMPORT_DRAG_SCROLL_CANCEL_DISTANCE = 36
 const DESKTOP_BOARD_HEIGHT_STORAGE_KEY = "focusmap:codex-kanban:desktop-height"
 const DESKTOP_BOARD_DEFAULT_HEIGHT_PX = 260
 const DESKTOP_BOARD_MIN_HEIGHT_PX = 180
@@ -1172,6 +1172,7 @@ export function TaskProgressKanban({
   const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [activeMobileImportFilter, setActiveMobileImportFilter] = useState<MobileImportHistoryFilterId>("review")
   const [activeMobileImportDetailId, setActiveMobileImportDetailId] = useState<string | null>(null)
+  const [mobileImportArmingItemId, setMobileImportArmingItemId] = useState<string | null>(null)
   const [mobileImportDetailsById, setMobileImportDetailsById] = useState<Record<string, MobileImportDetailState>>({})
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [desktopBodyHeightPx, setDesktopBodyHeightPx] = useState(readStoredDesktopBoardHeight)
@@ -1183,7 +1184,10 @@ export function TaskProgressKanban({
     item: TaskProgressImportItem
     startX: number
     startY: number
+    lastX: number
+    lastY: number
     dragging: boolean
+    armTimerId: number | null
   } | null>(null)
   const suppressMobileImportClickUntilRef = useRef(0)
   const lastDesktopOpenSignalRef = useRef<number | undefined>(desktopOpenSignal)
@@ -1213,6 +1217,11 @@ export function TaskProgressKanban({
 
   useEffect(() => {
     return () => {
+      const session = mobileImportDragSessionRef.current
+      if (session && session.armTimerId != null) {
+        window.clearTimeout(session.armTimerId)
+      }
+      mobileImportDragSessionRef.current = null
       desktopResizeCleanupRef.current?.()
       desktopResizeCleanupRef.current = null
     }
@@ -1470,21 +1479,30 @@ export function TaskProgressKanban({
     const target = event.target
     if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return
 
-    const session = {
+    const previousSession = mobileImportDragSessionRef.current
+    if (previousSession && previousSession.armTimerId != null) {
+      window.clearTimeout(previousSession.armTimerId)
+    }
+
+    const session: NonNullable<typeof mobileImportDragSessionRef.current> = {
       pointerId: event.pointerId,
       item,
       startX: event.clientX,
       startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
       dragging: false,
+      armTimerId: null,
     }
     mobileImportDragSessionRef.current = session
+    setMobileImportArmingItemId(item.id)
 
-    const emit = (phase: TaskProgressImportDragEvent["phase"], pointerEvent: PointerEvent) => {
+    const emit = (phase: TaskProgressImportDragEvent["phase"], clientX: number, clientY: number) => {
       onMobileImportDrag({
         phase,
         item,
-        clientX: pointerEvent.clientX,
-        clientY: pointerEvent.clientY,
+        clientX,
+        clientY,
       })
     }
 
@@ -1496,26 +1514,47 @@ export function TaskProgressKanban({
       window.removeEventListener("pointermove", handlePointerMove)
       window.removeEventListener("pointerup", handlePointerUp)
       window.removeEventListener("pointercancel", handlePointerCancel)
+      const current = mobileImportDragSessionRef.current
+      if (current && current.armTimerId != null) {
+        window.clearTimeout(current.armTimerId)
+      }
       mobileImportDragSessionRef.current = null
+      setMobileImportArmingItemId(null)
     }
+
+    const beginDrag = () => {
+      const current = mobileImportDragSessionRef.current
+      if (!current || current.pointerId !== session.pointerId || current.dragging) return
+      if (current.armTimerId !== null) {
+        window.clearTimeout(current.armTimerId)
+        current.armTimerId = null
+      }
+      current.dragging = true
+      suppressMobileImportClickUntilRef.current = Date.now() + 900
+      setMobileImportArmingItemId(null)
+      setActiveMobileImportDetailId(null)
+      setMobileOpen(false)
+      emit("start", current.lastX, current.lastY)
+    }
+
+    session.armTimerId = window.setTimeout(beginDrag, MOBILE_IMPORT_DRAG_ARM_DELAY_MS)
 
     handlePointerMove = (pointerEvent: PointerEvent) => {
       const current = mobileImportDragSessionRef.current
       if (!current || current.pointerId !== pointerEvent.pointerId) return
+      current.lastX = pointerEvent.clientX
+      current.lastY = pointerEvent.clientY
 
       const deltaX = pointerEvent.clientX - current.startX
       const deltaY = pointerEvent.clientY - current.startY
       const distance = Math.hypot(deltaX, deltaY)
       if (!current.dragging) {
-        if (distance < MOBILE_IMPORT_DRAG_START_DISTANCE) return
-        if (deltaY > -MOBILE_IMPORT_DRAG_MIN_UPWARD_DISTANCE) return
-        current.dragging = true
-        suppressMobileImportClickUntilRef.current = Date.now() + 700
-        setActiveMobileImportDetailId(null)
-        setMobileOpen(false)
-        emit("start", pointerEvent)
+        if (distance >= MOBILE_IMPORT_DRAG_SCROLL_CANCEL_DISTANCE) {
+          cleanup()
+        }
+        return
       } else {
-        emit("move", pointerEvent)
+        emit("move", pointerEvent.clientX, pointerEvent.clientY)
       }
       pointerEvent.preventDefault()
     }
@@ -1525,8 +1564,8 @@ export function TaskProgressKanban({
       const wasDragging = Boolean(current?.dragging && current.pointerId === pointerEvent.pointerId)
       cleanup()
       if (!wasDragging) return
-      suppressMobileImportClickUntilRef.current = Date.now() + 700
-      emit("end", pointerEvent)
+      suppressMobileImportClickUntilRef.current = Date.now() + 900
+      emit("end", pointerEvent.clientX, pointerEvent.clientY)
       pointerEvent.preventDefault()
     }
 
@@ -1534,7 +1573,7 @@ export function TaskProgressKanban({
       const current = mobileImportDragSessionRef.current
       const wasDragging = Boolean(current?.dragging && current.pointerId === pointerEvent.pointerId)
       cleanup()
-      if (wasDragging) emit("cancel", pointerEvent)
+      if (wasDragging) emit("cancel", pointerEvent.clientX, pointerEvent.clientY)
     }
 
     window.addEventListener("pointermove", handlePointerMove)
@@ -1842,6 +1881,7 @@ export function TaskProgressKanban({
                     const visualStatus = item.status ?? "awaiting_approval"
                     const uiStatus = getCodexMonitorUiStatus(visualStatus)
                     const canOpenDetail = Boolean(item.aiTaskId)
+                    const isArmingImportDrag = mobileImportArmingItemId === item.id
                     const openImportDetail = () => {
                       if (Date.now() < suppressMobileImportClickUntilRef.current) return
                       if (canOpenDetail) handleOpenImportItem(item)
@@ -1854,6 +1894,7 @@ export function TaskProgressKanban({
                         className={cn(
                           "relative overflow-visible rounded-lg border p-2.5 pl-4 transition-all duration-150",
                           (canOpenDetail || onMobileImportDrag) && "cursor-grab focus:outline-none focus:ring-2 focus:ring-ring active:scale-[0.99]",
+                          isArmingImportDrag && "scale-[0.99] ring-2 ring-amber-300/70 shadow-[0_0_18px_rgba(245,158,11,0.32)]",
                           codexMonitorCardClass(visualStatus),
                         )}
                         onPointerDown={event => handleMobileImportPointerDown(item, event)}
@@ -1872,7 +1913,12 @@ export function TaskProgressKanban({
                           <div className="flex min-w-0 flex-1 items-start gap-1.5">
                             {onMobileImportDrag && (
                               <span
-                                className="mt-0.5 inline-flex h-8 w-6 shrink-0 items-center justify-center rounded-md text-zinc-500"
+                                className={cn(
+                                  "mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border text-zinc-500 transition-colors",
+                                  isArmingImportDrag
+                                    ? "border-amber-300/60 bg-amber-400/15 text-amber-300"
+                                    : "border-white/5 bg-white/5",
+                                )}
                                 aria-hidden="true"
                               >
                                 <GripVertical className="h-4 w-4" />

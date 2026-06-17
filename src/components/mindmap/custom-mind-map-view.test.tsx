@@ -1345,30 +1345,36 @@ describe("CustomMindMapView keyboard operations", () => {
     const rootPoint = getNodeClientPoint(getNode("Root task", "root-1"))
     const importCard = await screen.findByLabelText("「実行中Codexチャット」のチャットを見る")
 
-    fireEvent.pointerDown(importCard, {
-      pointerId: 9,
-      pointerType: "touch",
-      button: 0,
-      clientX: rootPoint.clientX,
-      clientY: rootPoint.clientY + 240,
-    })
-    fireEvent.pointerMove(window, {
-      pointerId: 9,
-      pointerType: "touch",
-      clientX: rootPoint.clientX,
-      clientY: rootPoint.clientY,
-    })
+    vi.useFakeTimers()
+    try {
+      fireEvent.pointerDown(importCard, {
+        pointerId: 9,
+        pointerType: "touch",
+        button: 0,
+        clientX: rootPoint.clientX,
+        clientY: rootPoint.clientY + 240,
+      })
+      act(() => {
+        vi.advanceTimersByTime(650)
+      })
+      fireEvent.pointerMove(window, {
+        pointerId: 9,
+        pointerType: "touch",
+        clientX: rootPoint.clientX,
+        clientY: rootPoint.clientY,
+      })
 
-    await waitFor(() => {
       expect(screen.getByTestId("mobile-codex-chat-import-drag-ghost")).toHaveTextContent("実行中Codexチャット")
-    })
 
-    fireEvent.pointerUp(window, {
-      pointerId: 9,
-      pointerType: "touch",
-      clientX: rootPoint.clientX,
-      clientY: rootPoint.clientY,
-    })
+      fireEvent.pointerUp(window, {
+        pointerId: 9,
+        pointerType: "touch",
+        clientX: rootPoint.clientX,
+        clientY: rootPoint.clientY,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
 
     await waitFor(() => {
       expect(onUpdateTask).toHaveBeenCalledWith("chat-node-1", {
