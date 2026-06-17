@@ -1,0 +1,5 @@
+Create a 2x-scale Focusmap desktop calendar UI mockup. This is a calendar event split interaction, not a mindmap interaction.
+
+Scene: Desktop Todo 3days calendar in the current Focusmap dark compact style. A calendar event block from 10:00 to 10:45 is selected. Because calendar time runs vertically, show the split affordance as a horizontal line inside the selected event block at 10:20, with a small near-event popover saying `10:20で分割` and `ここで分割`.
+
+Keep the 3days calendar visible while a right-side drawer is open. The drawer visually matches Focusmap's dense dark right panel and supports the split with 10-minute chips, selected `10:20`, before/after preview, and confirmation button. No mindmap dotted node canvas, no mobile bottom sheet on desktop, no full-screen modal.

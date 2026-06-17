@@ -1,0 +1,5 @@
+Create a 2x-scale Focusmap mobile calendar UI mockup. This is a calendar event split interaction, not a mindmap interaction.
+
+Scene: Mobile Todo calendar with a selected event block from 10:00 to 10:45. The event block shows a horizontal split marker at 10:20 inside the calendar event. The user has entered an explicit `予定を分割` bottom-sheet mode.
+
+Inside the bottom sheet, show 10-minute choices: 10:10, 10:20, 10:30, 10:40. Highlight `10:20` in amber. Show before/after preview: 10:00-10:20 and 10:20-10:45. Primary action says `10:20で分割する`. Keep bottom nav visible and safe area respected. Do not use tiny hover controls on mobile.
