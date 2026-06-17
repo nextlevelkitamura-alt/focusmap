@@ -743,6 +743,10 @@ export function TodayView({
                             onScrollPositionChange={handleTimelineScrollPositionChange}
                             onDateSelect={handleRangeDateSelect}
                             onItemTap={logic.handleItemTap}
+                            currentTime={logic.currentTime}
+                            onToggleTask={logic.toggleTask}
+                            onToggleEvent={logic.toggleEventCompletion}
+                            onDragDrop={logic.handleDragDrop}
                         />
                     ) : calendarRangeMode === 'month' ? (
                         <TodayMonthCalendar

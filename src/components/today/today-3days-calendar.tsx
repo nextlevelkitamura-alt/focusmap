@@ -1,13 +1,14 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import type { CSSProperties } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { CheckSquare, ChevronRight, Square, X } from "lucide-react"
 import type { Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import type { TimeBlock } from "@/lib/time-block"
+import type { DragItem } from "@/hooks/useTouchDrag"
 import { buildTimeBlocksForDay } from "@/lib/today-range-blocks"
 import { calculateTodayTimelineLayout, type TodayTimelineLayoutPosition } from "@/lib/today-timeline-layout"
 import { cn } from "@/lib/utils"
@@ -18,11 +19,18 @@ const DEFAULT_SCROLL_HOUR = 10
 const HOUR_HEIGHT = 56
 const SCROLL_LABEL_OFFSET = 12
 const TOTAL_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT
-const GRID_COLUMNS = "48px repeat(3, minmax(0, 1fr))"
+const TIME_GUTTER_WIDTH = 48
+const GRID_COLUMNS = `${TIME_GUTTER_WIDTH}px repeat(3, minmax(0, 1fr))`
 const CARD_LINE_HEIGHT = 12
 const CARD_VERTICAL_PADDING = 8
 const CARD_TEXT_SAFE_BUFFER = 10
 const CHIP_TITLE_GAP = 12
+const SNAP_MINUTES = 15
+const POINTER_DRAG_THRESHOLD_PX = 3
+const TOUCH_LONG_PRESS_MS = 260
+const TOUCH_MOVE_CANCEL_PX = 10
+const DRAG_AUTO_SCROLL_ZONE = 56
+const DRAG_AUTO_SCROLL_MAX_SPEED = 2
 
 interface Today3DaysCalendarProps {
   selectedDate: Date
@@ -38,6 +46,7 @@ interface Today3DaysCalendarProps {
   onToggleTask?: (taskId: string) => void
   onToggleEvent?: (eventId: string) => void
   showOverflowChips?: boolean
+  onDragDrop?: (item: DragItem, newStartTime: Date, newEndTime: Date) => void
 }
 
 interface OverflowGroup {
@@ -48,6 +57,32 @@ interface OverflowGroup {
 }
 
 type ConflictLayoutItem = TimeBlock & TodayTimelineLayoutPosition
+
+interface DragPreviewState {
+  item: DragItem
+  sourceKey: string
+  dayIndex: number
+  previewTop: number
+  previewStartTime: Date
+  previewEndTime: Date
+  hasMoved: boolean
+}
+
+interface PointerDragGesture {
+  item: DragItem
+  sourceKey: string
+  pointerId: number
+  pointerType: string
+  startClientX: number
+  startClientY: number
+  lastClientX: number
+  lastClientY: number
+  initialOffsetY: number
+  itemTop: number
+  active: boolean
+  hasMoved: boolean
+  longPressTimer: ReturnType<typeof setTimeout> | null
+}
 
 interface ConflictCluster {
   visible: ConflictLayoutItem[]
@@ -70,6 +105,20 @@ function minutesFromDisplayDayStart(date: Date, displayDay: Date): number {
 function clamp(value: number, min: number, max: number): number {
   if (max < min) return min
   return Math.min(Math.max(value, min), max)
+}
+
+function snapToQuarter(minutes: number): number {
+  return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES
+}
+
+function minutesToTop(minutes: number): number {
+  return ((minutes - START_HOUR * 60) / 60) * HOUR_HEIGHT
+}
+
+function minutesToDate(baseDate: Date, minutes: number): Date {
+  const d = startOfLocalDay(baseDate)
+  d.setMinutes(minutes)
+  return d
 }
 
 function topForDate(date: Date, displayDay: Date): number {
@@ -223,6 +272,10 @@ function titleLineCount(item: ConflictLayoutItem): number {
   )
 }
 
+function durationMinutesForItem(item: TimeBlock): number {
+  return Math.max(1, Math.round((item.endTime.getTime() - item.startTime.getTime()) / 60000))
+}
+
 export function Today3DaysCalendar({
   selectedDate,
   events,
@@ -237,14 +290,255 @@ export function Today3DaysCalendar({
   onToggleTask,
   onToggleEvent,
   showOverflowChips = true,
+  onDragDrop,
 }: Today3DaysCalendarProps) {
   const [overflowGroup, setOverflowGroup] = useState<OverflowGroup | null>(null)
+  const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null)
+  const [suppressTapUntil, setSuppressTapUntil] = useState(0)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  const pointerGestureRef = useRef<PointerDragGesture | null>(null)
+  const dragPreviewRef = useRef<DragPreviewState | null>(null)
+  const autoScrollRef = useRef<{ frame: number | null; speed: number }>({ frame: null, speed: 0 })
+  const cleanupPointerListenersRef = useRef<(() => void) | null>(null)
+  const dragLockSnapshotRef = useRef<{
+    bodyUserSelect: string
+    bodyTouchAction: string
+    scrollerTouchAction: string
+  } | null>(null)
   const days = useMemo(() => [0, 1, 2].map((i) => addDays(selectedDate, i)), [selectedDate])
   const dayBlocks = useMemo(
     () => days.map((date) => buildTimeBlocksForDay({ date, events, tasks, calendarColorMap }).filter(overlapsVisibleRange)),
     [calendarColorMap, days, events, tasks],
   )
+
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollRef.current.frame != null) {
+      cancelAnimationFrame(autoScrollRef.current.frame)
+      autoScrollRef.current.frame = null
+    }
+    autoScrollRef.current.speed = 0
+  }, [])
+
+  const lockDragInteraction = useCallback(() => {
+    if (typeof document === "undefined" || dragLockSnapshotRef.current) return
+    dragLockSnapshotRef.current = {
+      bodyUserSelect: document.body.style.userSelect,
+      bodyTouchAction: document.body.style.touchAction,
+      scrollerTouchAction: scrollContainerRef.current?.style.touchAction ?? "",
+    }
+    document.body.style.userSelect = "none"
+    document.body.style.touchAction = "none"
+    if (scrollContainerRef.current) scrollContainerRef.current.style.touchAction = "none"
+  }, [])
+
+  const unlockDragInteraction = useCallback(() => {
+    if (typeof document === "undefined" || !dragLockSnapshotRef.current) return
+    document.body.style.userSelect = dragLockSnapshotRef.current.bodyUserSelect
+    document.body.style.touchAction = dragLockSnapshotRef.current.bodyTouchAction
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.style.touchAction = dragLockSnapshotRef.current.scrollerTouchAction
+    }
+    dragLockSnapshotRef.current = null
+  }, [])
+
+  const resolveDragPreview = useCallback((gesture: PointerDragGesture, clientX: number, clientY: number): DragPreviewState | null => {
+    const grid = gridRef.current
+    if (!grid) return null
+
+    const rect = grid.getBoundingClientRect()
+    const columnWidth = Math.max(1, (rect.width - TIME_GUTTER_WIDTH) / 3)
+    const xInSchedule = clientX - rect.left - TIME_GUTTER_WIDTH
+    const dayIndex = clamp(Math.floor(xInSchedule / columnWidth), 0, 2)
+    const yInGrid = clientY - rect.top - gesture.initialOffsetY
+    const rawMinutes = ((clamp(yInGrid, 0, TOTAL_HEIGHT) / TOTAL_HEIGHT) * 24 * 60)
+    const snappedMinutes = snapToQuarter(rawMinutes)
+    const clampedMinutes = clamp(snappedMinutes, START_HOUR * 60, END_HOUR * 60 - gesture.item.durationMinutes)
+    const previewStartTime = minutesToDate(days[dayIndex], clampedMinutes)
+    const previewEndTime = new Date(previewStartTime.getTime() + gesture.item.durationMinutes * 60 * 1000)
+
+    return {
+      item: gesture.item,
+      sourceKey: gesture.sourceKey,
+      dayIndex,
+      previewTop: minutesToTop(clampedMinutes),
+      previewStartTime,
+      previewEndTime,
+      hasMoved: gesture.hasMoved,
+    }
+  }, [days])
+
+  const updateDragPreview = useCallback((gesture: PointerDragGesture, clientX: number, clientY: number) => {
+    const next = resolveDragPreview(gesture, clientX, clientY)
+    if (!next) return null
+    dragPreviewRef.current = next
+    setDragPreview(next)
+    return next
+  }, [resolveDragPreview])
+
+  const runAutoScroll = useCallback((clientY: number) => {
+    const scroller = scrollContainerRef.current
+    const gesture = pointerGestureRef.current
+    if (!scroller || !gesture?.active) return
+
+    const rect = scroller.getBoundingClientRect()
+    const relativeY = clientY - rect.top
+    const bottomDistance = rect.bottom - clientY
+    let speed = 0
+
+    if (relativeY < DRAG_AUTO_SCROLL_ZONE) {
+      const ratio = clamp(1 - relativeY / DRAG_AUTO_SCROLL_ZONE, 0, 1)
+      speed = -DRAG_AUTO_SCROLL_MAX_SPEED * ratio
+    } else if (bottomDistance < DRAG_AUTO_SCROLL_ZONE) {
+      const ratio = clamp(1 - bottomDistance / DRAG_AUTO_SCROLL_ZONE, 0, 1)
+      speed = DRAG_AUTO_SCROLL_MAX_SPEED * ratio
+    }
+
+    autoScrollRef.current.speed = speed
+    if (speed === 0) {
+      stopAutoScroll()
+      return
+    }
+    if (autoScrollRef.current.frame != null) return
+
+    const step = () => {
+      const activeGesture = pointerGestureRef.current
+      const activeScroller = scrollContainerRef.current
+      if (!activeGesture?.active || !activeScroller || autoScrollRef.current.speed === 0) {
+        autoScrollRef.current.frame = null
+        return
+      }
+      const maxScrollTop = Math.max(0, activeScroller.scrollHeight - activeScroller.clientHeight)
+      activeScroller.scrollTop = clamp(activeScroller.scrollTop + autoScrollRef.current.speed, 0, maxScrollTop)
+      updateDragPreview(activeGesture, activeGesture.lastClientX, activeGesture.lastClientY)
+      autoScrollRef.current.frame = requestAnimationFrame(step)
+    }
+
+    autoScrollRef.current.frame = requestAnimationFrame(step)
+  }, [stopAutoScroll, updateDragPreview])
+
+  const clearPointerGesture = useCallback(() => {
+    const gesture = pointerGestureRef.current
+    if (gesture?.longPressTimer) clearTimeout(gesture.longPressTimer)
+    pointerGestureRef.current = null
+    cleanupPointerListenersRef.current?.()
+    cleanupPointerListenersRef.current = null
+    stopAutoScroll()
+    unlockDragInteraction()
+  }, [stopAutoScroll, unlockDragInteraction])
+
+  const startPointerDrag = useCallback((gesture: PointerDragGesture) => {
+    if (gesture.active) return
+    if (gesture.longPressTimer) {
+      clearTimeout(gesture.longPressTimer)
+      gesture.longPressTimer = null
+    }
+    gesture.active = true
+    lockDragInteraction()
+    updateDragPreview(gesture, gesture.lastClientX, gesture.lastClientY)
+  }, [lockDragInteraction, updateDragPreview])
+
+  const completePointerDrag = useCallback((cancel = false) => {
+    const gesture = pointerGestureRef.current
+    const preview = dragPreviewRef.current
+    const didMove = !!gesture?.hasMoved || !!preview?.hasMoved
+
+    clearPointerGesture()
+    dragPreviewRef.current = null
+    setDragPreview(null)
+
+    if (!cancel && gesture?.active) {
+      if (preview && didMove) {
+        const moved = preview.previewStartTime.getTime() !== gesture.item.startTime.getTime()
+        if (moved) onDragDrop?.(gesture.item, preview.previewStartTime, preview.previewEndTime)
+      }
+      setSuppressTapUntil(Date.now() + 250)
+    }
+  }, [clearPointerGesture, onDragDrop])
+
+  const handleItemPointerDown = useCallback((
+    event: ReactPointerEvent<HTMLDivElement>,
+    item: DragItem,
+    itemTop: number,
+    sourceKey: string,
+  ) => {
+    if (!onDragDrop || event.button !== 0) return
+    const target = event.target as HTMLElement
+    if (target.closest("button, input, textarea, select, a, [contenteditable='true']")) return
+    if (!gridRef.current) return
+
+    completePointerDrag(true)
+
+    const rect = gridRef.current.getBoundingClientRect()
+    const gesture: PointerDragGesture = {
+      item,
+      sourceKey,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
+      initialOffsetY: event.clientY - rect.top - itemTop,
+      itemTop,
+      active: false,
+      hasMoved: false,
+      longPressTimer: null,
+    }
+    pointerGestureRef.current = gesture
+
+    if (event.pointerType === "touch" || event.pointerType === "pen") {
+      gesture.longPressTimer = setTimeout(() => startPointerDrag(gesture), TOUCH_LONG_PRESS_MS)
+    }
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const activeGesture = pointerGestureRef.current
+      if (!activeGesture || activeGesture.pointerId !== moveEvent.pointerId) return
+      activeGesture.lastClientX = moveEvent.clientX
+      activeGesture.lastClientY = moveEvent.clientY
+
+      const deltaX = Math.abs(moveEvent.clientX - activeGesture.startClientX)
+      const deltaY = Math.abs(moveEvent.clientY - activeGesture.startClientY)
+
+      if (!activeGesture.active) {
+        if (activeGesture.pointerType === "touch" || activeGesture.pointerType === "pen") {
+          if (Math.max(deltaX, deltaY) > TOUCH_MOVE_CANCEL_PX) {
+            if (activeGesture.longPressTimer) clearTimeout(activeGesture.longPressTimer)
+            activeGesture.longPressTimer = null
+          }
+          return
+        }
+        if (Math.max(deltaX, deltaY) < POINTER_DRAG_THRESHOLD_PX) return
+        activeGesture.hasMoved = true
+        startPointerDrag(activeGesture)
+      } else {
+        activeGesture.hasMoved = true
+      }
+
+      if (moveEvent.cancelable) moveEvent.preventDefault()
+      updateDragPreview(activeGesture, moveEvent.clientX, moveEvent.clientY)
+      runAutoScroll(moveEvent.clientY)
+    }
+
+    const handlePointerUp = (upEvent: PointerEvent) => {
+      if (pointerGestureRef.current?.pointerId !== upEvent.pointerId) return
+      completePointerDrag(false)
+    }
+
+    const handlePointerCancel = (cancelEvent: PointerEvent) => {
+      if (pointerGestureRef.current?.pointerId !== cancelEvent.pointerId) return
+      completePointerDrag(true)
+    }
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false })
+    window.addEventListener("pointerup", handlePointerUp)
+    window.addEventListener("pointercancel", handlePointerCancel)
+    cleanupPointerListenersRef.current = () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", handlePointerUp)
+      window.removeEventListener("pointercancel", handlePointerCancel)
+    }
+  }, [completePointerDrag, onDragDrop, runAutoScroll, startPointerDrag, updateDragPreview])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -255,6 +549,10 @@ export function Today3DaysCalendar({
     })
     return () => cancelAnimationFrame(frame)
   }, [getInitialScrollTop])
+
+  useEffect(() => {
+    return () => completePointerDrag(true)
+  }, [completePointerDrag])
 
   return (
     <div
@@ -297,7 +595,7 @@ export function Today3DaysCalendar({
       {eventsLoading && dayBlocks.every((items) => items.length === 0) ? (
         <div className="py-8 text-center text-sm text-muted-foreground">読み込み中...</div>
       ) : (
-        <div className="grid" style={{ gridTemplateColumns: GRID_COLUMNS, height: TOTAL_HEIGHT }}>
+        <div ref={gridRef} className="grid" style={{ gridTemplateColumns: GRID_COLUMNS, height: TOTAL_HEIGHT }}>
           <div className="relative border-r border-border/30 bg-background/90 pointer-events-none select-none" aria-hidden="true">
             {Array.from({ length: END_HOUR - START_HOUR }, (_, index) => START_HOUR + index).map((hour) => (
               <div
@@ -352,6 +650,7 @@ export function Today3DaysCalendar({
                   return (
                     <Fragment key={`${day.toISOString()}-${clusterIndex}-${cluster.start.getTime()}`}>
                       {cluster.visible.map((layout) => {
+                        const sourceKey = itemKey(layout)
                         const toggleItem = layout.originalTask && onToggleTask
                           ? () => onToggleTask(layout.originalTask!.id)
                           : layout.originalEvent && onToggleEvent && layout.originalEvent.sync_status !== "pending"
@@ -359,22 +658,39 @@ export function Today3DaysCalendar({
                             : undefined
                         const isDone = layout.isCompleted
                         const isNow = currentTime >= layout.startTime && currentTime < layout.endTime
+                        const dragItem: DragItem = {
+                          type: layout.originalEvent ? "event" : "task",
+                          id: layout.id,
+                          startTime: layout.startTime,
+                          endTime: layout.endTime,
+                          durationMinutes: durationMinutesForItem(layout),
+                        }
+                        const isDraggingThisItem = dragPreview?.sourceKey === sourceKey
                         return (
                           <div
-                            key={itemKey(layout)}
+                            key={sourceKey}
                             role="button"
                             tabIndex={0}
-                            onClick={() => onItemTap?.(layout)}
+                            onClick={(event) => {
+                              if (suppressTapUntil > Date.now()) {
+                                event.preventDefault()
+                                return
+                              }
+                              onItemTap?.(layout)
+                            }}
                             onKeyDown={(event) => {
                               if (event.key !== "Enter" && event.key !== " ") return
                               event.preventDefault()
                               onItemTap?.(layout)
                             }}
+                            onPointerDown={(event) => handleItemPointerDown(event, dragItem, layout.top, sourceKey)}
                             className={cn(
                               "absolute z-10 flex min-w-0 items-start justify-start gap-1.5 overflow-hidden rounded-md border-l-[3px] text-left align-top shadow-sm outline-none active:opacity-80",
                               "focus-visible:ring-2 focus-visible:ring-primary/80",
+                              onDragDrop && "cursor-grab active:cursor-grabbing",
                               isNow && "ring-1 ring-primary/50",
-                              isDone && "opacity-55"
+                              isDone && "opacity-55",
+                              isDraggingThisItem && "invisible",
                             )}
                             style={{
                               ...eventStyle(layout.color),
@@ -434,6 +750,9 @@ export function Today3DaysCalendar({
                     </Fragment>
                   )
                 })}
+                {dragPreview?.dayIndex === dayIndex && (
+                  <DragPreviewBlock preview={dragPreview} />
+                )}
               </div>
             )
           })}
@@ -498,6 +817,41 @@ export function Today3DaysCalendar({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function DragPreviewBlock({ preview }: { preview: DragPreviewState }) {
+  const isTask = preview.item.type === "task"
+  const startStr = format(preview.previewStartTime, "HH:mm")
+  const endStr = format(preview.previewEndTime, "HH:mm")
+  const height = Math.max((preview.item.durationMinutes / 60) * HOUR_HEIGHT, HOUR_HEIGHT * 0.4)
+
+  return (
+    <div
+      className="pointer-events-none absolute left-1 right-1 z-40 overflow-hidden rounded-md border-2 border-dashed px-2 py-1 shadow-lg"
+      style={{
+        top: preview.previewTop,
+        height,
+      }}
+    >
+      <div
+        className={cn(
+          "absolute inset-0",
+          isTask ? "bg-green-400/20" : "bg-sky-400/20",
+        )}
+      />
+      <div
+        className={cn(
+          "absolute inset-0 rounded-[inherit] border",
+          isTask ? "border-green-400/70" : "border-sky-400/70",
+        )}
+      />
+      <div className="relative flex min-w-0 items-center gap-1.5 text-[11px] font-bold">
+        <span className={isTask ? "text-green-200" : "text-sky-200"}>
+          {startStr} - {endStr}
+        </span>
+      </div>
     </div>
   )
 }

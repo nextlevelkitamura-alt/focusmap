@@ -655,6 +655,7 @@ export function DesktopTodayPanel({
                         onToggleTask={toggleTask}
                         onToggleEvent={toggleEventCompletion}
                         showOverflowChips={show3DayOverflowChips}
+                        onDragDrop={handleDragDrop}
                     />
                 ) : calendarRangeMode === 'month' ? (
                     <TodayMonthCalendar
