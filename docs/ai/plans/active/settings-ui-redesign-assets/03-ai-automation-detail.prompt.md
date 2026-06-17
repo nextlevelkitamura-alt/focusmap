@@ -14,9 +14,9 @@ Components:
 - Toggle row: 予定作成時に毎回カレンダーを聞く
 - Collapsible setup section: Macエージェントを導入/再設定, command copy
 - Status chips: 接続中, 要確認, 未確認, Macが必要
-State requirements: show connected Mac agent, Codex ready, thread import ready, and one amber stale/attention line. Show loading/saving feedback as small row text, not a full-page spinner.
+State requirements: show connected Mac agent, Codex ready, thread import ready, and one monochrome stale/attention line. Show loading/saving feedback as small row text, not a full-page spinner.
 Responsive note: desktop version; rows should translate to mobile stacked sections.
 Text: Japanese concise labels, no long prose blocks.
-Visual style: compact control center, dark neutral Focusmap surfaces, high confidence but not flashy.
-Constraints: no marketing hero, no decorative blobs, no fake logos, no nested cards inside cards, no tiny logs, no terminal wall of text except a short command preview in the setup details.
+Visual style: compact control center, black/white/gray neutral Focusmap surfaces, high confidence but not flashy. Use smaller modern admin typography and monochrome status labels.
+Constraints: no marketing hero, no decorative blobs, no fake logos, no nested cards inside cards, no tiny logs, no terminal wall of text except a short command preview in the setup details, no bright status color palette.
 ```

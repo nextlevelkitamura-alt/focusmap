@@ -17,6 +17,6 @@ Components:
 State requirements: show connected normal state, selected calendar count, one disabled/unselected calendar, and one inline sync state.
 Responsive note: desktop version; mobile becomes a provider detail with calendar list below.
 Text: Japanese concise labels, no long paragraphs.
-Visual style: familiar integration settings, restrained, high clarity, not Google Admin-heavy.
-Constraints: no fake Google logo if uncertain, no nested cards, no decorative blobs, no oversized connection card, no unreadable tiny text.
+Visual style: familiar integration settings, restrained black/white/gray UI, high clarity, not Google Admin-heavy. Use monochrome connection/status chips and smaller modern admin typography.
+Constraints: no fake Google logo if uncertain, no nested cards, no decorative blobs, no oversized connection card, no unreadable tiny text, no bright status color palette.
 ```

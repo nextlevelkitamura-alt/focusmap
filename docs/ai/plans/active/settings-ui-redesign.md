@@ -3,6 +3,7 @@
 - Mode: `settings-ui-architect / design-pack`
 - Created: 2026-06-17
 - Status: Chat 1 design pack complete
+- Image review status: Complete
 - Scope: `/dashboard/settings`, `/dashboard/settings/projects`, `/dashboard/settings/automation`, `/dashboard/settings/integrations`, `/dashboard/settings/access`, `/dashboard/settings/appearance`
 - Assets: `docs/ai/plans/active/settings-ui-redesign-assets/`
 - Code implementation: out of scope
@@ -119,24 +120,33 @@ Gate A is satisfied.
 
 | Category | Route | Priority | Risk | Main Jobs | Notes |
 |---|---|---:|---|---|---|
-| 概要 | `/dashboard/settings` | 1 | Low | See all critical setup states, search settings, jump to the right place | Rename from `一般`. This is not a settings form. |
+| 設定トップ | `/dashboard/settings` | 1 | Low | See all critical setup states, search settings, jump to the right place | This is the root/status dashboard, not a normal sidebar category row. Do not show `概要` as a repeated menu item. |
 | AI / 自動化 | `/dashboard/settings/automation` | 1 | High | Mac agent status, Codex state, thread import, calendar behavior, install/recovery | Keep route, but label should show both AI and automation intent. |
 | プロジェクト | `/dashboard/settings/projects` | 2 | Medium | Project colors, repo paths, project descriptions/context, scan paths | Split visual/color vs execution/repo state inside the page. |
 | 連携 | `/dashboard/settings/integrations` | 2 | Medium | Google Calendar connection, selected calendars, token health, import behavior | Add status summary row and clearer sync/error language. |
-| アクセス / API | `/dashboard/settings/access` | 1 | High | API keys, external AI prompt, scopes, last used, account, danger zone | Rename label to `アクセス/API` if width allows. |
+| アクセス/API | `/dashboard/settings/access` | 1 | High | API keys, external AI prompt, scopes, last used, account, danger zone | API keys stay here for this redesign; do not split a separate developer category yet. |
 | 外観 | `/dashboard/settings/appearance` | 3 | Low | Theme, density/display preferences later | Keep simple; do not compete with operational categories. |
-| スペース共有 | `/dashboard/settings/spaces` | Later | High | Members and permissions | Existing route can remain, but do not include in primary redesign unless user expands scope. |
+| スペース共有 | `/dashboard/settings/spaces` | Later | High | Members and permissions | Out of scope for this redesign. Treat as secondary/later category and do not include in primary nav. |
+
+Design clarification after image review:
+
+- `設定トップ` is the root screen role. Do not show a redundant `概要` row in the sidebar or mobile category list.
+- The sidebar title/header area and settings URL itself carry the top/root role.
 
 ### Navigation Model
 
 - Desktop: keep persistent left sidebar, add search input above category groups.
+- Sidebar search is Phase 1 scope, but only as local filtering of category/section labels. Do not add server search in this redesign.
+- The settings root/top is reached from the sidebar title/header area, not by showing `概要` as another normal category row.
 - Sidebar groups:
-  - `状態`: 概要, AI / 自動化
+  - `状態`: AI / 自動化
   - `作業環境`: プロジェクト, 連携
   - `管理`: アクセス/API, 外観
 - Show selected state, icon, and compact status chip/error dot in the sidebar when a category has attention needed.
 - Keep `アプリに戻る` at top. In Mac app, respect native titlebar spacing from existing dashboard rules.
+- Add a bottom account profile button in the sidebar. It should show a small circular initial/avatar, account email/name, and a menu affordance. Account menu actions should include logout; account deletion remains isolated in the relevant high-risk account/danger flow.
 - Mobile: root settings page is a list-detail launcher. Each row has title, short subtitle, and status chip. Detail screens use the existing back link.
+- Mobile should also expose the account profile/logout entry near the bottom of the settings root, not buried inside API settings.
 - Search MVP: filter category labels and known section labels locally; it does not need cross-route server search in Phase 1.
 
 ### Layout Pattern
@@ -152,9 +162,18 @@ Gate A is satisfied.
   - Danger/destructive/account actions at bottom in an isolated `DangerZone`.
 - Avoid nested cards inside cards. Sections can be bordered surfaces, repeated rows can be grouped lists.
 
+### Visual And Typography Direction
+
+- Use a black/white/gray first visual system for settings. The screen should read as Focusmap's quiet control surface, not a colorful admin console.
+- State meaning must not depend on color. Use label text, borders, icon shape, badge weight, and placement first.
+- If implementation keeps semantic color tokens, use them sparingly and only where product-wide status/danger semantics already require them. The mockups for this design gate use grayscale status chips.
+- Reduce the visual scale from the first mockup pass: desktop page titles around 24-28px, section titles around 15-18px, row titles around 14-16px, supporting text around 12-13px.
+- Prefer modern compact settings typography: medium weight for row titles, regular muted supporting text, no oversized hero-style headings inside settings.
+
 ### Component Inventory
 
 - `SettingsShell`: keep, but add sidebar search/status/grouping.
+- `SettingsAccountMenu`: sidebar/mobile account profile entry with avatar/initial, account email/name, menu affordance, and logout action.
 - `SettingsOverview`: redesign as status dashboard + grouped category list.
 - `SettingsStatusTile`: compact status tile for agent/calendar/API/project state.
 - `SettingsSection`: shared section primitive with heading, description, optional trailing action.
@@ -183,15 +202,15 @@ Use the same labels across categories:
 
 Color guidance:
 
-- Good/connected: restrained emerald.
-- Attention/stale: amber.
-- Error/danger: red, used sparingly.
-- Neutral/off: zinc.
-- Primary action: existing Focusmap blue/neutral button style; do not introduce a separate palette.
+- Primary surface palette: black, near-black, gray, white.
+- Good/connected, attention/stale, and neutral/off states should remain readable in grayscale through label text and hierarchy.
+- Error/danger should be clearly isolated by placement, border, and confirmation flow. Avoid making the whole settings UI depend on bright red/yellow status chips.
+- Primary action: white/neutral button style in settings; do not introduce a separate colorful palette.
 
 ### Mobile Behavior
 
 - Settings root shows only high-signal categories and status chips. Avoid full desktop sidebar on mobile.
+- Settings root includes an account profile/logout entry near the bottom.
 - Detail screens use one primary job per screen section.
 - Tap targets are at least 44px.
 - Long tables become grouped rows or drill-in sheets.
@@ -220,6 +239,7 @@ Gate B is satisfied.
 ### Information Architecture
 
 - `/dashboard/settings` is an overview/status dashboard, not a "general" settings form.
+- `/dashboard/settings` is reached as the settings top/root. `概要` must not be duplicated as a normal sidebar category.
 - AI execution, local Mac/Codex, Google Calendar, API keys, project repo/context, and appearance are separated by user job and risk.
 - Space sharing is either explicitly added to nav or removed from primary overview for this scope.
 - Search/filter is present in the sidebar/overview, at least for category/section labels.
@@ -228,6 +248,7 @@ Gate B is satisfied.
 
 - Desktop settings shell remains sidebar + content.
 - Sidebar shows category groups and selected state.
+- Sidebar includes a bottom account profile/menu entry for logout/account actions.
 - Root overview shows current operational status before category navigation.
 - Detail screens put current state and recovery/primary action first.
 - Mobile root is a list of categories with status chips; detail screens drill in.
@@ -240,6 +261,7 @@ Gate B is satisfied.
 - Selects are used for theme/import period; not for binary options.
 - Tables/lists are used for API keys, calendars, projects, and repo scan paths.
 - Destructive actions sit in a dedicated danger zone with confirmation.
+- Logout is available from the sidebar/mobile account menu; account deletion remains in a dedicated danger zone.
 
 ### Accessibility
 
@@ -263,13 +285,21 @@ Target level: structured cleanup with visual redesign.
 
 ### Phase 0: Contract
 
-- Approve category names, sidebar grouping, state labels, and shared component primitives.
-- Decide whether `スペース共有` is in or out of this redesign.
+- Approved: Direction A「Focusmap Control Center」.
+- Revised after image review: `/dashboard/settings` remains the settings top/root, but `概要` is not shown as a normal sidebar category because it is redundant.
+- Approved: `スペース共有` is out of scope and remains secondary/later.
+- Approved: sidebar search is Phase 1 as local filtering only.
+- Approved: `アクセス` -> `アクセス/API`.
+- Approved: API keys stay under `アクセス/API` for now.
+- Approved after image review: visual system is black/white/gray first; avoid colorful status palette in settings.
+- Approved after image review: add bottom account profile/menu entry with logout.
+- Approved after image review: reduce type scale and use modern compact settings typography.
 
 ### Phase 1: Shell And Overview
 
-- Rename root sidebar label to `概要`.
+- Remove the old root sidebar category label. The root is the settings top reached from the shell/header, not a duplicated menu row.
 - Add sidebar search/filter and category groups.
+- Add sidebar account profile/menu entry with logout.
 - Redesign settings overview into operational status dashboard.
 - Keep existing `prefetch={false}` behavior.
 
@@ -305,6 +335,18 @@ Mockup image generation prompts are saved under:
 - `docs/ai/plans/active/settings-ui-redesign-assets/09-mobile-ai-automation.prompt.md`
 - `docs/ai/plans/active/settings-ui-redesign-assets/10-alternate-directions.prompt.md`
 
+Generated mockup images are saved under:
+
+- `docs/ai/plans/active/settings-ui-redesign-assets/01-settings-overview.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/02-menu-state.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/03-ai-automation-detail.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/04-projects-detail.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/05-integrations-detail.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/06-access-detail.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/07-appearance-detail.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/08-mobile-overview.png`
+- `docs/ai/plans/active/settings-ui-redesign-assets/09-mobile-ai-automation.png`
+
 Recommended visual direction: Direction A, `Focusmap Control Center`.
 
 Rationale:
@@ -316,7 +358,7 @@ Rationale:
 
 ### Prompt Self-Review
 
-I revised the prompts to avoid these issues:
+I revised the prompts and generated images to avoid these issues:
 
 - Too many decorative icon cards on the overview.
 - A generic SaaS admin palette that would make settings feel unrelated to Focusmap.
@@ -324,28 +366,29 @@ I revised the prompts to avoid these issues:
 - Hidden danger/account/API actions.
 - Marketing or onboarding text inside settings.
 - Fake logos or overly tiny text in generated mockups.
+- Redundant `概要` rows in sidebar/mobile lists.
+- Overly large settings typography.
+- Colorful status-heavy UI. Final mockups use black/white/gray first.
+- Missing account/logout entry in the settings navigation.
 
 Remaining risk:
 
 - Prompt-generated text may be slightly inaccurate in Japanese. Implementation should follow this plan's category labels and acceptance criteria rather than copying mockup text exactly.
 
-## User Decisions Needed
+## Decisions
 
-- Approve root category rename: `一般` -> `概要`.
-- Decide whether `スペース共有` belongs in this redesign now or stays secondary/out of scope.
-- Decide whether sidebar search is MVP Phase 1 or deferred until after the overview/status redesign.
-- Decide whether `アクセス` should be displayed as `アクセス/API` in the sidebar.
-- Decide whether API keys stay under `アクセス/API` or become a separate `開発者` category later. Recommendation: keep under `アクセス/API` for now.
+- Direction A「Focusmap Control Center」を採用する。
+- `/dashboard/settings` は設定トップとして扱い、`概要` を通常のサイドバーカテゴリとしては表示しない。
+- `スペース共有` は今回対象外。二次カテゴリ/later扱いにする。
+- サイドバー検索はPhase 1に含める。ただしローカルフィルタのみ。
+- `アクセス` は `アクセス/API` と表示する。
+- APIキーは当面 `アクセス/API` に置き、別の `開発者` カテゴリは作らない。
 
 ## Implementation Readiness Decision
 
-Ready for Chat 2 after user approval of the recommended direction.
+Ready for Chat 2 after user approval of the generated image mockups.
 
-Do not start implementation until the user chooses:
-
-- Use Direction A as-is.
-- Combine Direction A with an alternate direction.
-- Revise the architecture before implementation.
+Real image mockups have been generated, saved, and reviewed. The final design gate direction is: Direction A with black/white/gray visual system, compact typography, no duplicated `概要` sidebar row, and account/logout access from the settings navigation.
 
 ## Chat 2 Input Values
 
@@ -357,9 +400,6 @@ Chat 2用プロンプトはこのDesign Packでは新規作成しない。正本
 - モックアップ/プロンプト保存先: `docs/ai/plans/active/settings-ui-redesign-assets/`
 - 推奨UI案: Direction A「Focusmap Control Center」
 - まだユーザー判断が必要な点:
-  - `一般` を `概要` へ改名してよいか
-  - `スペース共有` を今回の設定UI改善に含めるか、現時点では二次カテゴリ/対象外にするか
-  - サイドバー検索をPhase 1で入れるか、概要/状態表示の改善後に回すか
-  - サイドバー表示名を `アクセス` のままにするか、`アクセス/API` へ変えるか
-  - APIキーを当面 `アクセス/API` に置くか、後で `開発者` カテゴリへ分けるか
+  - この最終モックアップでChat 2へ進むか
+  - アカウントメニューに初期実装で含める操作を `ログアウトのみ` にするか、`ログアウト + アカウント設定への導線` にするか
 - Chat 1 commit hash: `<Chat 1完了後のcommit hashを貼る>`

@@ -16,6 +16,6 @@ Components: dense list rows, swatches, repo path monospace text, status chips, a
 State requirements: show one project with repo linked, one missing repo "要設定", one context "古い", one scan "同期中".
 Responsive note: desktop version; mobile should drill into repo/context sections instead of showing three columns.
 Text: Japanese concise labels; repo paths can be realistic but short like ~/Private/focusmap.
-Visual style: operational, dense, readable, Focusmap dark/neutral with subtle project colors.
-Constraints: no nested cards inside cards, no huge color palette wall, no fake logos, no decorative blobs, no unreadable table text.
+Visual style: operational, dense, readable, Focusmap black/white/gray dark neutral. Project colors should be shown as muted grayscale swatches in this mockup, not colorful decoration. Use smaller modern admin typography.
+Constraints: no nested cards inside cards, no huge color palette wall, no fake logos, no decorative blobs, no unreadable table text, no bright status color palette.
 ```

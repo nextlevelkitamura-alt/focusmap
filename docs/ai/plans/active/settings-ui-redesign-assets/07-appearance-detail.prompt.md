@@ -15,6 +15,6 @@ Components:
 State requirements: show selected "システム", one disabled/future row, no error.
 Responsive note: desktop version; mobile is simple stacked rows.
 Text: Japanese concise labels.
-Visual style: restrained, consistent with other settings sections, no separate artistic palette.
+Visual style: restrained black/white/gray UI, consistent with other settings sections, no separate artistic palette. Use smaller modern admin typography.
 Constraints: no marketing layout, no gradient hero, no decorative blobs, no oversized preview, no one-note purple/blue palette.
 ```

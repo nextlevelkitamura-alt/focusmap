@@ -13,10 +13,10 @@ Components:
 - Collapsible guide: 外部AI連携ガイド with "コピー"
 - Scope summary chips: mindmap:read, mindmap:drafts, calendar:write
 - Account panel: email, logout
-- Danger zone: アカウント削除 with red outline and confirmation note
+- Danger zone: アカウント削除 with isolated monochrome danger treatment and confirmation note
 State requirements: show one active key recently used, one inactive/revoked key muted, one broad write scope marked "危険", one no-error normal state.
 Responsive note: desktop version; mobile stacks and requires confirmation sheet for destructive actions.
 Text: Japanese short labels; use realistic but short scope labels.
-Visual style: dense developer/admin settings, risk visible but not alarmist.
-Constraints: no fake secrets beyond prefix, no full raw API key displayed, no decorative blobs, no nested cards, no tiny table text, no browser confirm UI.
+Visual style: dense developer/admin settings, black/white/gray surfaces, risk visible but not alarmist. Use border, label text, and placement for risk; avoid bright red/amber unless implementation later chooses a minimal danger token. Smaller modern admin typography.
+Constraints: no fake secrets beyond prefix, no full raw API key displayed, no decorative blobs, no nested cards, no tiny table text, no browser confirm UI, no bright status color palette.
 ```
