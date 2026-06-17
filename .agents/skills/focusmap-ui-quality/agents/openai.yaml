@@ -1,0 +1,4 @@
+interface:
+  display_name: "Focusmap UI Quality"
+  short_description: "FocusmapのUIを既存テーマを保ったまま95点以上へ引き上げるための調査・分解・実装・レビュー統合Skill。"
+  default_prompt: "Focusmap UIの調査、95点改善案、並列実装分解、readonlyレビュー統合を行ってください。"

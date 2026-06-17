@@ -139,6 +139,7 @@ Goals → Projects → TaskGroups → Tasks
 
 - スマホ・PC・Macアプリ・iOSアプリのUIは、同じFocusmapに見えることを必須条件にする。色味、状態色、アイコン、線幅、角丸、余白の考え方を共通化し、端末や画面ごとに別アプリのように見える独自パレットや別系統の装飾を持ち込まない。
 - アイコンは原則として既存の `lucide-react` と共通UIコンポーネントを使い、サイズ・stroke・色の扱いを揃える。プラットフォーム差は配置、密度、safe area、入力方式で吸収し、ブランドの視覚言語は共通デザイントークンを優先する。
+- UI崩れ、白画面、デスクトップ/モバイル差分、設定・カレンダー・マップ・チャットの大きな見直しは、プロジェクトSkill `.agents/skills/focusmap-ui-quality/SKILL.md` を入口にする。採点は診断用に留め、レビューや改善案は必ず95点以上の完成形、守る既存テーマ、Desktop/Mobileの役割差、P0/P1の完了条件まで具体化する。
 - 削除などの破壊的アクションを下部に置く場合も、太い塗りCTAのように強調しすぎない。モバイルのボトムシートでは高さ44〜48px程度、控えめな余白、細いアウトラインまたは淡い赤のテキスト/アイコンで、既存フォーム入力の密度に合わせる。
 
 ### 設定画面
@@ -161,6 +162,7 @@ Goals → Projects → TaskGroups → Tasks
 ### AIエージェント並列作業ポリシー
 
 - 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は、`task-router` Skill を入口にする。詳細な判断基準、worktree安全策、各チャット用プロンプト雛形は `task-router` の workflows を正とする。
+- UI改善を並列化する場合は、`focusmap-ui-quality` Skillで調査、UI憲法、95点以上のacceptance、Desktop/Mobile/Shared/Readonly Review/Integrationの分担を先に固めてから、task-routerのworktree運用へ渡す。
 - task-router の進捗管理は `docs/ai/task-board.md` を現在地の正本にする。task-router が新規に作る計画は `docs/ai/plans/active/`、完了タスクは `docs/ai/task-archive/YYYY/MM.md`、完了計画は `docs/ai/plans/archive/YYYY/MM/` に月別で格納する。
 - 並列化判断はタスク量・見積時間だけで行わず、同じファイルを触る可能性、UI/backend等の責務分離、API contract / DB schema / shared types / auth / error format の未確定、generated files / lockfile / migration の衝突、統合コスト、失敗worktreeを破棄できるかを見て提案する。
 - UI と backend を並列で進める場合は、まず Planner が `API_CONTRACT.md` / `UI_ACCEPTANCE.md` / `TEST_PLAN.md` / `OWNERSHIP.md` 相当を作り、Frontend / Backend / Integration / Review に分ける。worktree は統括側が branch/status/uncommitted changes/base/責務/allowed files/merge順を確認してから提案し、force push、`git reset --hard`、`git clean -fd`、本番DB操作、secret/token表示編集、GCP/GCS削除停止、未承認の大規模削除、意図しないlockfile更新、unrelated refactorは禁止する。
