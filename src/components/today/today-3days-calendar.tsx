@@ -472,6 +472,10 @@ export function Today3DaysCalendar({
     if (!gridRef.current) return
 
     completePointerDrag(true)
+    if (event.pointerType === "mouse") {
+      event.preventDefault()
+      window.getSelection()?.removeAllRanges()
+    }
 
     const rect = gridRef.current.getBoundingClientRect()
     event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -703,10 +707,11 @@ export function Today3DaysCalendar({
                               onItemTap?.(layout)
                             }}
                             onPointerDown={(event) => handleItemPointerDown(event, dragItem, layout.top, sourceKey)}
+                            aria-grabbed={isDraggingThisItem || undefined}
                             className={cn(
                               "absolute z-10 flex min-w-0 items-start justify-start gap-1.5 overflow-hidden rounded-md border-l-[3px] text-left align-top shadow-sm outline-none active:opacity-80",
                               "focus-visible:ring-2 focus-visible:ring-primary/80",
-                              onDragDrop && "cursor-grab active:cursor-grabbing",
+                              onDragDrop && "cursor-grab select-none active:cursor-grabbing",
                               isNow && "ring-1 ring-primary/50",
                               isDone && "opacity-55",
                               isDraggingThisItem && "invisible",

@@ -174,14 +174,19 @@ export function CalendarSelector({
               key={calendar.id}
               checked={calendar.selected}
               onSelect={(event) => event.preventDefault()}
-              onCheckedChange={(checked) => toggleCalendar(calendar.id, checked === true)}
+              onCheckedChange={(checked) => {
+                void toggleCalendar(calendar.id, checked === true).catch(() => {
+                  // useCalendars already rolls back and exposes the error state.
+                })
+              }}
               className={cn(
                 "flex items-center gap-2 py-1.5 pl-8",
                 "[&>span:first-child]:size-4 [&>span:first-child]:rounded-[3px] [&>span:first-child]:border [&>span:first-child]:border-muted-foreground/50",
                 "data-[state=checked]:[&>span:first-child]:border-primary data-[state=checked]:[&>span:first-child]:bg-primary/15 [&>span:first-child_svg]:size-3"
               )}
             >
-              <div
+              <span
+                aria-hidden="true"
                 className="w-2.5 h-2.5 rounded-full shrink-0 border"
                 style={{ backgroundColor: calendar.background_color || '#ccc' }}
               />
@@ -196,7 +201,12 @@ export function CalendarSelector({
               {allSelected ? '全解除' : '全選択'}
             </span>
             <button
-              onClick={() => toggleAll(!allSelected)}
+              type="button"
+              onClick={() => {
+                void toggleAll(!allSelected).catch(() => {
+                  // useCalendars already rolls back and exposes the error state.
+                })
+              }}
               className="p-0.5 hover:bg-accent rounded"
             >
               {allSelected ? (
