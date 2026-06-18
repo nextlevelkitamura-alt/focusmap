@@ -8,6 +8,7 @@ import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
 const RUNNING_CODEX_REFRESH_INTERVAL_MS = 3_000
+const REVIEW_CODEX_REFRESH_INTERVAL_MS = 3_000
 const RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS = 5_000
 const PROMPT_WAITING_FAST_SYNC_WINDOW_MS = 3 * 60_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
@@ -32,6 +33,19 @@ function isRunningCodexTask(task: AiTask) {
 function hasRunningCodexTask(tasks: Map<string, AiTask>) {
   for (const task of tasks.values()) {
     if (isRunningCodexTask(task)) return true
+  }
+  return false
+}
+
+function isReviewCodexTask(task: AiTask) {
+  if (!isCodexTask(task)) return false
+  if (task.status === 'completed' || task.status === 'failed') return false
+  return getCodexTaskUiState(task)?.state === 'awaiting_approval'
+}
+
+function hasReviewCodexTask(tasks: Map<string, AiTask>) {
+  for (const task of tasks.values()) {
+    if (isReviewCodexTask(task)) return true
   }
   return false
 }
@@ -87,6 +101,7 @@ function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
 
 function localSyncIntervalForTask(task: AiTask) {
   if (isRunningCodexTask(task)) return RUNNING_CODEX_REFRESH_INTERVAL_MS
+  if (isReviewCodexTask(task)) return REVIEW_CODEX_REFRESH_INTERVAL_MS
   if (isRecentPromptWaitingCodexTask(task)) return RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
   return IDLE_REFRESH_INTERVAL_MS
 }
@@ -172,9 +187,11 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
   const promptWaitingExpiryMs = useMemo(() => nextPromptWaitingExpiryMs(bySourceId), [bySourceId])
   const refreshIntervalMs = hasRunningCodexTask(bySourceId)
     ? RUNNING_CODEX_REFRESH_INTERVAL_MS
-    : hasRecentPromptWaitingCodexTask(bySourceId)
-      ? RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
-      : IDLE_REFRESH_INTERVAL_MS
+    : hasReviewCodexTask(bySourceId)
+      ? REVIEW_CODEX_REFRESH_INTERVAL_MS
+      : hasRecentPromptWaitingCodexTask(bySourceId)
+        ? RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
+        : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -195,11 +212,14 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
   const localSyncTargets = useMemo(() => codexTasksForLocalSync(bySourceId), [bySourceId])
   const localSyncTargetKey = useMemo(() => {
     return localSyncTargets
-      .map(({ sourceId, task }) => `${sourceId}:${task.id}:${task.status}:${isRunningCodexTask(task) ? 'running' : 'idle'}`)
+      .map(({ sourceId, task }) => `${sourceId}:${task.id}:${task.status}:${getCodexTaskUiState(task)?.state ?? 'idle'}`)
       .join('|')
   }, [localSyncTargets])
   const hasRunningLocalSyncTarget = useMemo(() => (
     localSyncTargets.some(({ task }) => isRunningCodexTask(task))
+  ), [localSyncTargets])
+  const hasReviewLocalSyncTarget = useMemo(() => (
+    localSyncTargets.some(({ task }) => isReviewCodexTask(task))
   ), [localSyncTargets])
 
   useEffect(() => {
@@ -210,9 +230,11 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
     }
     const localSyncIntervalMs = hasRunningCodexTask(bySourceId)
       ? RUNNING_CODEX_REFRESH_INTERVAL_MS
-      : hasRecentPromptWaitingCodexTask(bySourceId)
-        ? RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
-        : IDLE_REFRESH_INTERVAL_MS
+      : hasReviewCodexTask(bySourceId)
+        ? REVIEW_CODEX_REFRESH_INTERVAL_MS
+        : hasRecentPromptWaitingCodexTask(bySourceId)
+          ? RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
+          : IDLE_REFRESH_INTERVAL_MS
 
     let cancelled = false
     let syncing = false
@@ -246,13 +268,17 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
       }
     }
 
-    if (hasRunningLocalSyncTarget || localSyncTargets.some(({ task }) => isRecentPromptWaitingCodexTask(task))) void syncTargets()
+    if (
+      hasRunningLocalSyncTarget ||
+      hasReviewLocalSyncTarget ||
+      localSyncTargets.some(({ task }) => isRecentPromptWaitingCodexTask(task))
+    ) void syncTargets()
     const intervalId = window.setInterval(() => void syncTargets(), localSyncIntervalMs)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [bySourceId, fetchInitial, hasRunningLocalSyncTarget, localSyncTargetKey, localSyncTargets])
+  }, [bySourceId, fetchInitial, hasReviewLocalSyncTarget, hasRunningLocalSyncTarget, localSyncTargetKey, localSyncTargets])
 
   useEffect(() => {
     const onVisibilityChange = () => {

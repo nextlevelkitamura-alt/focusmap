@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-import { existsSync, statSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
+import { existsSync, statSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -15,8 +15,11 @@ const MONITOR_LIMIT = 200;
 const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
 const MAX_ACTIVITY_BODY_CHARS = 8_000;
 const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
+const ROLLOUT_READ_CACHE_LIMIT = 300;
+const PRE_IMPORT_SYNC_YIELD_EVERY = 25;
 const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
+const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: string }>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 export const RESUME_RUNNING_VISIBILITY_MS = 12_000;
@@ -658,6 +661,22 @@ function taskResult(task: AiTask): Record<string, unknown> {
   return isRecord(task.result) ? task.result : {};
 }
 
+function codexRunState(task: AiTask): string {
+  const state = taskResult(task).codex_run_state;
+  return typeof state === 'string' ? state : '';
+}
+
+function taskMonitorActivityMs(task: AiTask): number {
+  const result = taskResult(task);
+  return Math.max(
+    timeMs(result.last_activity_at) ?? 0,
+    timeMs(result.awaiting_approval_at) ?? 0,
+    timeMs(task.completed_at) ?? 0,
+    timeMs(task.started_at) ?? 0,
+    timeMs(task.created_at) ?? 0,
+  );
+}
+
 function importedThreadSourceTitleSuggestion(task: AiTask, row: CodexThreadRow): string | null {
   if (!task.source_task_id) return null;
   return codexThreadGeneratedTitle(row);
@@ -679,6 +698,31 @@ export function hasPendingArchiveRequest(task: AiTask): boolean {
     result.codex_archive_completed_at == null &&
     result.codex_source_task_completed === true &&
     result.codex_source_task_completion_suppressed !== true;
+}
+
+function codexMonitorTaskPriority(task: AiTask): number {
+  const state = codexRunState(task);
+  if (task.status === 'running' || state === 'running') return 0;
+  if (task.status === 'awaiting_approval' || state === 'awaiting_approval') return 1;
+  if (task.status === 'needs_input' || state === 'prompt_waiting') return 1;
+  if (hasPendingArchiveRequest(task)) return 1;
+  if (taskThreadId(task)) return 2;
+  if (task.status === 'pending') return 3;
+  return 4;
+}
+
+function shouldSyncBeforeOrphanImport(task: AiTask): boolean {
+  return codexMonitorTaskPriority(task) <= 2;
+}
+
+export function prioritizeCodexMonitorTasks(tasks: AiTask[]): AiTask[] {
+  return [...tasks].sort((left, right) => {
+    const priorityDelta = codexMonitorTaskPriority(left) - codexMonitorTaskPriority(right);
+    if (priorityDelta !== 0) return priorityDelta;
+    const activityDelta = taskMonitorActivityMs(right) - taskMonitorActivityMs(left);
+    if (activityDelta !== 0) return activityDelta;
+    return left.id.localeCompare(right.id);
+  });
 }
 
 function checkpointMs(task: AiTask): number | null {
@@ -876,8 +920,40 @@ function resultSnapshot(
 }
 
 async function readRollout(row: CodexThreadRow): Promise<string> {
-  if (!row.rollout_path || !existsSync(row.rollout_path)) return '';
-  return await readFile(row.rollout_path, 'utf-8').catch(() => '');
+  if (!row.rollout_path) return '';
+  const cached = rolloutReadCache.get(row.rollout_path);
+  let fileStat: Stats;
+  try {
+    fileStat = await stat(row.rollout_path);
+  } catch {
+    rolloutReadCache.delete(row.rollout_path);
+    return '';
+  }
+
+  if (!fileStat.isFile()) {
+    rolloutReadCache.delete(row.rollout_path);
+    return '';
+  }
+
+  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
+    return cached.raw;
+  }
+
+  try {
+    const raw = await readFile(row.rollout_path, 'utf-8');
+    rolloutReadCache.set(row.rollout_path, {
+      mtimeMs: fileStat.mtimeMs,
+      size: fileStat.size,
+      raw,
+    });
+    if (rolloutReadCache.size > ROLLOUT_READ_CACHE_LIMIT) {
+      const oldestKey = rolloutReadCache.keys().next().value;
+      if (oldestKey) rolloutReadCache.delete(oldestKey);
+    }
+    return raw;
+  } catch {
+    return cached?.raw ?? '';
+  }
 }
 
 function importScopeRepoPaths(importScopes: CodexThreadImportScope[]): string[] {
@@ -1281,6 +1357,23 @@ export function startCodexThreadMonitorLoop(
           scopes: scopeHeartbeat,
         });
       }
+      const preImportTasks = prioritizeCodexMonitorTasks(tasks).filter(shouldSyncBeforeOrphanImport);
+      const preImportTaskIds = new Set(preImportTasks.map(task => task.id));
+      let preImportSynced = 0;
+      for (const task of preImportTasks) {
+        if (!tasks.some(item => item.id === task.id)) continue;
+        try {
+          const result = await syncOneTask(api, runnerId, dbPath, task);
+          if (result === 'remove') {
+            tasks = tasks.filter(item => item.id !== task.id);
+          }
+          preImportSynced += 1;
+          if (preImportSynced % PRE_IMPORT_SYNC_YIELD_EVERY === 0) await sleep(0);
+        } catch (error) {
+          logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
+        }
+      }
+
       const shouldReconcile = importScopes.length > 0 &&
         (nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
       const imported = await importOrphanThreads(
@@ -1300,7 +1393,8 @@ export function startCodexThreadMonitorLoop(
         });
         debug(`codex orphan reconcile completed imported=${imported} next_in=${Math.round(reconcileIntervalMs / 1000)}s`);
       }
-      for (const task of tasks) {
+      for (const task of prioritizeCodexMonitorTasks(tasks)) {
+        if (preImportTaskIds.has(task.id)) continue;
         try {
           const result = await syncOneTask(api, runnerId, dbPath, task);
           if (result === 'remove') {

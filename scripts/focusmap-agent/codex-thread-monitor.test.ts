@@ -16,6 +16,7 @@ import {
   knownCodexThreadIds,
   matchingThreadImportScope,
   parseRollout,
+  prioritizeCodexMonitorTasks,
   RESUME_RUNNING_VISIBILITY_MS,
   taskStateForSummary,
 } from './src/codex-thread-monitor';
@@ -358,6 +359,67 @@ describe('codex-thread-monitor state detection', () => {
     ] as never);
 
     expect([...ids].sort()).toEqual(['thread-column', 'thread-result']);
+  });
+
+  test('prioritizes linked active tasks before cold monitor work', () => {
+    const baselineTimes = {
+      created_at: '2026-06-08T15:30:00.000Z',
+      started_at: '2026-06-08T15:30:00.000Z',
+    };
+    const ordered = prioritizeCodexMonitorTasks([
+      task({
+        ...baselineTimes,
+        id: 'cold-task',
+        status: 'completed',
+        result: {},
+        completed_at: '2026-06-08T15:58:00.000Z',
+      }),
+      task({
+        ...baselineTimes,
+        id: 'linked-task',
+        status: 'completed',
+        codex_thread_id: 'thread-linked',
+        result: { codex_run_state: 'awaiting_approval', last_activity_at: '2026-06-08T15:40:00.000Z' },
+      }),
+      task({
+        ...baselineTimes,
+        id: 'review-task',
+        status: 'awaiting_approval',
+        result: { codex_run_state: 'awaiting_approval', last_activity_at: '2026-06-08T15:45:00.000Z' },
+      }),
+      task({
+        ...baselineTimes,
+        id: 'running-task',
+        status: 'running',
+        result: { codex_run_state: 'running', last_activity_at: '2026-06-08T15:42:00.000Z' },
+      }),
+      task({
+        ...baselineTimes,
+        id: 'pending-task',
+        status: 'pending',
+        result: {},
+      }),
+      task({
+        ...baselineTimes,
+        id: 'archive-task',
+        status: 'completed',
+        result: {
+          codex_source_task_completed: true,
+          codex_archive_request_state: 'pending',
+          codex_archive_requested_at: '2026-06-08T15:41:00.000Z',
+          last_activity_at: '2026-06-08T15:41:00.000Z',
+        },
+      }),
+    ] as never);
+
+    expect(ordered.map(item => item.id)).toEqual([
+      'running-task',
+      'review-task',
+      'archive-task',
+      'linked-task',
+      'pending-task',
+      'cold-task',
+    ]);
   });
 
   test('imports only recent user-created threads that are not already known', () => {
