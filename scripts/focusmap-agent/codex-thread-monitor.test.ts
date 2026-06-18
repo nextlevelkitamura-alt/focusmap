@@ -15,9 +15,12 @@ import {
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
   matchingThreadImportScope,
+  orphanImportLimitForPreImportTasks,
   parseRollout,
+  preImportCodexMonitorTasks,
   prioritizeCodexMonitorTasks,
   RESUME_RUNNING_VISIBILITY_MS,
+  shouldDeferOrphanImportForTasks,
   taskStateForSummary,
 } from './src/codex-thread-monitor';
 import { AgentApiError } from './src/api-client';
@@ -215,6 +218,31 @@ describe('codex-thread-monitor state detection', () => {
     expect(state).toEqual({ status: 'running', resumed: true });
   });
 
+  test('restores running after app restart when tool activity continues after the awaiting checkpoint', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:01.000Z', { type: 'user_message', message: '最初の依頼' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
+      line('2026-06-08T15:49:14.929Z', { type: 'reasoning', summary: [] }),
+      line('2026-06-08T15:49:15.264Z', { type: 'function_call', name: 'exec_command' }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+    const state = taskStateForSummary(task({
+      status: 'awaiting_approval',
+      result: {
+        codex_run_state: 'awaiting_approval',
+        last_activity_at: '2026-06-08T15:40:10.000Z',
+        awaiting_approval_at: '2026-06-08T15:40:10.000Z',
+      },
+    }), summary);
+
+    expect(summary.state).toBe('running');
+    expect(summary.currentStep).toBe('Codexがコマンドを実行中');
+    expect(summary.latestRunningActivityAt).toBe('2026-06-08T15:49:15.264Z');
+    expect(state).toEqual({ status: 'running', resumed: true });
+  });
+
   test('keeps a just completed resumed turn running briefly so UI can show the restart', () => {
     const raw = [
       line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
@@ -351,6 +379,28 @@ describe('codex-thread-monitor state detection', () => {
     expect(nextBatch.map(message => message.body)).toEqual(['進捗 12', '進捗 13', '進捗 14']);
   });
 
+  test('uses tool events as lightweight running status updates', () => {
+    const raw = [
+      line('2026-06-08T15:49:14.929Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.264Z', { type: 'function_call', name: 'exec_command' }),
+      line('2026-06-08T15:49:16.264Z', { type: 'function_call_output', call_id: 'call-1', output: 'ok' }),
+      line('2026-06-08T15:49:17.264Z', { type: 'reasoning', summary: [] }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+
+    expect(summary.state).toBe('running');
+    expect(summary.currentStep).toBe('Codexが内容を検討中');
+    expect(parseRollout([
+      line('2026-06-08T15:49:14.929Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.264Z', { type: 'function_call', name: 'exec_command' }),
+    ].join('\n'), threadRow).currentStep).toBe('Codexがコマンドを実行中');
+    expect(parseRollout([
+      line('2026-06-08T15:49:14.929Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.264Z', { type: 'function_call_output', call_id: 'call-1', output: 'ok' }),
+    ].join('\n'), threadRow).currentStep).toBe('Codexが実行結果を確認中');
+  });
+
   test('builds known thread ids from column and result before orphan import', () => {
     const ids = knownCodexThreadIds([
       task({ codex_thread_id: 'thread-column' }),
@@ -420,6 +470,38 @@ describe('codex-thread-monitor state detection', () => {
       'pending-task',
       'cold-task',
     ]);
+  });
+
+  test('keeps the pre-import lane narrow while running tasks are active', () => {
+    const ordered = preImportCodexMonitorTasks([
+      task({
+        id: 'cold-linked-task',
+        status: 'completed',
+        codex_thread_id: 'thread-linked',
+        result: { last_activity_at: '2026-06-08T15:40:00.000Z' },
+      }),
+      task({
+        id: 'review-task',
+        status: 'awaiting_approval',
+        result: { codex_run_state: 'awaiting_approval', last_activity_at: '2026-06-08T15:45:00.000Z' },
+      }),
+      task({
+        id: 'running-task',
+        status: 'running',
+        result: { codex_run_state: 'running', last_activity_at: '2026-06-08T15:42:00.000Z' },
+      }),
+      task({
+        id: 'pending-task',
+        status: 'pending',
+        result: {},
+      }),
+    ] as never);
+
+    expect(ordered.map(item => item.id)).toEqual(['running-task', 'review-task']);
+    expect(shouldDeferOrphanImportForTasks(ordered)).toBe(true);
+    expect(orphanImportLimitForPreImportTasks(ordered)).toBe(3);
+    expect(shouldDeferOrphanImportForTasks(ordered.filter(item => item.id !== 'running-task'))).toBe(false);
+    expect(orphanImportLimitForPreImportTasks(ordered.filter(item => item.id !== 'running-task'))).toBe(30);
   });
 
   test('imports only recent user-created threads that are not already known', () => {

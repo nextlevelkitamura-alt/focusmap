@@ -16,7 +16,10 @@ const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
 const MAX_ACTIVITY_BODY_CHARS = 8_000;
 const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
 const ROLLOUT_READ_CACHE_LIMIT = 300;
+const PRE_IMPORT_SYNC_LIMIT = 40;
+const POST_IMPORT_SYNC_LIMIT = 80;
 const PRE_IMPORT_SYNC_YIELD_EVERY = 25;
+const RUNNING_HOT_ORPHAN_IMPORT_LIMIT = 3;
 const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: string }>();
@@ -132,6 +135,7 @@ type RolloutSummary = {
   latestUserMessageAt: string | null;
   latestTaskStartedAt: string | null;
   latestTaskCompleteAt: string | null;
+  latestRunningActivityAt: string | null;
   latestAgentMessage: string | null;
   visibleMessages: VisibleMessage[];
 };
@@ -210,6 +214,17 @@ function compactText(value: string, maxChars = 2_000): string {
 
 function compactStep(value: string, maxChars = 240): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
+}
+
+function toolStepName(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return 'ツール';
+  switch (value.trim()) {
+    case 'exec_command': return 'コマンド';
+    case 'write_stdin': return '実行中コマンド';
+    case 'apply_patch': return 'ファイル編集';
+    case 'tool_search_tool': return 'ツール検索';
+    default: return value.trim().replace(/_/g, ' ');
+  }
 }
 
 function oneLineTitle(value: unknown, maxChars = 80): string | null {
@@ -349,6 +364,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
   let latestUserMessageAt: string | null = null;
   let latestTaskStartedAt: string | null = null;
   let latestTaskCompleteAt: string | null = null;
+  let latestRunningActivityAt: string | null = null;
   let latestAgentMessage: string | null = null;
 
   let sequence = 0;
@@ -373,6 +389,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
 
     if (payloadType === 'task_started') {
       latestTaskStartedAt = eventTime;
+      latestRunningActivityAt = eventTime;
       state = 'running';
       reviewReason = 'started';
       currentStep = 'Codexが実行を開始しました';
@@ -410,6 +427,9 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     if (payloadType === 'agent_message') {
       const text = safeText(payload);
       if (text) {
+        latestRunningActivityAt = eventTime;
+        state = 'running';
+        reviewReason = 'started';
         latestAgentMessage = compactText(text, 2_000);
         currentStep = compactStep(text);
         appendVisibleMessage(visibleMessages, {
@@ -440,11 +460,38 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       continue;
     }
 
+    if (payloadType === 'reasoning') {
+      latestRunningActivityAt = eventTime;
+      state = 'running';
+      reviewReason = 'started';
+      currentStep = 'Codexが内容を検討中';
+      continue;
+    }
+
+    if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
+      latestRunningActivityAt = eventTime;
+      state = 'running';
+      reviewReason = 'started';
+      currentStep = `Codexが${toolStepName(payload.name ?? payload.tool_name)}を実行中`;
+      continue;
+    }
+
+    if (payloadType === 'function_call_output' || payloadType === 'custom_tool_call_output' || payloadType === 'patch_apply_end') {
+      latestRunningActivityAt = eventTime;
+      state = 'running';
+      reviewReason = 'started';
+      currentStep = 'Codexが実行結果を確認中';
+      continue;
+    }
+
     if (payloadType === 'message') {
       const role = typeof payload.role === 'string' ? payload.role : '';
       const text = safeText(payload);
       if (!text) continue;
       if (role === 'assistant') {
+        latestRunningActivityAt = eventTime;
+        state = 'running';
+        reviewReason = 'started';
         latestAgentMessage = compactText(text, 2_000);
         currentStep = compactStep(text);
         appendVisibleMessage(visibleMessages, {
@@ -481,6 +528,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     latestUserMessageAt,
     latestTaskStartedAt,
     latestTaskCompleteAt,
+    latestRunningActivityAt,
     latestAgentMessage,
     visibleMessages,
   };
@@ -711,8 +759,13 @@ function codexMonitorTaskPriority(task: AiTask): number {
   return 4;
 }
 
+function isRunningCodexMonitorTask(task: AiTask): boolean {
+  const state = codexRunState(task);
+  return task.status === 'running' || state === 'running';
+}
+
 function shouldSyncBeforeOrphanImport(task: AiTask): boolean {
-  return codexMonitorTaskPriority(task) <= 2;
+  return codexMonitorTaskPriority(task) <= 1;
 }
 
 export function prioritizeCodexMonitorTasks(tasks: AiTask[]): AiTask[] {
@@ -723,6 +776,20 @@ export function prioritizeCodexMonitorTasks(tasks: AiTask[]): AiTask[] {
     if (activityDelta !== 0) return activityDelta;
     return left.id.localeCompare(right.id);
   });
+}
+
+export function preImportCodexMonitorTasks(tasks: AiTask[], limit = PRE_IMPORT_SYNC_LIMIT): AiTask[] {
+  return prioritizeCodexMonitorTasks(tasks)
+    .filter(shouldSyncBeforeOrphanImport)
+    .slice(0, Math.max(1, limit));
+}
+
+export function shouldDeferOrphanImportForTasks(tasks: AiTask[]): boolean {
+  return tasks.some(isRunningCodexMonitorTask);
+}
+
+export function orphanImportLimitForPreImportTasks(tasks: AiTask[]): number {
+  return shouldDeferOrphanImportForTasks(tasks) ? RUNNING_HOT_ORPHAN_IMPORT_LIMIT : ORPHAN_IMPORT_LIMIT;
 }
 
 function checkpointMs(task: AiTask): number | null {
@@ -752,6 +819,7 @@ function didResumeAfterCheckpoint(task: AiTask, summary: RolloutSummary): boolea
   const candidates = [
     timeMs(summary.latestUserMessageAt),
     timeMs(summary.latestTaskStartedAt),
+    timeMs(summary.latestRunningActivityAt),
   ].filter((value): value is number => value !== null);
   return candidates.some(value => value > checkpoint);
 }
@@ -762,6 +830,7 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs
     const resumeMs = Math.max(
       timeMs(summary.latestUserMessageAt) ?? 0,
       timeMs(summary.latestTaskStartedAt) ?? 0,
+      timeMs(summary.latestRunningActivityAt) ?? 0,
     );
     const completedMs = timeMs(summary.latestTaskCompleteAt) ?? 0;
     if (completedMs >= resumeMs) {
@@ -1100,6 +1169,7 @@ async function importOrphanThreads(
   tasks: AiTask[],
   importScopes: CodexThreadImportScope[],
   mode: OrphanImportMode = 'hot',
+  maxImports = ORPHAN_IMPORT_LIMIT,
 ): Promise<number> {
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
@@ -1112,7 +1182,7 @@ async function importOrphanThreads(
   let imported = 0;
 
   for (const row of rows) {
-    if (imported >= ORPHAN_IMPORT_LIMIT) break;
+    if (imported >= maxImports) break;
     const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
     const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap);
     if (!matchingScope) continue;
@@ -1254,6 +1324,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     summary.currentStep,
     summary.latestUserMessageAt ?? '',
     summary.latestTaskCompleteAt ?? '',
+    summary.latestRunningActivityAt ?? '',
     activityBatch.syncedSequence ?? activitySyncedSequence(task) ?? '',
     summary.visibleMessages.length,
     sourceTaskTitleSuggestion ?? '',
@@ -1357,7 +1428,7 @@ export function startCodexThreadMonitorLoop(
           scopes: scopeHeartbeat,
         });
       }
-      const preImportTasks = prioritizeCodexMonitorTasks(tasks).filter(shouldSyncBeforeOrphanImport);
+      const preImportTasks = preImportCodexMonitorTasks(tasks);
       const preImportTaskIds = new Set(preImportTasks.map(task => task.id));
       let preImportSynced = 0;
       for (const task of preImportTasks) {
@@ -1376,15 +1447,19 @@ export function startCodexThreadMonitorLoop(
 
       const shouldReconcile = importScopes.length > 0 &&
         (nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
-      const imported = await importOrphanThreads(
-        api,
-        runnerId,
-        dbPath,
-        tasks,
-        importScopes,
-        shouldReconcile ? 'reconcile' : 'hot',
-      );
-      if (shouldReconcile) {
+      const deferOrphanImport = shouldDeferOrphanImportForTasks(preImportTasks);
+      const imported = importScopes.length === 0
+        ? 0
+        : await importOrphanThreads(
+          api,
+          runnerId,
+          dbPath,
+          tasks,
+          importScopes,
+          shouldReconcile && !deferOrphanImport ? 'reconcile' : 'hot',
+          orphanImportLimitForPreImportTasks(preImportTasks),
+        );
+      if (shouldReconcile && !deferOrphanImport) {
         nextReconcileAt = Date.now() + reconcileIntervalMs;
         updateCodexThreadMonitorHeartbeatState({
           last_reconcile_at: new Date().toISOString(),
@@ -1393,8 +1468,12 @@ export function startCodexThreadMonitorLoop(
         });
         debug(`codex orphan reconcile completed imported=${imported} next_in=${Math.round(reconcileIntervalMs / 1000)}s`);
       }
-      for (const task of prioritizeCodexMonitorTasks(tasks)) {
-        if (preImportTaskIds.has(task.id)) continue;
+      const postImportTasks = deferOrphanImport
+        ? []
+        : prioritizeCodexMonitorTasks(tasks)
+          .filter(task => !preImportTaskIds.has(task.id))
+          .slice(0, POST_IMPORT_SYNC_LIMIT);
+      for (const task of postImportTasks) {
         try {
           const result = await syncOneTask(api, runnerId, dbPath, task);
           if (result === 'remove') {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 
 const taskProgressSnapshotState = vi.hoisted(() => ({
   tasks: [] as Array<Record<string, unknown>>,
+  options: [] as Array<{ detailOpen?: boolean }>,
 }))
 
 vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
@@ -84,14 +85,17 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
 }))
 
 vi.mock("@/hooks/useTaskProgressSnapshot", () => ({
-  useTaskProgressSnapshot: () => ({
-    tasks: taskProgressSnapshotState.tasks,
-    getById: () => null,
-    pollIntervalMs: 3000,
-    isLoading: false,
-    error: null,
-    refresh: vi.fn(),
-  }),
+  useTaskProgressSnapshot: (options?: { detailOpen?: boolean }) => {
+    taskProgressSnapshotState.options.push(options ?? {})
+    return {
+      tasks: taskProgressSnapshotState.tasks,
+      getById: () => null,
+      pollIntervalMs: 3000,
+      isLoading: false,
+      error: null,
+      refresh: vi.fn(),
+    }
+  },
 }))
 
 vi.mock("@/utils/supabase/client", () => ({
@@ -211,6 +215,7 @@ const task = {
 
 beforeEach(() => {
   taskProgressSnapshotState.tasks = []
+  taskProgressSnapshotState.options = []
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     if (String(input).startsWith("/api/mindmap/drafts")) {
       return {
@@ -249,18 +254,21 @@ describe("MindMap controls", () => {
     render(<MindMap project={project} groups={[task]} tasks={[]} />)
 
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+    expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(false)
 
     fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "MindMap表示設定" })).not.toBeInTheDocument()
+    expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(true)
 
     fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
 
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
+    expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(false)
   })
 
   test("toggles the chat import sidebar from the header event and keeps it visible during map/project changes", async () => {

@@ -837,7 +837,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         error: taskProgressSnapshotError,
         refresh: refreshTaskProgressSnapshot,
     } = useTaskProgressSnapshot({
-        detailOpen: !!taskProgressPanelTaskId,
+        detailOpen: !!taskProgressPanelTaskId || isCodexChatImportSidebarOpen,
         activityHintKey: taskProgressActivityHintKey,
         fixtureTasks: taskProgressFixtureTasks,
     });
