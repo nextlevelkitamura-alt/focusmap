@@ -605,7 +605,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setCodexImportRepoPathOverride(undefined);
         setCodexThreadImportOverride(null);
         setHiddenCodexChatImportIds(new Set());
-        setIsCodexChatImportSidebarOpen(false);
         setSelectedCodexChatDetailId(null);
         setActiveCodexChatDrag(null);
     }, [project?.id, project?.space_id]);
@@ -2427,12 +2426,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setKanbanOpenSignal(signal => signal + 1);
     }, [closeCodexChatImportSidebar]);
     const handleMapPointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        closeKanbanFromMapInteraction();
         const target = event.target;
         if (target instanceof Element && target.closest('[data-codex-chat-import-sidebar="true"]')) return;
-        if (!isCodexChatImportSidebarOpen) return;
-        closeCodexChatImportSidebar();
-    }, [closeCodexChatImportSidebar, closeKanbanFromMapInteraction, isCodexChatImportSidebarOpen]);
+        closeKanbanFromMapInteraction();
+    }, [closeKanbanFromMapInteraction]);
 
     const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
         if (getIsTypingTarget(event.target)) return;

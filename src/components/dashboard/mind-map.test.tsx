@@ -263,8 +263,8 @@ describe("MindMap controls", () => {
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
   })
 
-  test("toggles the chat import sidebar from the header event and closes it from map interaction", async () => {
-    render(<MindMap project={project} groups={[task]} tasks={[]} />)
+  test("toggles the chat import sidebar from the header event and keeps it visible during map/project changes", async () => {
+    const { rerender } = render(<MindMap project={project} groups={[task]} tasks={[]} />)
 
     fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
@@ -286,9 +286,17 @@ describe("MindMap controls", () => {
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Root task" }))
 
-    await waitFor(() => {
-      expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
-    })
+    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+
+    rerender(
+      <MindMap
+        project={{ ...project, id: "project-2", title: "Next project", repo_path: "/Users/me/next-project" } as Project}
+        groups={[{ ...task, id: "root-2", project_id: "project-2", title: "Next root task" }]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
   })
 
   test("restores and saves collapsed node state through the task record", async () => {
