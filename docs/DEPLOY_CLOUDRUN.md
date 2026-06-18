@@ -4,7 +4,8 @@
 
 | 項目 | 値 |
 |---|---|
-| **Service URL** | https://shikumika-app-364jgme3ja-an.a.run.app |
+| **公開URL** | https://focusmap-official.com |
+| **Cloud Run Service URL** | https://shikumika-app-364jgme3ja-an.a.run.app |
 | **GCP プロジェクト** | `shikumika-app` (466617344999) |
 | **リージョン** | `asia-northeast1` (東京) |
 | **Node.js** | 22 (Alpine) |
@@ -14,23 +15,26 @@
 ## 外部サービス設定
 
 ### Supabase (Authentication → URL Configuration)
-- **Site URL**: `https://shikumika-app-364jgme3ja-an.a.run.app`
-- **Redirect URLs**: `https://shikumika-app-364jgme3ja-an.a.run.app/**`
+- **Site URL**: `https://focusmap-official.com`
+- **Redirect URLs**:
+  - `https://focusmap-official.com/**`
+  - `https://shikumika-app-364jgme3ja-an.a.run.app/**`（Cloud Run直接URLで確認する場合の予備）
 
 ### Google Cloud Console (OAuth 2.0 クライアント)
-- **承認済みの JavaScript 生成元**: `https://shikumika-app-364jgme3ja-an.a.run.app`
+- **承認済みの JavaScript 生成元**: `https://focusmap-official.com`
 - **承認済みのリダイレクト URI**:
-  - `https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback` (本番カレンダー連携用)
+  - `https://focusmap-official.com/api/calendar/callback` (本番カレンダー連携用)
+  - `https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback` (Cloud Run直接URLで確認する場合の予備)
   - `http://localhost:3001/api/calendar/callback` (ローカル開発用)
   - `https://whsjsscgmkkkzgcwxjko.supabase.co/auth/v1/callback` (Supabase Auth用)
 
 ### Cloud Run 環境変数（必須）
-- `NEXTAUTH_URL=https://shikumika-app-364jgme3ja-an.a.run.app`
+- `NEXTAUTH_URL=https://focusmap-official.com`
 - `NEXTAUTH_SECRET=<固定値>`
 - `SUPABASE_SERVICE_ROLE_KEY=<Supabase service role key>`（agent token検証・runner heartbeat登録用。GitHub Secrets経由で渡す）
 - `GOOGLE_CLIENT_ID=<Google OAuth Client ID>`
 - `GOOGLE_CLIENT_SECRET=<Google OAuth Client Secret>`
-- `GOOGLE_REDIRECT_URI=https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback`
+- `GOOGLE_REDIRECT_URI=https://focusmap-official.com/api/calendar/callback`
 
 ### Codex監視/Turso/R2 環境変数
 

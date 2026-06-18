@@ -797,7 +797,30 @@ function appOriginHost() {
 }
 
 function dashboardUrl(origin = APP_ORIGIN) {
-  return `${origin}/dashboard?desktop=1&source=mac`;
+  return appUrlFromPath('/dashboard', origin);
+}
+
+function normalizeInAppPath(value, fallback = '/dashboard') {
+  const candidate = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  try {
+    const parsed = new URL(candidate, APP_ORIGIN);
+    const appOrigin = new URL(APP_ORIGIN).origin;
+    const webAuthOrigin = new URL(WEB_AUTH_ORIGIN).origin;
+    if (parsed.origin !== appOrigin && parsed.origin !== webAuthOrigin) return fallback;
+    return `${parsed.pathname || '/dashboard'}${parsed.search}${parsed.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
+function appUrlFromPath(pathValue, origin = APP_ORIGIN, extraParams = {}) {
+  const url = new URL(normalizeInAppPath(pathValue), origin);
+  url.searchParams.set('desktop', '1');
+  url.searchParams.set('source', 'mac');
+  for (const [key, value] of Object.entries(extraParams)) {
+    if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+  }
+  return url.toString();
 }
 
 function isLoadingScreenUrl(urlString) {
@@ -1065,6 +1088,7 @@ function toWebAuthCalendarConnectUrl(urlString) {
   for (const [key, value] of sourceUrl.searchParams.entries()) {
     if (key !== 'desktop_oauth') targetUrl.searchParams.append(key, value);
   }
+  targetUrl.searchParams.set('desktop_oauth', '1');
   if (!targetUrl.searchParams.has('next')) targetUrl.searchParams.set('next', '/dashboard');
   return targetUrl.toString();
 }
@@ -1571,7 +1595,15 @@ function loadLoginForDesktopSessionRestore(reason) {
 function handleFocusmapDeepLink(urlString) {
   try {
     const url = new URL(urlString);
-    if (url.protocol !== 'focusmap:' || url.hostname !== 'auth-complete') return false;
+    if (url.protocol !== 'focusmap:') return false;
+
+    if (url.hostname === 'calendar-connected') {
+      const nextPath = normalizeInAppPath(url.searchParams.get('next') || '/dashboard');
+      void loadCalendarConnectedUrl(nextPath);
+      return true;
+    }
+
+    if (url.hostname !== 'auth-complete') return false;
     if (url.searchParams.get('desktop') !== '1') return false;
 
     const nonce = url.searchParams.get('nonce');
@@ -1604,6 +1636,23 @@ function handleFocusmapDeepLink(urlString) {
   } catch (error) {
     log('auth', `failed to handle focusmap deep link: ${error instanceof Error ? error.message : String(error)}`);
     return false;
+  }
+}
+
+async function loadCalendarConnectedUrl(nextPath) {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      await createMainWindow();
+    }
+    const origin = await ensureFocusmapApp();
+    await ensureDesktopAuthCookies('calendar-connected', origin);
+    await ensureFreshRemoteUiCache(origin, 'calendar-connected');
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    await loadUrlAllowingRedirect(mainWindow, appUrlFromPath(nextPath, origin, { calendar_connected: 'true' }));
+    focusWindow(mainWindow);
+  } catch (error) {
+    log('calendar', `failed to return after calendar OAuth: ${error instanceof Error ? error.message : String(error)}`);
+    loadDashboardSoon('calendar-connected-fallback');
   }
 }
 

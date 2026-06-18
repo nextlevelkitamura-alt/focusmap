@@ -19,7 +19,7 @@ import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Mai
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
-import { useCalendars } from "@/hooks/useCalendars"
+import { invalidateCalendarsCache, useCalendars } from "@/hooks/useCalendars"
 import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 interface CalendarStatus {
@@ -167,6 +167,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
       })
 
       if (response.ok) {
+        invalidateCalendarsCache()
         setStatus({
           isConnected: false,
           isSyncEnabled: false,

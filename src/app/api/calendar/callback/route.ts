@@ -30,7 +30,21 @@ function createUserAccessTokenClient(accessToken: string): SupabaseClient {
   );
 }
 
-function desktopOAuthDonePage() {
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function desktopOAuthDonePage(nextPath: string) {
+  const deepLink = new URL('focusmap://calendar-connected');
+  deepLink.searchParams.set('next', nextPath || '/dashboard');
+  const safeDeepLink = escapeHtmlAttribute(deepLink.toString());
+  const scriptDeepLink = JSON.stringify(deepLink.toString());
+
   return `<!doctype html>
 <html lang="ja">
   <head>
@@ -47,10 +61,12 @@ function desktopOAuthDonePage() {
   <body>
     <main>
       <h1>Google Calendar を連携しました</h1>
-      <p>このブラウザタブは閉じて、Focusmapアプリに戻ってください。</p>
+      <p>Focusmapアプリへ戻っています。</p>
+      <a href="${safeDeepLink}">アプリへ戻る</a>
     </main>
     <script>
-      setTimeout(() => window.close(), 1200);
+      setTimeout(() => { window.location.href = ${scriptDeepLink}; }, 300);
+      setTimeout(() => window.close(), 1600);
     </script>
   </body>
 </html>`;
@@ -251,8 +267,8 @@ export async function GET(request: NextRequest) {
         },
       });
     }
-    if (desktopCallback) {
-      return new NextResponse(desktopOAuthDonePage(), {
+    if (desktop || desktopCallback) {
+      return new NextResponse(desktopOAuthDonePage(nextPath || '/dashboard'), {
         headers: {
           'content-type': 'text/html; charset=utf-8',
         },

@@ -187,11 +187,19 @@ export async function openExternalAuthUrl(url: string) {
   window.location.href = url
 }
 
-export function startCalendarOAuth(next = '/dashboard') {
+function currentCalendarOAuthNext() {
+  if (typeof window === 'undefined') return '/dashboard'
+
+  const { pathname, search, hash } = window.location
+  if (!pathname || pathname === '/login' || pathname.startsWith('/auth/')) return '/dashboard'
+  return `${pathname}${search}${hash}`
+}
+
+export function startCalendarOAuth(next?: string) {
   if (typeof window === 'undefined') return
 
   const url = new URL('/api/calendar/connect', window.location.origin)
-  url.searchParams.set('next', next)
+  url.searchParams.set('next', next || currentCalendarOAuthNext())
 
   if (isFocusmapIosAppShell()) {
     url.searchParams.set('app_oauth', 'ios')
