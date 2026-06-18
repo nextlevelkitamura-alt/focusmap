@@ -19,6 +19,7 @@ const DESKTOP_HEALTH_TOKEN = process.env.FOCUSMAP_DESKTOP_HEALTH_TOKEN || random
 const SUPABASE_AUTH_COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60;
 const SUPABASE_AUTH_COOKIE_CHUNK_SIZE = 3180;
 const DESKTOP_AUTH_REFRESH_MARGIN_SECONDS = 10 * 60;
+const REMOTE_UI_CACHE_CLEAR_TIMEOUT_MS = 2_500;
 app.setName('Focusmap');
 app.setAboutPanelOptions({ applicationName: 'Focusmap' });
 app.setPath('userData', DESKTOP_USER_DATA_DIR);
@@ -229,6 +230,12 @@ function isChildRunning(child) {
 
 function serviceResult(ok, message, extra = {}) {
   return { ok, message, ...extra };
+}
+
+function timeoutAfter(ms, value) {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(value), ms);
+  });
 }
 
 function stopManagedProcess(processKey, label) {
@@ -760,15 +767,26 @@ async function ensureFreshRemoteUiCache(origin = APP_ORIGIN, reason = 'dashboard
     try {
       const webSession = desktopBrowserSession();
       // Keep the packaged shell on deployed Next assets without touching auth cookies or localStorage.
-      await webSession.clearCache();
-      await webSession.clearStorageData({
-        origin,
-        storages: ['serviceworkers', 'cachestorage'],
-      });
+      const result = await Promise.race([
+        (async () => {
+          await webSession.clearCache();
+          await webSession.clearStorageData({
+            origin,
+            storages: ['serviceworkers', 'cachestorage'],
+          });
+          return 'cleared';
+        })(),
+        timeoutAfter(REMOTE_UI_CACHE_CLEAR_TIMEOUT_MS, 'timeout'),
+      ]);
+      if (result === 'timeout') {
+        log('app', `remote Web UI cache clear timed out (${reason}); continuing startup: ${origin}`);
+        return;
+      }
       log('app', `cleared remote Web UI cache (${reason}): ${origin}`);
     } catch (error) {
-      remoteUiCacheClearPromise = null;
       log('app', `failed to clear remote Web UI cache (${reason}): ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      remoteUiCacheClearPromise = null;
     }
   })();
 
@@ -2173,7 +2191,7 @@ async function connectAutomation() {
 }
 
 async function retryDashboardFromLoadingScreen() {
-  void loadStartupScreen({ reason: 'manual-retry' }).catch(() => undefined);
+  await loadStartupScreen({ reason: 'manual-retry' }).catch(() => undefined);
   await loadDashboardWhenReady('manual-retry');
   return { ok: true };
 }
@@ -2258,9 +2276,11 @@ async function createMainWindow() {
       partition: DESKTOP_BROWSER_PARTITION,
     },
   });
-  void loadStartupScreen({ reason: 'create-main-window' }).catch((error) => {
-    log('app', `failed to load loading screen: ${error.message}`);
-  });
+  try {
+    await loadStartupScreen({ reason: 'create-main-window' });
+  } catch (error) {
+    log('app', `failed to load loading screen: ${error instanceof Error ? error.message : String(error)}`);
+  }
   mainWindow.webContents.on('will-navigate', handleMainNavigation);
   mainWindow.webContents.on('will-redirect', (event, url, isInPlace, isMainFrame) => {
     if (handleMainNavigation(event, url)) return;

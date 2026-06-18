@@ -6,6 +6,7 @@
 
 - 小さな修正・UI調整・ドキュメント変更で、作業開始時の現在ブランチが `main` 以外だった場合、そのまま現在ブランチで進めない。`git status --short --branch` で現在地を見た時点で、ユーザーがブランチ作業を明示していなければ既存の `main` worktree へ移る。未コミット差分などで `main` を使えない場合だけ、`origin/main` 起点の一時 worktree で隔離して作業し、完了時は `local main` へ取り込む。push は明示依頼時のみ。2026-06-11 に小修正を `fix/codex-kanban-current-map-actions` へ push して main に反映されない事故が起きた。
 - Macアプリの外部ブラウザログイン完了は、Next/Cloud Runのプロセス内メモリだけをhandoff正本にしない。`/api/auth/desktop-session` ポーリングはフォールバックとして残しつつ、`focusmap://auth-complete` のようなMacローカル到達経路とpending nonce検証を併用する。
+- Macアプリ起動時のremote UI cache/service worker削除をdashboard表示の必須前処理にしない。Electronの `clearCache()` / `clearStorageData()` が解決しないと `Focusmap 起動中` のまま止まり、retryも同じpending promiseで固まる。cache clearは短いtimeout付きのbest effortにし、保存済みセッションCookie復元後はdashboard `loadURL` へ必ず進める。
 - Codex manual handoffの初回同期は、既存thread_idの監視だけに寄せない。スマホからCodexへコピーした直後はai_tasksにthread_idが未保存のため、agent APIは直近のmanual handoffを返し、Mac側で同期ID/first_user_messageからthreadを発見できる必要がある。
 - Focusmap Macアプリ同梱のCodex監視コードを更新せずに使い続けない。Codex Desktopのstate DBが `~/.codex/sqlite/state_5.sqlite` へ移った後も、古いbundleが旧 `~/.codex/state_5.sqlite` を読むと実在threadを見失う。見失っただけで `thread_deleted` として永久除外せず、`thread_unavailable` / `awaiting_approval` で監視継続にする。Macアプリ、`focusmap-agent`、`/api/codex/sync-node`、互換runnerは同じresolverを使い、bundle更新後は再インストール/再起動を確認する。
 - Codex threadの `updated_at_ms` だけを確認待ち後の再開根拠にしない。`task_complete.completed_at` は秒精度、thread更新はミリ秒精度なので、完了直後の数ms差で「回答済み」を `running` に戻す事故が起きる。再開根拠はcheckpoint以降の `user_message` / `task_started` に限定する。
