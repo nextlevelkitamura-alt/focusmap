@@ -728,6 +728,8 @@ export function Today3DaysCalendar({
                             {toggleItem && (
                               <button
                                 type="button"
+                                aria-pressed={isDone}
+                                onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   event.stopPropagation()
                                   toggleItem()

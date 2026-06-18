@@ -816,13 +816,46 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       }));
     };
 
+    const completionHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        eventId?: string;
+        googleEventId?: string;
+        calendarId?: string;
+        isCompleted?: boolean;
+      }>).detail;
+      if (typeof detail?.isCompleted !== 'boolean') return;
+      const ids = new Set([detail.eventId, detail.googleEventId].filter((id): id is string => !!id));
+      if (ids.size === 0) return;
+
+      commitEvents(prev => prev.map(calendarEvent => (
+        ids.has(calendarEvent.id) ||
+        (
+          ids.has(calendarEvent.google_event_id) &&
+          (!detail.calendarId || calendarEvent.calendar_id === detail.calendarId)
+        )
+      ) ? { ...calendarEvent, is_completed: detail.isCompleted } : calendarEvent));
+    };
+
+    const timeUpdateHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ eventId?: string; startTime?: string; endTime?: string }>).detail;
+      if (!detail?.eventId || !detail.startTime || !detail.endTime) return;
+
+      commitEvents(prev => prev.map(calendarEvent => (
+        calendarEvent.id === detail.eventId || calendarEvent.google_event_id === detail.eventId
+      ) ? { ...calendarEvent, start_time: detail.startTime, end_time: detail.endTime } : calendarEvent));
+    };
+
     window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
     window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_REMOVE, removeHandler);
     window.addEventListener(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, updateHandler);
+    window.addEventListener(EVENT_COMPLETION_EVENT, completionHandler);
+    window.addEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, timeUpdateHandler);
     return () => {
       window.removeEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
       window.removeEventListener(CALENDAR_OPTIMISTIC_EVENT_REMOVE, removeHandler);
       window.removeEventListener(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, updateHandler);
+      window.removeEventListener(EVENT_COMPLETION_EVENT, completionHandler);
+      window.removeEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, timeUpdateHandler);
     };
   // See fetchEvents deps above: the stable keys intentionally stand in for the
   // Date objects and calendarIds array.
