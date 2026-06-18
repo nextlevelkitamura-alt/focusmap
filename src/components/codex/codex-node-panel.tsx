@@ -34,7 +34,7 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Calendar as CalendarIcon, Check, ChevronDown, ChevronLeft, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert, X } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert, X } from "lucide-react"
 import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
 import { useCalendars, type UserCalendar } from "@/hooks/useCalendars"
 import {
@@ -143,6 +143,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function parseIsoMs(value: string | null | undefined) {
+  if (!value) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : null
 }
 
 function buildCodexPrompt(heading: string, detail: string) {
@@ -272,6 +278,21 @@ function stripFocusmapSyncId(prompt: string) {
     .trim()
 }
 
+function sanitizeCodexPromptForDisplay(prompt: string) {
+  let value = stripFocusmapSyncId(prompt).replace(/\r\n/g, "\n")
+  const requestHeading = value.match(/(?:^|\n)\s*(?:#{1,6}\s*)?My request for Codex:\s*/iu)
+  if (requestHeading && typeof requestHeading.index === "number") {
+    value = value.slice(requestHeading.index + requestHeading[0].length)
+  }
+  return value
+    .replace(/^\s*(?:#{1,6}\s*)?My request for Codex:\s*/iu, "")
+    .split("\n")
+    .filter(line => !/^\s*[（(]\s*画面情報は省略\s*[)）]\s*$/u.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
 function normalizedKey(value: string) {
   return value.replace(/\s+/g, " ").trim()
 }
@@ -287,9 +308,62 @@ function promptEchoKeys(prompt: string) {
   const visiblePrompt = stripFocusmapSyncId(prompt)
   const normalizedPrompt = normalizedKey(visiblePrompt)
   if (normalizedPrompt) keys.add(normalizedPrompt)
+  const displayPrompt = sanitizeCodexPromptForDisplay(prompt)
+  const normalizedDisplayPrompt = normalizedKey(displayPrompt)
+  if (normalizedDisplayPrompt) keys.add(normalizedDisplayPrompt)
   const firstLine = visiblePrompt.split("\n").map(line => line.trim()).find(Boolean)
   if (firstLine) keys.add(normalizedKey(firstLine))
+  const displayFirstLine = displayPrompt.split("\n").map(line => line.trim()).find(Boolean)
+  if (displayFirstLine) keys.add(normalizedKey(displayFirstLine))
   return keys
+}
+
+function formatCodexElapsedMs(ms: number | null | undefined) {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return null
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const minuteRest = minutes % 60
+  return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`
+}
+
+function getCodexWorkElapsedMs(task: AiTask | null | undefined, result: Record<string, unknown>, nowMs: number, active: boolean) {
+  const startedMs = parseIsoMs(task?.started_at) ?? parseIsoMs(task?.created_at)
+  if (startedMs === null) return null
+  const progressSummary = asRecord(result.progress_summary)
+  const endedMs = active
+    ? nowMs
+    : parseIsoMs(task?.completed_at)
+      ?? parseIsoMs(stringValue(result.last_activity_at))
+      ?? parseIsoMs(stringValue(progressSummary.checked_at))
+  if (endedMs === null) return null
+  return Math.max(0, endedMs - startedMs)
+}
+
+function formatCodexWorkLabel(ms: number | null | undefined, active: boolean) {
+  const elapsed = formatCodexElapsedMs(ms)
+  if (!elapsed) return null
+  return active ? `${elapsed}作業中` : `${elapsed}作業しました`
+}
+
+function CodexPanelRunningOutline() {
+  return (
+    <span className="codex-monitor-running-orbit" aria-label="Codex 実行中">
+      <svg
+        className="codex-monitor-running-orbit__svg"
+        viewBox="0 0 100 100"
+        aria-hidden="true"
+        focusable="false"
+        preserveAspectRatio="none"
+      >
+        <rect className="codex-monitor-running-orbit__rail" x="1.5" y="1.5" width="97" height="97" rx="7" pathLength={100} />
+        <rect className="codex-monitor-running-orbit__runner" x="1.5" y="1.5" width="97" height="97" rx="7" pathLength={100} />
+      </svg>
+    </span>
+  )
 }
 
 function sanitizeCodexDisplayLog(value: string): string {
@@ -785,7 +859,7 @@ function parseCodexConversation(value: string, prompt: string): { entries: Codex
     const user = block.match(/^\[user\]\s*([\s\S]+)/i)
     if (user?.[1]?.trim()) {
       flushAssistant()
-      const userText = user[1].trim()
+      const userText = sanitizeCodexPromptForDisplay(user[1].trim())
       if (!promptKeys.has(normalizedKey(userText))) pushEntry({ kind: "user", text: userText })
       continue
     }
@@ -1502,9 +1576,27 @@ export function CodexNodePanel({
   const codexPreview = stringValue(codexSnapshot.preview)
   const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexAiTaskId = codexTask?.id ?? null
-  const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
+  const sentPrompt = sanitizeCodexPromptForDisplay(rawSentPrompt)
   const isCodexRunning = codexUiState?.state === "running" || codexTask?.status === "running"
+  const [codexRunNowMs, setCodexRunNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    setCodexRunNowMs(Date.now())
+    if (!isCodexRunning) return
+    const intervalId = window.setInterval(() => setCodexRunNowMs(Date.now()), 1000)
+    return () => window.clearInterval(intervalId)
+  }, [isCodexRunning])
   const canCopyCodexPrompt = hasCodexRun && !!rawSentPrompt && !isCodexRunning
+  const shouldShowCodexWorkElapsed =
+    isCodexRunning ||
+    codexUiState?.state === "awaiting_approval" ||
+    codexUiState?.state === "completed" ||
+    codexTask?.status === "awaiting_approval" ||
+    codexTask?.status === "needs_input" ||
+    codexTask?.status === "completed"
+  const codexWorkElapsedMs = shouldShowCodexWorkElapsed
+    ? getCodexWorkElapsedMs(codexTask, codexResult, codexRunNowMs, isCodexRunning)
+    : null
+  const codexWorkLabel = formatCodexWorkLabel(codexWorkElapsedMs, isCodexRunning)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
   const codexConversation = useMemo(
@@ -2421,7 +2513,11 @@ export function CodexNodePanel({
                 </a>
               )}
 	              {hasCodexRun && (
-                <section className="min-w-0 overflow-hidden overflow-x-hidden rounded-lg border border-border/70 bg-card">
+                <section className={cn(
+                  "relative min-w-0 overflow-hidden overflow-x-hidden rounded-lg border border-border/70 bg-card",
+                  isCodexRunning && "border-emerald-500/35 shadow-[0_0_18px_rgba(16,185,129,0.10)]",
+                )}>
+                  {isCodexRunning && <CodexPanelRunningOutline />}
                   <div className="flex min-w-0 flex-col gap-2 border-b border-border/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <Bot className={codexUiState?.state === "running" ? "h-4 w-4 text-emerald-500" : "h-4 w-4 text-amber-500"} />
@@ -2444,6 +2540,27 @@ export function CodexNodePanel({
                       ) : (
                         <span className="min-w-0 rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                           {codexWaitingForAppSend ? "未送信" : codexManualHandoff ? "外部アプリ確認待ち" : "thread検出待ち"}
+                        </span>
+                      )}
+                      {codexWorkLabel && (
+                        <span
+                          className={cn(
+                            "inline-flex min-w-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold",
+                            isCodexRunning
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                              : "border-border/70 bg-muted/60 text-muted-foreground",
+                          )}
+                        >
+                          {isCodexRunning ? (
+                            <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                            </span>
+                          ) : (
+                            <Clock className="h-3 w-3 shrink-0" />
+                          )}
+                          <span className="truncate">{codexWorkLabel}</span>
+                          {!isCodexRunning && <ChevronRight className="h-3 w-3 shrink-0 opacity-70" />}
                         </span>
                       )}
                     </div>
@@ -2488,6 +2605,24 @@ export function CodexNodePanel({
                   </div>
 
                   <div className="max-h-[46dvh] min-h-48 min-w-0 space-y-3 overflow-y-auto overflow-x-hidden px-3 py-4 sm:min-h-64">
+                    {isCodexRunning && (
+                      <div className="flex min-w-0 items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-emerald-800 dark:text-emerald-100">
+                        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-400/35 bg-emerald-500/15">
+                          <Bot className="h-4 w-4 motion-safe:animate-pulse" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                            <span className="truncate">Codexが作業中</span>
+                            {codexWorkLabel && <span className="shrink-0 text-xs text-emerald-700 dark:text-emerald-200">{codexWorkLabel}</span>}
+                          </div>
+                          <div className="mt-1 flex items-center gap-1" aria-hidden="true">
+                            <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-emerald-500 [animation-delay:150ms]" />
+                            <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-emerald-500 [animation-delay:300ms]" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {sentPrompt && (
                       <div className="flex min-w-0 justify-end">
                         <div className="min-w-0 max-w-[92%] rounded-2xl bg-muted px-3 py-2 text-sm leading-6 text-foreground sm:max-w-[84%]">
