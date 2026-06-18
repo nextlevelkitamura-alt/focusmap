@@ -541,10 +541,6 @@ function taskThreadId(task: AiTask): string | null {
   return typeof resultThreadId === 'string' && resultThreadId.trim() ? resultThreadId.trim() : null;
 }
 
-function boolValue(value: unknown): boolean {
-  return value === true || value === 1 || value === '1';
-}
-
 export function knownCodexThreadIds(tasks: AiTask[]): Set<string> {
   const ids = new Set<string>();
   for (const task of tasks) {
@@ -600,7 +596,6 @@ export function isOrphanThreadImportCandidate(
   cwdScopeMap?: Map<string, CodexThreadImportScope>,
 ): boolean {
   if (!row.id || knownThreadIds.has(row.id)) return false;
-  if (boolValue(row.archived)) return false;
   if (isFocusmapManualHandoffThread(row, focusmapTasks, cwdScopeMap)) return false;
   const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
   if (updatedMs <= 0) return false;
@@ -745,6 +740,13 @@ export function hasPendingArchiveRequest(task: AiTask): boolean {
     result.codex_archive_request_cancelled_at == null &&
     result.codex_archive_completed_at == null &&
     result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true;
+}
+
+export function shouldCompleteSourceFromArchivedThread(task: AiTask): boolean {
+  const result = taskResult(task);
+  return hasPendingArchiveRequest(task) &&
+    !!task.source_task_id &&
     result.codex_source_task_completion_suppressed !== true;
 }
 
@@ -1231,7 +1233,8 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
   const nowIso = new Date().toISOString();
   const current = taskResult(task);
   const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true;
-  const sourceTaskCompleted = reason === 'archived' && !!task.source_task_id && !sourceCompletionSuppressed;
+  const sourceTaskCompleted = reason === 'archived' && shouldCompleteSourceFromArchivedThread(task);
+  const pendingArchiveRequest = sourceTaskCompleted;
   const nextStatus: AiTask['status'] = sourceTaskCompleted ? 'completed' : 'awaiting_approval';
   const result: TaskResultJson = {
     executor: task.executor === 'codex' ? 'codex' : 'codex_app',
@@ -1248,14 +1251,14 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
     codex_source_task_id: task.source_task_id ?? null,
     codex_source_task_completion_reason: sourceTaskCompleted ? 'archived' : null,
     codex_source_task_completion_suppressed: sourceCompletionSuppressed,
-    codex_archive_request_state: reason === 'archived' && hasPendingArchiveRequest(task)
+    codex_archive_request_state: pendingArchiveRequest
       ? 'completed'
       : typeof current.codex_archive_request_state === 'string'
         ? current.codex_archive_request_state as TaskResultJson['codex_archive_request_state']
         : undefined,
     codex_archive_requested_at: typeof current.codex_archive_requested_at === 'string' ? current.codex_archive_requested_at : undefined,
     codex_archive_request_reason: typeof current.codex_archive_request_reason === 'string' ? current.codex_archive_request_reason : undefined,
-    codex_archive_completed_at: reason === 'archived' && hasPendingArchiveRequest(task)
+    codex_archive_completed_at: pendingArchiveRequest
       ? nowIso
       : typeof current.codex_archive_completed_at === 'string'
         ? current.codex_archive_completed_at

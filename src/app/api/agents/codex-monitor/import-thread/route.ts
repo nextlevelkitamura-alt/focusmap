@@ -213,6 +213,7 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
     meta: {
       imported_by: 'focusmap-agent',
       thread_title: thread.title ?? null,
+      thread_updated_at_ms: thread.updated_at_ms ?? null,
       thread_preview_chars: thread.preview?.length ?? 0,
       cwd: thread.cwd ?? null,
       scope_repo_path: thread.scope_repo_path ?? null,
@@ -252,6 +253,7 @@ export function linkedManualHandoffThreadResult(
       ...currentMeta,
       linked_by: 'codex-monitor-import-thread',
       thread_title: thread.title ?? null,
+      thread_updated_at_ms: thread.updated_at_ms ?? null,
       cwd: thread.cwd ?? null,
     },
   }

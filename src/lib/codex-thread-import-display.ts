@@ -1,9 +1,39 @@
 const SECTION_HEADING_RE = /^##\s+(.+?)\s*$/
+const IMPORTED_THREAD_UPDATED_AT_RE = /(?:^|\n)\s*-\s*最終更新:\s*([^\n]+)/u
 
 function compactDisplayText(value: unknown, maxChars = 2_000) {
   if (typeof value !== "string") return null
   const text = value.replace(/\r\n?/g, "\n").trim()
   return text ? text.slice(0, maxChars) : null
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function isoFromTime(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const ms = value > 10_000_000_000 ? value : value * 1000
+    return new Date(ms).toISOString()
+  }
+  const text = stringValue(value)
+  if (!text) return null
+  const ms = Date.parse(text)
+  return Number.isFinite(ms) ? text : null
+}
+
+function firstValidTime(...values: unknown[]) {
+  for (const value of values) {
+    const iso = isoFromTime(value)
+    if (iso) return iso
+  }
+  return null
 }
 
 export function markdownSectionBody(markdown: unknown, heading: string) {
@@ -28,4 +58,50 @@ export function markdownSectionBody(markdown: unknown, heading: string) {
 
 export function codexThreadPromptPreviewFromMemo(memo: unknown, fallback?: unknown) {
   return markdownSectionBody(memo, "初回依頼") ?? compactDisplayText(fallback)
+}
+
+export function importedCodexThreadUpdatedAtFromMemo(memo: unknown) {
+  const metadata = markdownSectionBody(memo, "取り込み情報")
+  const match = metadata?.match(IMPORTED_THREAD_UPDATED_AT_RE)
+  return firstValidTime(match?.[1])
+}
+
+export function codexThreadImportActivityAt(input: {
+  task?: {
+    memo?: unknown
+    updated_at?: string | null
+    created_at?: string | null
+  } | null
+  aiTask?: {
+    result?: unknown
+    completed_at?: string | null
+    started_at?: string | null
+    created_at?: string | null
+  } | null
+  progressTask?: {
+    updated_at?: string | null
+  } | null
+  codexRun?: {
+    lastActivityAt?: string | null
+    updatedAt?: string | null
+  } | null
+}) {
+  const result = recordValue(input.aiTask?.result)
+  const meta = recordValue(result?.meta)
+
+  return firstValidTime(
+    result?.last_activity_at,
+    result?.awaiting_approval_at,
+    result?.codex_activity_synced_at,
+    meta?.thread_updated_at_ms,
+    importedCodexThreadUpdatedAtFromMemo(input.task?.memo),
+    input.codexRun?.lastActivityAt,
+    input.codexRun?.updatedAt,
+    input.aiTask?.completed_at,
+    input.aiTask?.started_at,
+    input.aiTask?.created_at,
+    input.progressTask?.updated_at,
+    input.task?.updated_at,
+    input.task?.created_at,
+  )
 }

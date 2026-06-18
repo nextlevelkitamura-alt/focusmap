@@ -20,6 +20,7 @@ import {
   preImportCodexMonitorTasks,
   prioritizeCodexMonitorTasks,
   RESUME_RUNNING_VISIBILITY_MS,
+  shouldCompleteSourceFromArchivedThread,
   shouldDeferOrphanImportForTasks,
   taskStateForSummary,
 } from './src/codex-thread-monitor';
@@ -156,6 +157,28 @@ describe('codex-thread-monitor state detection', () => {
         codex_archive_request_cancelled_at: '2026-06-10T00:00:03.000Z',
       },
     }))).toBe(false);
+  });
+
+  test('does not complete a source task just because the Codex thread is archived', () => {
+    expect(shouldCompleteSourceFromArchivedThread(task({
+      status: 'awaiting_approval',
+      source_task_id: 'source-1',
+      result: {
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: 'archived',
+        codex_thread_id: 'thread-1',
+      },
+    }))).toBe(false);
+
+    expect(shouldCompleteSourceFromArchivedThread(task({
+      status: 'completed',
+      source_task_id: 'source-1',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+      },
+    }))).toBe(true);
   });
 
   test('keeps a completed Codex answer in awaiting_approval even when thread updated_at is later than completed_at seconds', () => {
@@ -523,7 +546,7 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(isOrphanThreadImportCandidate(base, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
     expect(isOrphanThreadImportCandidate(base, new Set(['thread-new']), importScopes, nowMs, 10 * 60_000)).toBe(false);
-    expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
     expect(isOrphanThreadImportCandidate({ ...base, cwd: '/Users/me/other' }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({ ...base, updated_at_ms: Date.parse('2026-06-10T08:59:59.000Z') }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({

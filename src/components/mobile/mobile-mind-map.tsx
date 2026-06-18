@@ -11,7 +11,7 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion"
-import { codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display"
+import { codexThreadImportActivityAt, codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
@@ -84,6 +84,18 @@ function codexThreadMatchesSelectedRepo(
     if (taskWorkDir === selected) return true
     if (codexScopeRepoPathFromAiTask(aiTask) === selected) return true
     return normalizeRepoPath(taskProject?.repo_path) === selected
+}
+
+function codexChatImportStatusLabel(
+    visualStatus: string | null | undefined,
+    fallbackLabel: string | null | undefined,
+) {
+    if (visualStatus === "completed" || visualStatus === "done") {
+        return fallbackLabel ?? "完了済み"
+    }
+    return getCodexMonitorUiStatus(visualStatus) === "review"
+        ? "返信待ち"
+        : fallbackLabel ?? codexMonitorUiLabel(visualStatus)
 }
 
 function shouldUseTaskProgressFixture() {
@@ -721,19 +733,24 @@ export function MobileMindMap({
                 const placementLabel = placed
                     ? `配置済み: ${parentTask?.title?.trim() || "プロジェクト直下"}`
                     : "未配置"
+                const updatedAt = codexThreadImportActivityAt({ task, aiTask, progressTask, codexRun })
+                const visualStatus = progressTask?.status ?? codexRun?.state ?? null
                 return [{
                     id: task.id,
-                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? null,
+                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
                     title: task.title,
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
-                    status: progressTask?.status ?? codexRun?.state ?? null,
-                    statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? null,
+                    status: visualStatus,
+                    statusLabel: codexChatImportStatusLabel(
+                        visualStatus,
+                        progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label,
+                    ),
                     placementLabel,
                     placed,
-                    updatedLabel: formatChatImportUpdatedLabel(task.updated_at ?? task.created_at),
-                    updatedAtIso: task.updated_at ?? task.created_at,
+                    updatedLabel: formatChatImportUpdatedLabel(updatedAt),
+                    updatedAtIso: updatedAt,
                 }]
             })
             .sort((a, b) => {

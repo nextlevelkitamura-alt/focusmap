@@ -109,6 +109,7 @@ describe('codex orphan thread import helpers', () => {
     expect(result.codex_review_reason).toBe('external_thread_import')
     expect(result.codex_run_state).toBe('running')
     expect(result.last_activity_at).toBe('2026-06-10T10:00:00.000Z')
+    expect(result.meta.thread_updated_at_ms).toBe(thread.updated_at_ms)
   })
 
   test('stores completed imported threads as awaiting approval immediately', () => {
@@ -262,5 +263,6 @@ describe('codex orphan thread import helpers', () => {
     expect(linkedResult.codex_review_reason).toBe('completed')
     expect(linkedResult.awaiting_approval_at).toBe('2026-06-10T10:03:00.000Z')
     expect(linkedResult.codex_source_task_id).toBe('mindmap-node-1')
+    expect(linkedResult.meta.thread_updated_at_ms).toBe(thread.updated_at_ms)
   })
 })

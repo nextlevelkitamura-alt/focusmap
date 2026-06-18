@@ -21,7 +21,7 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion";
-import { codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display";
+import { codexThreadImportActivityAt, codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display";
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
@@ -174,6 +174,18 @@ function compareCodexChatImportItems(a: CodexChatImportItem, b: CodexChatImportI
     const bRunning = getCodexMonitorUiStatus(b.status ?? null) === 'running' ? 0 : 1;
     if (aRunning !== bRunning) return aRunning - bRunning;
     return chatImportTimeMs(b.sortAt) - chatImportTimeMs(a.sortAt);
+}
+
+function codexChatImportStatusLabel(
+    visualStatus: string | null | undefined,
+    fallbackLabel: string | null | undefined,
+) {
+    if (visualStatus === 'completed' || visualStatus === 'done') {
+        return fallbackLabel ?? '完了済み';
+    }
+    return getCodexMonitorUiStatus(visualStatus) === 'review'
+        ? '返信待ち'
+        : fallbackLabel ?? codexMonitorUiLabel(visualStatus);
 }
 
 type MindMapClipboardNode = {
@@ -1047,13 +1059,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 const aiTask = aiTasksBySourceId.get(task.id) ?? null;
                 const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null;
                 if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return [];
-                const aiResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
-                    ? aiTask.result as Record<string, unknown>
-                    : {};
-                const resultString = (key: string) => {
-                    const value = aiResult[key];
-                    return typeof value === 'string' && value.trim() ? value.trim() : null;
-                };
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
                 if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
                 const placed = !task.parent_task_id || !codexInboxGroupIds.has(task.parent_task_id);
@@ -1064,14 +1069,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     task.codex_status ??
                     aiTask?.status ??
                     null;
-                const updatedAt = resultString('last_activity_at') ||
-                    codexRun?.updatedAt ||
-                    progressTask?.updated_at ||
-                    aiTask?.completed_at ||
-                    aiTask?.started_at ||
-                    aiTask?.created_at ||
-                    task.updated_at ||
-                    task.created_at;
+                const updatedAt = codexThreadImportActivityAt({ task, aiTask, progressTask, codexRun });
                 return [{
                     id: task.id,
                     aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
@@ -1082,7 +1080,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     status: visualStatus,
                     projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
                     placementLabel,
-                    statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? codexMonitorUiLabel(visualStatus),
+                    statusLabel: codexChatImportStatusLabel(
+                        visualStatus,
+                        progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label,
+                    ),
                     updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                     sortAt: updatedAt,
                     placed,
@@ -1152,14 +1153,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 progressTask?.current_step?.trim() ||
                 (aiTask?.prompt ? aiTask.prompt.replace(/\s+/g, ' ').trim().slice(0, 120) : null) ||
                 null;
-            const updatedAt = resultString('last_activity_at') ||
-                codexRun?.updatedAt ||
-                progressTask?.updated_at ||
-                aiTask?.completed_at ||
-                aiTask?.started_at ||
-                aiTask?.created_at ||
-                task.updated_at ||
-                task.created_at;
+            const updatedAt = codexThreadImportActivityAt({ task, aiTask, progressTask, codexRun });
 
             items.set(task.id, {
                 id: task.id,
@@ -1171,7 +1165,10 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 status: visualStatus,
                 projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
                 placementLabel,
-                statusLabel: progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label ?? codexMonitorUiLabel(visualStatus),
+                statusLabel: codexChatImportStatusLabel(
+                    visualStatus,
+                    progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label,
+                ),
                 updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                 sortAt: updatedAt,
                 placed,
