@@ -418,13 +418,13 @@ function codexProgressSummary(input: {
 }
 
 function codexClosureStep(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted' | 'thread_unavailable'>): string {
-  if (reason === 'archived') return 'Codex threadがアーカイブされたため完了しました'
+  if (reason === 'archived') return 'Codex threadはアーカイブ済みのため確認待ちです'
   if (reason === 'thread_unavailable') return 'Codex threadを一時的に確認できません'
   return 'Codex threadが削除されたため確認待ちです'
 }
 
 function codexClosureMessage(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted' | 'thread_unavailable'>): string {
-  if (reason === 'archived') return 'Codex.app側でthreadがアーカイブされたため、Focusmapタスクを完了しました。'
+  if (reason === 'archived') return 'Codex.app側でthreadがアーカイブ済みですが、Focusmap側の完了要求が確認できないため確認待ちとして扱います。'
   if (reason === 'thread_unavailable') return 'Codex.app側のthreadを一時的に確認できません。削除扱いにはせず、監視を継続します。'
   return 'Codex.app側でthreadが削除された可能性があります。内容確認が必要です。'
 }
@@ -937,7 +937,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Codex thread closure sync failed' }, { status: 500 })
     }
   }
-  const sentInCodex = parsed.sawTaskStarted || parsed.sawTerminalEvent
+  const sentInCodex = parsed.sawTaskStarted || parsed.sawTerminalEvent || !!parsed.latestRunningActivityAt
   const resumedFromApproval = wasAwaitingApproval && detectCodexResumeAfterApproval(
     parsed,
     current.awaiting_approval_at,

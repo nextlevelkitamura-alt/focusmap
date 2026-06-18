@@ -61,6 +61,23 @@ describe("parseCodexRollout", () => {
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:03.000Z")
   })
 
+  test("keeps Codex running while reasoning, tool activity, or context compaction continues", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }, "2026-05-30T08:00:00.000Z"),
+      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
+      row({ type: "reasoning", summary: [] }, "2026-05-30T08:02:05.000Z"),
+      row({ type: "function_call", name: "exec_command" }, "2026-05-30T08:02:07.000Z"),
+      row({ type: "function_call_output", call_id: "call-1", output: "ok" }, "2026-05-30T08:02:08.000Z"),
+      row({ type: "context_compaction", message: "Compacting context" }, "2026-05-30T08:02:09.000Z"),
+    ].join("\n"))
+
+    expect(parsed.state).toBe("running")
+    expect(parsed.reviewReason).toBe("started")
+    expect(parsed.currentStep).toBe("Codexがコンテキストを整理中")
+    expect(parsed.latestRunningActivityAt).toBe("2026-05-30T08:02:09.000Z")
+    expect(parsed.sawTerminalEvent).toBe(false)
+  })
+
   test("moves to review when Codex completes", () => {
     const parsed = parseCodexRollout([
       row({ type: "task_started" }),
@@ -153,6 +170,15 @@ describe("detectCodexResumeAfterApproval", () => {
         "2026-05-30T08:03:59.000Z",
       ),
     ).toBe(false)
+  })
+
+  test("detects later running activity after awaiting approval", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
+      row({ type: "context_compaction", message: "Compacting context" }, "2026-05-30T08:03:00.000Z"),
+    ].join("\n"))
+
+    expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:02:30.000Z")).toBe(true)
   })
 
   test("does not resume from older internal activity", () => {
@@ -295,8 +321,8 @@ describe("getCodexTaskUiState", () => {
 })
 
 describe("shouldCompleteSourceTaskForCodexReview", () => {
-  test("only treats archived Codex sessions as source task completion", () => {
-    expect(shouldCompleteSourceTaskForCodexReview("archived")).toBe(true)
+  test("does not complete source tasks from Codex review reasons alone", () => {
+    expect(shouldCompleteSourceTaskForCodexReview("archived")).toBe(false)
     expect(shouldCompleteSourceTaskForCodexReview("thread_deleted")).toBe(false)
     expect(shouldCompleteSourceTaskForCodexReview("thread_unavailable")).toBe(false)
     expect(shouldCompleteSourceTaskForCodexReview("completed")).toBe(false)

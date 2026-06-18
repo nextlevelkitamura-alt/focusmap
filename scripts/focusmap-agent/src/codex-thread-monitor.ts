@@ -26,6 +26,7 @@ const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: s
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 export const RESUME_RUNNING_VISIBILITY_MS = 12_000;
+export const AWAITING_APPROVAL_STABILITY_MS = 30_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
@@ -132,6 +133,8 @@ type RolloutSummary = {
   reviewReason: string;
   currentStep: string;
   lastActivityAt: string | null;
+  threadUpdatedAt: string | null;
+  threadArchived: boolean;
   latestUserMessageAt: string | null;
   latestTaskStartedAt: string | null;
   latestTaskCompleteAt: string | null;
@@ -304,6 +307,14 @@ function looksLikeQuestion(value: string): boolean {
   return /(確認してください|教えてください|選んでください|必要ですか|よいですか|しますか|どちら|どれ)/u.test(text.slice(-160));
 }
 
+function isContextMaintenanceEvent(payloadType: string, payload: Record<string, unknown>): boolean {
+  const type = payloadType.toLowerCase();
+  if (/(context|window).*(compact|compaction|compress|compression|summariz|summary)/.test(type)) return true;
+  if (/(compact|compaction|compress|compression).*(context|window)/.test(type)) return true;
+  const text = safeText(payload).toLowerCase();
+  return /context (compaction|compression)|compacting context|compressing context|コンテキスト圧縮|圧縮中/.test(text);
+}
+
 function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
@@ -357,10 +368,12 @@ function appendVisibleMessage(messages: VisibleMessage[], input: Omit<VisibleMes
 
 export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
   const visibleMessages: VisibleMessage[] = [];
-  let state: RolloutSummary['state'] = row.archived ? 'awaiting_approval' : 'running';
-  let reviewReason = row.archived ? 'archived' : 'started';
-  let currentStep = row.archived ? 'Codex thread は確認待ちです' : 'Codex.appで実行中';
-  let lastActivityAt = timestampToIso(row.updated_at_ms ?? null);
+  const threadArchived = Boolean(row.archived);
+  const threadUpdatedAt = timestampToIso(row.updated_at_ms ?? null);
+  let state: RolloutSummary['state'] = threadArchived ? 'awaiting_approval' : 'running';
+  let reviewReason = threadArchived ? 'archived' : 'started';
+  let currentStep = threadArchived ? 'Codex thread は確認待ちです' : 'Codex.appで実行中';
+  let lastActivityAt = threadUpdatedAt;
   let latestUserMessageAt: string | null = null;
   let latestTaskStartedAt: string | null = null;
   let latestTaskCompleteAt: string | null = null;
@@ -460,6 +473,14 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       continue;
     }
 
+    if (isContextMaintenanceEvent(payloadType, payload)) {
+      latestRunningActivityAt = eventTime;
+      state = 'running';
+      reviewReason = 'started';
+      currentStep = 'Codexがコンテキストを整理中';
+      continue;
+    }
+
     if (payloadType === 'reasoning') {
       latestRunningActivityAt = eventTime;
       state = 'running';
@@ -525,6 +546,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     reviewReason,
     currentStep,
     lastActivityAt,
+    threadUpdatedAt,
+    threadArchived,
     latestUserMessageAt,
     latestTaskStartedAt,
     latestTaskCompleteAt,
@@ -651,9 +674,9 @@ function importPayloadFromThread(
     codex_run_state: summary?.state ?? (row.archived ? 'awaiting_approval' : 'running'),
     codex_review_reason: summary?.reviewReason ?? (row.archived ? 'archived' : 'external_thread_import'),
     current_step: summary?.currentStep ?? null,
-    last_activity_at: summary?.lastActivityAt ?? timestampToIso(row.updated_at_ms ?? row.created_at_ms) ?? null,
+    last_activity_at: latestIso(summary?.lastActivityAt, summary?.threadUpdatedAt, row.updated_at_ms, row.created_at_ms),
     awaiting_approval_at: summary?.state === 'awaiting_approval'
-      ? (summary.lastActivityAt ?? timestampToIso(row.updated_at_ms ?? row.created_at_ms) ?? null)
+      ? latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms, row.created_at_ms)
       : null,
     scope_project_id: scope?.project_id ?? null,
     scope_repo_path: scope?.repo_path ?? null,
@@ -826,6 +849,25 @@ function didResumeAfterCheckpoint(task: AiTask, summary: RolloutSummary): boolea
   return candidates.some(value => value > checkpoint);
 }
 
+function awaitingApprovalSignalStable(summary: RolloutSummary, nowMs: number): boolean {
+  if (summary.state !== 'awaiting_approval') return true;
+  const completeMs = timeMs(summary.latestTaskCompleteAt);
+  if (completeMs === null) return true;
+  const latestRunningMs = Math.max(
+    timeMs(summary.latestUserMessageAt) ?? 0,
+    timeMs(summary.latestTaskStartedAt) ?? 0,
+    timeMs(summary.latestRunningActivityAt) ?? 0,
+  );
+  if (latestRunningMs > completeMs) return false;
+
+  const threadUpdatedMs = summary.threadArchived ? null : timeMs(summary.threadUpdatedAt);
+  const stabilityAnchorMs = Math.max(
+    completeMs,
+    threadUpdatedMs !== null && threadUpdatedMs > completeMs ? threadUpdatedMs : completeMs,
+  );
+  return nowMs - stabilityAnchorMs >= AWAITING_APPROVAL_STABILITY_MS;
+}
+
 export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs = Date.now()) {
   const resumed = didResumeAfterCheckpoint(task, summary);
   if (resumed) {
@@ -837,9 +879,15 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs
     const completedMs = timeMs(summary.latestTaskCompleteAt) ?? 0;
     if (completedMs >= resumeMs) {
       const recentlyResumed = resumeMs > 0 && nowMs - resumeMs <= RESUME_RUNNING_VISIBILITY_MS;
-      return { status: recentlyResumed ? 'running' as const : 'awaiting_approval' as const, resumed: true };
+      if (recentlyResumed || !awaitingApprovalSignalStable(summary, nowMs)) {
+        return { status: 'running' as const, resumed: true };
+      }
+      return { status: 'awaiting_approval' as const, resumed: true };
     }
     return { status: 'running' as const, resumed: true };
+  }
+  if (task.status === 'running' && summary.state === 'awaiting_approval' && !awaitingApprovalSignalStable(summary, nowMs)) {
+    return { status: 'running' as const, resumed: false };
   }
   if (wasWaitingForReview(task) && summary.state === 'running') {
     return { status: 'awaiting_approval' as const, resumed: false };
@@ -945,7 +993,10 @@ function resultSnapshot(
 ): TaskResultJson {
   const result = taskResult(task);
   const nowIso = new Date().toISOString();
-  const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? nowIso;
+  const lastActivityAt = latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms) ?? nowIso;
+  const currentStep = status === 'running' && summary.state === 'awaiting_approval'
+    ? 'Codexの実行状態を確認中'
+    : summary.currentStep;
   const codexExternalOrigin = typeof result.codex_external_origin === 'string' ? result.codex_external_origin : undefined;
   const sourceTaskTitleSuggestion = importedThreadSourceTitleSuggestion(task, row);
   const previousSyncedSequence = typeof result.codex_activity_synced_sequence === 'number'
@@ -969,7 +1020,7 @@ function resultSnapshot(
     codex_source_task_id: typeof result.codex_source_task_id === 'string'
       ? result.codex_source_task_id
       : task.source_task_id ?? null,
-    current_step: summary.currentStep,
+    current_step: currentStep,
     last_activity_at: lastActivityAt,
     awaiting_approval_at: status === 'awaiting_approval'
       ? awaitingApprovalAtForSummary(result, summary, nowIso)
@@ -1318,12 +1369,13 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   const summary = parseRollout(rolloutRaw, row);
   const { status, resumed } = taskStateForSummary(task, summary);
   const activityBatch = activitySyncBatch(task, threadId, summary, resumed);
-  const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? '';
+  const lastActivityAt = latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms) ?? '';
   const sourceTaskTitleSuggestion = importedThreadSourceTitleSuggestion(task, row);
   const cacheKey = [
     status,
     resumed ? 'resumed' : 'steady',
     lastActivityAt,
+    summary.threadUpdatedAt ?? '',
     summary.currentStep,
     summary.latestUserMessageAt ?? '',
     summary.latestTaskCompleteAt ?? '',

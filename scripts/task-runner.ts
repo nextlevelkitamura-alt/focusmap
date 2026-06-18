@@ -1652,14 +1652,17 @@ async function completeCodexTaskClosedFromApp(
   const now = new Date().toISOString()
   const current = (task.result ?? {}) as Record<string, unknown>
   const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
-  const completionNotice = opts.reason === 'archived'
-    ? 'Codex thread がCodex.app側でアーカイブされたため、マップノードを完了にしました。'
-    : 'Codex thread が見つからないため、確認待ちにしました。'
-  const sourceTaskCompleted = opts.reason === 'archived' && Boolean(task.source_task_id)
   const archiveRequestWasPending = opts.reason === 'archived' &&
     current.codex_archive_request_state === 'pending' &&
     typeof current.codex_archive_requested_at === 'string' &&
     current.codex_archive_requested_at.trim().length > 0
+  const completionNotice = opts.reason === 'archived'
+    ? archiveRequestWasPending
+      ? 'Focusmap側の完了要求に対応してCodex threadのアーカイブを確認しました。'
+      : 'Codex thread はアーカイブ済みですが、Focusmap側の完了要求がないため確認待ちにしました。'
+    : 'Codex thread が見つからないため、確認待ちにしました。'
+  const sourceTaskCompleted = opts.reason === 'archived' && archiveRequestWasPending && Boolean(task.source_task_id)
+  const nextTaskStatus = sourceTaskCompleted ? 'completed' : 'awaiting_approval'
 
   if (sourceTaskCompleted && task.source_task_id) {
     const { error } = await supabase
@@ -1675,9 +1678,9 @@ async function completeCodexTaskClosedFromApp(
   await supabase
     .from('ai_tasks')
     .update({
-      status: 'completed',
+      status: nextTaskStatus,
       error: null,
-      completed_at: now,
+      completed_at: sourceTaskCompleted ? now : null,
       result: {
         ...current,
         executor,
@@ -1703,11 +1706,11 @@ async function completeCodexTaskClosedFromApp(
 
   await mirrorCodexTaskSnapshotToTurso({
     task,
-    status: 'completed',
+    status: nextTaskStatus,
     threadId: opts.threadId,
     currentStep: completionNotice,
     summary: completionNotice,
-    eventType: 'completed',
+    eventType: sourceTaskCompleted ? 'completed' : 'awaiting_approval',
     updatedAt: now,
     force: true,
   }).catch(error => {
