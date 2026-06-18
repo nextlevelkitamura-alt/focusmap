@@ -33,6 +33,7 @@ import {
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import { formatAiTaskWorkLabel, getAiTaskWorkElapsedMs } from "@/lib/ai-task-work-elapsed"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import { Bot, Calendar as CalendarIcon, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert, X } from "lucide-react"
 import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
@@ -143,12 +144,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
-}
-
-function parseIsoMs(value: string | null | undefined) {
-  if (!value) return null
-  const ms = Date.parse(value)
-  return Number.isFinite(ms) ? ms : null
 }
 
 function buildCodexPrompt(heading: string, detail: string) {
@@ -316,37 +311,6 @@ function promptEchoKeys(prompt: string) {
   const displayFirstLine = displayPrompt.split("\n").map(line => line.trim()).find(Boolean)
   if (displayFirstLine) keys.add(normalizedKey(displayFirstLine))
   return keys
-}
-
-function formatCodexElapsedMs(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return null
-  const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const rest = seconds % 60
-  if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  const minuteRest = minutes % 60
-  return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`
-}
-
-function getCodexWorkElapsedMs(task: AiTask | null | undefined, result: Record<string, unknown>, nowMs: number, active: boolean) {
-  const startedMs = parseIsoMs(task?.started_at) ?? parseIsoMs(task?.created_at)
-  if (startedMs === null) return null
-  const progressSummary = asRecord(result.progress_summary)
-  const endedMs = active
-    ? nowMs
-    : parseIsoMs(task?.completed_at)
-      ?? parseIsoMs(stringValue(result.last_activity_at))
-      ?? parseIsoMs(stringValue(progressSummary.checked_at))
-  if (endedMs === null) return null
-  return Math.max(0, endedMs - startedMs)
-}
-
-function formatCodexWorkLabel(ms: number | null | undefined, active: boolean) {
-  const elapsed = formatCodexElapsedMs(ms)
-  if (!elapsed) return null
-  return active ? `${elapsed}作業中` : `${elapsed}作業しました`
 }
 
 function CodexPanelRunningOutline() {
@@ -1594,9 +1558,9 @@ export function CodexNodePanel({
     codexTask?.status === "needs_input" ||
     codexTask?.status === "completed"
   const codexWorkElapsedMs = shouldShowCodexWorkElapsed
-    ? getCodexWorkElapsedMs(codexTask, codexResult, codexRunNowMs, isCodexRunning)
+    ? getAiTaskWorkElapsedMs(codexTask, { nowMs: codexRunNowMs, active: isCodexRunning })
     : null
-  const codexWorkLabel = formatCodexWorkLabel(codexWorkElapsedMs, isCodexRunning)
+  const codexWorkLabel = formatAiTaskWorkLabel(codexWorkElapsedMs, isCodexRunning)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
   const codexConversation = useMemo(

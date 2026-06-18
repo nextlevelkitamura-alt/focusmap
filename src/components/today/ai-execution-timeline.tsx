@@ -24,6 +24,7 @@ import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { codexThreadUrl } from "@/lib/task-progress-ui"
+import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel, getAiTaskWorkElapsedMs } from "@/lib/ai-task-work-elapsed"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiTasks } from "@/hooks/useAiTasks"
 import { useScheduledTasks } from "@/hooks/useScheduledTasks"
@@ -344,6 +345,26 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
   const style = STATUS_STYLES[task.status]
   const progress = getProgressSummary(task)
   const codexUiState = getCodexTaskUiState(task)
+  const isWorkRunning = codexUiState?.state === "running" || (!codexUiState && task.status === "running")
+  const shouldShowWorkElapsed =
+    isWorkRunning ||
+    codexUiState?.state === "awaiting_approval" ||
+    codexUiState?.state === "completed" ||
+    task.status === "awaiting_approval" ||
+    task.status === "needs_input" ||
+    task.status === "completed"
+  const [workNowMs, setWorkNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    setWorkNowMs(Date.now())
+    if (!isWorkRunning) return
+    const intervalId = window.setInterval(() => setWorkNowMs(Date.now()), 1000)
+    return () => window.clearInterval(intervalId)
+  }, [isWorkRunning])
+  const workElapsedMs = shouldShowWorkElapsed
+    ? getAiTaskWorkElapsedMs(task, { nowMs: workNowMs, active: isWorkRunning })
+    : null
+  const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
+  const workLabel = formatAiTaskWorkLabel(workElapsedMs, isWorkRunning)
   const displayStyle = codexUiState
     ? {
       label: codexUiState.label,
@@ -386,14 +407,22 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium", displayStyle.className)}>
-                {codexUiState?.state === "running" ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {isWorkRunning ? (
+                  <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+                  </span>
                 ) : codexUiState?.state === "prompt_waiting" || codexUiState?.state === "awaiting_approval" ? (
                   <Clock className="h-3.5 w-3.5" />
                 ) : (
                   <StatusIcon status={task.status} />
                 )}
                 {displayStyle.label}
+                {isWorkRunning && workElapsedText && (
+                  <span className="ml-0.5 border-l border-current/25 pl-1 font-mono tabular-nums">
+                    {workElapsedText}
+                  </span>
+                )}
               </span>
               <span className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 <Terminal className="h-3 w-3" />
@@ -414,6 +443,12 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
               {task.recurrence_cron && (
                 <span className="rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                   {recurringLabel(task.recurrence_cron)}
+                </span>
+              )}
+              {!isWorkRunning && workLabel && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  <Clock className="h-3 w-3" />
+                  {workLabel}
                 </span>
               )}
             </div>
@@ -441,8 +476,14 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
                       ? "bg-sky-500/10 text-sky-300"
                       : "bg-amber-500/10 text-amber-300"
                 )}>
-                  {codexUiState.state === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {codexUiState.state === "running" && (
+                    <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+                    </span>
+                  )}
                   Codex {codexUiState.label}
+                  {workLabel && <span className="font-mono tabular-nums">· {workLabel}</span>}
                 </p>
               </div>
             ) : progress && (
@@ -585,8 +626,11 @@ export function AiExecutionTimeline({
   const isLoading = aiLoading || scheduledLoading || rangeLoading
   const error = aiError?.message ?? scheduledError ?? rangeError ?? null
 
-  const runningCount = visibleTasks.filter(task => task.status === "running").length
-  const reviewCount = visibleTasks.filter(task => task.status === "awaiting_approval" || task.status === "needs_input").length
+  const runningCount = visibleTasks.filter(task => getCodexTaskUiState(task)?.state === "running" || task.status === "running").length
+  const reviewCount = visibleTasks.filter(task => {
+    const codexState = getCodexTaskUiState(task)?.state
+    return codexState === "awaiting_approval" || task.status === "awaiting_approval" || task.status === "needs_input"
+  }).length
 
   const shiftDate = (days: number) => {
     if (!onDateChange) return

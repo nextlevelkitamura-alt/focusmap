@@ -43,6 +43,7 @@ import {
   getCodexMonitorUiStatus,
   isSameLocalDate,
 } from "@/lib/task-progress-ui"
+import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel, getAiTaskWorkElapsedMs } from "@/lib/ai-task-work-elapsed"
 import { cn } from "@/lib/utils"
 import type { AiTaskActivityMessage } from "@/types/ai-task"
 import type { Project, Space, Task } from "@/types/database"
@@ -100,6 +101,10 @@ export type TaskProgressImportItem = {
   placed?: boolean
   updatedLabel: string
   updatedAtIso?: string | null
+  workStartedAt?: string | null
+  workAwaitingApprovalAt?: string | null
+  workCompletedAt?: string | null
+  workLastActivityAt?: string | null
 }
 
 export type TaskProgressImportDragEvent = {
@@ -268,6 +273,24 @@ function CodexMonitorRunningOutline() {
       </svg>
     </span>
   )
+}
+
+function importItemWorkTask(item: TaskProgressImportItem) {
+  if (!item.workStartedAt) return null
+  return {
+    created_at: item.workStartedAt,
+    started_at: item.workStartedAt,
+    completed_at: item.workCompletedAt ?? null,
+    result: {
+      awaiting_approval_at: item.workAwaitingApprovalAt ?? undefined,
+      last_activity_at: item.workLastActivityAt ?? undefined,
+    },
+  }
+}
+
+function importItemWorkElapsedMs(item: TaskProgressImportItem, nowMs: number, active: boolean) {
+  const task = importItemWorkTask(item)
+  return task ? getAiTaskWorkElapsedMs(task, { nowMs, active }) : null
 }
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
@@ -1034,23 +1057,45 @@ function ImportDetailMetaColumn({
   statusLabel,
   repoPath,
   projectTitle,
+  workItem,
+  nowMs,
   className,
 }: {
   status?: TaskProgressStatus | string | null
   statusLabel?: string | null
   repoPath?: string | null
   projectTitle?: string | null
+  workItem?: TaskProgressImportItem | null
+  nowMs: number
   className?: string
 }) {
   const visualStatus = status ?? "awaiting_approval"
+  const uiStatus = getCodexMonitorUiStatus(visualStatus)
   const repoLabel = repoNameFromPath(repoPath) || projectTitle || null
+  const workElapsedMs = workItem ? importItemWorkElapsedMs(workItem, nowMs, uiStatus === "running") : null
+  const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
+  const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
 
   return (
     <div className={cn("flex min-w-[4.5rem] shrink-0 flex-col items-start gap-1", className)}>
       <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(visualStatus))}>
-        {getCodexMonitorUiStatus(visualStatus) === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+        {uiStatus === "running" && (
+          <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+          </span>
+        )}
         <span className="truncate">{statusLabel ?? codexMonitorUiLabel(visualStatus)}</span>
+        {uiStatus === "running" && workElapsedText && (
+          <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{workElapsedText}</span>
+        )}
       </span>
+      {uiStatus !== "running" && workLabel && (
+        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
+          <Clock className="h-3 w-3" />
+          <span className="truncate">{workLabel}</span>
+        </span>
+      )}
       {repoLabel && (
         <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
           <span className="truncate">{repoLabel}</span>
@@ -1198,11 +1243,6 @@ export function TaskProgressKanban({
   const hasMobileImportRepoControl = Boolean(mobileImportRepoControl)
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => setNowMs(Date.now()), HEARTBEAT_POLL_INTERVAL_MS)
-    return () => window.clearInterval(intervalId)
-  }, [])
-
-  useEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(DESKTOP_BOARD_HEIGHT_STORAGE_KEY, String(Math.round(desktopBodyHeightPx)))
   }, [desktopBodyHeightPx])
@@ -1321,6 +1361,17 @@ export function TaskProgressKanban({
   const activeMobileImportThreadHref = activeMobileImportDetailItem
     ? codexThreadUrl(activeMobileImportDetailItem.threadId)
     : null
+  const hasRunningMobileImportWork = useMemo(() => (
+    [...visibleMobileImportItems, activeMobileImportDetailItem].some(item => (
+      !!item?.workStartedAt && getCodexMonitorUiStatus(item.status ?? null) === "running"
+    ))
+  ), [activeMobileImportDetailItem, visibleMobileImportItems])
+
+  useEffect(() => {
+    const intervalMs = hasRunningMobileImportWork ? 1000 : HEARTBEAT_POLL_INTERVAL_MS
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), intervalMs)
+    return () => window.clearInterval(intervalId)
+  }, [hasRunningMobileImportWork])
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -1713,6 +1764,8 @@ export function TaskProgressKanban({
                       status={activeMobileImportDetailItem.status}
                       statusLabel={activeMobileImportDetailItem.statusLabel}
                       repoPath={activeMobileImportDetailItem.repoPath}
+                      workItem={activeMobileImportDetailItem}
+                      nowMs={nowMs}
                       className="pt-0.5"
                     />
                     <div className="min-w-0">
@@ -1881,6 +1934,9 @@ export function TaskProgressKanban({
                   ) : filteredMobileImportItems.map(item => {
                     const visualStatus = item.status ?? "awaiting_approval"
                     const uiStatus = getCodexMonitorUiStatus(visualStatus)
+                    const workElapsedMs = importItemWorkElapsedMs(item, nowMs, uiStatus === "running")
+                    const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
+                    const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
                     const canOpenDetail = Boolean(item.aiTaskId)
                     const isArmingImportDrag = mobileImportArmingItemId === item.id
                     const openImportDetail = () => {
@@ -1937,8 +1993,16 @@ export function TaskProgressKanban({
                           <div className="flex shrink-0 items-start gap-1">
                             {(item.statusLabel || visualStatus) && (
                               <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold", codexMonitorToneClass(visualStatus))}>
-                                {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                                {uiStatus === "running" && (
+                                  <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
+                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+                                  </span>
+                                )}
                                 {item.statusLabel ?? codexMonitorUiLabel(visualStatus)}
+                                {uiStatus === "running" && workElapsedText && (
+                                  <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{workElapsedText}</span>
+                                )}
                               </span>
                             )}
                             {canOpenDetail && (
@@ -1961,6 +2025,12 @@ export function TaskProgressKanban({
                             </span>
                           )}
                           <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>
+                          {uiStatus !== "running" && workLabel && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5">
+                              <Clock className="h-3 w-3" />
+                              {workLabel}
+                            </span>
+                          )}
                         </div>
                         {(canOpenDetail || onDeleteSourceTask) && (
                           <div className="mt-2 flex items-center gap-1.5">

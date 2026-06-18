@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, PanelBottomOpen, RefreshCw, Search, Trash2, X } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, PanelBottomOpen, RefreshCw, Search, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -28,6 +28,7 @@ import {
   codexThreadUrl,
   getCodexMonitorUiStatus,
 } from "@/lib/task-progress-ui"
+import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel, getAiTaskWorkElapsedMs } from "@/lib/ai-task-work-elapsed"
 import { cn } from "@/lib/utils"
 import type { AiTaskActivityKind, AiTaskActivityMessage, AiTaskActivityRole } from "@/types/ai-task"
 
@@ -44,6 +45,10 @@ export type CodexChatImportItem = {
   statusLabel: string | null
   updatedLabel: string | null
   sortAt?: string | null
+  workStartedAt?: string | null
+  workAwaitingApprovalAt?: string | null
+  workCompletedAt?: string | null
+  workLastActivityAt?: string | null
   placed: boolean
 }
 
@@ -375,6 +380,24 @@ function CodexMonitorRunningOutline() {
   )
 }
 
+function codexChatImportWorkTask(item: CodexChatImportItem) {
+  if (!item.workStartedAt) return null
+  return {
+    created_at: item.workStartedAt,
+    started_at: item.workStartedAt,
+    completed_at: item.workCompletedAt ?? null,
+    result: {
+      awaiting_approval_at: item.workAwaitingApprovalAt ?? undefined,
+      last_activity_at: item.workLastActivityAt ?? undefined,
+    },
+  }
+}
+
+function codexChatImportWorkElapsedMs(item: CodexChatImportItem, nowMs: number, active: boolean) {
+  const task = codexChatImportWorkTask(item)
+  return task ? getAiTaskWorkElapsedMs(task, { nowMs, active }) : null
+}
+
 function isUserActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "user" || message.kind === "sent" || message.kind === "user_answer"
 }
@@ -590,6 +613,19 @@ export function CodexChatImportSidebar({
     if (!selectedChatId) return null
     return selectableChatItems.find(item => item.id === selectedChatId) ?? null
   }, [selectableChatItems, selectedChatId])
+  const hasRunningWorkTimer = React.useMemo(() => (
+    [...filteredChatItems, selectedChatItem].some(item => (
+      !!item?.workStartedAt && getCodexMonitorUiStatus(item.status ?? null) === "running"
+    ))
+  ), [filteredChatItems, selectedChatItem])
+  const [workNowMs, setWorkNowMs] = React.useState(() => Date.now())
+
+  React.useEffect(() => {
+    setWorkNowMs(Date.now())
+    if (!hasRunningWorkTimer) return
+    const intervalId = window.setInterval(() => setWorkNowMs(Date.now()), 1000)
+    return () => window.clearInterval(intervalId)
+  }, [hasRunningWorkTimer])
 
   React.useEffect(() => {
     if (!selectedChatId) return
@@ -894,6 +930,13 @@ export function CodexChatImportSidebar({
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
   const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
+  const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
+  const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
+  const selectedWorkElapsedMs = selectedChatItem
+    ? codexChatImportWorkElapsedMs(selectedChatItem, workNowMs, selectedUiStatus === "running")
+    : null
+  const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
+  const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
     return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [])
@@ -1301,10 +1344,24 @@ export function CodexChatImportSidebar({
                       )}
                     </div>
                   </div>
-                  <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(selectedChatItem.status ?? "awaiting_approval"))}>
-                    {getCodexMonitorUiStatus(selectedChatItem.status ?? "awaiting_approval") === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
-                    <span className="truncate">{selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedChatItem.status ?? "awaiting_approval")}</span>
+                  <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(selectedVisualStatus))}>
+                    {selectedUiStatus === "running" && (
+                      <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+                      </span>
+                    )}
+                    <span className="truncate">{selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedVisualStatus)}</span>
+                    {selectedUiStatus === "running" && selectedWorkElapsedText && (
+                      <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{selectedWorkElapsedText}</span>
+                    )}
                   </span>
+                  {selectedUiStatus !== "running" && selectedWorkLabel && (
+                    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
+                      <Clock className="h-3 w-3" />
+                      <span className="truncate">{selectedWorkLabel}</span>
+                    </span>
+                  )}
                 </div>
 
               </div>
@@ -1442,6 +1499,9 @@ export function CodexChatImportSidebar({
                   const statusText = item.statusLabel ?? codexMonitorUiLabel(visualStatus)
                   const threadHref = codexThreadUrl(item.threadId)
                   const updatedLabel = displayUpdatedLabel(item)
+                  const workElapsedMs = codexChatImportWorkElapsedMs(item, workNowMs, uiStatus === "running")
+                  const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
+                  const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
                   return (
                     <div
                       key={item.id}
@@ -1499,9 +1559,23 @@ export function CodexChatImportSidebar({
                         </span>
                       )}
                       <span className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none", codexMonitorToneClass(visualStatus))}>
-                        {uiStatus === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {uiStatus === "running" && (
+                          <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+                          </span>
+                        )}
                         {statusText}
+                        {uiStatus === "running" && workElapsedText && (
+                          <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{workElapsedText}</span>
+                        )}
                       </span>
+                      {uiStatus !== "running" && workLabel && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium leading-none text-zinc-500">
+                          <Clock className="h-3 w-3" />
+                          {workLabel}
+                        </span>
+                      )}
                       {item.repoPath && (
                         <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] leading-none text-zinc-500" title={item.repoPath}>
                           {repoNameFromPath(item.repoPath)}

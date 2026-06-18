@@ -188,6 +188,16 @@ function codexChatImportStatusLabel(
         : fallbackLabel ?? codexMonitorUiLabel(visualStatus);
 }
 
+function codexChatImportWorkTiming(aiTask: AiTask | null | undefined, aiResult?: Record<string, unknown> | null) {
+    const result = aiResult ?? recordValue(aiTask?.result);
+    return {
+        workStartedAt: aiTask?.started_at ?? aiTask?.created_at ?? null,
+        workAwaitingApprovalAt: stringValue(result?.awaiting_approval_at),
+        workCompletedAt: aiTask?.completed_at ?? null,
+        workLastActivityAt: stringValue(result?.last_activity_at),
+    };
+}
+
 type MindMapClipboardNode = {
     title: string;
     status: string;
@@ -1057,6 +1067,9 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 const progressTask = taskProgressByNodeId[task.id];
                 const codexRun = codexRunByNodeId[task.id];
                 const aiTask = aiTasksBySourceId.get(task.id) ?? null;
+                const aiResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
+                    ? aiTask.result as Record<string, unknown>
+                    : {};
                 const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null;
                 if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return [];
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
@@ -1086,6 +1099,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     ),
                     updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                     sortAt: updatedAt,
+                    ...codexChatImportWorkTiming(aiTask, aiResult),
                     placed,
                 }];
             })
@@ -1171,6 +1185,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 ),
                 updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                 sortAt: updatedAt,
+                ...codexChatImportWorkTiming(aiTask, aiResult),
                 placed,
             });
         }

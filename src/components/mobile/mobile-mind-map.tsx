@@ -98,6 +98,16 @@ function codexChatImportStatusLabel(
         : fallbackLabel ?? codexMonitorUiLabel(visualStatus)
 }
 
+function codexChatImportWorkTiming(aiTask: AiTask | null | undefined, aiResult?: Record<string, unknown> | null) {
+    const result = aiResult ?? recordValue(aiTask?.result)
+    return {
+        workStartedAt: aiTask?.started_at ?? aiTask?.created_at ?? null,
+        workAwaitingApprovalAt: stringValue(result?.awaiting_approval_at),
+        workCompletedAt: aiTask?.completed_at ?? null,
+        workLastActivityAt: stringValue(result?.last_activity_at),
+    }
+}
+
 function shouldUseTaskProgressFixture() {
     if (typeof window === "undefined") return false
     const params = new URLSearchParams(window.location.search)
@@ -724,6 +734,9 @@ export function MobileMindMap({
                 const progressTask = taskProgressByNodeId[task.id]
                 const codexRun = codexRunByNodeId[task.id]
                 const aiTask = getBySourceId(task.id)
+                const aiResult = aiTask?.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
+                    ? aiTask.result as Record<string, unknown>
+                    : {}
                 const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null
                 if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return []
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === "unsent") return []
@@ -751,6 +764,7 @@ export function MobileMindMap({
                     placed,
                     updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                     updatedAtIso: updatedAt,
+                    ...codexChatImportWorkTiming(aiTask, aiResult),
                 }]
             })
             .sort((a, b) => {
