@@ -205,7 +205,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
   });
 
-  test('keeps a running task running until the completion signal is stable', () => {
+  test('keeps a running task running until the completion signal is stable without waiting for thread metadata updates', () => {
     const raw = [
       line('2026-06-08T15:49:14.929Z', { type: 'task_started', started_at: 1780933754 }),
       line('2026-06-08T15:49:15.264Z', { type: 'user_message', message: 'やてひねす' }),
@@ -215,7 +215,8 @@ describe('codex-thread-monitor state detection', () => {
         last_agent_message: '一旦返答しました。',
       }),
     ].join('\n');
-    const threadUpdatedMs = Date.parse('2026-06-08T15:49:35.000Z');
+    const completeMs = Date.parse('2026-06-08T15:49:18.368Z');
+    const threadUpdatedMs = Date.parse('2026-06-08T15:50:35.000Z');
     const summary = parseRollout(raw, {
       ...threadRow,
       updated_at_ms: threadUpdatedMs,
@@ -223,33 +224,46 @@ describe('codex-thread-monitor state detection', () => {
     const runningTask = task();
 
     expect(summary.state).toBe('awaiting_approval');
-    expect(taskStateForSummary(runningTask, summary, threadUpdatedMs + 5_000))
+    expect(taskStateForSummary(runningTask, summary, completeMs + 5_000))
       .toEqual({ status: 'running', resumed: false });
-    expect(taskStateForSummary(runningTask, summary, threadUpdatedMs + AWAITING_APPROVAL_STABILITY_MS + 1))
+    expect(taskStateForSummary(runningTask, summary, completeMs + AWAITING_APPROVAL_STABILITY_MS + 1))
       .toEqual({ status: 'awaiting_approval', resumed: false });
   });
 
-  test('treats context compaction as Codex running activity', () => {
+  test('treats context compaction before task_complete as Codex running activity', () => {
     const raw = [
       line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
-      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '一旦返答しました' }),
       line('2026-06-08T15:40:20.000Z', { type: 'context_compaction', message: 'Compacting context' }),
     ].join('\n');
 
     const summary = parseRollout(raw, threadRow);
-    const state = taskStateForSummary(task({
-      status: 'awaiting_approval',
-      result: {
-        codex_run_state: 'awaiting_approval',
-        last_activity_at: '2026-06-08T15:40:10.000Z',
-        awaiting_approval_at: '2026-06-08T15:40:10.000Z',
-      },
-    }), summary);
+    const state = taskStateForSummary(task(), summary);
 
     expect(summary.state).toBe('running');
     expect(summary.currentStep).toBe('Codexがコンテキストを整理中');
     expect(summary.latestRunningActivityAt).toBe('2026-06-08T15:40:20.000Z');
-    expect(state).toEqual({ status: 'running', resumed: true });
+    expect(state).toEqual({ status: 'running', resumed: false });
+  });
+
+  test('keeps passive context maintenance after task_complete in awaiting approval', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '一旦返答しました' }),
+      line('2026-06-08T15:40:20.000Z', { type: 'context_compaction', message: 'Compacting context' }),
+      line('2026-06-08T15:40:25.000Z', { type: 'reasoning', summary: [] }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+    const state = taskStateForSummary(
+      task(),
+      summary,
+      Date.parse('2026-06-08T15:40:10.000Z') + AWAITING_APPROVAL_STABILITY_MS + 1,
+    );
+
+    expect(summary.state).toBe('awaiting_approval');
+    expect(summary.currentStep).toBe('Codexが実行完了し確認待ちです');
+    expect(summary.latestRunningActivityAt).toBe('2026-06-08T15:40:00.000Z');
+    expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
   });
 
   test('does not mark initial prompt_waiting handoff as resumed', () => {

@@ -26,7 +26,7 @@ const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: s
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 export const RESUME_RUNNING_VISIBILITY_MS = 12_000;
-export const AWAITING_APPROVAL_STABILITY_MS = 30_000;
+export const AWAITING_APPROVAL_STABILITY_MS = 12_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
@@ -366,6 +366,23 @@ function appendVisibleMessage(messages: VisibleMessage[], input: Omit<VisibleMes
   messages.push({ ...input, body });
 }
 
+function shouldTreatCodexActivityAsRunning(input: {
+  eventTime: string | null;
+  latestTaskCompleteAt: string | null;
+  latestUserMessageAt: string | null;
+  latestTaskStartedAt: string | null;
+}): boolean {
+  const completeMs = timeMs(input.latestTaskCompleteAt);
+  if (completeMs === null) return true;
+  const eventMs = timeMs(input.eventTime);
+  if (eventMs !== null && eventMs <= completeMs) return true;
+  const restartMs = Math.max(
+    timeMs(input.latestUserMessageAt) ?? 0,
+    timeMs(input.latestTaskStartedAt) ?? 0,
+  );
+  return restartMs > completeMs;
+}
+
 export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
   const visibleMessages: VisibleMessage[] = [];
   const threadArchived = Boolean(row.archived);
@@ -391,6 +408,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       continue;
     }
     if (!isRecord(parsed)) continue;
+    const previousLastActivityAt = lastActivityAt;
     const rowTime = timestampToIso(parsed.timestamp);
     if (rowTime) lastActivityAt = rowTime;
 
@@ -440,6 +458,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     if (payloadType === 'agent_message') {
       const text = safeText(payload);
       if (text) {
+        if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+          lastActivityAt = previousLastActivityAt;
+          continue;
+        }
         latestRunningActivityAt = eventTime;
         state = 'running';
         reviewReason = 'started';
@@ -474,6 +496,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (isContextMaintenanceEvent(payloadType, payload)) {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt;
+        continue;
+      }
       latestRunningActivityAt = eventTime;
       state = 'running';
       reviewReason = 'started';
@@ -482,6 +508,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'reasoning') {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt;
+        continue;
+      }
       latestRunningActivityAt = eventTime;
       state = 'running';
       reviewReason = 'started';
@@ -490,6 +520,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt;
+        continue;
+      }
       latestRunningActivityAt = eventTime;
       state = 'running';
       reviewReason = 'started';
@@ -498,6 +532,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'function_call_output' || payloadType === 'custom_tool_call_output' || payloadType === 'patch_apply_end') {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt;
+        continue;
+      }
       latestRunningActivityAt = eventTime;
       state = 'running';
       reviewReason = 'started';
@@ -510,6 +548,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       const text = safeText(payload);
       if (!text) continue;
       if (role === 'assistant') {
+        if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+          lastActivityAt = previousLastActivityAt;
+          continue;
+        }
         latestRunningActivityAt = eventTime;
         state = 'running';
         reviewReason = 'started';
@@ -534,6 +576,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           sourceEvent: 'message',
         });
       }
+    }
+
+    if (payloadType && !shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+      lastActivityAt = previousLastActivityAt;
     }
   }
 
@@ -860,12 +906,9 @@ function awaitingApprovalSignalStable(summary: RolloutSummary, nowMs: number): b
   );
   if (latestRunningMs > completeMs) return false;
 
-  const threadUpdatedMs = summary.threadArchived ? null : timeMs(summary.threadUpdatedAt);
-  const stabilityAnchorMs = Math.max(
-    completeMs,
-    threadUpdatedMs !== null && threadUpdatedMs > completeMs ? threadUpdatedMs : completeMs,
-  );
-  return nowMs - stabilityAnchorMs >= AWAITING_APPROVAL_STABILITY_MS;
+  // Codex may update thread.updated_at_ms while building sidebar titles/summaries after a turn is done.
+  // That metadata update should affect sorting/display time, not keep the run in "running".
+  return nowMs - completeMs >= AWAITING_APPROVAL_STABILITY_MS;
 }
 
 export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs = Date.now()) {

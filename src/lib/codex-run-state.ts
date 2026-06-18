@@ -42,6 +42,7 @@ export type CodexRolloutSummary = {
   lastActivityAt: string | null
   latestUserMessageAt: string | null
   latestTaskStartedAt: string | null
+  latestTaskCompleteAt: string | null
   latestRunningActivityAt: string | null
   latestAgentMessage: string | null
   latestQuestion: string | null
@@ -159,6 +160,23 @@ function appendVisibleMessage(
   while (messages.length > 40) messages.shift()
 }
 
+function shouldTreatCodexActivityAsRunning(input: {
+  eventTime: string | null
+  latestTaskCompleteAt: string | null
+  latestUserMessageAt: string | null
+  latestTaskStartedAt: string | null
+}) {
+  const completeMs = parseTimeMsForResume(input.latestTaskCompleteAt)
+  if (completeMs === null) return true
+  const eventMs = parseTimeMsForResume(input.eventTime)
+  if (eventMs !== null && eventMs <= completeMs) return true
+  const restartMs = Math.max(
+    parseTimeMsForResume(input.latestUserMessageAt) ?? 0,
+    parseTimeMsForResume(input.latestTaskStartedAt) ?? 0,
+  )
+  return restartMs > completeMs
+}
+
 export function parseCodexRollout(
   rawJsonl: string,
   options: { archived?: boolean; snapshot?: CodexThreadSnapshot } = {},
@@ -170,6 +188,7 @@ export function parseCodexRollout(
   let lastActivityAt: string | null = timestampToIso(options.snapshot?.updated_at_ms ?? null)
   let latestUserMessageAt: string | null = null
   let latestTaskStartedAt: string | null = null
+  let latestTaskCompleteAt: string | null = null
   let latestRunningActivityAt: string | null = null
   let latestAgentMessage: string | null = null
   let latestQuestion: string | null = null
@@ -187,6 +206,7 @@ export function parseCodexRollout(
     }
     if (!isRecord(row)) continue
 
+    const previousLastActivityAt = lastActivityAt
     const rowTime = timestampToIso(row.timestamp)
     if (rowTime) lastActivityAt = rowTime
 
@@ -222,6 +242,7 @@ export function parseCodexRollout(
         })
       }
       sawTerminalEvent = true
+      latestTaskCompleteAt = eventTime
       state = "awaiting_approval"
       reviewReason = "completed"
       currentStep = "Codexが実行完了し確認待ちです"
@@ -231,6 +252,7 @@ export function parseCodexRollout(
 
     if (payloadType === "turn_aborted") {
       sawTerminalEvent = true
+      latestTaskCompleteAt = eventTime
       state = "awaiting_approval"
       reviewReason = "aborted"
       currentStep = "Codexのターンが停止し確認待ちです"
@@ -241,6 +263,10 @@ export function parseCodexRollout(
     if (payloadType === "agent_message") {
       const text = safeText(payload)
       if (text) {
+        if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+          lastActivityAt = previousLastActivityAt
+          continue
+        }
         latestRunningActivityAt = eventTime
         sawTerminalEvent = false
         state = "running"
@@ -275,6 +301,10 @@ export function parseCodexRollout(
     }
 
     if (isContextMaintenanceEvent(payloadType, payload)) {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt
+        continue
+      }
       latestRunningActivityAt = eventTime
       sawTerminalEvent = false
       state = "running"
@@ -285,10 +315,34 @@ export function parseCodexRollout(
 
     if (payloadType === "message") {
       const role = typeof payload.role === "string" ? payload.role : "message"
-      if (role === "developer" || role === "system" || role === "user") continue
       const text = safeText(payload)
+      if (role === "developer" || role === "system") {
+        if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+          lastActivityAt = previousLastActivityAt
+        }
+        continue
+      }
+      if (role === "user") {
+        if (text && !isInternalUserMessage(text)) {
+          latestUserMessageAt = eventTime
+          appendLog(logs, `[user] ${text}`)
+          appendVisibleMessage(visibleMessages, {
+            role: "user",
+            body: text,
+            kind: "user_answer",
+            createdAt: eventTime,
+          })
+        } else if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+          lastActivityAt = previousLastActivityAt
+        }
+        continue
+      }
       if (text) {
         if (role === "assistant") {
+          if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+            lastActivityAt = previousLastActivityAt
+            continue
+          }
           latestRunningActivityAt = eventTime
           sawTerminalEvent = false
           state = "running"
@@ -314,6 +368,10 @@ export function parseCodexRollout(
       payloadType === "web_search_call" ||
       payloadType === "tool_search_call"
     ) {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt
+        continue
+      }
       latestRunningActivityAt = eventTime
       sawTerminalEvent = false
       state = "running"
@@ -328,6 +386,10 @@ export function parseCodexRollout(
       payloadType === "web_search_end" ||
       payloadType === "tool_search_output"
     ) {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt
+        continue
+      }
       latestRunningActivityAt = eventTime
       sawTerminalEvent = false
       state = "running"
@@ -337,12 +399,20 @@ export function parseCodexRollout(
     }
 
     if (payloadType === "reasoning") {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        lastActivityAt = previousLastActivityAt
+        continue
+      }
       latestRunningActivityAt = eventTime
       sawTerminalEvent = false
       state = "running"
       reviewReason = "started"
       currentStep = "Codexが内容を検討中"
       continue
+    }
+
+    if (payloadType && !shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+      lastActivityAt = previousLastActivityAt
     }
   }
 
@@ -367,6 +437,7 @@ export function parseCodexRollout(
     lastActivityAt,
     latestUserMessageAt,
     latestTaskStartedAt,
+    latestTaskCompleteAt,
     latestRunningActivityAt,
     latestAgentMessage,
     latestQuestion,

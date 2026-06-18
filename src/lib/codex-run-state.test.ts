@@ -61,10 +61,9 @@ describe("parseCodexRollout", () => {
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:03.000Z")
   })
 
-  test("keeps Codex running while reasoning, tool activity, or context compaction continues", () => {
+  test("keeps Codex running while reasoning, tool activity, or context compaction continues before completion", () => {
     const parsed = parseCodexRollout([
       row({ type: "task_started" }, "2026-05-30T08:00:00.000Z"),
-      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
       row({ type: "reasoning", summary: [] }, "2026-05-30T08:02:05.000Z"),
       row({ type: "function_call", name: "exec_command" }, "2026-05-30T08:02:07.000Z"),
       row({ type: "function_call_output", call_id: "call-1", output: "ok" }, "2026-05-30T08:02:08.000Z"),
@@ -76,6 +75,23 @@ describe("parseCodexRollout", () => {
     expect(parsed.currentStep).toBe("Codexがコンテキストを整理中")
     expect(parsed.latestRunningActivityAt).toBe("2026-05-30T08:02:09.000Z")
     expect(parsed.sawTerminalEvent).toBe(false)
+  })
+
+  test("keeps passive summary or context maintenance after completion in review", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }, "2026-05-30T08:00:00.000Z"),
+      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
+      row({ type: "reasoning", summary: [] }, "2026-05-30T08:02:05.000Z"),
+      row({ type: "function_call", name: "exec_command" }, "2026-05-30T08:02:07.000Z"),
+      row({ type: "context_compaction", message: "Compacting context" }, "2026-05-30T08:02:09.000Z"),
+    ].join("\n"))
+
+    expect(parsed.state).toBe("awaiting_approval")
+    expect(parsed.reviewReason).toBe("completed")
+    expect(parsed.currentStep).toBe("Codexが実行完了し確認待ちです")
+    expect(parsed.latestTaskCompleteAt).toBe("2026-05-30T08:02:00.000Z")
+    expect(parsed.latestRunningActivityAt).toBe("2026-05-30T08:00:00.000Z")
+    expect(parsed.sawTerminalEvent).toBe(true)
   })
 
   test("moves to review when Codex completes", () => {
@@ -172,10 +188,20 @@ describe("detectCodexResumeAfterApproval", () => {
     ).toBe(false)
   })
 
-  test("detects later running activity after awaiting approval", () => {
+  test("does not resume from passive maintenance after awaiting approval", () => {
     const parsed = parseCodexRollout([
       row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
       row({ type: "context_compaction", message: "Compacting context" }, "2026-05-30T08:03:00.000Z"),
+    ].join("\n"))
+
+    expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:02:30.000Z")).toBe(false)
+  })
+
+  test("detects later running activity after a user follow-up", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
+      row({ type: "user_message", message: "続けて" }, "2026-05-30T08:03:00.000Z"),
+      row({ type: "context_compaction", message: "Compacting context" }, "2026-05-30T08:03:02.000Z"),
     ].join("\n"))
 
     expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:02:30.000Z")).toBe(true)
