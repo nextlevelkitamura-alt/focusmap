@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import {
+  codexVisibleMessageWorkMetadata,
   detectCodexResumeAfterApproval,
   getCodexTaskUiState,
   parseCodexRollout,
@@ -29,6 +30,7 @@ describe("parseCodexRollout", () => {
       body: "作業を始めます",
       kind: "progress",
       createdAt: "2026-05-30T08:00:02.000Z",
+      turnStartedAt: "2026-05-30T08:00:00.000Z",
     }])
     expect(parsed.liveLog).not.toContain("[command:started] exec_command")
     expect(parsed.liveLog).not.toContain("internal instructions")
@@ -122,6 +124,25 @@ describe("parseCodexRollout", () => {
       role: "assistant",
       body: "候補者名なら状況確認、タスクなら追加できます。",
       kind: "completed",
+    })
+  })
+
+  test("keeps per-turn work duration metadata on the completed visible message", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }, "2026-05-30T08:00:00.000Z"),
+      row({ type: "user_message", message: "最初の依頼" }, "2026-05-30T08:00:01.000Z"),
+      row({ type: "task_complete", last_agent_message: "完了しました" }, "2026-05-30T08:00:10.000Z"),
+      row({ type: "task_started" }, "2026-05-30T08:05:14.000Z"),
+      row({ type: "user_message", message: "追加で確認して" }, "2026-05-30T08:05:15.000Z"),
+      row({ type: "task_complete", last_agent_message: "完了しました" }, "2026-05-30T08:05:41.000Z"),
+    ].join("\n"))
+
+    const completedMessage = parsed.visibleMessages.at(-1)
+    expect(completedMessage?.body).toBe("完了しました")
+    expect(codexVisibleMessageWorkMetadata(completedMessage!)).toMatchObject({
+      turn_started_at: "2026-05-30T08:05:14.000Z",
+      turn_completed_at: "2026-05-30T08:05:41.000Z",
+      work_elapsed_ms: 27_000,
     })
   })
 

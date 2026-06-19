@@ -31,6 +31,8 @@ export type CodexRolloutVisibleMessage = {
   body: string
   kind: "progress" | "question" | "completed" | "user_answer"
   createdAt: string | null
+  turnStartedAt?: string | null
+  turnCompletedAt?: string | null
 }
 
 export type CodexRolloutSummary = {
@@ -154,10 +156,55 @@ function appendVisibleMessage(
 ) {
   const body = compactLine(input.body, 2_000)
   if (!body) return
-  const key = `${input.role}:${body.replace(/\s+/g, " ")}`
-  if (messages.some(message => `${message.role}:${message.body.replace(/\s+/g, " ")}` === key)) return
+  const inputTurnKey = input.role === "assistant" ? input.turnStartedAt ?? "" : input.createdAt ?? ""
+  const key = `${input.role}:${inputTurnKey}:${body.replace(/\s+/g, " ")}`
+  const existing = messages.find(message => {
+    const messageTurnKey = message.role === "assistant" ? message.turnStartedAt ?? "" : message.createdAt ?? ""
+    return `${message.role}:${messageTurnKey}:${message.body.replace(/\s+/g, " ")}` === key
+  })
+  if (existing) {
+    existing.turnStartedAt = existing.turnStartedAt ?? input.turnStartedAt
+    existing.turnCompletedAt = existing.turnCompletedAt ?? input.turnCompletedAt
+    if (existing.role === "assistant" && input.kind === "completed") existing.kind = input.kind
+    existing.createdAt = input.createdAt ?? existing.createdAt
+    return
+  }
   messages.push({ ...input, body })
   while (messages.length > 40) messages.shift()
+}
+
+function completeLatestAssistantVisibleMessage(
+  messages: CodexRolloutVisibleMessage[],
+  turnStartedAt: string | null,
+  turnCompletedAt: string | null,
+) {
+  if (!turnCompletedAt) return
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || message.role !== "assistant") continue
+    if (turnStartedAt && message.turnStartedAt && message.turnStartedAt !== turnStartedAt) continue
+    message.turnStartedAt = message.turnStartedAt ?? turnStartedAt
+    message.turnCompletedAt = message.turnCompletedAt ?? turnCompletedAt
+    message.createdAt = turnCompletedAt ?? message.createdAt
+    if (message.kind !== "question") message.kind = "completed"
+    return
+  }
+}
+
+export function codexVisibleMessageWorkMetadata(message: CodexRolloutVisibleMessage): Record<string, unknown> {
+  if (message.role !== "assistant") return {}
+  const startedAt = message.turnStartedAt ?? null
+  const completedAt = message.turnCompletedAt ?? null
+  const startedMs = parseTimeMsForResume(startedAt)
+  const completedMs = parseTimeMsForResume(completedAt)
+  const elapsedMs = startedMs !== null && completedMs !== null
+    ? Math.max(0, completedMs - startedMs)
+    : null
+  return {
+    ...(startedAt ? { turn_started_at: startedAt } : {}),
+    ...(completedAt ? { turn_completed_at: completedAt } : {}),
+    ...(elapsedMs !== null ? { work_elapsed_ms: elapsedMs } : {}),
+  }
 }
 
 function shouldTreatCodexActivityAsRunning(input: {
@@ -239,7 +286,11 @@ export function parseCodexRollout(
           body: text,
           kind: looksLikeQuestion(text) ? "question" : "completed",
           createdAt: eventTime,
+          turnStartedAt: latestTaskStartedAt,
+          turnCompletedAt: eventTime,
         })
+      } else {
+        completeLatestAssistantVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime)
       }
       sawTerminalEvent = true
       latestTaskCompleteAt = eventTime
@@ -257,6 +308,7 @@ export function parseCodexRollout(
       reviewReason = "aborted"
       currentStep = "Codexのターンが停止し確認待ちです"
       appendLog(logs, "[Codex] ターンが停止しました。確認待ちです")
+      completeLatestAssistantVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime)
       continue
     }
 
@@ -280,6 +332,7 @@ export function parseCodexRollout(
           body: text,
           kind: looksLikeQuestion(text) ? "question" : "progress",
           createdAt: eventTime,
+          turnStartedAt: latestTaskStartedAt,
         })
       }
       continue
@@ -355,6 +408,7 @@ export function parseCodexRollout(
             body: text,
             kind: looksLikeQuestion(text) ? "question" : "progress",
             createdAt: eventTime,
+            turnStartedAt: latestTaskStartedAt,
           })
         }
         appendLog(logs, `[${role}] ${text}`)

@@ -174,6 +174,7 @@ function fallbackVisibleMessagesFromResult(
     if (!body) return []
     const role = activityRole(value.role) ?? 'codex'
     const kind = activityKind(value.kind) ?? (role === 'user' ? 'user_answer' : 'progress')
+    const metadata = isRecord(value.metadata) ? value.metadata : {}
     const createdAt = stringValue(value.created_at) ||
       fallbackCreatedAt ||
       task.started_at ||
@@ -188,7 +189,7 @@ function fallbackVisibleMessagesFromResult(
       kind,
       body,
       importance: activityImportance(value.importance),
-      metadata: { source: 'ai_tasks.result.codex_visible_messages' },
+      metadata: { source: 'ai_tasks.result.codex_visible_messages', ...metadata },
       created_at: createdAt,
     }]
   })

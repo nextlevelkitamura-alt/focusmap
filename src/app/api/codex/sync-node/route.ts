@@ -11,6 +11,7 @@ import {
 } from '@/lib/ai-task-activity'
 import { isLocalCodexOpenRequestHost } from '@/lib/codex-app-launch'
 import {
+  codexVisibleMessageWorkMetadata,
   detectCodexResumeAfterApproval,
   parseCodexRollout,
   shouldCompleteSourceTaskForCodexReview,
@@ -277,6 +278,7 @@ function visibleCodexActivityEvent(row: CodexThreadRow, parsed: ReturnType<typeo
   dedupeKey: string
   importance?: 'normal' | 'important'
   createdAt?: string | null
+  metadata?: Record<string, unknown>
 } | null {
   const candidates = [
     { body: parsed.latestQuestion, kind: 'question' as const, importance: 'important' as const, createdAt: parsed.lastActivityAt },
@@ -310,6 +312,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
   dedupeKey: string
   importance?: 'normal' | 'important'
   createdAt?: string | null
+  metadata?: Record<string, unknown>
 }> {
   const events: Array<{
     role: AiTaskActivityRole
@@ -318,6 +321,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
     dedupeKey: string
     importance?: 'normal' | 'important'
     createdAt?: string | null
+    metadata?: Record<string, unknown>
   }> = []
   const pushEvent = (event: {
     role: AiTaskActivityRole
@@ -326,9 +330,9 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
     dedupeKey: string
     importance?: 'normal' | 'important'
     createdAt?: string | null
+    metadata?: Record<string, unknown>
   }) => {
-    const fingerprint = textFingerprint(event.body)
-    if (events.some(existing => textFingerprint(existing.body) === fingerprint)) return
+    if (events.some(existing => existing.dedupeKey === event.dedupeKey)) return
     events.push(event)
   }
 
@@ -351,6 +355,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
       dedupeKey: `thread:${row.id}:message:${message.role}:${message.createdAt ?? 'no-time'}:${textFingerprint(body)}`,
       importance: kind === 'progress' ? 'normal' : 'important',
       createdAt: message.createdAt,
+      metadata: codexVisibleMessageWorkMetadata(message),
     })
   }
 
@@ -619,6 +624,7 @@ async function persistCodexThreadClosure(input: {
     dedupeKey: string
     importance?: 'normal' | 'important'
     createdAt?: string | null
+    metadata?: Record<string, unknown>
   }>
 }) {
   const {
@@ -682,6 +688,7 @@ async function persistCodexThreadClosure(input: {
     body: event.body,
     importance: event.importance ?? 'normal',
     created_at: event.createdAt ?? nowIso,
+    metadata: event.metadata ?? {},
   }))
   const shouldPersistVisibleMessagesFallback =
     compactVisibleMessages.length > 0 &&
@@ -777,6 +784,7 @@ async function persistCodexThreadClosure(input: {
         dedupeKey: `thread:${threadId}:closed:${reason}`,
         importance: 'important',
         createdAt: nowIso,
+        metadata: {},
       },
     ]
 
@@ -787,6 +795,7 @@ async function persistCodexThreadClosure(input: {
       kind: event.kind,
       body: event.body,
       importance: event.importance,
+      metadata: event.metadata,
       dedupeKey: event.dedupeKey,
       createdAt: event.createdAt ?? undefined,
     })))
@@ -1002,6 +1011,7 @@ export async function POST(req: NextRequest) {
     body: event.body,
     importance: event.importance ?? 'normal',
     created_at: event.createdAt ?? nowIso,
+    metadata: event.metadata ?? {},
   }))
   const shouldUpdateVisibleMessages =
     shouldCollectVisibleActivity &&
@@ -1066,6 +1076,8 @@ export async function POST(req: NextRequest) {
       : summary,
     current_step: currentStep,
     progress_summary: nextProgressSummary,
+    codex_turn_started_at: parsed.latestTaskStartedAt ?? undefined,
+    codex_turn_completed_at: parsed.latestTaskCompleteAt ?? undefined,
     ...(shouldPersistVisibleMessagesFallback
       ? { codex_visible_messages: compactVisibleMessages }
       : Array.isArray(current.codex_visible_messages)
@@ -1164,6 +1176,7 @@ export async function POST(req: NextRequest) {
     dedupeKey: string
     importance?: 'normal' | 'important'
     createdAt?: string | null
+    metadata?: Record<string, unknown>
   }> = []
 
   if (!hadThreadId && (!wasAwaitingApproval || resumedFromApproval)) {
@@ -1204,7 +1217,7 @@ export async function POST(req: NextRequest) {
 
   if (shouldCollectVisibleActivity) {
     for (const visibleActivityEvent of visibleActivityEventsForResult) {
-      if (!activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
+      if (!activityEvents.some(event => event.dedupeKey === visibleActivityEvent.dedupeKey)) {
         activityEvents.push(visibleActivityEvent)
       }
     }
@@ -1232,6 +1245,7 @@ export async function POST(req: NextRequest) {
     kind: event.kind,
     body: event.body,
     importance: event.importance,
+    metadata: event.metadata,
     dedupeKey: event.dedupeKey,
     createdAt: event.createdAt ?? undefined,
   })))

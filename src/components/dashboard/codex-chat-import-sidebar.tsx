@@ -406,8 +406,37 @@ function isStatusActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "status" || message.role === "system"
 }
 
-function completedWorkMessageIndex(messages: AiTaskActivityMessage[], elapsedText: string | null, running: boolean) {
-  if (running || !elapsedText) return -1
+function activityMessageWorkElapsedMs(message: AiTaskActivityMessage | null | undefined) {
+  const metadata = readRecord(message?.metadata)
+  const directValue = readNumber(metadata?.work_elapsed_ms)
+  if (directValue !== null) return Math.max(0, directValue)
+  if (typeof metadata?.work_elapsed_ms === "string" && metadata.work_elapsed_ms.trim()) {
+    const parsed = Number(metadata.work_elapsed_ms)
+    if (Number.isFinite(parsed)) return Math.max(0, parsed)
+  }
+
+  const startedAt = readString(metadata?.turn_started_at)
+  const completedAt = readString(metadata?.turn_completed_at)
+  if (!startedAt || !completedAt) return null
+  const startedMs = new Date(startedAt).getTime()
+  const completedMs = new Date(completedAt).getTime()
+  if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)) return null
+  return Math.max(0, completedMs - startedMs)
+}
+
+function runningRallyElapsedMs(messages: AiTaskActivityMessage[], nowMs: number) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || !isUserActivityMessage(message)) continue
+    const startedMs = new Date(message.created_at).getTime()
+    if (!Number.isFinite(startedMs)) return null
+    return Math.max(0, nowMs - startedMs)
+  }
+  return null
+}
+
+function completedWorkMessageIndex(messages: AiTaskActivityMessage[], running: boolean) {
+  if (running) return -1
 
   let latestUserIndex = -1
   messages.forEach((message, index) => {
@@ -416,7 +445,9 @@ function completedWorkMessageIndex(messages: AiTaskActivityMessage[], elapsedTex
   if (latestUserIndex < 0) return -1
 
   for (let index = latestUserIndex + 1; index < messages.length; index += 1) {
-    if (!isStatusActivityMessage(messages[index])) return index
+    const message = messages[index]
+    if (!message || isStatusActivityMessage(message)) continue
+    if (activityMessageWorkElapsedMs(message) !== null) return index
   }
   return -1
 }
@@ -983,16 +1014,25 @@ export function CodexChatImportSidebar({
   const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
   const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
-  const selectedWorkElapsedMs = selectedChatItem
+  const selectedTaskWorkElapsedMs = selectedChatItem
     ? codexChatImportWorkElapsedMs(selectedChatItem, workNowMs, selectedUiStatus === "running")
     : null
-  const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
-  const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")
   const selectedCompletedWorkMessageIndex = completedWorkMessageIndex(
     selectedMessages,
-    selectedWorkElapsedText,
     selectedUiStatus === "running",
   )
+  const selectedCompletedWorkElapsedMs = selectedCompletedWorkMessageIndex >= 0
+    ? activityMessageWorkElapsedMs(selectedMessages[selectedCompletedWorkMessageIndex])
+    : null
+  const selectedRunningWorkElapsedMs = selectedUiStatus === "running"
+    ? runningRallyElapsedMs(selectedMessages, workNowMs)
+    : null
+  const selectedWorkElapsedMs = selectedUiStatus === "running"
+    ? selectedRunningWorkElapsedMs ?? selectedTaskWorkElapsedMs
+    : selectedCompletedWorkElapsedMs ?? selectedTaskWorkElapsedMs
+  const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
+  const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
+  const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
     return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [])
@@ -1492,7 +1532,7 @@ export function CodexChatImportSidebar({
                     <React.Fragment key={message.id}>
                       {shouldShowActivityTimeBreak(previous, message) && <ActivityTimeBreak value={message.created_at} />}
                       {selectedCompletedWorkMessageIndex === index && (
-                        <ChatCompletedWorkInlineStatus elapsedText={selectedWorkElapsedText} />
+                        <ChatCompletedWorkInlineStatus elapsedText={selectedCompletedWorkElapsedText} />
                       )}
                       <ActivityMessageBubble message={message} />
                     </React.Fragment>

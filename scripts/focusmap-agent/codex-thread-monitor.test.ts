@@ -443,6 +443,35 @@ describe('codex-thread-monitor state detection', () => {
     ]);
   });
 
+  test('adds per-turn work duration metadata to the completed Codex answer after resume', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:01.000Z', { type: 'user_message', message: '最初の依頼' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '最初の回答です' }),
+      line('2026-06-08T15:49:14.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.000Z', { type: 'user_message', message: '追加で確認して' }),
+      line('2026-06-08T15:49:41.000Z', { type: 'task_complete', last_agent_message: '追加分の回答です' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const messages = activityMessages(task({
+      status: 'awaiting_approval',
+      result: {
+        codex_run_state: 'awaiting_approval',
+        awaiting_approval_at: '2026-06-08T15:40:10.000Z',
+        codex_activity_synced_sequence: 3,
+      },
+    }), 'thread-1', summary, true);
+    const completedMessage = messages.find(message => message.body === '追加分の回答です');
+
+    expect(completedMessage?.metadata).toMatchObject({
+      source: 'codex_thread_monitor',
+      source_event: 'task_complete',
+      turn_started_at: '2026-06-08T15:49:14.000Z',
+      turn_completed_at: '2026-06-08T15:49:41.000Z',
+      work_elapsed_ms: 27_000,
+    });
+  });
+
   test('sends visible Codex messages from the oldest unsynced item in bounded batches', () => {
     const raw = Array.from({ length: 15 }, (_, index) => (
       line(`2026-06-08T15:49:${String(index).padStart(2, '0')}.000Z`, {

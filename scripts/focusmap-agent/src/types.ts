@@ -101,6 +101,8 @@ export interface TaskResultJson {
   codex_thread_url?: string;
   codex_run_state?: 'running' | 'awaiting_approval';
   codex_review_reason?: string;
+  codex_turn_started_at?: string;
+  codex_turn_completed_at?: string;
   codex_source_task_completed?: boolean;
   codex_source_task_id?: string | null;
   codex_source_task_completion_reason?: string | null;

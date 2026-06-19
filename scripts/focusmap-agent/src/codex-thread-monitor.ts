@@ -126,6 +126,8 @@ type VisibleMessage = {
   body: string;
   createdAt: string | null;
   sourceEvent: string;
+  turnStartedAt?: string | null;
+  turnCompletedAt?: string | null;
 };
 
 type RolloutSummary = {
@@ -361,9 +363,58 @@ async function readThread(dbPath: string, threadId: string): Promise<CodexThread
 function appendVisibleMessage(messages: VisibleMessage[], input: Omit<VisibleMessage, 'body'> & { body: string }): void {
   const body = compactText(input.body, MAX_ACTIVITY_BODY_CHARS);
   if (!body) return;
-  const key = `${input.role}:${input.kind}:${textFingerprint(body)}`;
-  if (messages.some(message => `${message.role}:${message.kind}:${textFingerprint(message.body)}` === key)) return;
+  const inputTurnKey = input.role === 'codex' ? input.turnStartedAt ?? '' : input.createdAt ?? '';
+  const key = `${input.role}:${inputTurnKey}:${textFingerprint(body)}`;
+  const existing = messages.find(message => {
+    const messageTurnKey = message.role === 'codex' ? message.turnStartedAt ?? '' : message.createdAt ?? '';
+    return `${message.role}:${messageTurnKey}:${textFingerprint(message.body)}` === key;
+  });
+  if (existing) {
+    existing.turnStartedAt = existing.turnStartedAt ?? input.turnStartedAt;
+    existing.turnCompletedAt = existing.turnCompletedAt ?? input.turnCompletedAt;
+    existing.sequence = Math.max(existing.sequence, input.sequence);
+    existing.createdAt = input.createdAt ?? existing.createdAt;
+    existing.sourceEvent = input.sourceEvent;
+    if (input.kind === 'completed' || input.kind === 'question') existing.kind = input.kind;
+    return;
+  }
   messages.push({ ...input, body });
+}
+
+function completeLatestCodexVisibleMessage(
+  messages: VisibleMessage[],
+  turnStartedAt: string | null,
+  turnCompletedAt: string | null,
+  sourceEvent = 'task_complete',
+): void {
+  if (!turnCompletedAt) return;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== 'codex') continue;
+    if (turnStartedAt && message.turnStartedAt && message.turnStartedAt !== turnStartedAt) continue;
+    message.turnStartedAt = message.turnStartedAt ?? turnStartedAt;
+    message.turnCompletedAt = message.turnCompletedAt ?? turnCompletedAt;
+    message.createdAt = turnCompletedAt ?? message.createdAt;
+    message.sourceEvent = sourceEvent;
+    if (message.kind !== 'question') message.kind = 'completed';
+    return;
+  }
+}
+
+function visibleMessageTurnMetadata(message: VisibleMessage): Record<string, unknown> {
+  if (message.role !== 'codex') return {};
+  const startedAt = message.turnStartedAt ?? null;
+  const completedAt = message.turnCompletedAt ?? null;
+  const startedMs = timeMs(startedAt);
+  const completedMs = timeMs(completedAt);
+  const elapsedMs = startedMs !== null && completedMs !== null
+    ? Math.max(0, completedMs - startedMs)
+    : null;
+  return {
+    ...(startedAt ? { turn_started_at: startedAt } : {}),
+    ...(completedAt ? { turn_completed_at: completedAt } : {}),
+    ...(elapsedMs !== null ? { work_elapsed_ms: elapsedMs } : {}),
+  };
 }
 
 function shouldTreatCodexActivityAsRunning(input: {
@@ -442,7 +493,11 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           body: text,
           createdAt: eventTime,
           sourceEvent: 'task_complete',
+          turnStartedAt: latestTaskStartedAt,
+          turnCompletedAt: eventTime,
         });
+      } else {
+        completeLatestCodexVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime);
       }
       continue;
     }
@@ -452,6 +507,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       state = 'awaiting_approval';
       reviewReason = 'aborted';
       currentStep = 'Codexのターンが停止し確認待ちです';
+      completeLatestCodexVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime, 'turn_aborted');
       continue;
     }
 
@@ -474,6 +530,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           body: text,
           createdAt: eventTime,
           sourceEvent: 'agent_message',
+          turnStartedAt: latestTaskStartedAt,
         });
       }
       continue;
@@ -564,6 +621,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           body: text,
           createdAt: eventTime,
           sourceEvent: 'message',
+          turnStartedAt: latestTaskStartedAt,
         });
       } else if (role === 'user' && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
@@ -1007,8 +1065,12 @@ function activitySyncBatch(task: AiTask, threadId: string, summary: RolloutSumma
       body: message.body,
       importance: message.kind === 'progress' ? 'normal' : 'important',
       created_at: message.createdAt ?? undefined,
-      dedupe_key: `thread:${threadId}:${message.role}:${message.kind}:${textFingerprint(message.body)}`,
-      metadata: { source: 'codex_thread_monitor', source_event: message.sourceEvent },
+      dedupe_key: `thread:${threadId}:${message.sequence}:${message.role}:${message.kind}:${textFingerprint(message.body)}`,
+      metadata: {
+        source: 'codex_thread_monitor',
+        source_event: message.sourceEvent,
+        ...visibleMessageTurnMetadata(message),
+      },
     });
   }
 
@@ -1065,6 +1127,8 @@ function resultSnapshot(
       : task.source_task_id ?? null,
     current_step: currentStep,
     last_activity_at: lastActivityAt,
+    codex_turn_started_at: summary.latestTaskStartedAt ?? undefined,
+    codex_turn_completed_at: summary.latestTaskCompleteAt ?? undefined,
     awaiting_approval_at: status === 'awaiting_approval'
       ? awaitingApprovalAtForSummary(result, summary, nowIso)
       : undefined,
