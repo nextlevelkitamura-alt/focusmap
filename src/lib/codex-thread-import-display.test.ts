@@ -82,7 +82,7 @@ describe("codex thread import display helpers", () => {
     expect(importedCodexThreadUpdatedAtFromMemo(memo)).toBe("2026-06-18T00:30:00.000Z")
   })
 
-  test("prefers Codex activity time over Focusmap import snapshot time", () => {
+  test("prefers Codex turn completion time over Focusmap import snapshot time", () => {
     const task = {
       memo: [
         "# Codex thread",
@@ -97,7 +97,11 @@ describe("codex thread import display helpers", () => {
     expect(codexThreadImportActivityAt({
       task,
       aiTask: {
-        result: { last_activity_at: "2026-06-18T00:45:00.000Z" },
+        result: {
+          codex_turn_completed_at: "2026-06-18T00:45:00.000Z",
+          last_activity_at: "2026-06-18T01:10:00.000Z",
+          codex_activity_synced_at: "2026-06-18T01:15:00.000Z",
+        },
         created_at: "2026-06-18T01:00:00.000Z",
       },
       progressTask: {
@@ -111,5 +115,30 @@ describe("codex thread import display helpers", () => {
         updated_at: "2026-06-18T01:05:00.000Z",
       },
     })).toBe("2026-06-18T00:30:00.000Z")
+  })
+
+  test("does not promote Focusmap sync or import timestamps into the history sort time", () => {
+    expect(codexThreadImportActivityAt({
+      task: {
+        updated_at: "2026-06-18T01:00:00.000Z",
+        created_at: "2026-06-18T01:00:00.000Z",
+      },
+      aiTask: {
+        result: {
+          last_activity_at: "2026-06-18T01:10:00.000Z",
+          codex_activity_synced_at: "2026-06-18T01:15:00.000Z",
+        },
+        completed_at: "2026-06-18T01:20:00.000Z",
+        started_at: "2026-06-18T00:59:00.000Z",
+        created_at: "2026-06-18T00:58:00.000Z",
+      },
+      progressTask: {
+        updated_at: "2026-06-18T01:25:00.000Z",
+      },
+      codexRun: {
+        lastActivityAt: "2026-06-18T01:30:00.000Z",
+        updatedAt: "2026-06-18T01:35:00.000Z",
+      },
+    })).toBeNull()
   })
 })

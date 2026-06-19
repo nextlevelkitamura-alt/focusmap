@@ -177,7 +177,9 @@ function compareCodexChatImportItems(a: CodexChatImportItem, b: CodexChatImportI
     const aRunning = getCodexMonitorUiStatus(a.status ?? null) === 'running' ? 0 : 1;
     const bRunning = getCodexMonitorUiStatus(b.status ?? null) === 'running' ? 0 : 1;
     if (aRunning !== bRunning) return aRunning - bRunning;
-    return chatImportTimeMs(b.sortAt) - chatImportTimeMs(a.sortAt);
+    const timeDiff = chatImportTimeMs(b.sortAt) - chatImportTimeMs(a.sortAt);
+    if (timeDiff !== 0) return timeDiff;
+    return a.id.localeCompare(b.id);
 }
 
 function codexChatImportStatusLabel(

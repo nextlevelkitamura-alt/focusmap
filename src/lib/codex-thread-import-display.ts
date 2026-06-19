@@ -106,21 +106,14 @@ export function codexThreadImportActivityAt(input: {
   } | null
 }) {
   const result = recordValue(input.aiTask?.result)
-  const meta = recordValue(result?.meta)
 
+  // Keep list ordering tied to Codex work, not Focusmap import/sync writes.
+  // task/progress updated_at can change when old threads are imported or cards are
+  // background-refreshed, which otherwise makes the top row jump every poll.
   return firstValidTime(
-    result?.last_activity_at,
+    result?.codex_turn_completed_at,
     result?.awaiting_approval_at,
-    result?.codex_activity_synced_at,
-    meta?.thread_updated_at_ms,
+    result?.codex_turn_started_at,
     importedCodexThreadUpdatedAtFromMemo(input.task?.memo),
-    input.codexRun?.lastActivityAt,
-    input.codexRun?.updatedAt,
-    input.aiTask?.completed_at,
-    input.aiTask?.started_at,
-    input.aiTask?.created_at,
-    input.progressTask?.updated_at,
-    input.task?.updated_at,
-    input.task?.created_at,
   )
 }

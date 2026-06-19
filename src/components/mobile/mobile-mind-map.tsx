@@ -42,6 +42,12 @@ function formatChatImportUpdatedLabel(value: string | null | undefined) {
     return `最終 ${date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })} ${date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`
 }
 
+function chatImportTimeMs(value: string | null | undefined) {
+    if (!value) return 0
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : 0
+}
+
 function normalizeRepoPath(value: string | null | undefined) {
     return (value ?? "").trim().replace(/\/+$/, "")
 }
@@ -768,9 +774,9 @@ export function MobileMindMap({
                 }]
             })
             .sort((a, b) => {
-                const taskA = repoScopedTasksById.get(a.id)
-                const taskB = repoScopedTasksById.get(b.id)
-                return (taskB?.updated_at ?? "").localeCompare(taskA?.updated_at ?? "")
+                const timeDiff = chatImportTimeMs(b.updatedAtIso) - chatImportTimeMs(a.updatedAtIso)
+                if (timeDiff !== 0) return timeDiff
+                return a.id.localeCompare(b.id)
             })
     }, [
         codexInboxGroupIds,
