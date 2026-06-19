@@ -1,6 +1,6 @@
 # AI History Sync Foundation Plan
 
-Status: active planning pack
+Status: contract finalized; implementation workers pending
 Task ID: TASK-20260620-004
 Date: 2026-06-20
 Owner: task-router parent chat
@@ -93,7 +93,15 @@ Do not sync full chat body for all rows in normal list sync.
 
 ## Data Contract
 
-Recommended new table:
+Final decision:
+
+- Add `ai_history_items`.
+- Add `project_repo_scopes`.
+- Do not model the all-Codex history list by extending existing `ai_tasks`.
+- Keep existing `ai_tasks` / Turso `ai_tasks` as execution tracking, compatibility summary, and activity bridge.
+- Do not add a new full chat body table in this phase. Detail activity should reuse existing `ai_task_activity_messages` / Turso `ai_task_progress` via `linked_ai_task_id` where possible.
+
+`ai_history_items`:
 
 ```text
 ai_history_items
@@ -101,13 +109,15 @@ ai_history_items
 - user_id
 - provider                 codex_app, future claude_code, etc.
 - external_thread_id        Codex thread id
-- repo_path
-- project_id nullable       optional display context
+- repo_path                 canonical repo root path
+- worktree_path nullable    actual Codex cwd when different from repo root
+- project_id nullable       first/representative display context
 - source_task_id nullable   null = 未配置, set = マインドマップ
+- linked_ai_task_id nullable existing ai_tasks bridge for activity/compat
 - title
 - snippet nullable          short preview only, capped
-- status                    running | awaiting_approval | completed | failed | idle
-- run_state nullable        running | awaiting_approval | needs_input | completed | failed
+- status                    running | awaiting_approval | needs_input | completed | failed | idle
+- run_state nullable        provider/raw run state
 - last_activity_at          Codex activity timestamp
 - indexed_at                server write/cursor timestamp
 - started_at nullable
@@ -123,7 +133,7 @@ ai_history_items
 - updated_at
 ```
 
-Recommended repo scope table:
+`project_repo_scopes`:
 
 ```text
 project_repo_scopes
@@ -136,6 +146,7 @@ project_repo_scopes
 - sync_enabled
 - last_scanned_at nullable
 - last_reconciled_at nullable
+- settings_json nullable
 - created_at
 - updated_at
 ```
@@ -143,7 +154,7 @@ project_repo_scopes
 Uniqueness:
 
 ```text
-unique(provider, external_thread_id, repo_path)
+unique(user_id, provider, external_thread_id, repo_path)
 unique(user_id, project_id, provider, repo_path)
 ```
 
@@ -152,12 +163,20 @@ Important indexes:
 ```text
 (user_id, repo_path, indexed_at, id)
 (user_id, repo_path, last_activity_at)
-(user_id, repo_path, source_task_id)
+(user_id, source_task_id, last_activity_at)
 (user_id, project_id, last_activity_at)
-(provider, external_thread_id, repo_path)
+(user_id, provider, external_thread_id, repo_path)
+(user_id, sync_enabled, updated_at) on project_repo_scopes
 ```
 
 Do not use `last_activity_at` as the sync cursor. Use `indexed_at` so old Codex activity timestamps do not make new writes invisible to cursor-based clients.
+
+Existing table boundaries:
+
+- `ai_tasks`: command/execution tracking, manual handoff compatibility, `linked_ai_task_id` activity bridge.
+- Turso `ai_tasks`: live task snapshot/event/activity bridge for existing task-progress UI.
+- `tasks`: Focusmap mindmap node. AI history placement stores the target task id in `ai_history_items.source_task_id`; metadata-only sync must not auto-create a `tasks` node.
+- `project_repo_scopes`: multi-repo display/sync scope. Existing `projects.repo_path` and `projects.codex_thread_import_enabled` are migration/default sources only.
 
 ## API Contract
 
@@ -169,7 +188,7 @@ Query:
 project_id
 repo=all | <repo_path>
 placement=unplaced | mindmap | all
-status=running | awaiting_approval | completed | failed | all
+status=running | awaiting_approval | needs_input | completed | failed | idle | all
 cursor optional
 limit default 50 max 200
 ```
@@ -179,15 +198,62 @@ Response:
 ```ts
 type AiHistoryListResponse = {
   items: AiHistoryListItem[];
+  counts: {
+    unplaced: number;
+    mindmap: number;
+  };
   nextCursor: string | null;
   sync: {
+    featureEnabled: boolean;
     aiOnline: boolean;
+    agentConnected: boolean;
     selectedRepo: "all" | string;
-    repoOptions: Array<{ repoPath: string; label: string; enabled: boolean }>;
+    repoOptions: Array<{
+      repoPath: string;
+      label: string;
+      enabled: boolean;
+      agentSeen: boolean;
+    }>;
     lastIndexedAt: string | null;
+    lastReconciledAt: string | null;
+    nextReconcileAt: string | null;
+  };
+  page: {
+    limit: number;
+    cursor: string | null;
   };
 };
+
+type AiHistoryListItem = {
+  id: string;
+  provider: "codex_app" | string;
+  externalThreadId: string;
+  title: string;
+  snippet: string | null;
+  repoPath: string;
+  repoLabel: string;
+  worktreePath: string | null;
+  placement: "unplaced" | "mindmap";
+  sourceTaskId: string | null;
+  linkedAiTaskId: string | null;
+  status: "running" | "awaiting_approval" | "needs_input" | "completed" | "failed" | "idle";
+  runState: string | null;
+  lastActivityAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  workDurationSeconds: number | null;
+  archived: boolean;
+  detailHydrated: boolean;
+  detailSyncedAt: string | null;
+  codexOpenUrl: string | null;
+};
 ```
+
+Notes:
+
+- Normal list response excludes `archived=true` and `deleted_at is not null`.
+- No item includes full body, full transcript, raw rollout, command output, or unbounded JSON.
+- `counts` respect the selected `project_id` and `repo` filter, but ignore the active `placement` tab so the header can show both bucket counts.
 
 ### GET /api/ai-history/snapshot
 
@@ -196,12 +262,17 @@ Purpose: UI and local sync diff.
 Query:
 
 ```text
-cursor=<indexed_at,id cursor>
+cursor=<indexed_at|id cursor>
 project_id
 repo=all | <repo_path>
 include_deleted=true
 limit=500
 ```
+
+Rules:
+
+- Use `indexed_at|id` cursor.
+- `include_deleted=true` is for reconcile/restore diff only. Normal UI does not show deleted or archived rows.
 
 ### POST /api/agents/ai-history/batch-upsert
 
@@ -210,22 +281,29 @@ Purpose: focusmap-agent sends metadata changes only.
 Rules:
 
 - Batch by repo and provider.
-- Upsert by `provider + external_thread_id + repo_path`.
+- Upsert by `user_id + provider + external_thread_id + repo_path`.
 - Accept archive state changes.
 - Store `indexed_at` server-side.
 - Do not require body/full message content.
+- Accept `linked_ai_task_id` and `source_task_id` when the thread is already tied to an existing Focusmap task.
+- Reject or sanitize raw rollout/full transcript fields if an old agent sends them.
 
 ### GET /api/ai-history/[id]
 
 Purpose: list item detail shell.
 
-Returns metadata, placement, and whether details are hydrated.
+Returns metadata, placement, linked ids, and whether details are hydrated.
 
 ### GET /api/ai-history/[id]/activity
 
 Purpose: fetch/hydrate message detail only when the detail panel opens.
 
-Reuse existing AI task activity endpoints where possible. Avoid adding a second full chat storage path unless the existing contract cannot represent Codex visible activity.
+Reuse existing AI task activity endpoints where possible.
+
+- If `linked_ai_task_id` exists, return the same display-safe activity as `/api/ai-tasks/[id]/activity`.
+- If no linked task exists, request local agent detail hydration for that history item and either return provider visible messages directly or create the smallest compatible `ai_tasks` stub needed for existing activity persistence.
+- Do not add a second full chat storage path in Phase 1.
+- Return only display-safe user/assistant visible activity. Filter status/system/heartbeat/raw tool logs the same way existing activity API does.
 
 ## Agent Contract
 
@@ -253,7 +331,8 @@ Status detection:
 - `task_complete` -> awaiting_approval unless explicit completion/archive tells otherwise.
 - `turn_aborted` -> awaiting_approval or failed/aborted depending existing semantics.
 - new user message after awaiting -> running/resumed.
-- `archived=1` -> hidden.
+- `archived=1` -> `ai_history_items.archived=true` and hidden from normal UI.
+- `archived=0` after archived -> restore same `ai_history_items` row and keep prior `source_task_id` if the task still exists.
 
 Work duration:
 
@@ -267,6 +346,12 @@ Cost controls:
 - Write on state change, archive change, title change, repo association change, or meaningful last activity change.
 - Batch metadata upserts.
 - Do not upload full chat bodies during hourly scans.
+
+Latency contract:
+
+- Local state transition target: within 2 seconds.
+- DB/UI reflection target: within 3 seconds.
+- Running/awaiting/needs_input transitions must not wait for hourly reconcile.
 
 ## UI Acceptance
 
@@ -328,7 +413,7 @@ Base worktree:
 ```text
 /Users/kitamuranaohiro/Private/focusmap-codex-reconcile-main
 branch: main
-status at planning time: clean, main == origin/main
+status at contract update: main worktree, no pre-existing uncommitted changes, local main was ahead of origin/main by 1 commit
 ```
 
 Suggested implementation branches if user chooses multi-chat work:
@@ -445,12 +530,16 @@ Planner / Contract チャットのcommitをbaseにしてください。まだCon
 - docs/ai/task-board.md / task-runs / archive（Integrationが担当）
 
 実装要件:
+- Turso/libSQL migrationで `ai_history_items` と `project_repo_scopes` を追加する。
+- 既存 `ai_tasks` / Turso `ai_tasks` は実行tracking・compat・activity bridgeのまま残し、AI履歴一覧の正本へ流用しない。
 - metadata-only list API を作る。
 - `repo=all | repo_path` と `placement=unplaced | mindmap | all` を実装する。
-- batch upsert API は `provider + external_thread_id + repo_path` で冪等にする。
+- batch upsert API は `user_id + provider + external_thread_id + repo_path` で冪等にする。
 - `indexed_at` を server write cursor として保存する。
 - archive は物理削除せず hidden/tombstone として扱う。
+- archive解除で同じ `ai_history_items` rowを復元し、既存 `source_task_id` がまだ存在する場合は配置を保持する。
 - detail body は一覧APIに載せない。
+- `GET /api/ai-history/[id]/activity` は `linked_ai_task_id` がある場合は既存 activity API と同じ表示安全化ルールを使う。
 - Turso無料枠を意識し、indexなしscanや全文LIKEを避ける。
 
 検証:
@@ -512,9 +601,11 @@ Planner / Contract と Backend / DB API の契約を読んでください。API�
 - 起動時とscope変更時に現在project repoを優先reconcileする。
 - 1時間ごとにenabled repoを順番に巡回する。
 - running threadは約1秒でrolloutを監視する。
-- DB/APIへの送信は状態変化・archive変化・title変化・last activity変化などの差分だけにする。
+- DB/APIへの送信は状態変化・archive変化・archive解除・title変化・repo association変化・last activity変化・duration変化などの差分だけにする。
 - 毎秒DB書き込みや全文本文送信は禁止。
 - monitorが落ちていた期間もrolloutから作業時間を逆算する。
+- `project_repo_scopes` を正にし、既存 `projects.repo_path` / `codex_thread_import_enabled` は移行・後方互換入力として扱う。
+- `linked_ai_task_id` / `source_task_id` が既存manual handoffや既存取り込みtaskから判定できる場合はmetadata upsertに含める。
 
 検証:
 AGENTSに従い、npm test/lint/buildはユーザーが明示した場合だけ実行。必要な確認コマンド候補は最終報告へ。
@@ -585,6 +676,8 @@ UI要件:
 - `マインドマップ` は補助表示。
 - archived rowsは出さない。
 - チャットカード一覧をできるだけ上から始め、表示件数を増やす。
+- `/api/ai-history` の `items` と `counts` を正にし、API contractにないfieldや旧 `ai_tasks` result shapeを前提にしない。
+- `repo=all` は選択中projectに紐づく有効repo scopeの横断表示。selector変更だけで同期ON/OFF APIを呼ばない。
 
 検証:
 AGENTSに従い、browser/Playwright/npm test/lint/buildはユーザーが明示した場合だけ実行。必要な確認コマンド候補は最終報告へ。
@@ -631,11 +724,13 @@ Repo:
 3. `AI履歴 = 未配置 / マインドマップ` が全層で同じ意味か確認。
 4. repo selectorが表示フィルタに留まっているか確認。
 5. archive hidden + restore が壊れていないか確認。
-6. indexed_at cursor とTurso index方針が守られているか確認。
-7. 2秒/3秒反映目標を阻むpoll/write queueがないか確認。
-8. 必要な最小修正だけintegration側で行う。
-9. docs/CONTEXT.md とこのplanを最終状態へ更新。
-10. task-board / task-runs / archive を最後に更新。
+6. `ai_history_items` と `project_repo_scopes` が契約どおり追加され、既存 `ai_tasks` に全履歴一覧の意味を押し込んでいないか確認。
+7. `linked_ai_task_id` による既存activity bridgeとdetail-on-openが一覧metadata-only契約を壊していないか確認。
+8. indexed_at cursor とTurso index方針が守られているか確認。
+9. 2秒/3秒反映目標を阻むpoll/write queueがないか確認。
+10. 必要な最小修正だけintegration側で行う。
+11. docs/CONTEXT.md とこのplanを最終状態へ更新。
+12. task-board / task-runs / archive を最後に更新。
 
 検証:
 AGENTSに従い、テスト/lint/build/browser確認はユーザーが明示した場合だけ実行。明示されていない場合はdiff reviewのみ行い、必要な確認コマンド候補を報告する。
@@ -680,4 +775,3 @@ AGENTSに従い、テスト/lint/build/browser確認はユーザーが明示し�
 - Production deployment.
 - Push to origin/main.
 - Manual production DB operation.
-
