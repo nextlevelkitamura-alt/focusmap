@@ -27,15 +27,17 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 
 ### 基本方針
 - Git運用で古い計画書や個別docsと矛盾する記述がある場合は、この `AGENTS.md` のGitルールを優先する
+- **通常作業の既定は既存の `main` worktree で直接作業すること**。worktree / feature branch は例外であり、「念のため」や小さな修正では新規作成しない
 - **小さな修正・UI調整・ドキュメント変更は `main` に直接コミットしてよい**
 - 作業開始時に `git fetch --prune origin` を実行してから `git status --short --branch` と `git worktree list` を確認し、`main` が `origin/main` より先行・遅延している場合は報告する
-- Codex.app ではチャットごとに worktree が作られることがある。小さな修正で現在地が `main` 以外なら、まず既存の `main` worktree を探し、あればそこを使う。`main` が別 worktree で使用中なら、同じ用途の worktree を二重に作らない
-- 既存の `main` worktree が無い、または未コミット差分で使えない場合だけ、`origin/main` から一時 worktree を作る。ユーザーが明示的にブランチ作業を求めた場合だけ現在ブランチで続ける
+- Codex.app ではチャットごとに worktree が作られることがあるが、通常作業では新規 worktree を増やさない。現在地が `main` 以外なら、まず既存の `main` worktree を探し、あればそこを使う
+- 既存の `main` worktree が無い、または未コミット差分で使えず混在リスクが高い場合だけ、`origin/main` から一時 worktree を作る。ユーザーが明示的にブランチ作業を求めた場合だけ現在ブランチで続ける
 - Codex は毎回ブランチを切らない。基本は `main` で小さく作業し、差分範囲を確認してコミットする
-- Git worktree は、未コミット差分の保護や並行作業のための隔離場所として使う。作業完了時は、コミットが `local main` / `origin/main` / 本番デプロイのどこまで反映済みかを分けて報告する
+- Git worktree は、未コミット差分の保護、明示された並行実装、本番にすぐ出したくない大きな作業のための隔離場所としてだけ使う。作業完了時は、コミットが `local main` / `origin/main` / 本番デプロイのどこまで反映済みかを分けて報告する
 - Focusmapの作業完了の正は **local main にコミットが取り込み済み** であること。pushは明示依頼があるまでしないが、完了報告時点で `main` に入っていれば次回 `git push origin main` でまとめて反映される
 - worktree / feature / fix ブランチは作業中の隔離場所。そこにコミットが残っているだけでは完了扱いにしない。ユーザーが「mainへ入れないで」と明示した場合を除き、Integrationまたは担当Codexが `local main` へ取り込む
 - ブランチを切るのは、ユーザーが明示した場合、大きな機能、数日またぐ作業、破壊的変更、DBマイグレーション、本番にすぐ出したくない変更に限る
+- worktree を作る判断は、実質的にブランチを増やす判断でもある。同じ `main` ブランチを複数 worktree に checkout して並行作業する運用はしない
 - 複数スレッドで同じリポジトリを触る場合も、最終的な正はGit履歴。Codexのスレッド分離だけで変更の整合性が保証されるとは考えない
 
 ### コミットルール
@@ -54,9 +56,9 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 ### 開発の進め方
 1. `git fetch --prune origin` でリモート追跡情報を更新
 2. `git status --short --branch` と `git worktree list` で現在地、未コミット差分、既存 `main` worktree を確認
-3. 小さな修正なら `main` で作る。現在地が `main` 以外の場合は、既存の `main` worktree へ移るか、必要な場合だけ `origin/main` の一時 worktree を作る
+3. 通常は既存の `main` worktree で作る。現在地が `main` 以外の場合は、既存の `main` worktree へ移り、条件を満たす場合だけ一時 worktree / branch を作る
 4. 自分が触ったファイルだけを `git add` してコミットする
-5. worktree / 一時ブランチで作った場合は `local main` へ取り込む。取り込めない場合は完了扱いにせず、`worktree path`、`branch`、`commit hash`、阻害要因、次の判断を報告する
+5. 例外的に worktree / 一時ブランチで作った場合は `local main` へ取り込む。取り込めない場合は完了扱いにせず、`worktree path`、`branch`、`commit hash`、阻害要因、次の判断を報告する
 6. `origin/main` に取り込み済みで `git status --short` が clean な worktree / local branch は整理対象にしてよい
 7. 大きい/危険/本番保留の作業だけ、事前にユーザーへ伝えてから `feat/*` / `fix/*` を作る
 8. **迷ったらブランチではなく、小さくコミットして戻せる状態にする**
@@ -68,10 +70,11 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - ユーザーが検証を明示した場合だけ、対象範囲とコマンドを確認してから実行し、結果を完了報告に書く。
 
 ### AIエージェント並列作業
-- 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は `task-router` Skill を使う
+- 複数チャット・readonlyサブエージェント・Git worktree を本当に使うか迷う依頼は `task-router` Skill を使う
 - 詳細な判断基準・worktree安全策・プロンプト雛形は `task-router` の workflows を正とする
 - 並列化は時間だけで判断しない。編集範囲、共通契約、衝突コスト、危険操作、統合条件を見て提案する
-- 複数Codexで実装する場合は、原則 `1チャット = 1 worktree = 1 branch` にする
+- 通常は単一チャットまたは順次実装で進める。実装のための複数Codex / 複数worktree は、ユーザーが明示した場合か、task-router が分割必須と判断した場合だけ使う
+- 複数Codexで本当に並列実装する場合は、原則 `1チャット = 1 worktree = 1 branch` にする。同じ `main` worktree を複数チャットで共有して実装しない
 - 並列実装では、各チャットの担当範囲・触ってよいファイル・触らないファイルを先に決める。ユーザーが明示した場合だけ検証コマンドも決める。同じファイルを触りそうなら、先に共通仕様を決めるか直列にする
 - 並列workerのコミットは中間成果物。親チャットまたはIntegration担当が全workerのcommitを確認し、衝突解消と統合判断後に `local main` へ取り込んでから完了報告する
 - `docs/ai/task-board.md` には branch / worktree / owner / status に加えて、必要に応じて `local main 取り込み済み` か `main未統合` かを残す
