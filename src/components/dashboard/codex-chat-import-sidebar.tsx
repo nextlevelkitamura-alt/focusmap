@@ -1133,14 +1133,15 @@ export function CodexChatImportSidebar({
     ? runningRallyElapsedMs(selectedMessages, workNowMs, selectedChatItem?.workStartedAt)
     : null
   const selectedWorkElapsedMs = selectedUiStatus === "running"
-    ? selectedLocalWorkElapsedMs ?? selectedRunningWorkElapsedMs ?? selectedRallyWorkElapsedMs
-    : selectedLocalWorkElapsedMs ?? selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs
+    ? selectedRallyWorkElapsedMs ?? selectedLocalWorkElapsedMs ?? selectedRunningWorkElapsedMs
+    : selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs ?? selectedLocalWorkElapsedMs
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
   const selectedFinishedAgoLabel = selectedUiStatus === "review"
-    ? selectedLocalWorkTimer?.finishedAtMs
-      ? formatFinishedAgoLabelFromMs(selectedLocalWorkTimer.finishedAtMs, workNowMs)
-      : formatFinishedAgoLabel(codexChatImportFinishedAt(selectedChatItem), workNowMs)
+    ? formatFinishedAgoLabel(codexChatImportFinishedAt(selectedChatItem), workNowMs) ??
+      (selectedLocalWorkTimer?.finishedAtMs
+        ? formatFinishedAgoLabelFromMs(selectedLocalWorkTimer.finishedAtMs, workNowMs)
+        : null)
     : null
   const selectedStatusTimeLabel = selectedUiStatus === "running"
     ? selectedWorkElapsedText
@@ -1737,7 +1738,7 @@ export function CodexChatImportSidebar({
                   const itemLocalWorkTimer = localWorkTimers[localWorkTimerKey(item)] ?? null
                   const itemLocalWorkElapsedMs = localWorkElapsedMs(itemLocalWorkTimer, workNowMs)
                   const itemRallyWorkElapsedMs = codexChatImportWorkElapsedMs(item, workNowMs, uiStatus === "running")
-                  const workElapsedMs = itemLocalWorkElapsedMs ?? itemRallyWorkElapsedMs
+                  const workElapsedMs = itemRallyWorkElapsedMs ?? itemLocalWorkElapsedMs
                   const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
                   const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
                   return (

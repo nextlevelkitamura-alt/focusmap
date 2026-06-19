@@ -297,6 +297,81 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).getByText("作業時間 18s")).toBeInTheDocument()
   })
 
+  test("prefers Codex turn start over the local timer on running history cards", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-19T00:02:45.000Z"))
+    renderSidebar({
+      chatItems: [
+        {
+          ...chatItems[0],
+          id: "chat-running-server-card",
+          status: "running",
+          statusLabel: "実行中",
+          workStartedAt: "2026-06-19T00:00:00.000Z",
+          workAwaitingApprovalAt: null,
+          workCompletedAt: null,
+        },
+      ],
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    let row = screen.getByTestId("codex-chat-import-row-chat-running-server-card")
+    expect(within(row).getByText("2m 45s")).toBeInTheDocument()
+    expect(within(row).queryByText("0s")).not.toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+      await Promise.resolve()
+    })
+
+    row = screen.getByTestId("codex-chat-import-row-chat-running-server-card")
+    expect(within(row).getByText("2m 50s")).toBeInTheDocument()
+  })
+
+  test("prefers Codex turn duration over local fixed duration on review history cards", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-19T00:00:00.000Z"))
+    const runningItem = {
+      ...chatItems[0],
+      id: "chat-review-server-card",
+      status: "running",
+      statusLabel: "実行中",
+      workStartedAt: null,
+      workAwaitingApprovalAt: null,
+      workCompletedAt: null,
+    }
+    const { rerenderSidebar } = renderSidebar({
+      chatItems: [runningItem],
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(18_000)
+      await Promise.resolve()
+    })
+
+    rerenderSidebar({
+      chatItems: [{
+        ...runningItem,
+        status: "awaiting_approval",
+        statusLabel: "返信待ち",
+        workStartedAt: "2026-06-19T00:00:00.000Z",
+        workAwaitingApprovalAt: "2026-06-19T00:00:27.000Z",
+        workCompletedAt: "2026-06-19T00:00:27.000Z",
+      }],
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const row = screen.getByTestId("codex-chat-import-row-chat-review-server-card")
+    expect(within(row).getByText("作業時間 27s")).toBeInTheDocument()
+    expect(within(row).queryByText("作業時間 18s")).not.toBeInTheDocument()
+  })
+
   test("renders completed work time from one-rally timing on the history card", () => {
     renderSidebar({
       chatItems: [
@@ -347,6 +422,59 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("focusmap")).toBeInTheDocument()
     expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
     expect(screen.getByText("作業時間 1m 30s")).toBeInTheDocument()
+  })
+
+  test("prefers Codex turn start over the local timer in the running detail header", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-19T00:02:45.000Z"))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-server-timer" })
+      if (url.startsWith("/api/ai-tasks/ai-task-server-timer/activity")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-server-timer-user",
+              task_id: "ai-task-server-timer",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "正しい開始時刻で測る",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-19T00:02:45.000Z",
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar({
+      chatItems: [
+        {
+          ...chatItems[0],
+          id: "chat-server-timer",
+          aiTaskId: "ai-task-server-timer",
+          status: "running",
+          statusLabel: "実行中",
+          snippet: "正しい開始時刻で測る",
+          workStartedAt: "2026-06-19T00:00:00.000Z",
+          workAwaitingApprovalAt: null,
+          workCompletedAt: null,
+        },
+      ],
+    })
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-server-timer"))
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByLabelText("実行中 2m 45s")).toBeInTheDocument()
+    expect(screen.queryByLabelText("実行中 0s")).not.toBeInTheDocument()
   })
 
   test("keeps running and completed work time from local status transitions when server timing is missing", async () => {

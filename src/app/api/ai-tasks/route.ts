@@ -7,7 +7,7 @@ import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 import { isTursoConfigured } from '@/lib/turso/client'
 import { upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
-const AI_TASK_LIST_SELECT = [
+export const AI_TASK_LIST_SELECT = [
   'id',
   'user_id',
   'space_id',
@@ -45,9 +45,11 @@ const AI_TASK_LIST_SELECT = [
   'result_steps:result->steps',
   'result_codex_manual_handoff:result->codex_manual_handoff',
   'result_awaiting_approval_at:result->>awaiting_approval_at',
+  'result_codex_turn_started_at:result->>codex_turn_started_at',
+  'result_codex_turn_completed_at:result->>codex_turn_completed_at',
 ].join(', ')
 
-const AI_TASK_STATUS_SELECT = [
+export const AI_TASK_STATUS_SELECT = [
   'id',
   'user_id',
   'space_id',
@@ -70,6 +72,8 @@ const AI_TASK_STATUS_SELECT = [
   'result_progress_summary:result->progress_summary',
   'result_codex_manual_handoff:result->codex_manual_handoff',
   'result_awaiting_approval_at:result->>awaiting_approval_at',
+  'result_codex_turn_started_at:result->>codex_turn_started_at',
+  'result_codex_turn_completed_at:result->>codex_turn_completed_at',
 ].join(', ')
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,7 +84,7 @@ function trimText(value: unknown, max: number) {
   return typeof value === 'string' && value.length > max ? value.slice(-max) : value
 }
 
-function compactAiTask(row: Record<string, unknown>) {
+export function compactAiTask(row: Record<string, unknown>) {
   const result: Record<string, unknown> = {}
   const resultKeyMap: Array<[string, string, number?]> = [
     ['result_codex_run_state', 'codex_run_state'],
@@ -93,6 +97,8 @@ function compactAiTask(row: Record<string, unknown>) {
     ['result_steps', 'steps'],
     ['result_codex_manual_handoff', 'codex_manual_handoff'],
     ['result_awaiting_approval_at', 'awaiting_approval_at'],
+    ['result_codex_turn_started_at', 'codex_turn_started_at'],
+    ['result_codex_turn_completed_at', 'codex_turn_completed_at'],
   ]
 
   for (const [sourceKey, targetKey, max] of resultKeyMap) {
