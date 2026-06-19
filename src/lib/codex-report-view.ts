@@ -37,6 +37,26 @@ function isUserRequestMessage(message: ActivityLike) {
   return message.role === "user" || message.kind === "sent" || message.kind === "user_answer"
 }
 
+function normalizedUserRequestKey(message: ActivityLike) {
+  const body = message.body.replace(/\s+/g, " ").trim()
+  return body ? `user:${body}` : messageKey(message)
+}
+
+function reportDedupeKey(message: ActivityLike) {
+  if (isUserRequestMessage(message)) return normalizedUserRequestKey(message)
+  return messageKey(message)
+}
+
+function preferReportMessage<T extends ActivityLike>(current: T, next: T) {
+  const currentTime = createdAtMs(current)
+  const nextTime = createdAtMs(next)
+  if (nextTime !== currentTime) return nextTime > currentTime ? next : current
+  if (isUserRequestMessage(current) && isUserRequestMessage(next)) {
+    if (current.kind === "sent" && next.kind !== "sent") return next
+  }
+  return next
+}
+
 function isGenericStatusBody(body: string) {
   return GENERIC_CODEX_STATUS_PATTERNS.some(pattern => pattern.test(body))
 }
@@ -72,7 +92,11 @@ function fallbackLatestCodexReport(messages: ActivityLike[]) {
 
 function dedupeReportMessages<T extends ActivityLike>(messages: T[]) {
   const byKey = new Map<string, T>()
-  for (const message of messages) byKey.set(messageKey(message), message)
+  for (const message of messages) {
+    const key = reportDedupeKey(message)
+    const current = byKey.get(key)
+    byKey.set(key, current ? preferReportMessage(current, message) : message)
+  }
   return Array.from(byKey.values()).sort((a, b) => createdAtMs(a) - createdAtMs(b))
 }
 

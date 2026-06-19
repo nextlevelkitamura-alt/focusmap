@@ -39,4 +39,37 @@ describe("codexReportViewMessages", () => {
 
     expect(codexReportViewMessages(messages).map(item => item.id)).toEqual(["1", "3"])
   })
+
+  test("dedupes the same user request stored as sent and user_answer", () => {
+    const requestBody = [
+      "そんな感じでよろしく！ついでにこの画面でも出すようにしてほしい",
+      "",
+      "添付ファイル",
+      "画像: 1件",
+    ].join("\n")
+    const messages = [
+      message({
+        id: "prompt",
+        role: "user",
+        kind: "sent",
+        body: requestBody,
+        created_at: "2026-06-17T00:00:00.000Z",
+      }),
+      message({
+        id: "codex-user",
+        role: "user",
+        kind: "user_answer",
+        body: requestBody,
+        created_at: "2026-06-17T00:00:05.000Z",
+      }),
+      message({
+        id: "done",
+        kind: "completed",
+        body: "同じ依頼の二重表示を防ぐようにしました。",
+        created_at: "2026-06-17T00:02:00.000Z",
+      }),
+    ]
+
+    expect(codexReportViewMessages(messages).map(item => item.id)).toEqual(["codex-user", "done"])
+  })
 })
