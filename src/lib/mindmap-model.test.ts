@@ -36,16 +36,21 @@ const getTaskNode = (model: MindMapModel, id: string) => {
 
 const centerY = (node: MindMapModelNode) => node.y + node.height / 2;
 
-const getSubtreeBounds = (model: MindMapModel, rootId: string) => {
+const getSubtreeDepthBounds = (model: MindMapModel, rootId: string, relativeDepth: number) => {
     const root = getTaskNode(model, rootId);
     const nodes: MindMapModelNode[] = [];
-    const visit = (node: MindMapModelNode) => {
-        nodes.push(node);
+    const visit = (node: MindMapModelNode, depth: number) => {
+        if (depth === relativeDepth) {
+            nodes.push(node);
+            return;
+        }
         for (const child of model.nodes.filter(candidate => candidate.parentId === node.id)) {
-            visit(child);
+            visit(child, depth + 1);
         }
     };
-    visit(root);
+    visit(root, 0);
+
+    if (nodes.length === 0) throw new Error(`Missing relative depth ${relativeDepth} under ${rootId}`);
 
     return {
         minY: Math.min(...nodes.map(node => node.y)),
@@ -253,7 +258,7 @@ describe("buildMindMapModel", () => {
         expect(childCenters[1] + childCenters[2]).toBe(parentCenter * 2);
     });
 
-    test("widens sibling pitch when a child subtree would otherwise overlap the next sibling", () => {
+    test("keeps direct siblings compact when only one sibling has deeper descendants", () => {
         const parent = makeTask({
             id: "parent",
             title: "Parent",
@@ -291,12 +296,118 @@ describe("buildMindMapModel", () => {
             isMobile: false,
         });
 
-        const leafPitch = getTaskNode(model, "branch").height + 10;
-        expect(centerY(getTaskNode(model, "sibling")) - centerY(getTaskNode(model, "branch"))).toBeGreaterThan(leafPitch);
+        const compactPitch = Math.ceil(
+            ((getTaskNode(model, "branch").height / 2) + (getTaskNode(model, "sibling").height / 2) + 10) / 2
+        ) * 2;
 
-        const branchBounds = getSubtreeBounds(model, "branch");
-        const siblingBounds = getSubtreeBounds(model, "sibling");
-        expect(branchBounds.maxY + 10).toBeLessThanOrEqual(siblingBounds.minY);
+        expect(centerY(getTaskNode(model, "sibling")) - centerY(getTaskNode(model, "branch"))).toBe(compactPitch);
+    });
+
+    test("widens sibling pitch when same-depth child subtrees would overlap", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const branchA = makeTask({
+            id: "branch-a",
+            title: "Branch A",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+        const branchB = makeTask({
+            id: "branch-b",
+            title: "Branch B",
+            parent_task_id: "parent",
+            order_index: 1,
+        });
+        const branchAGrandchildren = [0, 1].map(index => makeTask({
+            id: `branch-a-grandchild-${index}`,
+            title: `Branch A grandchild ${index}`,
+            parent_task_id: "branch-a",
+            order_index: index,
+        }));
+        const branchBGrandchildren = [0, 1].map(index => makeTask({
+            id: `branch-b-grandchild-${index}`,
+            title: `Branch B grandchild ${index}`,
+            parent_task_id: "branch-b",
+            order_index: index,
+        }));
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [branchA, branchB, ...branchAGrandchildren, ...branchBGrandchildren],
+            isMobile: false,
+        });
+
+        const compactPitch = Math.ceil(
+            ((getTaskNode(model, "branch-a").height / 2) + (getTaskNode(model, "branch-b").height / 2) + 10) / 2
+        ) * 2;
+
+        expect(centerY(getTaskNode(model, "branch-b")) - centerY(getTaskNode(model, "branch-a"))).toBeGreaterThan(compactPitch);
+
+        const branchABounds = getSubtreeDepthBounds(model, "branch-a", 1);
+        const branchBBounds = getSubtreeDepthBounds(model, "branch-b", 1);
+        expect(branchABounds.maxY + 10).toBeLessThanOrEqual(branchBBounds.minY);
+    });
+
+    test("prevents same-depth subtree overlap even when a leaf sibling sits between branches", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const branchA = makeTask({
+            id: "branch-a",
+            title: "Branch A",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+        const leaf = makeTask({
+            id: "leaf",
+            title: "Leaf",
+            parent_task_id: "parent",
+            order_index: 1,
+        });
+        const branchC = makeTask({
+            id: "branch-c",
+            title: "Branch C",
+            parent_task_id: "parent",
+            order_index: 2,
+        });
+        const branchAGrandchildren = [0, 1].map(index => makeTask({
+            id: `branch-a-grandchild-${index}`,
+            title: `Branch A grandchild ${index}`,
+            parent_task_id: "branch-a",
+            order_index: index,
+        }));
+        const branchCGrandchildren = [0, 1].map(index => makeTask({
+            id: `branch-c-grandchild-${index}`,
+            title: `Branch C grandchild ${index}`,
+            parent_task_id: "branch-c",
+            order_index: index,
+        }));
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [branchA, leaf, branchC, ...branchAGrandchildren, ...branchCGrandchildren],
+            isMobile: false,
+        });
+
+        const compactPitch = Math.ceil(
+            ((getTaskNode(model, "branch-a").height / 2) + (getTaskNode(model, "leaf").height / 2) + 10) / 2
+        ) * 2;
+        const firstGap = centerY(getTaskNode(model, "leaf")) - centerY(getTaskNode(model, "branch-a"));
+        const secondGap = centerY(getTaskNode(model, "branch-c")) - centerY(getTaskNode(model, "leaf"));
+
+        expect(firstGap).toBe(secondGap);
+        expect(firstGap).toBe(compactPitch);
+
+        const branchABounds = getSubtreeDepthBounds(model, "branch-a", 1);
+        const branchCBounds = getSubtreeDepthBounds(model, "branch-c", 1);
+        expect(branchABounds.maxY + 10).toBeLessThanOrEqual(branchCBounds.minY);
     });
 
     test("uses the widest node in a depth as the basis for the next column", () => {

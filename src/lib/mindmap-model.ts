@@ -77,10 +77,12 @@ const COLUMN_GAP_MOBILE = 20;
 const SIBLING_NODE_GAP = 10;
 const SIBLING_NODE_GAP_MOBILE = 14;
 
-type VerticalSubtreeExtent = {
+type VerticalColumnExtent = {
     top: number;
     bottom: number;
 };
+
+type VerticalColumnExtents = Map<number, VerticalColumnExtent>;
 
 const hasMemoImages = (task: Task) =>
     Array.isArray(task.memo_images) && task.memo_images.some(url => typeof url === 'string' && url.trim().length > 0);
@@ -130,50 +132,95 @@ const alignChildrenAroundParents = (
         childrenByParent.set(node.parentId, children);
     }
 
-    const extentById = new Map<string, VerticalSubtreeExtent>();
+    const extentById = new Map<string, VerticalColumnExtents>();
     const childPitchByParentId = new Map<string, number>();
 
-    const getExtent = (node: MindMapModelNode, seen = new Set<string>()): VerticalSubtreeExtent => {
+    const mergeColumnExtent = (
+        extents: VerticalColumnExtents,
+        depth: number,
+        top: number,
+        bottom: number,
+    ) => {
+        const current = extents.get(depth);
+        extents.set(depth, {
+            top: Math.max(current?.top ?? top, top),
+            bottom: Math.max(current?.bottom ?? bottom, bottom),
+        });
+    };
+
+    const getRequiredPitch = (
+        previous: VerticalColumnExtents,
+        next: VerticalColumnExtents,
+        indexDistance: number,
+    ) => {
+        let requiredPitch = 0;
+        for (const [depth, previousExtent] of previous) {
+            const nextExtent = next.get(depth);
+            if (!nextExtent) continue;
+            requiredPitch = Math.max(
+                requiredPitch,
+                (previousExtent.bottom + nextExtent.top + siblingGap) / indexDistance
+            );
+        }
+        return requiredPitch;
+    };
+
+    const getExtent = (node: MindMapModelNode, seen = new Set<string>()): VerticalColumnExtents => {
         const cached = extentById.get(node.id);
         if (cached) return cached;
 
         if (seen.has(node.id)) {
-            return { top: node.height / 2, bottom: node.height / 2 };
+            return new Map([[0, { top: node.height / 2, bottom: node.height / 2 }]]);
         }
         const nextSeen = new Set(seen);
         nextSeen.add(node.id);
 
         const children = childrenByParent.get(node.id) ?? [];
-        let top = node.height / 2;
-        let bottom = node.height / 2;
+        const extents: VerticalColumnExtents = new Map([
+            [0, { top: node.height / 2, bottom: node.height / 2 }],
+        ]);
 
         if (children.length > 0) {
             const childExtents = children.map(child => getExtent(child, nextSeen));
-            const maxChildHeight = Math.max(...children.map(child => child.height));
-            let pitch = maxChildHeight + siblingGap;
+            let pitch = children.length === 1 ? (children[0]?.height ?? 0) + siblingGap : 0;
 
-            for (let i = 1; i < children.length; i += 1) {
-                pitch = Math.max(
-                    pitch,
-                    childExtents[i - 1].bottom + childExtents[i].top + siblingGap
-                );
+            for (let previousIndex = 0; previousIndex < children.length; previousIndex += 1) {
+                for (let nextIndex = previousIndex + 1; nextIndex < children.length; nextIndex += 1) {
+                    const previousExtent = childExtents[previousIndex];
+                    const nextExtent = childExtents[nextIndex];
+                    if (!previousExtent || !nextExtent) continue;
+                    pitch = Math.max(
+                        pitch,
+                        getRequiredPitch(
+                            previousExtent,
+                            nextExtent,
+                            nextIndex - previousIndex
+                        )
+                    );
+                }
             }
             pitch = Math.ceil(pitch / 2) * 2;
 
             const middleIndex = (children.length - 1) / 2;
-            children.forEach((child, index) => {
+            children.forEach((_, index) => {
                 const offset = (index - middleIndex) * pitch;
                 const childExtent = childExtents[index];
-                top = Math.max(top, childExtent.top - offset);
-                bottom = Math.max(bottom, childExtent.bottom + offset);
+                if (!childExtent) return;
+                for (const [depth, extent] of childExtent) {
+                    mergeColumnExtent(
+                        extents,
+                        depth + 1,
+                        extent.top - offset,
+                        extent.bottom + offset
+                    );
+                }
             });
 
             childPitchByParentId.set(node.id, pitch);
         }
 
-        const extent = { top, bottom };
-        extentById.set(node.id, extent);
-        return extent;
+        extentById.set(node.id, extents);
+        return extents;
     };
 
     const placeChildren = (node: MindMapModelNode, centerY: number, seen = new Set<string>()) => {
