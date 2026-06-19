@@ -54,12 +54,7 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useAgentChatSessions, type AgentChatSession } from "@/hooks/useAgentChatSessions"
 import { cn } from "@/lib/utils"
 import { useAgentConnection } from "@/components/chat/agent-status-chip"
-import {
-  agentProgressText,
-  agentToolLabel,
-  getAgentProgressMetadata,
-  type AgentChatProgressMetadata,
-} from "@/lib/ai/agent-chat-progress"
+import { agentToolLabel, withoutAgentProgressMessages } from "@/lib/ai/agent-chat-progress"
 import { MAX_CURRENT_IMAGE_DATA_URL_CHARS } from "@/lib/ai/ui-message-sanitize"
 import {
   AGENT_MODEL_MODE_DESCRIPTIONS,
@@ -213,6 +208,30 @@ const CHAT_SLOW_NOTICE_MS = 45_000
 const DEFAULT_VISIBLE_HISTORY_COUNT = 3
 const MAP_CHAT_VISIBLE_HISTORY_COUNT = 3
 const MODEL_MODE_STORAGE_KEY = "focusmap:agent-chat:model-mode"
+
+function shouldRenderToolPart(part: UIMessage["parts"][number]): part is ToolUIPart | DynamicToolUIPart {
+  return isToolUIPart(part) && part.state === "approval-requested"
+}
+
+function hasVisibleMessagePart(part: UIMessage["parts"][number]): boolean {
+  if (part.type === "text") return part.text.trim().length > 0
+  if (isFileUIPart(part)) return true
+  return shouldRenderToolPart(part)
+}
+
+function messageHasVisibleChatContent(message: UIMessage): boolean {
+  if (message.parts.some(hasVisibleMessagePart)) return true
+  if (message.role === "user") return false
+  return Boolean(
+    getMindmapDraftReadyAction(message)
+      || getMindmapDraftApplyAction(message)
+      || getProjectContextProposalAction(message),
+  )
+}
+
+function visibleAgentChatMessages(messages: UIMessage[]): UIMessage[] {
+  return withoutAgentProgressMessages(messages).filter(messageHasVisibleChatContent)
+}
 
 const MODEL_MODE_OPTIONS: Array<{ value: AgentModelMode; icon: typeof Zap }> = [
   { value: "speed", icon: Zap },
@@ -420,6 +439,7 @@ export function UnifiedChat({
     startRun,
   } = sessions
   const messages = activeSession?.messages ?? []
+  const visibleMessages = useMemo(() => visibleAgentChatMessages(messages), [messages])
   const isBusy = activeSession?.status === "running"
   const [nowMs, setNowMs] = useState(() => Date.now())
   useEffect(() => {
@@ -434,7 +454,7 @@ export function UnifiedChat({
   )
   const mapHistorySessions = useMemo(() => {
     return [...chatSessions]
-      .filter(session => session.messages.length > 0 || session.title !== "新しいチャット")
+      .filter(session => visibleAgentChatMessages(session.messages).length > 0 || session.title !== "新しいチャット")
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }, [chatSessions])
   const addToolApprovalResponse = useCallback<ApprovalHandler>(() => {
@@ -534,7 +554,7 @@ export function UnifiedChat({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
-  }, [messages.length, isBusy])
+  }, [visibleMessages.length, isBusy])
 
   const handleTranscribed = useCallback((text: string) => {
     setInput(prev => (prev ? `${prev} ${text}` : text))
@@ -766,7 +786,7 @@ export function UnifiedChat({
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-6 md:py-8">
           {activeProjectChat && !(isMapSidebar && mapHistoryOpen) && (
-            <ProjectChatHeader project={activeProjectChat} hasMessages={messages.length > 0} />
+            <ProjectChatHeader project={activeProjectChat} hasMessages={visibleMessages.length > 0} />
           )}
           {isMapSidebar && mapHistoryOpen ? (
             <MapChatHistoryList
@@ -776,7 +796,7 @@ export function UnifiedChat({
               onSelect={handleSelectSession}
               onBack={() => setMapHistoryOpen(false)}
             />
-          ) : messages.length === 0 ? (
+          ) : visibleMessages.length === 0 ? (
               <EmptyChat
                 project={activeProjectChat}
                 historySessions={isMapSidebar ? mapHistorySessions.slice(0, MAP_CHAT_VISIBLE_HISTORY_COUNT) : []}
@@ -788,7 +808,7 @@ export function UnifiedChat({
               />
           ) : (
             <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pb-6">
-              {messages.map(message => (
+              {visibleMessages.map(message => (
                 <MessageBubble
                   key={message.id}
                   message={message}
@@ -1495,7 +1515,7 @@ function AssistantThinking({ elapsedMs }: { elapsedMs: number | null }) {
   return (
     <div className="flex items-center gap-2 px-0 py-1 text-sm text-zinc-400" aria-live="polite">
       <span className="motion-safe:animate-pulse motion-reduce:opacity-80">
-        思考中{elapsedLabel ? ` ${elapsedLabel}` : ""}
+        作業中{elapsedLabel ? ` ${elapsedLabel}` : ""}
       </span>
       <span className="flex items-center gap-1" aria-hidden="true">
         <span className="agent-thinking-dot h-1.5 w-1.5 rounded-full bg-zinc-500" />
@@ -1583,9 +1603,6 @@ function getProjectContextProposalAction(message: UIMessage): ProjectContextProp
 }
 
 function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval: ApprovalHandler }) {
-  const progress = getAgentProgressMetadata(message)
-  if (progress) return <ProgressLogMessage progress={progress} />
-
   const isUser = message.role === "user"
   const mindmapDraftReadyAction = isUser ? null : getMindmapDraftReadyAction(message)
   const mindmapDraftApplyAction = isUser ? null : getMindmapDraftApplyAction(message)
@@ -1613,6 +1630,7 @@ function MessageBubble({ message, onApproval }: { message: UIMessage; onApproval
             )
           }
           if (isToolUIPart(part)) {
+            if (!shouldRenderToolPart(part)) return null
             return <ToolPart key={index} part={part} name={getToolName(part)} onApproval={onApproval} />
           }
           if (isFileUIPart(part)) {
@@ -1876,33 +1894,6 @@ function MindmapDraftApplyActions({ action }: { action: MindmapDraftApplyAction 
         {isUndone ? "やり直す" : "元に戻す"}
       </Button>
       {error && <span className="text-xs text-red-300">{error}</span>}
-    </div>
-  )
-}
-
-function ProgressLogMessage({ progress }: { progress: AgentChatProgressMetadata }) {
-  const running = progress.state === "running" || progress.state === "thinking"
-  const done = progress.state === "done"
-  const failed = progress.state === "failed"
-  return (
-    <div className="flex justify-start py-0.5" aria-live={running ? "polite" : undefined}>
-      <div
-        className={cn(
-          "inline-flex min-h-8 max-w-full items-center gap-2 rounded-full border px-3 text-xs transition",
-          running && "border-blue-400/20 bg-blue-400/10 text-blue-200 motion-safe:animate-pulse",
-          done && "border-emerald-400/20 bg-emerald-400/10 text-emerald-300",
-          failed && "border-red-400/25 bg-red-400/10 text-red-300",
-        )}
-      >
-        {running ? (
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-        ) : done ? (
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-        ) : (
-          <XCircle className="h-3.5 w-3.5 shrink-0" />
-        )}
-        <span className="min-w-0 truncate">{agentProgressText(progress)}</span>
-      </div>
     </div>
   )
 }
