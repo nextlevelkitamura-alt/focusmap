@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { canEditSpace, canViewSpace, normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
+import { resolveRunningStartedAt, shouldInitializeRunningStartedAt } from '@/lib/ai-task-run-timing'
 
 // GET /api/ai-tasks/:id — 単一AIタスク取得
 export async function GET(
@@ -67,7 +68,7 @@ export async function PATCH(
 
   const { data: existingTask } = await supabase
     .from('ai_tasks')
-    .select('user_id, space_id, run_visibility')
+    .select('user_id, space_id, run_visibility, started_at')
     .eq('id', id)
     .maybeSingle()
 
@@ -93,7 +94,9 @@ export async function PATCH(
     }
     updates.status = status
     if (status === 'completed') updates.completed_at = new Date().toISOString()
-    if (status === 'running') updates.started_at = new Date().toISOString()
+    if (status === 'running' && shouldInitializeRunningStartedAt(existingTask.started_at)) {
+      updates.started_at = resolveRunningStartedAt(existingTask.started_at)
+    }
   }
 
   // 繰り返しタスク用: completed_at を直接更新（status は維持）

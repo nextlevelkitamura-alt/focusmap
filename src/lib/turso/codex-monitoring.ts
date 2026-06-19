@@ -263,7 +263,7 @@ export async function upsertTursoAiTask(input: {
         summary = COALESCE(excluded.summary, ai_tasks.summary),
         error_message = COALESCE(excluded.error_message, ai_tasks.error_message),
         updated_at = excluded.updated_at,
-        started_at = COALESCE(excluded.started_at, ai_tasks.started_at),
+        started_at = COALESCE(ai_tasks.started_at, excluded.started_at),
         completed_at = COALESCE(excluded.completed_at, ai_tasks.completed_at)
     `,
     args: [

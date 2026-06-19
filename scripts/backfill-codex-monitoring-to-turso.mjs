@@ -353,7 +353,7 @@ async function upsertTask(turso, row) {
         summary = excluded.summary,
         error_message = excluded.error_message,
         updated_at = excluded.updated_at,
-        started_at = excluded.started_at,
+        started_at = COALESCE(ai_tasks.started_at, excluded.started_at),
         completed_at = excluded.completed_at
     `,
     args: taskArgs(row),

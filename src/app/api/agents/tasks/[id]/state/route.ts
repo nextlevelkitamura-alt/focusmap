@@ -6,6 +6,7 @@ import {
   type AiTaskActivityKind,
   type AiTaskActivityRole,
 } from '@/lib/ai-task-activity'
+import { resolveRunningStartedAt, shouldInitializeRunningStartedAt } from '@/lib/ai-task-run-timing'
 import { isTursoConfigured } from '@/lib/turso/client'
 import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
@@ -253,7 +254,7 @@ export async function POST(
 
     const { data: task } = await supabase
       .from('ai_tasks')
-      .select('id, user_id, space_id, prompt, result, claimed_runner_id, claim_expires_at, status, source_task_id')
+      .select('id, user_id, space_id, prompt, result, claimed_runner_id, claim_expires_at, status, started_at, source_task_id')
       .eq('id', id)
       .maybeSingle()
     if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
@@ -276,7 +277,9 @@ export async function POST(
     }
     if (normalizedState.result) updates.result = normalizedState.result
     if (typeof body.error === 'string') updates.error = body.error
-    if (status === 'running') updates.started_at = new Date().toISOString()
+    const existingStartedAt = typeof task.started_at === 'string' ? task.started_at : null
+    const runningStartedAt = status === 'running' ? resolveRunningStartedAt(existingStartedAt) : null
+    if (status === 'running' && shouldInitializeRunningStartedAt(existingStartedAt)) updates.started_at = runningStartedAt
     if (status === 'completed' || status === 'failed') {
       updates.completed_at = new Date().toISOString()
       updates.claim_expires_at = null
@@ -378,7 +381,7 @@ export async function POST(
           current_step: currentStep,
           summary,
           error_message: typeof body.error === 'string' ? body.error : null,
-          started_at: status === 'running' ? new Date().toISOString() : null,
+          started_at: status === 'running' ? runningStartedAt : null,
           completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
         })
         if (statusChanged) {

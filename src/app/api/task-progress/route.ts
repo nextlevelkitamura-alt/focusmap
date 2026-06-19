@@ -10,6 +10,7 @@ import {
 } from '@/lib/turso/codex-monitoring'
 import { boundedTaskProgressJson } from '@/lib/turso/task-progress-payload'
 import { authenticateMonitoringRequest } from '@/lib/turso/request-auth'
+import { resolveRunningStartedAt } from '@/lib/ai-task-run-timing'
 
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
 const MAX_MESSAGE_CHARS = 1_200
@@ -205,7 +206,7 @@ export async function POST(request: NextRequest) {
       updated_at: lastActivityAt && !Number.isNaN(Date.parse(lastActivityAt))
         ? new Date(lastActivityAt).toISOString()
         : null,
-      started_at: status === 'running' ? new Date().toISOString() : null,
+      started_at: status === 'running' ? resolveRunningStartedAt(task.started_at) : null,
       completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
     })
 

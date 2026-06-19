@@ -18,6 +18,7 @@ import {
   type CodexRunState,
   type CodexThreadSnapshot,
 } from '@/lib/codex-run-state'
+import { resolveRunningStartedAt, shouldInitializeRunningStartedAt } from '@/lib/ai-task-run-timing'
 import { createClient } from '@/utils/supabase/server'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 import { isTursoConfigured } from '@/lib/turso/client'
@@ -498,7 +499,7 @@ async function mirrorCodexSyncToTurso(input: {
     current_step: compactText(input.currentStep, MAX_CURRENT_STEP_CHARS),
     summary: compactText(input.summary, MAX_SUMMARY_CHARS),
     updated_at: new Date().toISOString(),
-    started_at: input.status === 'running' ? new Date().toISOString() : null,
+    started_at: input.status === 'running' ? resolveRunningStartedAt(input.task.started_at) : null,
     completed_at: input.status === 'completed' ? (input.completedAt ?? new Date().toISOString()) : null,
   })
 
@@ -1079,14 +1080,18 @@ export async function POST(req: NextRequest) {
     shouldPersistVisibleMessagesFallback
 
   if (shouldUpdateSupabase) {
+    const updates: Record<string, unknown> = {
+      status: nextStatus,
+      codex_thread_id: threadId,
+      result,
+    }
+    if (nextStatus === 'running' && shouldInitializeRunningStartedAt(task.started_at)) {
+      updates.started_at = resolveRunningStartedAt(task.started_at, nowIso)
+    }
+
     const { error: updateError } = await supabase
       .from('ai_tasks')
-      .update({
-        status: nextStatus,
-        started_at: task.started_at ?? nowIso,
-        codex_thread_id: threadId,
-        result,
-      })
+      .update(updates)
       .eq('id', task.id)
 
     if (updateError) {
