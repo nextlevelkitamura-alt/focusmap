@@ -41,16 +41,16 @@ export function codexMonitorUiLabel(status: TaskProgressStatus | string | null |
 export function codexMonitorToneClass(status: TaskProgressStatus | string | null | undefined) {
   switch (getCodexMonitorUiStatus(status)) {
     case "running":
-      return "border-emerald-400/65 bg-emerald-500/[0.12] text-emerald-700 dark:text-emerald-100"
+      return "border-emerald-300 bg-emerald-400 text-emerald-950"
     case "connection_failed":
-      return "border-red-400/70 bg-red-500/10 text-red-700 dark:text-red-200"
+      return "border-red-300 bg-red-500 text-white"
     case "unsent":
-      return "border-sky-400/70 bg-sky-500/10 text-sky-800 dark:text-sky-200"
+      return "border-sky-300 bg-sky-400 text-sky-950"
     case "done":
-      return "border-emerald-400/45 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-200/85"
+      return "border-emerald-300 bg-emerald-500 text-white"
     case "review":
     default:
-      return "border-amber-400/70 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+      return "border-amber-300 bg-amber-400 text-amber-950"
   }
 }
 

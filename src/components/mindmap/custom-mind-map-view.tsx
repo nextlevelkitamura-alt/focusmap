@@ -262,6 +262,45 @@ function canShowHeadingActionForCodexState(
     return codexIsUnsent && progressIsUnsent;
 }
 
+function taskNodeSelectionRingClass({
+    node,
+    isMemoNode,
+    codexState,
+    taskProgress,
+    draftMeta,
+}: {
+    node: MindMapModelNode;
+    isMemoNode: boolean;
+    codexState: CodexNodeState | null | undefined;
+    taskProgress: TaskProgressSnapshotTask | null | undefined;
+    draftMeta: CustomMindMapDraftMeta | null | undefined;
+}) {
+    const base = "ring-[3px] ring-offset-2 ring-offset-background";
+
+    if (draftMeta?.kind === "new") return `${base} ring-sky-400`;
+    if (draftMeta?.kind === "moved") return `${base} ring-violet-400`;
+    if (draftMeta?.kind === "adjusted") return `${base} ring-amber-400`;
+
+    if (taskProgress?.status === "failed") return `${base} ring-red-400`;
+    if (taskProgress?.status === "running") return `${base} ring-emerald-400`;
+    if (
+        taskProgress?.status === "awaiting_approval" ||
+        taskProgress?.status === "needs_input" ||
+        taskProgress?.status === "completed"
+    ) {
+        return `${base} ring-amber-400`;
+    }
+
+    if (codexState?.state === "connection_failed") return `${base} ring-red-400`;
+    if (codexState?.state === "running" || codexState?.state === "completed") return `${base} ring-emerald-400`;
+    if (codexState?.state === "prompt_waiting") return `${base} ring-sky-400`;
+
+    if (node.isDone) return `${base} ring-muted-foreground/45`;
+    if (node.isHabit || node.parentIsHabit) return `${base} ring-blue-400`;
+    if (isMemoNode) return `${base} ring-amber-400`;
+    return `${base} ring-zinc-500`;
+}
+
 function importDropLabel(position: CustomDropPosition | null | undefined) {
     if (position === "above") return "上に並べる";
     if (position === "below") return "下に並べる";
@@ -550,6 +589,13 @@ function CustomTaskNode({
         (codexState && codexState.state !== "prompt_waiting")
     );
     const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(codexState, taskProgress);
+    const selectedRingClass = taskNodeSelectionRingClass({
+        node,
+        isMemoNode,
+        codexState,
+        taskProgress,
+        draftMeta,
+    });
 
     useEffect(() => {
         setExternalDropActive(false);
@@ -885,7 +931,7 @@ function CustomTaskNode({
                 "group flex select-none flex-col gap-0 outline-none",
                 showLongNodeHeadingAction && "pb-2.5",
                 floatingEditing && "opacity-0",
-                selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
+                selected && selectedRingClass,
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
                 node.isDone && "border-muted-foreground/25 bg-background text-muted-foreground grayscale",
@@ -899,7 +945,6 @@ function CustomTaskNode({
                 draftMeta?.kind === "new" && "border-sky-400 bg-sky-500/10 shadow-[0_0_18px_rgba(56,189,248,0.24)]",
                 draftMeta?.kind === "moved" && "border-violet-400 bg-violet-500/10 shadow-[0_0_18px_rgba(167,139,250,0.22)]",
                 draftMeta?.kind === "adjusted" && "border-amber-400 bg-amber-500/10 shadow-[0_0_18px_rgba(245,158,11,0.2)]",
-                selected && node.isDone && "ring-muted-foreground/40",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 !dragging && "cursor-grab",
@@ -1797,6 +1842,15 @@ export function CustomMindMapView({
             };
         })()
         : undefined;
+    const floatingEditSelectionRingClass = floatingEditNode?.kind === "task"
+        ? taskNodeSelectionRingClass({
+            node: floatingEditNode,
+            isMemoNode: floatingEditNode.source === "memo" || floatingEditNode.source === "wishlist" || floatingEditNode.hasMemo || floatingEditNode.hasMemoImages,
+            codexState: codexRunByNodeId[floatingEditNode.id] ?? null,
+            taskProgress: taskProgressByNodeId[floatingEditNode.id] ?? null,
+            draftMeta: draftMetaByNodeId[floatingEditNode.id] ?? null,
+        })
+        : "ring-[3px] ring-primary ring-offset-2 ring-offset-background";
     const selectedTaskIds = useMemo(
         () => positionedNodes
             .filter(node => node.kind === "task" && selectedNodeIds.has(node.id))
@@ -3783,7 +3837,8 @@ export function CustomMindMapView({
                 {isMobile && floatingEditNode && floatingEditViewportStyle && (
                     <div
                         className={cn(
-                            "absolute z-50 flex items-center justify-center rounded-lg shadow-lg ring-2 ring-white ring-offset-2 ring-offset-background",
+                            "absolute z-50 flex items-center justify-center rounded-lg shadow-lg",
+                            floatingEditSelectionRingClass,
                             floatingEditKind === "project"
                                 ? "bg-primary px-4 py-2 text-primary-foreground"
                                 : "border border-border bg-background px-1.5 py-1"
