@@ -54,8 +54,8 @@ export function mapEventToTask(event: CalendarEvent, userId: string): Partial<Ta
     scheduled_at: event.start_time,
     estimated_time: estimatedMinutes,
     source: 'google_event' as TaskSource,
-    stage: 'scheduled',
-    status: 'todo',
+    stage: event.is_completed ? 'done' : 'scheduled',
+    status: event.is_completed ? 'done' : 'todo',
     google_event_fingerprint: computeFingerprint(event),
   }
 }
@@ -99,6 +99,7 @@ export function useEventImport(): UseEventImportReturn {
           start_time: e.start_time,
           end_time: e.end_time,
           is_all_day: e.is_all_day,
+          is_completed: e.is_completed === true,
           fingerprint: computeFingerprint(e),
         })),
       }

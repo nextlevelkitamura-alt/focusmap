@@ -21,6 +21,7 @@ import { useTodayDateContext } from "@/contexts/TodayDateContext"
 import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
+import { findCalendarEventForCompletion, matchesCalendarEventCompletionTarget } from "@/lib/calendar-event-completion"
 import {
     CALENDAR_EVENT_TO_MEMO_CONVERTED_EVENT,
     buildCalendarEventMemoPayload,
@@ -85,6 +86,7 @@ export function useTodayViewLogic({
     const [habitsExpanded, setHabitsExpanded] = useState(false)
     const [expandedHabitId, setExpandedHabitId] = useState<string | null>(null)
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
+    const [calendarActionError, setCalendarActionError] = useState<string | null>(null)
     const syncDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
@@ -837,21 +839,25 @@ export function useTodayViewLogic({
 
     // Toggle calendar event completion
     const toggleEventCompletion = useCallback(async (eventId: string) => {
-        // setState callback 外でイベントを取得（React の updater は render 時実行のため）
-        const targetEvent = localCalendarEvents.find(e => e.id === eventId)
-        console.log('[toggleEventCompletion] eventId:', eventId, 'found:', !!targetEvent, 'localCount:', localCalendarEvents.length)
+        // 3days 表示では選択日以外の予定も渡るため、表示範囲全体から対象を探す。
+        const targetEvent =
+            findCalendarEventForCompletion(localCalendarEvents, eventId) ??
+            findCalendarEventForCompletion(allFetchedEvents, eventId)
+        console.log('[toggleEventCompletion] eventId:', eventId, 'found:', !!targetEvent, 'localCount:', localCalendarEvents.length, 'allCount:', allFetchedEvents.length)
         if (!targetEvent) {
-            console.error('[toggleEventCompletion] Event not found in localCalendarEvents! IDs:', localCalendarEvents.slice(0, 3).map(e => e.id))
+            console.error('[toggleEventCompletion] Event not found! local IDs:', localCalendarEvents.slice(0, 3).map(e => e.id), 'all IDs:', allFetchedEvents.slice(0, 3).map(e => e.id))
+            setCalendarActionError('予定の完了状態を変更できませんでした。予定を再読み込みしてもう一度お試しください。')
             return
         }
 
         const newCompleted = !targetEvent.is_completed
         const googleEventId = targetEvent.google_event_id
         console.log('[toggleEventCompletion] googleEventId:', googleEventId, 'newCompleted:', newCompleted)
+        setCalendarActionError(null)
 
         // ローカル状態を即時更新
         setLocalCalendarEvents(prev => prev.map(e =>
-            e.id === eventId ? { ...e, is_completed: newCompleted } : e
+            matchesCalendarEventCompletionTarget(e, targetEvent, eventId) ? { ...e, is_completed: newCompleted } : e
         ))
         // 他パネルに即時反映（API ラウンドトリップ不要）
         broadcastEventCompletion(eventId, newCompleted, googleEventId, targetEvent.calendar_id)
@@ -897,12 +903,13 @@ export function useTodayViewLogic({
         } catch (err) {
             console.error('[toggleEventCompletion] Failed:', err)
             setLocalCalendarEvents(prev => prev.map(e =>
-                e.id === eventId ? { ...e, is_completed: !newCompleted } : e
+                matchesCalendarEventCompletionTarget(e, targetEvent, eventId) ? { ...e, is_completed: !newCompleted } : e
             ))
             // 失敗時はロールバックも即時通知
             broadcastEventCompletion(eventId, !newCompleted, googleEventId, targetEvent.calendar_id)
+            setCalendarActionError('予定の完了状態を保存できませんでした。時間をおいてもう一度お試しください。')
         }
-    }, [localCalendarEvents, pushAction, setCalendarEventCompletion])
+    }, [allFetchedEvents, localCalendarEvents, pushAction, setCalendarEventCompletion])
 
     // Toggle child task
     const toggleChildTask = useCallback(async (
@@ -2121,6 +2128,7 @@ export function useTodayViewLogic({
         syncNow,
         refreshCalendar,
         syncState,
+        calendarActionError,
         writableCalendars,
         stableCalendarColorMap,
 

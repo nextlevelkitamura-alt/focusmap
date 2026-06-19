@@ -136,6 +136,16 @@ describe('mapEventToTask', () => {
     })
   })
 
+  test('完了済み CalendarEvent は done タスクとしてマッピングする', () => {
+    const event = createMockEvent({ is_completed: true })
+    const task = mapEventToTask(event, 'user-1')
+
+    expect(task).toMatchObject({
+      stage: 'done',
+      status: 'done',
+    })
+  })
+
   test('フィンガープリントが設定される', () => {
     const event = createMockEvent()
     const task = mapEventToTask(event, 'user-1')
@@ -234,6 +244,27 @@ describe('useEventImport', () => {
     const body = JSON.parse(mockFetch.mock.calls[0][1].body)
     expect(body.events).toHaveLength(1)
     expect(body.events[0].google_event_id).toBe('gevt-1')
+    expect(body.events[0].is_completed).toBe(false)
+  })
+
+  test('importEvents: 完了済みイベントは is_completed=true としてAPIに送る', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        result: { inserted: 1, updated: 0, softDeleted: 0, skipped: 0 },
+      }),
+    })
+
+    const { useEventImport } = await import('./useEventImport')
+    const { result } = renderHook(() => useEventImport())
+
+    await act(async () => {
+      await result.current.importEvents([createMockEvent({ is_completed: true })])
+    })
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.events[0].is_completed).toBe(true)
   })
 
   test('importEvents: APIエラー時はerrorが設定される', async () => {

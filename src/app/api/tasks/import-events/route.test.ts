@@ -10,12 +10,14 @@ const {
   setUpsertResult,
   setUpdateResult,
   mockFrom,
+  mockUpsert,
 } = vi.hoisted(() => {
   let _selectResult: { data: unknown[]; error: unknown } = { data: [], error: null }
   let _upsertResult: { data: unknown[]; error: unknown } = { data: [], error: null }
   let _updateResult: { error: unknown } = { error: null }
 
   const _mockFrom = vi.fn()
+  const _mockUpsert = vi.fn(() => ({ select: () => Promise.resolve(_upsertResult) }))
 
   return {
     mockGetUser: vi.fn(),
@@ -26,6 +28,7 @@ const {
     setUpsertResult: (v: typeof _upsertResult) => { _upsertResult = v },
     setUpdateResult: (v: typeof _updateResult) => { _updateResult = v },
     mockFrom: _mockFrom,
+    mockUpsert: _mockUpsert,
   }
 })
 
@@ -87,7 +90,7 @@ beforeEach(() => {
   // Default mock: tasks テーブル操作
   mockFrom.mockImplementation(() => ({
     select: () => selectBuilder,
-    upsert: () => ({ select: () => Promise.resolve(getUpsertResult()) }),
+    upsert: mockUpsert,
     update: () => updateBuilder,
   }))
 })
@@ -137,6 +140,27 @@ describe('POST /api/tasks/import-events', () => {
     expect(res.status).toBe(200)
     expect(json.success).toBe(true)
     expect(json.result.inserted).toBe(1)
+  })
+
+  test('完了済みの新規イベントは done タスクとして INSERT する', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({ data: [], error: null })
+    setUpsertResult({ data: [{ id: 'task-done' }], error: null })
+
+    const res = await POST(postReq({
+      events: [createEventPayload({ google_event_id: 'gevt-done', is_completed: true })],
+    }))
+    const json = await res.json()
+    const rows = mockUpsert.mock.calls[0][0] as Array<Record<string, unknown>>
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.inserted).toBe(1)
+    expect(rows[0]).toMatchObject({
+      google_event_id: 'gevt-done',
+      stage: 'done',
+      status: 'done',
+    })
   })
 
   test('同じgoogle_event_idでも別カレンダーなら別タスクとしてINSERTする', async () => {
@@ -191,6 +215,41 @@ describe('POST /api/tasks/import-events', () => {
     expect(json.result.updated).toBe(0)
   })
 
+  test('完了済みイベントに対応する既存の自動取り込みタスクは done に補正する', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({
+      data: [{
+        id: 'task-existing',
+        google_event_id: 'gevt-1',
+        calendar_id: 'cal-1',
+        google_event_fingerprint: 'Test Event|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
+        status: 'todo',
+        source: 'google_event',
+        scheduled_at: '2026-02-20T10:00:00Z',
+        updated_at: '2026-02-20T08:00:00Z',
+        deleted_at: null,
+      }],
+      error: null,
+    })
+    setUpsertResult({ data: [{ id: 'task-existing', status: 'done' }], error: null })
+
+    const res = await POST(postReq({
+      events: [createEventPayload({ is_completed: true })],
+    }))
+    const json = await res.json()
+    const rows = mockUpsert.mock.calls[0][0] as Array<Record<string, unknown>>
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.updated).toBe(1)
+    expect(json.result.skipped).toBe(0)
+    expect(rows[0]).toMatchObject({
+      id: 'task-existing',
+      stage: 'done',
+      status: 'done',
+    })
+  })
+
   test('既存の手動Google連携タスクがある場合は自動取り込みタスクを増やさない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
     setSelectResult({
@@ -219,6 +278,35 @@ describe('POST /api/tasks/import-events', () => {
     expect(json.result.updated).toBe(0)
   })
 
+  test('完了済みイベントでも既存の手動Google連携タスクのstatusは上書きしない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({
+      data: [{
+        id: 'manual-linked-task',
+        google_event_id: 'gevt-1',
+        google_event_fingerprint: 'Test Event|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
+        status: 'todo',
+        source: 'manual',
+        calendar_id: 'cal-1',
+        scheduled_at: '2026-02-20T10:00:00Z',
+        updated_at: '2026-02-20T08:00:00Z',
+        deleted_at: null,
+      }],
+      error: null,
+    })
+
+    const res = await POST(postReq({
+      events: [createEventPayload({ is_completed: true })],
+    }))
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.skipped).toBe(1)
+    expect(json.result.updated).toBe(0)
+    expect(mockUpsert).not.toHaveBeenCalled()
+  })
+
   test('既存タスクの fingerprint が異なる場合は UPDATE する', async () => {
     mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
     setSelectResult({
@@ -241,6 +329,41 @@ describe('POST /api/tasks/import-events', () => {
     expect(res.status).toBe(200)
     expect(json.success).toBe(true)
     expect(json.result.updated).toBe(1)
+  })
+
+  test('完了済みイベントで削除済み自動取り込みタスクを復活する時も done にする', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({
+      data: [{
+        id: 'task-deleted',
+        google_event_id: 'gevt-1',
+        calendar_id: 'cal-1',
+        google_event_fingerprint: 'Old Title|2026-02-20T10:00:00Z|2026-02-20T11:00:00Z|cal-1',
+        status: 'todo',
+        source: 'google_event',
+        scheduled_at: '2026-02-20T10:00:00Z',
+        updated_at: '2026-02-20T08:00:00Z',
+        deleted_at: '2026-02-20T09:00:00Z',
+      }],
+      error: null,
+    })
+    setUpsertResult({ data: [{ id: 'task-deleted', status: 'done' }], error: null })
+
+    const res = await POST(postReq({
+      events: [createEventPayload({ is_completed: true })],
+    }))
+    const json = await res.json()
+    const rows = mockUpsert.mock.calls[0][0] as Array<Record<string, unknown>>
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.updated).toBe(1)
+    expect(rows[0]).toMatchObject({
+      id: 'task-deleted',
+      deleted_at: null,
+      stage: 'done',
+      status: 'done',
+    })
   })
 
   test('updated_at が5分以内のタスクはスキップする（ユーザー操作中保護）', async () => {

@@ -10,6 +10,7 @@ interface EventPayload {
   start_time: string
   end_time: string
   is_all_day: boolean
+  is_completed?: boolean
   fingerprint: string
 }
 
@@ -69,6 +70,22 @@ function createStableGoogleEventTaskId(userId: string, calendarId: string, googl
     chars.slice(16, 20).join(''),
     chars.slice(20, 32).join(''),
   ].join('-')
+}
+
+function getImportedTaskCompletionFields(event: Pick<EventPayload, 'is_completed'>) {
+  return event.is_completed === true
+    ? { stage: 'done', status: 'done' }
+    : { stage: 'scheduled', status: 'todo' }
+}
+
+function getCompletedEventPatch(
+  event: Pick<EventPayload, 'is_completed'>,
+  task: ExistingGoogleEventTaskRow
+): { stage: string; status: string } | null {
+  if (event.is_completed !== true) return null
+  if (!isImportedGoogleEventTask(task)) return null
+  if (task.status === 'done') return null
+  return { stage: 'done', status: 'done' }
 }
 
 /**
@@ -212,8 +229,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
           }
         }
 
-        // fingerprint 一致ならスキップ
+        const completedPatch = getCompletedEventPatch(event, existing)
+
+        // fingerprint 一致ならスキップ。ただし完了済み予定から作られた自動取り込みtaskだけは補正する。
         if (existing.google_event_fingerprint === event.fingerprint) {
+          if (completedPatch) {
+            toUpsert.push({
+              id: existing.id,
+              user_id: user.id,
+              ...completedPatch,
+            })
+            updated++
+            continue
+          }
           skipped++
           continue
         }
@@ -230,7 +258,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
             (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
           ),
           source: existing.source || 'google_event',
-          stage: 'scheduled',
+          stage: completedPatch?.stage || 'scheduled',
+          ...(completedPatch ? { status: completedPatch.status } : {}),
           google_event_fingerprint: event.fingerprint,
         })
         updated++
@@ -238,6 +267,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         // 削除済みタスクが存在する場合は復活させる（重複作成防止）
         const deletedTask = deletedTaskMap.get(eventKey)
         if (deletedTask) {
+          const completionFields = getImportedTaskCompletionFields(event)
           toUpsert.push({
             id: deletedTask.id,
             user_id: user.id,
@@ -249,12 +279,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
               (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
             ),
             source: 'google_event',
-            stage: 'scheduled',
+            stage: completionFields.stage,
+            status: completionFields.status,
             deleted_at: null, // 復活
             google_event_fingerprint: event.fingerprint,
           })
           updated++
         } else {
+          const completionFields = getImportedTaskCompletionFields(event)
           // 完全新規 → INSERT（同時 import でも同じ予定は同じ id に収束させる）
           toUpsert.push({
             id: createStableGoogleEventTaskId(user.id, event.calendar_id, event.google_event_id),
@@ -267,8 +299,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
               (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
             ),
             source: 'google_event',
-            stage: 'scheduled',
-            status: 'todo',
+            stage: completionFields.stage,
+            status: completionFields.status,
             google_event_fingerprint: event.fingerprint,
           })
           inserted++

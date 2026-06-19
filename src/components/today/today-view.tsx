@@ -750,6 +750,14 @@ export function TodayView({
                         </div>
                     )}
 
+                    {logic.calendarActionError && logic.calendars.length > 0 && (
+                        <div className="mx-4 mt-3 py-3 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                                {logic.calendarActionError}
+                            </p>
+                        </div>
+                    )}
+
                     {calendarRangeMode === '3days' ? (
                         <Today3DaysCalendar
                             selectedDate={logic.selectedDate}

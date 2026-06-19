@@ -98,6 +98,7 @@ export function DesktopTodayPanel({
         doneHabitCount,
         editTarget,
         allFetchedEvents,
+        calendarActionError,
         eventsError,
         eventsLoading,
         expandedHabitId,
@@ -633,6 +634,14 @@ export function DesktopTodayPanel({
                                 再接続
                             </button>
                         </div>
+                    </div>
+                )}
+
+                {calendarActionError && calendars.length > 0 && (
+                    <div className="mx-3 mt-2 py-2 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                        <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                            {calendarActionError}
+                        </p>
                     </div>
                 )}
 
