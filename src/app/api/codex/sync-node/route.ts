@@ -908,6 +908,27 @@ export async function POST(req: NextRequest) {
 
   const archived = row.archived === 1 || row.archived === true
   const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
+  const archivedWithoutSourceCompletion = archived && !shouldCompleteSourceTaskForCodexReview('archived')
+  const archivedSourceTaskId = typeof current.codex_source_task_id === 'string'
+    ? current.codex_source_task_id
+    : task.source_task_id?.trim() || null
+  if (
+    archivedWithoutSourceCompletion &&
+    task.status === 'completed' &&
+    current.codex_source_task_completed === true &&
+    codexTaskThreadId(task) === threadId
+  ) {
+    return NextResponse.json({
+      task_id: task.id,
+      thread_id: threadId,
+      state: 'completed',
+      synced: true,
+      persisted: false,
+      source_task_completed: true,
+      source_task_id: archivedSourceTaskId,
+      source_task_missing: current.codex_source_task_missing === true,
+    })
+  }
   if (archived && shouldCompleteSourceTaskForCodexReview('archived')) {
     const visibleActivityEventsForClosure = visibleCodexActivityEvents(row, parsed, task)
     try {
@@ -945,14 +966,18 @@ export async function POST(req: NextRequest) {
   )
   const visibleCodexOutput = hasVisibleCodexOutput(row, parsed, task)
   const threadMoved = threadMovedSinceLastSync(current, row)
-  const codexState: CodexRunState = resumedFromApproval
+  const codexState: CodexRunState = archivedWithoutSourceCompletion
+    ? 'awaiting_approval'
+    : resumedFromApproval
     ? 'running'
     : sentInCodex
       ? parsed.state
       : visibleCodexOutput
         ? (threadMoved ? 'running' : 'awaiting_approval')
         : 'prompt_waiting'
-  const reviewReason: CodexReviewReason = resumedFromApproval
+  const reviewReason: CodexReviewReason = archivedWithoutSourceCompletion
+    ? 'archived'
+    : resumedFromApproval
     ? 'started'
     : sentInCodex
       ? parsed.reviewReason
@@ -1050,6 +1075,14 @@ export async function POST(req: NextRequest) {
     awaiting_approval_at: codexState === 'awaiting_approval'
       ? (typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso)
       : null,
+    ...(archivedWithoutSourceCompletion
+      ? {
+          codex_source_task_completed: current.codex_source_task_completed === true,
+          codex_source_task_id: archivedSourceTaskId,
+          codex_source_task_completion_suppressed: current.codex_source_task_completion_suppressed === true,
+          codex_source_task_missing: current.codex_source_task_missing === true,
+        }
+      : {}),
     codex_thread_snapshot: {
       title: row.title ?? null,
       preview: null,
@@ -1208,5 +1241,8 @@ export async function POST(req: NextRequest) {
     thread_id: threadId,
     state: codexState,
     synced: true,
+    source_task_completed: result.codex_source_task_completed === true,
+    source_task_id: typeof result.codex_source_task_id === 'string' ? result.codex_source_task_id : task.source_task_id ?? null,
+    source_task_missing: result.codex_source_task_missing === true,
   })
 }

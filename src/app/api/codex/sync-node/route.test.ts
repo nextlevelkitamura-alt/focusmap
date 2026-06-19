@@ -221,7 +221,7 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     setSourceTask({ id: 'source-task-1', status: 'todo', stage: 'plan' })
   })
 
-  test('marks the ai task completed and checks the source node when the Codex thread is archived', async () => {
+  test('keeps the source node unchecked when the Codex thread is archived without a pending Focusmap completion', async () => {
     setThreadRow({
       id: 'thread-1',
       title: '調べて',
@@ -241,26 +241,21 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     const json = await response.json()
 
     expect(response.status).toBe(200)
-    expect(json.state).toBe('completed')
-    expect(json.source_task_completed).toBe(true)
-    expect(getSourceTaskUpdates()).toEqual([
-      {
-        id: 'source-task-1',
-        payload: expect.objectContaining({ status: 'done', stage: 'done' }),
-      },
-    ])
+    expect(json.state).toBe('awaiting_approval')
+    expect(json.source_task_completed).toBe(false)
+    expect(getSourceTaskUpdates()).toEqual([])
     expect(getAiTaskUpdates()[0]).toEqual(expect.objectContaining({
-      status: 'completed',
+      status: 'awaiting_approval',
       codex_thread_id: 'thread-1',
     }))
     expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
       codex_review_reason: 'archived',
-      codex_source_task_completed: true,
+      codex_source_task_completed: false,
       codex_source_task_id: 'source-task-1',
     }))
     expect(mockInsertActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      kind: 'completed',
-      dedupeKey: 'thread:thread-1:closed:archived',
+      kind: 'approval',
+      dedupeKey: 'thread:thread-1:review:archived',
     }))
   })
 
@@ -398,7 +393,6 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(getSourceTaskUpdates()).toEqual([])
     expect(getAiTaskUpdates()[0]).toEqual(expect.objectContaining({
       status: 'awaiting_approval',
-      completed_at: null,
     }))
     expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
       codex_source_task_completed: false,
