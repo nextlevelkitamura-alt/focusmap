@@ -669,6 +669,24 @@ function ChatCompletedWorkInlineStatus({ elapsedText }: { elapsedText: string | 
   )
 }
 
+function ChatRunningWorkInlineStatus({ elapsedText }: { elapsedText: string | null }) {
+  if (!elapsedText) return null
+
+  return (
+    <div
+      className="!mt-2 flex items-center justify-start gap-1.5 text-[12px] font-medium leading-none text-zinc-500"
+      aria-live="polite"
+      aria-label={`${elapsedText} 作業中`}
+    >
+      <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-300/80" aria-hidden="true" />
+      <span className="min-w-0">
+        <span className="font-mono tabular-nums">{elapsedText}</span>
+        <span className="ml-1">作業中</span>
+      </span>
+    </div>
+  )
+}
+
 export function CodexChatImportSidebar({
   projectTitle,
   selectedRepoPath,
@@ -1105,6 +1123,9 @@ export function CodexChatImportSidebar({
   const selectedCompletedWorkElapsedMs = selectedCompletedWorkMessageIndex >= 0
     ? activityMessageWorkElapsedMs(selectedMessages[selectedCompletedWorkMessageIndex])
     : null
+  const selectedRunningUserMessageIndex = selectedUiStatus === "running"
+    ? runningRallyUserMessageIndex(selectedMessages, selectedChatItem?.workStartedAt)
+    : -1
   const selectedSyntheticRunningPromptMessage = selectedUiStatus === "running" && selectedChatItem
     ? syntheticRunningPromptMessage(selectedChatItem, selectedMessages)
     : null
@@ -1631,6 +1652,9 @@ export function CodexChatImportSidebar({
                         <ChatCompletedWorkInlineStatus elapsedText={selectedCompletedWorkElapsedText} />
                       )}
                       <ActivityMessageBubble message={message} />
+                      {selectedRunningUserMessageIndex === index && (
+                        <ChatRunningWorkInlineStatus elapsedText={selectedWorkElapsedText} />
+                      )}
                     </React.Fragment>
                   )
                 })}
@@ -1641,7 +1665,11 @@ export function CodexChatImportSidebar({
                       selectedSyntheticRunningPromptMessage,
                     ) && <ActivityTimeBreak value={selectedSyntheticRunningPromptMessage.created_at} />}
                     <ActivityMessageBubble message={selectedSyntheticRunningPromptMessage} />
+                    <ChatRunningWorkInlineStatus elapsedText={selectedWorkElapsedText} />
                   </React.Fragment>
+                )}
+                {selectedUiStatus === "running" && selectedRunningUserMessageIndex < 0 && !selectedSyntheticRunningPromptMessage && (
+                  <ChatRunningWorkInlineStatus elapsedText={selectedWorkElapsedText} />
                 )}
               </div>
             ) : selectedDetail?.text ? (
@@ -1650,6 +1678,9 @@ export function CodexChatImportSidebar({
                 <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-zinc-100">
                   {selectedDetail.text}
                 </div>
+                {selectedUiStatus === "running" && (
+                  <ChatRunningWorkInlineStatus elapsedText={selectedWorkElapsedText} />
+                )}
               </div>
             ) : !selectedDetail?.loading && !selectedDetail?.error ? (
               <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">

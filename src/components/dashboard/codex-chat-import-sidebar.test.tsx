@@ -603,7 +603,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
   })
 
-  test("renders the latest running prompt without a duplicate inline working indicator", async () => {
+  test("renders the latest running prompt with one inline working indicator", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-running" })
@@ -656,12 +656,15 @@ describe("CodexChatImportSidebar", () => {
       expect(chatMessageText("横の矢印いらない")).toBeInTheDocument()
     })
     const prompt = chatMessageText("横の矢印いらない")
+    const runningStatus = screen.getByLabelText(/作業中/)
     const progress = chatMessageText("Codexが内容を検討中")
     expectBefore(prompt, progress)
-    expect(screen.queryByLabelText(/作業中/)).not.toBeInTheDocument()
+    expectBefore(prompt, runningStatus)
+    expectBefore(runningStatus, progress)
+    expect(screen.getAllByLabelText(/作業中/)).toHaveLength(1)
   })
 
-  test("shows a temporary current prompt without a duplicate inline working indicator when activity has not caught up", async () => {
+  test("shows a temporary current prompt before one inline working indicator when activity has not caught up", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-running" })
@@ -719,8 +722,10 @@ describe("CodexChatImportSidebar", () => {
     })
     const previousReport = chatMessageText("前回の作業を完了しました")
     const prompt = chatMessageText("横の矢印いらない")
+    const runningStatus = screen.getByLabelText(/作業中/)
     expectBefore(previousReport, prompt)
-    expect(screen.queryByLabelText(/作業中/)).not.toBeInTheDocument()
+    expectBefore(prompt, runningStatus)
+    expect(screen.getAllByLabelText(/作業中/)).toHaveLength(1)
   })
 
   test("loads older Codex activity pages when the detail view has a cursor", async () => {
