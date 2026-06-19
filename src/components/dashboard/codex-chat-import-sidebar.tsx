@@ -1,13 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, FolderOpen, GitBranch, Loader2, PanelBottomOpen, RefreshCw, Search, Trash2, X } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, Settings, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
-import { useAvailableRepos } from "@/hooks/useAvailableRepos"
-import { useCodexRunnerStatus } from "@/hooks/useCodexRunnerStatus"
+import { useAiHistory } from "@/hooks/useAiHistory"
 import {
   buildFallbackCodexDisplaySummary,
   codexDisplaySummarySignature,
@@ -15,9 +12,13 @@ import {
   type CodexDisplaySummaryInput,
 } from "@/lib/codex-display-summary"
 import {
-  CODEX_CHAT_IMPORT_DRAG_TYPE,
-  encodeCodexChatImportDragPayload,
-} from "@/lib/codex-chat-import-dnd"
+  aiHistoryPlacementLabel,
+  aiHistoryRepoName,
+  aiHistoryStatusLabel,
+  aiHistoryWorkTiming,
+  formatAiHistoryRelativeTime,
+  normalizeAiHistoryRepoPath,
+} from "@/lib/ai-history-display"
 import { sanitizeCodexDisplayText } from "@/lib/codex-display-sanitize"
 import { codexReportViewMessages, codexReportViewSummaryMessages } from "@/lib/codex-report-view"
 import {
@@ -32,14 +33,19 @@ import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel } from "@/lib/ai-task-
 import { getCodexThreadRallyWorkElapsedMs } from "@/lib/codex-thread-import-display"
 import { cn } from "@/lib/utils"
 import type { AiTaskActivityKind, AiTaskActivityMessage, AiTaskActivityRole } from "@/types/ai-task"
+import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryRepoFilter } from "@/types/ai-history"
 
 export type CodexChatImportItem = {
   id: string
+  historyItemId?: string | null
+  sourceTaskId?: string | null
   aiTaskId?: string | null
   title: string
   snippet: string | null
   repoPath: string | null
+  repoLabel?: string | null
   threadId?: string | null
+  codexOpenUrl?: string | null
   status?: string | null
   projectTitle: string | null
   placementLabel: string
@@ -50,27 +56,19 @@ export type CodexChatImportItem = {
   workAwaitingApprovalAt?: string | null
   workCompletedAt?: string | null
   workLastActivityAt?: string | null
+  workDurationSeconds?: number | null
   placed: boolean
 }
 
 type CodexChatImportSidebarProps = {
+  projectId: string | null
   projectTitle: string
-  selectedRepoPath: string | null
-  importEnabled: boolean
-  importOwnerLabel?: string | null
-  importPending?: boolean
-  chatItems: CodexChatImportItem[]
+  initialRepoPath?: string | null
   detailItems?: CodexChatImportItem[]
   initialSelectedChatId?: string | null
   onInitialSelectedChatClear?: () => void
   onClose: () => void
-  onSelectRepoPath: (repoPath: string | null) => Promise<void> | void
-  onToggleImport: () => Promise<void> | void
-  onDeleteChatItem?: (taskId: string) => Promise<void> | void
-  onPlaceChatItem?: (taskId: string) => Promise<void> | void
-  onReturnPlacedChatItem?: (taskId: string) => Promise<void> | void
-  onChatDragStateChange?: (state: { itemId: string; title: string } | null) => void
-  onOpenBoard?: () => void
+  onOpenSettings?: () => void
 }
 
 type FocusmapDesktopFolderBridge = {
@@ -117,18 +115,37 @@ function repoNameFromPath(value: string | null | undefined) {
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized
 }
 
+function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem {
+  const visualStatus = item.status === "completed" ? "done" : item.status
+  return {
+    id: item.id,
+    historyItemId: item.id,
+    sourceTaskId: item.sourceTaskId,
+    aiTaskId: item.linkedAiTaskId,
+    title: item.title,
+    snippet: item.snippet,
+    repoPath: item.repoPath || null,
+    repoLabel: item.repoLabel,
+    threadId: item.externalThreadId || null,
+    codexOpenUrl: item.codexOpenUrl,
+    status: visualStatus,
+    projectTitle: null,
+    placementLabel: aiHistoryPlacementLabel(item),
+    statusLabel: aiHistoryStatusLabel(item.status),
+    updatedLabel: formatAiHistoryRelativeTime(item.lastActivityAt),
+    sortAt: item.lastActivityAt || item.indexedAt,
+    ...aiHistoryWorkTiming(item),
+    workDurationSeconds: item.workDurationSeconds,
+    placed: item.placement === "mindmap",
+  }
+}
+
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function readStringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.map(item => readString(item)).filter((item): item is string => !!item)
-    : []
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -197,51 +214,6 @@ function localWorkElapsedMs(timer: LocalWorkTimer | null | undefined, nowMs: num
     return null
   }
   return Math.max(0, nowMs - timer.startedAtMs)
-}
-
-type CodexThreadImportScopeStatus = {
-  projectId: string | null
-  repoPath: string
-  cwdPaths: string[]
-}
-
-function readCodexThreadImportScopes(metadata: Record<string, unknown> | null): CodexThreadImportScopeStatus[] {
-  if (!metadata) return []
-  const nested = readRecord(metadata.codex_thread_import)
-  const scopes = Array.isArray(nested?.scopes) ? nested.scopes : null
-  if (scopes) {
-    return scopes.map(scope => {
-      const record = readRecord(scope)
-      const repoPath = normalizeRepoPath(readString(record?.repo_path) ?? "")
-      if (!repoPath) return null
-      return {
-        projectId: readString(record?.project_id),
-        repoPath,
-        cwdPaths: readStringArray(record?.cwd_paths).map(normalizeRepoPath).filter(Boolean),
-      }
-    }).filter((scope): scope is CodexThreadImportScopeStatus => !!scope)
-  }
-  return readStringArray(metadata.codex_import_scope_repo_paths)
-    .map(path => normalizeRepoPath(path))
-    .filter(Boolean)
-    .map(repoPath => ({ projectId: null, repoPath, cwdPaths: [repoPath] }))
-}
-
-function readCodexThreadImportMetadata(metadata: Record<string, unknown> | null) {
-  const nested = readRecord(metadata?.codex_thread_import)
-  return {
-    stateDbFound: typeof nested?.state_db_found === "boolean"
-      ? nested.state_db_found
-      : typeof metadata?.codex_monitor_db_available === "boolean"
-        ? metadata.codex_monitor_db_available
-        : null,
-    lastScopeRefreshAt: readString(nested?.last_scope_refresh_at) ?? readString(metadata?.codex_last_scope_refresh_at),
-    lastScopeRefreshError: readString(nested?.last_scope_refresh_error) ?? readString(metadata?.codex_last_scope_refresh_error),
-    lastReconcileAt: readString(nested?.last_reconcile_at) ?? readString(metadata?.codex_last_reconcile_at),
-    lastReconcileImported: readNumber(nested?.last_reconcile_imported) ?? readNumber(metadata?.codex_last_reconcile_imported),
-    lastError: readString(nested?.last_error) ?? readString(metadata?.codex_monitor_last_error),
-    scopes: readCodexThreadImportScopes(metadata),
-  }
 }
 
 function focusmapDesktopFolderBridge() {
@@ -384,46 +356,6 @@ function ActivityTimeBreak({ value }: { value: string }) {
   )
 }
 
-function createChatDragImage(item: CodexChatImportItem) {
-  if (typeof document === "undefined") return null
-  const preview = document.createElement("div")
-  preview.style.cssText = [
-    "position:fixed",
-    "left:-9999px",
-    "top:-9999px",
-    "z-index:999999",
-    "width:220px",
-    "max-width:220px",
-    "border:1px solid rgba(56,189,248,0.9)",
-    "border-radius:8px",
-    "background:rgba(10,20,28,0.96)",
-    "box-shadow:0 18px 42px rgba(0,0,0,0.35),0 0 0 3px rgba(56,189,248,0.18)",
-    "color:white",
-    "padding:8px 10px",
-    "font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
-    "line-height:1.35",
-    "pointer-events:none",
-  ].join(";")
-
-  const status = document.createElement("div")
-  status.textContent = "ノード化"
-  status.style.cssText = "margin-bottom:4px;color:rgb(125,211,252);font-size:10px;font-weight:700"
-
-  const title = document.createElement("div")
-  title.textContent = item.title
-  title.style.cssText = "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"
-
-  preview.append(status, title)
-  document.body.appendChild(preview)
-  const removePreview = () => preview.remove()
-  if (typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(removePreview)
-  } else {
-    window.setTimeout(removePreview, 0)
-  }
-  return preview
-}
-
 function CodexMonitorRunningOutline() {
   return (
     <span className="codex-monitor-running-orbit" aria-label="Codex 実行中">
@@ -442,6 +374,9 @@ function CodexMonitorRunningOutline() {
 }
 
 function codexChatImportWorkElapsedMs(item: CodexChatImportItem, nowMs: number, active: boolean) {
+  if (!active && typeof item.workDurationSeconds === "number" && Number.isFinite(item.workDurationSeconds)) {
+    return Math.max(0, item.workDurationSeconds * 1000)
+  }
   return getCodexThreadRallyWorkElapsedMs(item, { nowMs, active })
 }
 
@@ -688,30 +623,21 @@ function ChatRunningWorkInlineStatus({ elapsedText }: { elapsedText: string | nu
 }
 
 export function CodexChatImportSidebar({
+  projectId,
   projectTitle,
-  selectedRepoPath,
-  importEnabled,
-  importOwnerLabel = null,
-  importPending = false,
-  chatItems,
+  initialRepoPath = null,
   detailItems = [],
   initialSelectedChatId = null,
   onInitialSelectedChatClear,
   onClose,
-  onSelectRepoPath,
-  onToggleImport,
-  onDeleteChatItem,
-  onChatDragStateChange,
-  onOpenBoard,
+  onOpenSettings,
 }: CodexChatImportSidebarProps) {
-  const [pickerPending, setPickerPending] = React.useState(false)
   const [repoPickerOpen, setRepoPickerOpen] = React.useState(false)
-  const [repoError, setRepoError] = React.useState<string | null>(null)
-  const [query, setQuery] = React.useState("")
+  const [repoFilter, setRepoFilter] = React.useState<AiHistoryRepoFilter>("all")
+  const [activePlacement, setActivePlacement] = React.useState<AiHistoryPlacement>("unplaced")
   const [selectedChatId, setSelectedChatId] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
-  const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
   const [aiSummaryByChatId, setAiSummaryByChatId] = React.useState<Record<string, {
     signature: string
@@ -721,81 +647,60 @@ export function CodexChatImportSidebar({
   }>>({})
   const consumedInitialSelectedChatIdRef = React.useRef<string | null>(null)
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
-  const { repos, isLoading, error: reposError, refresh, requestRescan } = useAvailableRepos()
-  const codexRunnerStatus = useCodexRunnerStatus()
 
-  const currentRepoPath = normalizeRepoPath(selectedRepoPath ?? "")
-  const hasRepoPath = currentRepoPath.length > 0
-  const codexRepos = React.useMemo(() => repos.filter(repo => repo.source === "codex"), [repos])
-  const currentRepo = repos.find(repo => normalizeRepoPath(repo.absolute_path) === currentRepoPath) ?? null
-  const currentCodexRepo = codexRepos.find(repo => normalizeRepoPath(repo.absolute_path) === currentRepoPath) ?? null
-  const currentRepoIsCodexProject = !!currentCodexRepo
-  const currentRepoIsCandidateOnly = hasRepoPath && !currentRepoIsCodexProject
-  const importMetadata = React.useMemo(
-    () => readCodexThreadImportMetadata(codexRunnerStatus.metadata),
-    [codexRunnerStatus.metadata],
-  )
-  const currentImportScope = React.useMemo(() => (
-    importMetadata.scopes.find(scope => scope.repoPath === currentRepoPath) ?? null
-  ), [currentRepoPath, importMetadata.scopes])
-  const currentRepoAgentScopeMatched = !!currentImportScope
-  const currentRepoWorktreeCount = currentImportScope
-    ? new Set(currentImportScope.cwdPaths.map(normalizeRepoPath).filter(Boolean)).size
-    : 0
-  const agentStatusLabel = !codexRunnerStatus.ready
-    ? "agent未接続"
-    : importMetadata.stateDbFound === false
-      ? "Codex DB未検出"
-      : currentRepoAgentScopeMatched
-        ? "agent反映済み"
-        : importEnabled && hasRepoPath
-          ? "agent反映待ち"
-          : "監視OFF"
-  const agentStatusTone = currentRepoAgentScopeMatched
-    ? "bg-emerald-400/10 text-emerald-300"
-    : importEnabled && hasRepoPath && codexRunnerStatus.ready
-      ? "bg-amber-400/10 text-amber-200"
-      : "bg-white/[0.06] text-zinc-400"
-  const lastScopeRefreshLabel = formatActivityTime(importMetadata.lastScopeRefreshAt)
-  const lastReconcileLabel = formatActivityTime(importMetadata.lastReconcileAt)
-  const isBusy = importPending || pickerPending
-  const runnerUnavailable = !codexRunnerStatus.ready
-  const runnerUnavailableMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
-    ? "Macの通信状態を確認中です。確認後にリポ監視を切り替えられます"
-    : "Macがオンラインではありません。Focusmap Macを起動するとリポ監視を切り替えられます"
-  const currentRepoLabel = currentRepo?.display_name || repoNameFromPath(currentRepoPath)
-  const normalizedQuery = query.trim().toLowerCase()
-  const filteredChatItems = React.useMemo(() => {
-    if (!normalizedQuery) return chatItems
-    return chatItems.filter(item => {
-      const haystack = [item.title, item.snippet, item.repoPath, item.projectTitle, item.placementLabel, item.statusLabel]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-      return haystack.includes(normalizedQuery)
-    })
-  }, [chatItems, normalizedQuery])
-  const isFilteringChatItems = normalizedQuery.length > 0
+  const aiHistory = useAiHistory({
+    projectId,
+    repo: repoFilter,
+    placement: activePlacement,
+  })
+  const historyChatItems = React.useMemo(() => (
+    aiHistory.items.map(aiHistoryToChatImportItem)
+  ), [aiHistory.items])
+  const visibleHistoryChatItems = historyChatItems
+  const initialRepoOption = normalizeAiHistoryRepoPath(initialRepoPath)
+  const repoOptions = React.useMemo(() => {
+    const byRepo = new Map<string, { repoPath: AiHistoryRepoFilter; label: string }>()
+    byRepo.set("all", { repoPath: "all", label: "全体" })
+    for (const option of aiHistory.sync.repoOptions) {
+      const repoPath = normalizeAiHistoryRepoPath(option.repoPath)
+      if (!repoPath) continue
+      byRepo.set(repoPath, { repoPath, label: option.label || aiHistoryRepoName(repoPath) })
+    }
+    if (initialRepoOption && !byRepo.has(initialRepoOption)) {
+      byRepo.set(initialRepoOption, { repoPath: initialRepoOption, label: aiHistoryRepoName(initialRepoOption) })
+    }
+    if (repoFilter !== "all" && !byRepo.has(repoFilter)) {
+      byRepo.set(repoFilter, { repoPath: repoFilter, label: aiHistoryRepoName(repoFilter) })
+    }
+    return Array.from(byRepo.values())
+  }, [aiHistory.sync.repoOptions, initialRepoOption, repoFilter])
+  const currentRepoLabel = React.useMemo(() => (
+    repoOptions.find(option => option.repoPath === repoFilter)?.label ?? (repoFilter === "all" ? "全体" : aiHistoryRepoName(repoFilter))
+  ), [repoFilter, repoOptions])
+  const aiOnlineLabel = aiHistory.sync.aiOnline ? "AI online" : "AI offline"
   const selectableChatItems = React.useMemo(() => {
     const byId = new Map<string, CodexChatImportItem>()
-    for (const item of chatItems) byId.set(item.id, item)
+    for (const item of historyChatItems) byId.set(item.id, item)
+    for (const item of historyChatItems) {
+      if (item.sourceTaskId) byId.set(item.sourceTaskId, item)
+    }
     for (const item of detailItems) byId.set(item.id, item)
     return Array.from(byId.values())
-  }, [chatItems, detailItems])
+  }, [historyChatItems, detailItems])
   const selectedChatItem = React.useMemo(() => {
     if (!selectedChatId) return null
-    return selectableChatItems.find(item => item.id === selectedChatId) ?? null
+    return selectableChatItems.find(item => item.id === selectedChatId || item.sourceTaskId === selectedChatId) ?? null
   }, [selectableChatItems, selectedChatId])
   const [localWorkTimers, setLocalWorkTimers] = React.useState<Record<string, LocalWorkTimer>>(() => readLocalWorkTimers())
   const hasLiveWorkTimer = React.useMemo(() => {
-    const hasRunningTimer = [...filteredChatItems, selectedChatItem].some(item => (
+    const hasRunningTimer = [...visibleHistoryChatItems, selectedChatItem].some(item => (
       getCodexMonitorUiStatus(item?.status ?? null) === "running"
     ))
     const hasSelectedFinishedAgoTimer = !!selectedChatItem &&
       getCodexMonitorUiStatus(selectedChatItem.status ?? null) === "review" &&
       (!!codexChatImportFinishedAt(selectedChatItem) || !!localWorkTimers[localWorkTimerKey(selectedChatItem)]?.finishedAtMs)
     return hasRunningTimer || hasSelectedFinishedAgoTimer
-  }, [filteredChatItems, localWorkTimers, selectedChatItem])
+  }, [visibleHistoryChatItems, localWorkTimers, selectedChatItem])
   const [workNowMs, setWorkNowMs] = React.useState(() => Date.now())
 
   React.useEffect(() => {
@@ -844,7 +749,7 @@ export function CodexChatImportSidebar({
 
   React.useEffect(() => {
     if (!selectedChatId) return
-    if (selectableChatItems.some(item => item.id === selectedChatId)) return
+    if (selectableChatItems.some(item => item.id === selectedChatId || item.sourceTaskId === selectedChatId)) return
     setSelectedChatId(null)
     onInitialSelectedChatClear?.()
   }, [onInitialSelectedChatClear, selectableChatItems, selectedChatId])
@@ -856,28 +761,30 @@ export function CodexChatImportSidebar({
   }, [linkedAiTaskIdsBySourceId])
   const displayUpdatedLabel = React.useCallback((item: CodexChatImportItem) => item.updatedLabel, [])
   const fetchChatActivityPage = React.useCallback(async (
-    aiTaskId: string,
+    activityUrl: string,
     cursor: { created_at: string; id: string | null } | null = null,
   ) => {
-    const params = new URLSearchParams({ limit: String(ACTIVITY_DETAIL_PAGE_LIMIT), mode: "report" })
+    const url = new URL(activityUrl, window.location.origin)
+    url.searchParams.set("limit", String(ACTIVITY_DETAIL_PAGE_LIMIT))
+    url.searchParams.set("mode", "report")
     if (cursor) {
-      params.set("before_created_at", cursor.created_at)
-      if (cursor.id) params.set("before_id", cursor.id)
+      url.searchParams.set("before_created_at", cursor.created_at)
+      if (cursor.id) url.searchParams.set("before_id", cursor.id)
     }
-    const activityRes = await fetch(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity?${params}`, { cache: "no-store" })
+    const activityRes = await fetchWithSupabaseAuth(`${url.pathname}${url.search}`, { cache: "no-store" })
     const activityData = await activityRes.json().catch(() => ({}))
-    if (!activityRes.ok) return { messages: [] as AiTaskActivityMessage[], nextCursor: null }
+    if (!activityRes.ok && activityRes.status !== 202) return { messages: [] as AiTaskActivityMessage[], nextCursor: null }
     return {
       messages: readActivityMessages(activityData),
       nextCursor: readActivityNextCursor(activityData),
     }
   }, [])
-  const fetchChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
+  const fetchChatActivityMessages = React.useCallback(async (activityUrl: string) => {
     const messages: AiTaskActivityMessage[] = []
     let cursor: { created_at: string; id: string | null } | null = null
     let hasMore = false
     for (let page = 0; page < ACTIVITY_DETAIL_MAX_PAGES; page += 1) {
-      const activityPage = await fetchChatActivityPage(aiTaskId, cursor)
+      const activityPage = await fetchChatActivityPage(activityUrl, cursor)
       messages.push(...activityPage.messages)
       const visibleMessages = latestVisibleActivityMessages(messages)
       const allVisibleMessages = visibleActivityMessages(dedupeActivityMessages(messages))
@@ -896,71 +803,7 @@ export function CodexChatImportSidebar({
     return { messages: latestVisibleActivityMessages(messages), hasMore }
   }, [fetchChatActivityPage])
 
-  const selectRepoPath = React.useCallback(async (nextRepoPath: string | null) => {
-    const normalized = nextRepoPath ? normalizeRepoPath(nextRepoPath) : ""
-    setRepoError(null)
-    try {
-      await onSelectRepoPath(normalized || null)
-      setRepoPickerOpen(false)
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "対象リポを選択できませんでした")
-    }
-  }, [onSelectRepoPath])
-
-  const openRepoInFinder = React.useCallback(async () => {
-    if (!currentRepoPath) {
-      setRepoError("先にCodexプロジェクトを選択してください")
-      return
-    }
-    setPickerPending(true)
-    setRepoError(null)
-    try {
-      const bridge = focusmapDesktopFolderBridge()
-      if (bridge?.openPath) {
-        const data = await bridge.openPath(currentRepoPath)
-        if (!data?.ok) setRepoError(data?.error || "Finderで選択中リポを開けませんでした")
-        return
-      }
-      setRepoError("Finder表示はMacアプリ更新後に利用できます。リポ選択はCodexプロジェクト候補から行ってください")
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "Finderで選択中リポを開けませんでした")
-    } finally {
-      setPickerPending(false)
-    }
-  }, [currentRepoPath])
-
-  const handleToggleImport = React.useCallback(async () => {
-    if (!hasRepoPath || isBusy) {
-      if (!hasRepoPath) setRepoError("対象リポを選択してからONにできます")
-      return
-    }
-    if (!importEnabled && currentRepoIsCandidateOnly) {
-      setRepoError("Codexプロジェクト候補から選び直すと監視ONにできます")
-      return
-    }
-    if (runnerUnavailable) {
-      setRepoError(runnerUnavailableMessage)
-      return
-    }
-    setRepoError(null)
-    try {
-      await onToggleImport()
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "取り込み設定を更新できませんでした")
-    }
-  }, [currentRepoIsCandidateOnly, hasRepoPath, importEnabled, isBusy, onToggleImport, runnerUnavailable, runnerUnavailableMessage])
-
-  const handleRefreshRepos = React.useCallback(async () => {
-    setRepoError(null)
-    try {
-      await requestRescan()
-      await refresh()
-    } catch (error) {
-      setRepoError(error instanceof Error ? error.message : "リポフォルダ一覧を更新できませんでした")
-    }
-  }, [refresh, requestRescan])
-
-  const syncChatActivity = React.useCallback(async (item: CodexChatImportItem) => {
+  const syncLegacyChatActivity = React.useCallback(async (item: CodexChatImportItem) => {
     const aiTaskId = resolveAiTaskId(item)
     const payload = aiTaskId
       ? { ai_task_id: aiTaskId, include_visible_activity: true }
@@ -1009,16 +852,52 @@ export function CodexChatImportSidebar({
       }
     })
 
-    let aiTaskId = resolveAiTaskId(item)
     try {
+      if (item.historyItemId) {
+        const detailRes = await fetchWithSupabaseAuth(`/api/ai-history/${encodeURIComponent(item.historyItemId)}`, { cache: "no-store" })
+        const detailData = await detailRes.json().catch(() => ({}))
+        if (!detailRes.ok) {
+          const message = isRecord(detailData) && typeof detailData.error === "string"
+            ? detailData.error
+            : "AI履歴の詳細を取得できませんでした"
+          throw new Error(message)
+        }
+        const detail = isRecord(detailData) ? readRecord(detailData.detail) : null
+        const activityUrl = readString(detail?.activityUrl) ??
+          `/api/ai-history/${encodeURIComponent(item.historyItemId)}/activity`
+        const { messages, hasMore } = await fetchChatActivityMessages(activityUrl)
+        if (messages.length > 0) {
+          setChatDetailsById(prev => ({
+            ...prev,
+            [item.id]: { loading: false, messages, text: null, hasMore, error: null },
+          }))
+          return
+        }
+        setChatDetailsById(prev => ({
+          ...prev,
+          [item.id]: {
+            loading: false,
+            messages: [],
+            text: sanitizeCodexDisplayText(item.snippet, {
+              maxChars: 1_200,
+              fallback: "詳細本文はまだ取得されていません。Codexで開くから確認できます。",
+            }).text,
+            hasMore: false,
+            error: null,
+          },
+        }))
+        return
+      }
+
+      let aiTaskId = resolveAiTaskId(item)
       try {
-        aiTaskId = await syncChatActivity(item) || aiTaskId
+        aiTaskId = await syncLegacyChatActivity(item) || aiTaskId
       } catch {
-        // ローカルMacが使えない環境でも、既にDBへ保存済みのactivityは表示する。
+        // 既存マップノード詳細の互換fallback。AI履歴一覧の正本化には使わない。
       }
 
       if (aiTaskId) {
-        const { messages, hasMore } = await fetchChatActivityMessages(aiTaskId)
+        const { messages, hasMore } = await fetchChatActivityMessages(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`)
         if (messages.length > 0) {
           setChatDetailsById(prev => ({
             ...prev,
@@ -1028,7 +907,7 @@ export function CodexChatImportSidebar({
         }
       }
 
-      const fallbackRes = await fetch(`/api/tasks/${encodeURIComponent(item.id)}`)
+      const fallbackRes = await fetchWithSupabaseAuth(`/api/tasks/${encodeURIComponent(item.id)}`)
       const fallbackData = await fallbackRes.json().catch(() => ({}))
       if (!fallbackRes.ok || (fallbackData as { success?: boolean })?.success === false) {
         const message = (fallbackData as { error?: { message?: string } })?.error?.message || "チャット詳細を取得できませんでした"
@@ -1068,7 +947,7 @@ export function CodexChatImportSidebar({
         }
       })
     }
-  }, [fetchChatActivityMessages, resolveAiTaskId, syncChatActivity])
+  }, [fetchChatActivityMessages, resolveAiTaskId, syncLegacyChatActivity])
 
   const handleChatItemClick = React.useCallback((item: CodexChatImportItem) => {
     setSelectedChatId(item.id)
@@ -1082,7 +961,7 @@ export function CodexChatImportSidebar({
       return
     }
     if (consumedInitialSelectedChatIdRef.current === initialSelectedChatId) return
-    const item = selectableChatItems.find(candidate => candidate.id === initialSelectedChatId)
+    const item = selectableChatItems.find(candidate => candidate.id === initialSelectedChatId || candidate.sourceTaskId === initialSelectedChatId)
     if (!item) return
     consumedInitialSelectedChatIdRef.current = initialSelectedChatId
     setSelectedChatId(item.id)
@@ -1092,7 +971,7 @@ export function CodexChatImportSidebar({
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
-  const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
+  const selectedThreadHref = selectedChatItem?.codexOpenUrl ?? codexThreadUrl(selectedChatItem?.threadId)
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
   const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
   const selectedStatusText = selectedUiStatus === "review"
@@ -1275,238 +1154,132 @@ export function CodexChatImportSidebar({
       if (typeof window !== "undefined") window.location.href = href
     })
   }, [])
-  const finishChatDrag = React.useCallback(() => {
-    setDraggingChatId(null)
-    onChatDragStateChange?.(null)
-  }, [onChatDragStateChange])
-
-  React.useEffect(() => {
-    if (!draggingChatId) return
-    if (chatItems.some(item => item.id === draggingChatId)) return
-    finishChatDrag()
-  }, [chatItems, draggingChatId, finishChatDrag])
-
   return (
     <aside
       className="flex h-full w-[min(460px,calc(100vw-1.5rem))] flex-col overflow-hidden border border-y-0 border-r-0 border-[#303030] bg-[#171717] text-zinc-100 shadow-2xl shadow-black/40"
-      aria-label="チャット取り込み"
+      aria-label="AI履歴"
       title={projectTitle}
     >
       {!selectedChatItem && (
-        <div className="space-y-2 border-b border-[#303030] p-3">
-          <div className="flex items-center gap-2 rounded-lg border border-[#2d2d2d] bg-[#111111] px-2.5 py-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="shrink-0 text-xs font-semibold text-zinc-200">リポ監視</span>
-              {hasRepoPath && importOwnerLabel && (
-                <span className="max-w-[96px] shrink-0 truncate rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400" title={importOwnerLabel}>
-                  監視: {importOwnerLabel}
-                </span>
-              )}
-              <span
-                className={cn(
-                  "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                  codexRunnerStatus.ready
-                    ? "bg-emerald-400/10 text-emerald-300"
-                    : "bg-amber-400/10 text-amber-200",
-                )}
-              >
-                {codexRunnerStatus.loading || !codexRunnerStatus.checked
-                  ? "Mac確認中"
-                  : codexRunnerStatus.ready
-                    ? "Mac online"
-                    : "Mac offline"}
-              </span>
+        <div className="border-b border-[#303030] bg-[#171717] px-3 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1 truncate text-[20px] font-semibold tracking-normal text-zinc-50">
+              AI履歴
             </div>
-            <Switch
-              checked={importEnabled && hasRepoPath}
-              onCheckedChange={() => void handleToggleImport()}
-              disabled={!hasRepoPath || isBusy || runnerUnavailable || (!importEnabled && currentRepoIsCandidateOnly)}
-              aria-label="リポ監視"
-              title={runnerUnavailable ? runnerUnavailableMessage : currentRepoIsCandidateOnly ? "Codexプロジェクト候補から選び直すとONにできます" : undefined}
-              className="h-6 w-10 shrink-0 border-0 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-zinc-700 [&>span]:h-5 [&>span]:w-5 [&>span[data-state=checked]]:translate-x-4"
-            />
+            <span className={cn(
+              "inline-flex h-8 shrink-0 items-center rounded-md border px-2 text-xs font-semibold",
+              aiHistory.sync.aiOnline
+                ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-300"
+                : "border-white/10 bg-white/[0.06] text-zinc-400",
+            )}>
+              {aiOnlineLabel}
+            </span>
+            <div className="relative min-w-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 max-w-[150px] justify-start gap-1.5 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
+                onClick={() => setRepoPickerOpen(open => !open)}
+                aria-expanded={repoPickerOpen}
+                aria-controls="ai-history-repo-filter"
+                title={repoFilter === "all" ? "全体" : repoFilter}
+              >
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                <span className="min-w-0 truncate text-xs">{currentRepoLabel}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+              </Button>
+              {repoPickerOpen && (
+                <div
+                  id="ai-history-repo-filter"
+                  className="absolute right-0 top-full z-20 mt-1 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
+                >
+                  <div className="max-h-64 overflow-auto">
+                    {repoOptions.map(option => {
+                      const selected = option.repoPath === repoFilter
+                      return (
+                        <button
+                          key={option.repoPath}
+                          type="button"
+                          className={cn(
+                            "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
+                            selected && "bg-white/10 text-white",
+                          )}
+                          onClick={() => {
+                            setRepoFilter(option.repoPath)
+                            setRepoPickerOpen(false)
+                          }}
+                          title={option.repoPath === "all" ? "全体" : option.repoPath}
+                        >
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                            {option.label}
+                          </span>
+                          {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-9 w-9 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
+              className="h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
+              onClick={() => {
+                if (onOpenSettings) {
+                  onOpenSettings()
+                  return
+                }
+                if (typeof window !== "undefined") window.location.assign("/dashboard/settings/automation")
+              }}
+              aria-label="AI履歴設定"
+              title="AI履歴設定"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
               onClick={onClose}
-              aria-label="AI実行を閉じる"
+              aria-label="AI履歴を閉じる"
               title="閉じる"
             >
               <X className="h-4 w-4" />
             </Button>
           </div>
-
-          <div className="rounded-lg border border-[#2d2d2d] bg-[#101010] px-2.5 py-2">
-            <div className="flex min-w-0 items-start gap-2">
-              <FolderGit2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500" />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="shrink-0 text-[10px] font-medium text-zinc-500">選択中</span>
-                  <span className="min-w-0 truncate text-xs font-semibold text-zinc-100" title={hasRepoPath ? currentRepoPath : undefined}>
-                    {hasRepoPath ? currentRepoLabel : "Codexプロジェクト未選択"}
-                  </span>
-                  {hasRepoPath && (
-                    <span className={cn(
-                      "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                      currentRepoIsCodexProject
-                        ? "bg-sky-400/10 text-sky-200"
-                        : "bg-amber-400/10 text-amber-200",
-                    )}>
-                      {currentRepoIsCodexProject ? "Codexプロジェクト" : "Codex候補外"}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 min-w-0 truncate text-[10px] text-zinc-500" title={hasRepoPath ? currentRepoPath : undefined}>
-                  {hasRepoPath ? currentRepoPath : "Codex側に表示されているプロジェクトから選択してください"}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  <span className={cn(
-                    "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                    importEnabled && hasRepoPath ? "bg-emerald-400/10 text-emerald-300" : "bg-white/[0.06] text-zinc-400",
-                  )}>
-                    {importEnabled && hasRepoPath ? "監視ON" : "監視OFF"}
-                  </span>
-                  <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", agentStatusTone)}>
-                    {agentStatusLabel}
-                  </span>
-                  {currentRepoWorktreeCount > 1 && (
-                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                      worktree含む
-                    </span>
-                  )}
-                  {lastScopeRefreshLabel && (
-                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
-                      scope {lastScopeRefreshLabel}
-                    </span>
-                  )}
-                  {lastReconcileLabel && (
-                    <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-500">
-                      照合 {lastReconcileLabel}{typeof importMetadata.lastReconcileImported === "number" ? ` / ${importMetadata.lastReconcileImported}件` : ""}
-                    </span>
-                  )}
-                </div>
-                {(importMetadata.lastScopeRefreshError || importMetadata.lastError) && (
-                  <div className="mt-1 truncate text-[10px] text-amber-200" title={importMetadata.lastScopeRefreshError ?? importMetadata.lastError ?? undefined}>
-                    {importMetadata.lastScopeRefreshError ?? importMetadata.lastError}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="flex items-center gap-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
-                onClick={() => setRepoPickerOpen(open => !open)}
-                disabled={isBusy}
-                aria-expanded={repoPickerOpen}
-                aria-controls="codex-repo-picker"
-              >
-                <FolderGit2 className="h-3.5 w-3.5" />
-                <span className="ml-1.5 text-xs">Codexプロジェクトから選択</span>
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
-                onClick={openRepoInFinder}
-                disabled={isBusy || !hasRepoPath}
-                aria-label="選択中リポをFinderで開く"
-                title="選択中リポをFinderで開く"
-              >
-                {pickerPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
-                <span className="ml-1.5 text-xs">Finder</span>
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-zinc-400 hover:bg-white/10 hover:text-white"
-                onClick={handleRefreshRepos}
-                disabled={isBusy}
-                aria-label="リポ候補を更新"
-                title="リポ候補を更新"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-              </Button>
-              {currentRepoPath && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-zinc-500 hover:bg-white/10 hover:text-zinc-200"
-                  onClick={() => void selectRepoPath(null)}
-                  disabled={isBusy}
-                >
-                  選択解除
-                </Button>
-              )}
-            </div>
-
-            {repoPickerOpen && (
-              <div
-                id="codex-repo-picker"
-                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
-              >
-                {codexRepos.length === 0 ? (
-                  <div className="px-2 py-3 text-center text-xs text-zinc-500">
-                    Codexプロジェクト候補がありません
-                  </div>
-                ) : (
-                  codexRepos.slice(0, 8).map(repo => {
-                    const selected = currentRepoPath === repo.absolute_path
-                    return (
-                      <button
-                        key={repo.id}
-                        type="button"
-                        aria-label={`対象リポを選択 ${repo.display_name || repoNameFromPath(repo.absolute_path)}`}
-                        className={cn(
-                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
-                          selected && "bg-white/10 text-white",
-                        )}
-                        onClick={() => void selectRepoPath(repo.absolute_path)}
-                        disabled={isBusy}
-                        title={repo.absolute_path}
-                      >
-                        <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                          {repo.display_name || repoNameFromPath(repo.absolute_path)}
-                        </span>
-                        <span className="shrink-0 text-[10px] text-zinc-500">
-                          Codex
-                        </span>
-                        {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
-                      </button>
-                    )
-                  })
-                )}
-              </div>
-            )}
-          </div>
-
-          {onOpenBoard && (
-            <Button
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
               type="button"
-              variant="outline"
-              size="sm"
-              className="h-9 w-full justify-start border-[#303030] bg-[#111111] px-2.5 text-zinc-200 hover:bg-white/10 hover:text-white"
-              onClick={onOpenBoard}
+              className={cn(
+                "h-10 rounded-md text-sm font-semibold transition-colors",
+                activePlacement === "unplaced"
+                  ? "bg-amber-400 text-zinc-950 shadow-[0_8px_18px_rgba(245,158,11,0.18)]"
+                  : "bg-white/[0.06] text-zinc-300 hover:bg-white/10 hover:text-white",
+              )}
+              onClick={() => setActivePlacement("unplaced")}
             >
-              <PanelBottomOpen className="h-3.5 w-3.5" />
-              <span className="ml-1.5 text-xs font-semibold">Codex看板を開く</span>
-            </Button>
-          )}
-
-          {(repoError || reposError) && (
-            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">
-              {repoError ?? reposError}
+              未配置 {aiHistory.counts.unplaced}件
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "h-10 rounded-md text-sm font-semibold transition-colors",
+                activePlacement === "mindmap"
+                  ? "bg-amber-400 text-zinc-950 shadow-[0_8px_18px_rgba(245,158,11,0.18)]"
+                  : "bg-white/[0.06] text-zinc-300 hover:bg-white/10 hover:text-white",
+              )}
+              onClick={() => setActivePlacement("mindmap")}
+            >
+              マインドマップ
+            </button>
+          </div>
+          {aiHistory.error && (
+            <p className="mt-2 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-300">
+              {aiHistory.error}
             </p>
           )}
         </div>
@@ -1539,7 +1312,7 @@ export function CodexChatImportSidebar({
                       )}
                       {selectedChatItem.repoPath && (
                         <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
-                          <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath)}</span>
+                          <span className="truncate">{selectedChatItem.repoLabel || repoNameFromPath(selectedChatItem.repoPath)}</span>
                         </span>
                       )}
                       {selectedThreadHref && (
@@ -1692,48 +1465,23 @@ export function CodexChatImportSidebar({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b border-[#303030] p-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-              <Input
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                className="h-11 rounded-lg border-[#2d2d2d] bg-[#111111] pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-zinc-500"
-                placeholder="チャットを検索"
-                aria-label="チャットを検索"
-              />
-            </div>
-            <div className="mt-2 flex min-w-0 items-center justify-between gap-2 px-1">
-              <div className="min-w-0 truncate text-xs font-semibold text-zinc-400">Codexチャット履歴</div>
-              <div
-                className="flex shrink-0 items-center gap-1.5"
-                aria-label={`未配置 ${chatItems.length}件${isFilteringChatItems ? `、表示 ${filteredChatItems.length}件` : ""}`}
-              >
-                <span className="inline-flex h-6 items-center rounded-full border border-amber-400/25 bg-amber-400/10 px-2 text-[11px] font-semibold text-amber-200">
-                  未配置 {chatItems.length}件
-                </span>
-                {isFilteringChatItems && (
-                  <span className="inline-flex h-6 items-center rounded-full border border-white/10 bg-white/[0.06] px-2 text-[11px] font-medium text-zinc-300">
-                    表示 {filteredChatItems.length}件
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
-            {filteredChatItems.length === 0 ? (
+            {aiHistory.isLoading && visibleHistoryChatItems.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-3 py-2 text-xs text-zinc-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                AI履歴を取得中
+              </div>
+            ) : visibleHistoryChatItems.length === 0 ? (
               <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
-                Codexチャット履歴はありません
+                AI履歴はありません
               </div>
             ) : (
               <div className="space-y-2.5">
-                {filteredChatItems.map(item => {
-                  const isDragging = draggingChatId === item.id
+                {visibleHistoryChatItems.map(item => {
                   const visualStatus = item.status ?? "awaiting_approval"
                   const uiStatus = getCodexMonitorUiStatus(visualStatus)
                   const statusText = item.statusLabel ?? codexMonitorUiLabel(visualStatus)
-                  const threadHref = codexThreadUrl(item.threadId)
+                  const threadHref = item.codexOpenUrl ?? codexThreadUrl(item.threadId)
                   const updatedLabel = displayUpdatedLabel(item)
                   const itemLocalWorkTimer = localWorkTimers[localWorkTimerKey(item)] ?? null
                   const itemLocalWorkElapsedMs = localWorkElapsedMs(itemLocalWorkTimer, workNowMs)
@@ -1744,44 +1492,26 @@ export function CodexChatImportSidebar({
                   return (
                     <div
                       key={item.id}
-                      draggable
                       role="button"
                       tabIndex={0}
                       className={cn(
-                        "group relative flex w-full cursor-grab flex-col gap-1 overflow-visible rounded-lg border px-3 py-2 pl-4 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:cursor-grabbing",
+                        "group relative flex w-full cursor-pointer flex-col gap-1 overflow-visible rounded-lg border px-3 py-2 pl-4 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500",
                         codexMonitorCardClass(visualStatus),
-                        isDragging && "scale-[0.985] opacity-70 shadow-inner ring-1 ring-sky-400/60",
                       )}
                       data-testid={`codex-chat-import-row-${item.id}`}
-                      aria-grabbed={isDragging}
                       onClick={() => handleChatItemClick(item)}
                       onKeyDown={event => {
                         if (event.key !== "Enter" && event.key !== " ") return
                         event.preventDefault()
                         handleChatItemClick(item)
                       }}
-                      onDragStart={event => {
-                        setDraggingChatId(item.id)
-                        onChatDragStateChange?.({ itemId: item.id, title: item.title })
-                        event.dataTransfer.effectAllowed = "move"
-                        event.dataTransfer.setData(
-                          CODEX_CHAT_IMPORT_DRAG_TYPE,
-                          encodeCodexChatImportDragPayload({ taskId: item.id, title: item.title, snippet: item.snippet }),
-                        )
-                        event.dataTransfer.setData("text/plain", item.title)
-                        const dragImage = createChatDragImage(item)
-                        if (dragImage && typeof event.dataTransfer.setDragImage === "function") {
-                          event.dataTransfer.setDragImage(dragImage, 24, 18)
-                        }
-                      }}
-                      onDragEnd={finishChatDrag}
                       title={item.snippet ?? item.title}
                     >
                     {uiStatus === "running" && <CodexMonitorRunningOutline />}
                     <span className={cn("absolute bottom-2 left-0 top-2 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex min-w-0 flex-1 items-start gap-1.5">
-                        <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", uiStatus === "running" && "text-emerald-200", isDragging && "text-sky-300")} />
+                        <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", uiStatus === "running" && "text-emerald-200")} />
                         <div className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</div>
                       </div>
                       {updatedLabel && <span className="shrink-0 text-[10px] text-zinc-500">{updatedLabel}</span>}
@@ -1817,11 +1547,11 @@ export function CodexChatImportSidebar({
                       )}
                       {item.repoPath && (
                         <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] leading-none text-zinc-500" title={item.repoPath}>
-                          {repoNameFromPath(item.repoPath)}
+                          {item.repoLabel || repoNameFromPath(item.repoPath)}
                         </span>
                       )}
                     </div>
-                    {(threadHref || onDeleteChatItem) && (
+                    {(threadHref || item.historyItemId) && (
                       <div className="mt-1 flex min-h-8 items-end gap-2">
                         {threadHref && (
                           <a
@@ -1835,18 +1565,15 @@ export function CodexChatImportSidebar({
                             Codexで開く
                           </a>
                         )}
-                        {onDeleteChatItem && (
+                        {item.historyItemId && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="ml-auto h-9 w-9 shrink-0 text-zinc-500 hover:bg-red-500/10 hover:text-red-300 focus-visible:ring-red-300"
-                            aria-label={`チャットを削除 ${item.title}`}
-                            onClick={event => {
-                              event.preventDefault()
-                              event.stopPropagation()
-                              void onDeleteChatItem(item.id)
-                            }}
+                            className="ml-auto h-9 w-9 shrink-0 text-zinc-600 hover:bg-white/[0.03] hover:text-zinc-500 focus-visible:ring-zinc-500/40 disabled:cursor-not-allowed disabled:opacity-60"
+                            aria-label={`履歴をアーカイブ ${item.title}`}
+                            title="履歴アーカイブは設定画面で管理します"
+                            disabled
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -1858,17 +1585,6 @@ export function CodexChatImportSidebar({
                 })}
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {!selectedChatItem && (
-        <div className="flex min-h-12 items-center justify-end border-t border-[#303030] bg-[#171717] px-3 py-2">
-          <div className={cn(
-            "flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500 transition-colors",
-            draggingChatId && "text-sky-300",
-          )}>
-            {draggingChatId ? "マップ外で離すとカードに戻ります" : "ドラッグしてノードへ配置"}
           </div>
         </div>
       )}

@@ -141,44 +141,6 @@ function chatImportTimeMs(value: string | null | undefined) {
     return Number.isFinite(ms) ? ms : 0;
 }
 
-function normalizeRepoPath(value: string | null | undefined) {
-    return (value ?? '').trim().replace(/\/+$/, '');
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
-}
-
-function stringValue(value: unknown) {
-    return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function codexScopeRepoPathFromAiTask(aiTask: AiTask | null | undefined) {
-    const result = recordValue(aiTask?.result);
-    const meta = recordValue(result?.meta);
-    return normalizeRepoPath(
-        stringValue(meta?.scope_repo_path) ||
-        stringValue(result?.scope_repo_path) ||
-        null,
-    );
-}
-
-function codexThreadMatchesSelectedRepo(
-    task: Task,
-    aiTask: AiTask | null | undefined,
-    taskProject: Project | null | undefined,
-    selectedRepoPath: string | null | undefined,
-) {
-    const selected = normalizeRepoPath(selectedRepoPath);
-    if (!selected) return true;
-    const taskWorkDir = normalizeRepoPath(task.codex_work_dir ?? aiTask?.cwd ?? null);
-    if (taskWorkDir === selected) return true;
-    if (codexScopeRepoPathFromAiTask(aiTask) === selected) return true;
-    return normalizeRepoPath(taskProject?.repo_path) === selected;
-}
-
 function compareCodexChatImportItems(a: CodexChatImportItem, b: CodexChatImportItem) {
     const aRunning = getCodexMonitorUiStatus(a.status ?? null) === 'running' ? 0 : 1;
     const bRunning = getCodexMonitorUiStatus(b.status ?? null) === 'running' ? 0 : 1;
@@ -686,7 +648,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
     ), [codexImportRepoPathOverride, projectRepoPath]);
     const codexThreadImportEnabled = codexThreadImportOverride ?? Boolean(project?.codex_thread_import_enabled);
     const selectedRepoImportEnabled = projectRepoPath === selectedCodexImportRepoPath && codexThreadImportEnabled;
-    const selectedRepoImportOwnerLabel = selectedRepoImportEnabled ? project.title : null;
 
     const patchProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
         if (onPatchProject) {
@@ -1086,63 +1047,6 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         if (codexInboxGroupId) ids.add(codexInboxGroupId);
         return ids;
     }, [codexInboxGroupId, repoScopedCodexTaskNodes]);
-    const codexChatImportItems = useMemo<CodexChatImportItem[]>(() => {
-        return repoScopedCodexTaskNodes
-            .filter(task => task.source === 'codex_app_thread' && task.deleted_at == null)
-            .filter(task => !hiddenCodexChatImportIds.has(task.id))
-            .flatMap(task => {
-                const progressTask = taskProgressByNodeId[task.id];
-                const codexRun = codexRunByNodeId[task.id];
-                const aiTask = aiTasksBySourceId.get(task.id) ?? null;
-                const aiResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
-                    ? aiTask.result as Record<string, unknown>
-                    : {};
-                const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null;
-                if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return [];
-                if (codexThreadArchivedForDisplay({ task, aiTask, aiResult, progressTask })) return [];
-                if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
-                if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
-                const placed = !task.parent_task_id || !codexInboxGroupIds.has(task.parent_task_id);
-                if (placed) return [];
-                const placementLabel = '未配置';
-                const visualStatus = progressTask?.status ??
-                    codexRun?.state ??
-                    task.codex_status ??
-                    aiTask?.status ??
-                    null;
-                const updatedAt = codexThreadImportActivityAt({ task, aiTask, progressTask, codexRun });
-                return [{
-                    id: task.id,
-                    aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
-                    title: codexChatImportTitle({ task, progressTask, aiResult }),
-                    snippet: codexThreadPromptPreviewFromMemo(task.memo),
-                    repoPath: task.codex_work_dir?.trim() || null,
-                    threadId: task.codex_thread_id?.trim() || null,
-                    status: visualStatus,
-                    projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,
-                    placementLabel,
-                    statusLabel: codexChatImportStatusLabel(
-                        visualStatus,
-                        progressTask ? codexMonitorUiLabel(progressTask.status) : codexRun?.label,
-                    ),
-                    updatedLabel: formatChatImportUpdatedLabel(updatedAt),
-                    sortAt: updatedAt,
-                    ...codexThreadRallyWorkTiming({ aiTask, aiResult }),
-                    placed,
-                }];
-            })
-            .sort(compareCodexChatImportItems);
-    }, [
-        aiTasksBySourceId,
-        codexInboxGroupIds,
-        codexRunByNodeId,
-        hiddenCodexChatImportIds,
-        projectTitleById,
-        projectById,
-        repoScopedCodexTaskNodes,
-        selectedCodexImportRepoPath,
-        taskProgressByNodeId,
-    ]);
     const codexChatDetailItems = useMemo<CodexChatImportItem[]>(() => {
         const items = new Map<string, CodexChatImportItem>();
 
@@ -3095,23 +2999,13 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     {isCodexChatImportSidebarOpen && (
                         <div className="absolute inset-y-0 right-0 z-40 flex" data-codex-chat-import-sidebar="true">
                             <CodexChatImportSidebar
+                                projectId={project?.id ?? null}
                                 projectTitle={project?.title ?? 'Project'}
-                                selectedRepoPath={selectedCodexImportRepoPath || null}
-                                importEnabled={selectedRepoImportEnabled}
-                                importOwnerLabel={selectedRepoImportOwnerLabel}
-                                importPending={isCodexThreadImportSaving}
-                                chatItems={codexChatImportItems}
+                                initialRepoPath={projectRepoPath || null}
                                 detailItems={codexChatDetailItems}
                                 initialSelectedChatId={selectedCodexChatDetailId}
                                 onInitialSelectedChatClear={() => setSelectedCodexChatDetailId(null)}
                                 onClose={closeCodexChatImportSidebar}
-                                onSelectRepoPath={selectCodexImportRepoPath}
-                                onToggleImport={toggleSelectedRepoImport}
-                                onDeleteChatItem={handleDeleteCodexChatImportItem}
-                                onPlaceChatItem={(taskId) => handleDropImportedChatNode({ taskId, targetId: 'project-root', position: 'as-child' })}
-                                onReturnPlacedChatItem={handleReturnCodexChatToHistory}
-                                onChatDragStateChange={setActiveCodexChatDrag}
-                                onOpenBoard={openKanbanFromCodexSidebar}
                             />
                         </div>
                     )}
