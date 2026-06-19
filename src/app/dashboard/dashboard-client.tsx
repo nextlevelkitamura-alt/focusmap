@@ -28,6 +28,10 @@ import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { OPEN_TODAY_CALENDAR_EVENT } from "@/lib/calendar-constants"
+import {
+    CLOSE_CODEX_CHAT_IMPORT_EVENT,
+    CLOSE_DASHBOARD_SIDE_PANEL_EVENT,
+} from "@/lib/codex-chat-import-events"
 import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-memos-dialog"
 import { ProjectContextDialog } from "@/components/projects/project-context-dialog"
 
@@ -275,55 +279,68 @@ export function DashboardClient({
     const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
     const isMapSplitVisible = activeView === 'long-term' && isMapSplitOpen
     const isRightSidePanelVisible = isCalendarPanelVisible || isProjectChatSidebarVisible || isMemoSplitVisible
+    const closeDashboardSidePanels = useCallback((options: { preserveMapSplit?: boolean } = {}) => {
+        setIsCalendarSplitOpen(false)
+        setIsMemoSplitOpen(false)
+        if (!options.preserveMapSplit) setIsMapSplitOpen(false)
+        setIsProjectChatSidebarOpen(false)
+    }, [])
+    const closeCodexChatImportSidebar = useCallback(() => {
+        window.dispatchEvent(new Event(CLOSE_CODEX_CHAT_IMPORT_EVENT))
+    }, [])
+    useEffect(() => {
+        const handleCloseDashboardSidePanels = (event: Event) => {
+            const detail = (event as CustomEvent<{ preserveMapSplit?: unknown }>).detail
+            closeDashboardSidePanels({ preserveMapSplit: detail?.preserveMapSplit === true })
+        }
+        window.addEventListener(CLOSE_DASHBOARD_SIDE_PANEL_EVENT, handleCloseDashboardSidePanels)
+        return () => window.removeEventListener(CLOSE_DASHBOARD_SIDE_PANEL_EVENT, handleCloseDashboardSidePanels)
+    }, [closeDashboardSidePanels])
     const toggleCalendarSplit = useCallback(() => {
-        setIsCalendarSplitOpen(prev => {
-            const next = !prev
-            if (next) {
-                setIsMemoSplitOpen(false)
-                setIsMapSplitOpen(false)
-                setIsProjectChatSidebarOpen(false)
-            }
-            return next
-        })
-    }, [])
+        const next = !isCalendarSplitOpen
+        if (next) {
+            closeCodexChatImportSidebar()
+            setIsMemoSplitOpen(false)
+            setIsMapSplitOpen(false)
+            setIsProjectChatSidebarOpen(false)
+        }
+        setIsCalendarSplitOpen(next)
+    }, [closeCodexChatImportSidebar, isCalendarSplitOpen])
     const toggleMemoSplit = useCallback(() => {
-        setIsMemoSplitOpen(prev => {
-            const next = !prev
-            if (next) {
-                setIsCalendarSplitOpen(false)
-                setIsMapSplitOpen(false)
-                setIsProjectChatSidebarOpen(false)
-            }
-            return next
-        })
-    }, [])
+        const next = !isMemoSplitOpen
+        if (next) {
+            closeCodexChatImportSidebar()
+            setIsCalendarSplitOpen(false)
+            setIsMapSplitOpen(false)
+            setIsProjectChatSidebarOpen(false)
+        }
+        setIsMemoSplitOpen(next)
+    }, [closeCodexChatImportSidebar, isMemoSplitOpen])
     const toggleMapSplit = useCallback(() => {
-        setIsMapSplitOpen(prev => {
-            const next = !prev
-            if (next) {
-                setIsCalendarSplitOpen(false)
-                setIsMemoSplitOpen(false)
-                setIsProjectChatSidebarOpen(false)
-            }
-            return next
-        })
-    }, [])
+        const next = !isMapSplitOpen
+        if (next) {
+            closeCodexChatImportSidebar()
+            setIsCalendarSplitOpen(false)
+            setIsMemoSplitOpen(false)
+            setIsProjectChatSidebarOpen(false)
+        }
+        setIsMapSplitOpen(next)
+    }, [closeCodexChatImportSidebar, isMapSplitOpen])
     const toggleProjectChatSidebar = useCallback(() => {
         if (!selectedProjectId) return
-        setIsProjectChatSidebarOpen(prev => {
-            const next = !prev
-            if (next) {
-                setIsCalendarSplitOpen(false)
-                setIsMemoSplitOpen(false)
-                setIsMapSplitOpen(false)
-                setProjectChatLaunchRequest(current => ({
-                    projectId: selectedProjectId,
-                    key: current.key + 1,
-                }))
-            }
-            return next
-        })
-    }, [selectedProjectId])
+        const next = !isProjectChatSidebarOpen
+        if (next) {
+            closeCodexChatImportSidebar()
+            setIsCalendarSplitOpen(false)
+            setIsMemoSplitOpen(false)
+            setIsMapSplitOpen(false)
+            setProjectChatLaunchRequest(current => ({
+                projectId: selectedProjectId,
+                key: current.key + 1,
+            }))
+        }
+        setIsProjectChatSidebarOpen(next)
+    }, [closeCodexChatImportSidebar, isProjectChatSidebarOpen, selectedProjectId])
     useEffect(() => {
         if (!isProjectChatSidebarOpen || (activeView !== 'map' && activeView !== 'long-term') || !selectedProjectId) return
         setProjectChatLaunchRequest(current => {
@@ -335,10 +352,10 @@ export function DashboardClient({
         })
     }, [activeView, isProjectChatSidebarOpen, selectedProjectId])
     const openMindmapLinkedMemos = useCallback((taskId: string) => {
-        setIsCalendarSplitOpen(false)
-        setIsProjectChatSidebarOpen(false)
+        closeDashboardSidePanels()
+        closeCodexChatImportSidebar()
         setMindmapLinkedMemoTarget({ taskId, requestKey: Date.now() })
-    }, [])
+    }, [closeCodexChatImportSidebar, closeDashboardSidePanels])
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
 

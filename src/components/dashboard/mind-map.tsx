@@ -29,7 +29,11 @@ import { hydrateTaskProgressMindMapSources } from "@/lib/task-progress-source";
 import { missingTaskProgressSourceIds } from "@/lib/task-progress-source-refresh";
 import { codexMonitorUiLabel, getCodexMonitorUiStatus } from "@/lib/task-progress-ui";
 import { LINKED_TASK_STATUS_EVENT } from "@/lib/calendar-constants";
-import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events";
+import {
+    CLOSE_CODEX_CHAT_IMPORT_EVENT,
+    CLOSE_DASHBOARD_SIDE_PANEL_EVENT,
+    OPEN_CODEX_CHAT_IMPORT_EVENT,
+} from "@/lib/codex-chat-import-events";
 import { MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useMindMapCollapsedTaskIds } from "@/hooks/useMindMapCollapsedTaskIds";
@@ -651,19 +655,30 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setActiveCodexChatDrag(null);
     }, []);
 
+    const openCodexChatImportSidebar = useCallback((selectedChatId: string | null = null) => {
+        window.dispatchEvent(new CustomEvent(CLOSE_DASHBOARD_SIDE_PANEL_EVENT, {
+            detail: { preserveMapSplit: true },
+        }));
+        setSelectedCodexChatDetailId(selectedChatId);
+        setIsCodexChatImportSidebarOpen(true);
+    }, []);
+
     const toggleCodexChatImportSidebar = useCallback(() => {
         if (isCodexChatImportSidebarOpen) {
             closeCodexChatImportSidebar();
             return;
         }
-        setSelectedCodexChatDetailId(null);
-        setIsCodexChatImportSidebarOpen(true);
-    }, [closeCodexChatImportSidebar, isCodexChatImportSidebarOpen]);
+        openCodexChatImportSidebar();
+    }, [closeCodexChatImportSidebar, isCodexChatImportSidebarOpen, openCodexChatImportSidebar]);
 
     useEffect(() => {
         window.addEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, toggleCodexChatImportSidebar);
-        return () => window.removeEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, toggleCodexChatImportSidebar);
-    }, [toggleCodexChatImportSidebar]);
+        window.addEventListener(CLOSE_CODEX_CHAT_IMPORT_EVENT, closeCodexChatImportSidebar);
+        return () => {
+            window.removeEventListener(OPEN_CODEX_CHAT_IMPORT_EVENT, toggleCodexChatImportSidebar);
+            window.removeEventListener(CLOSE_CODEX_CHAT_IMPORT_EVENT, closeCodexChatImportSidebar);
+        };
+    }, [closeCodexChatImportSidebar, toggleCodexChatImportSidebar]);
 
     const projectRepoPath = useMemo(() => (
         (codexRepoPathOverride !== undefined ? codexRepoPathOverride ?? '' : project?.repo_path ?? '').trim()
@@ -1299,13 +1314,12 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             if (chatItem.repoPath?.trim()) {
                 setCodexImportRepoPathOverride(chatItem.repoPath.trim().replace(/\/+$/, ''));
             }
-            setSelectedCodexChatDetailId(taskId);
-            setIsCodexChatImportSidebarOpen(true);
+            openCodexChatImportSidebar(taskId);
             return;
         }
         setSelectedCodexChatDetailId(null);
         setCodexPanelTaskId(taskId);
-    }, [codexChatDetailItemsById]);
+    }, [codexChatDetailItemsById, openCodexChatImportSidebar]);
 
     const codexPanelTask = useMemo(() => {
         if (!codexPanelTaskId) return null;

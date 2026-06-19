@@ -185,7 +185,11 @@ vi.mock("@/components/codex/codex-node-panel", () => ({
 
 import { MindMap } from "./mind-map"
 import type { Project, Task } from "@/types/database"
-import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events"
+import {
+  CLOSE_CODEX_CHAT_IMPORT_EVENT,
+  CLOSE_DASHBOARD_SIDE_PANEL_EVENT,
+  OPEN_CODEX_CHAT_IMPORT_EVENT,
+} from "@/lib/codex-chat-import-events"
 
 const project = {
   id: "project-1",
@@ -251,24 +255,45 @@ describe("MindMap controls", () => {
   })
 
   test("opens the chat import sidebar from the map corner", () => {
-    render(<MindMap project={project} groups={[task]} tasks={[]} />)
+    const closeDashboardSidePanel = vi.fn()
+    window.addEventListener(CLOSE_DASHBOARD_SIDE_PANEL_EVENT, closeDashboardSidePanel)
 
-    expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
-    expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(false)
+    try {
+      render(<MindMap project={project} groups={[task]} tasks={[]} />)
+
+      expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+      expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(false)
+
+      fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
+
+      expect(closeDashboardSidePanel).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "MindMap表示設定" })).not.toBeInTheDocument()
+      expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(true)
+
+      fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
+
+      expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
+      expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(false)
+    } finally {
+      window.removeEventListener(CLOSE_DASHBOARD_SIDE_PANEL_EVENT, closeDashboardSidePanel)
+    }
+  })
+
+  test("closes the chat import sidebar when another dashboard side panel opens", () => {
+    render(<MindMap project={project} groups={[task]} tasks={[]} />)
 
     fireEvent(window, new Event(OPEN_CODEX_CHAT_IMPORT_EVENT))
 
     expect(screen.getByRole("complementary", { name: "チャット取り込み" })).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "MindMap表示設定" })).not.toBeInTheDocument()
-    expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(true)
 
-    fireEvent.click(screen.getByRole("button", { name: "閉じる" }))
+    fireEvent(window, new Event(CLOSE_CODEX_CHAT_IMPORT_EVENT))
 
     expect(screen.queryByRole("complementary", { name: "チャット取り込み" })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "チャット取り込み" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "MindMap表示設定" })).toBeInTheDocument()
-    expect(taskProgressSnapshotState.options.at(-1)?.detailOpen).toBe(false)
   })
 
   test("toggles the chat import sidebar from the header event and keeps it visible during map/project changes", async () => {
