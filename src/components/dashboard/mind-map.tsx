@@ -21,7 +21,7 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion";
-import { codexThreadImportActivityAt, codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display";
+import { codexThreadDisplayTitle, codexThreadImportActivityAt, codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display";
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
@@ -196,6 +196,20 @@ function codexChatImportWorkTiming(aiTask: AiTask | null | undefined, aiResult?:
         workCompletedAt: aiTask?.completed_at ?? null,
         workLastActivityAt: stringValue(result?.last_activity_at),
     };
+}
+
+function codexChatImportTitle(input: {
+    task: Task;
+    progressTask?: TaskProgressSnapshotTask | null;
+    aiResult?: Record<string, unknown> | null;
+}) {
+    if (input.task.source !== 'codex_app_thread') return input.task.title;
+    return codexThreadDisplayTitle({
+        taskTitle: input.task.title,
+        progressTitle: input.progressTask?.title,
+        aiResult: input.aiResult,
+        fallback: input.task.codex_thread_id ? `Codex thread ${input.task.codex_thread_id.slice(0, 8)}` : null,
+    }) ?? input.task.title;
 }
 
 type MindMapClipboardNode = {
@@ -1086,7 +1100,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 return [{
                     id: task.id,
                     aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
-                    title: task.title,
+                    title: codexChatImportTitle({ task, progressTask, aiResult }),
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
                     repoPath: task.codex_work_dir?.trim() || null,
                     threadId: task.codex_thread_id?.trim() || null,
@@ -1172,7 +1186,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             items.set(task.id, {
                 id: task.id,
                 aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
-                title: task.title,
+                title: codexChatImportTitle({ task, progressTask, aiResult }),
                 snippet,
                 repoPath: repoPath || null,
                 threadId,

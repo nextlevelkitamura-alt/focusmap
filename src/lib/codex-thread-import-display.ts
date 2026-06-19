@@ -60,6 +60,25 @@ export function codexThreadPromptPreviewFromMemo(memo: unknown, fallback?: unkno
   return markdownSectionBody(memo, "初回依頼") ?? compactDisplayText(fallback)
 }
 
+export function codexThreadDisplayTitle(input: {
+  taskTitle?: unknown
+  progressTitle?: unknown
+  aiResult?: unknown
+  fallback?: unknown
+}) {
+  const result = recordValue(input.aiResult)
+  const meta = recordValue(result?.meta)
+  const taskTitle = compactDisplayText(input.taskTitle, 120)
+  const progressTitle = compactDisplayText(input.progressTitle, 120)
+
+  return compactDisplayText(meta?.source_task_title, 120)
+    ?? (progressTitle && progressTitle !== taskTitle ? progressTitle : null)
+    ?? compactDisplayText(meta?.thread_title, 120)
+    ?? progressTitle
+    ?? taskTitle
+    ?? compactDisplayText(input.fallback, 120)
+}
+
 export function importedCodexThreadUpdatedAtFromMemo(memo: unknown) {
   const metadata = markdownSectionBody(memo, "取り込み情報")
   const match = metadata?.match(IMPORTED_THREAD_UPDATED_AT_RE)

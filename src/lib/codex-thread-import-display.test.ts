@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import {
+  codexThreadDisplayTitle,
   codexThreadImportActivityAt,
   codexThreadPromptPreviewFromMemo,
   importedCodexThreadUpdatedAtFromMemo,
@@ -29,6 +30,43 @@ describe("codex thread import display helpers", () => {
   test("falls back only when the request section is missing", () => {
     expect(codexThreadPromptPreviewFromMemo("# 見出し", "fallback prompt")).toBe("fallback prompt")
     expect(codexThreadPromptPreviewFromMemo("# 見出し")).toBeNull()
+  })
+
+  test("prefers the Codex generated thread title for history cards", () => {
+    expect(codexThreadDisplayTitle({
+      taskTitle: "うちの情報をネクストレベルの登録してくれた時に",
+      progressTitle: "サービス案内メールを作成",
+      aiResult: {
+        meta: {
+          source_task_title: "サービス案内メールの構成作成",
+          thread_title: "うちの情報をネクストレベルの登録してくれた時に",
+        },
+      },
+    })).toBe("サービス案内メールの構成作成")
+  })
+
+  test("uses progress snapshot title before the old task title", () => {
+    expect(codexThreadDisplayTitle({
+      taskTitle: "長い初回プロンプトの先頭",
+      progressTitle: "Codex側で生成された短い見出し",
+      aiResult: {
+        meta: {
+          thread_title: "Codex側の未確定タイトル",
+        },
+      },
+    })).toBe("Codex側で生成された短い見出し")
+  })
+
+  test("uses thread title when progress title is still the old task title", () => {
+    expect(codexThreadDisplayTitle({
+      taskTitle: "うちの情報をネクストレベルの登録してくれた時に",
+      progressTitle: "うちの情報をネクストレベルの登録してくれた時に",
+      aiResult: {
+        meta: {
+          thread_title: "サービス案内メールを作成",
+        },
+      },
+    })).toBe("サービス案内メールを作成")
   })
 
   test("reads the imported thread updated time from memo metadata", () => {
