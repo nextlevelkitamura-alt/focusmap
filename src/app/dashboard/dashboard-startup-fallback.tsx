@@ -13,22 +13,13 @@ type CachedCalendarEvent = {
     background_color?: string | null
 }
 
-type CachedTask = {
-    id?: string
-    title?: string
-    parent_task_id?: string | null
-    order_index?: number | null
-    project_id?: string | null
-}
-
 type StartupSnapshot = {
     activeView: "today" | "map"
     events: CachedCalendarEvent[]
-    tasks: CachedTask[]
 }
 
 const CALENDAR_CACHE_PREFIX = "focusmap:calendar-events:"
-const MINDMAP_CACHE_PREFIX = "focusmap:mindmap:project:"
+const MINDMAP_SKELETON_DEPTHS = [0, 1, 2, 1, 2]
 
 function readJson<T>(raw: string | null): T | null {
     if (!raw) return null
@@ -70,37 +61,11 @@ function readCalendarEvents(): CachedCalendarEvent[] {
         .slice(0, 8)
 }
 
-function readMindmapTasks(): CachedTask[] {
-    const preferredProjectId =
-        window.localStorage.getItem("focusmap:lastProjectId") ||
-        window.localStorage.getItem("focusmap:lastMindmapProjectId")
-
-    const projectIds = [
-        preferredProjectId,
-        ...Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
-            .filter((key): key is string => Boolean(key?.startsWith(MINDMAP_CACHE_PREFIX)))
-            .map(key => key.slice(MINDMAP_CACHE_PREFIX.length)),
-    ].filter((id): id is string => Boolean(id))
-
-    for (const projectId of [...new Set(projectIds)]) {
-        const parsed = readJson<{ tasks?: CachedTask[] }>(window.localStorage.getItem(`${MINDMAP_CACHE_PREFIX}${projectId}`))
-        if (Array.isArray(parsed?.tasks) && parsed.tasks.length > 0) {
-            return parsed.tasks
-                .filter(task => task.project_id === projectId)
-                .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-                .slice(0, 8)
-        }
-    }
-
-    return []
-}
-
 function createStartupSnapshot(): StartupSnapshot {
     if (typeof window === "undefined") {
         return {
             activeView: "today",
             events: [],
-            tasks: [],
         }
     }
 
@@ -108,7 +73,6 @@ function createStartupSnapshot(): StartupSnapshot {
     return {
         activeView: savedView === "map" ? "map" : "today",
         events: readCalendarEvents(),
-        tasks: readMindmapTasks(),
     }
 }
 
@@ -167,7 +131,7 @@ export function DashboardStartupFallback() {
                             {isMap ? "マップ" : dateLabel}
                         </div>
                         <div className="mt-1 text-xs text-neutral-400">
-                            {isMap ? `${snapshot.tasks.length}件のノード` : `${snapshot.events.length}件のスケジュール`}
+                            {isMap ? "マップを準備中" : `${snapshot.events.length}件のスケジュール`}
                         </div>
                     </div>
                     <div className="inline-flex h-10 min-w-10 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-3">
@@ -181,16 +145,14 @@ export function DashboardStartupFallback() {
                     <div className="absolute left-10 top-12 h-px w-[72%] bg-white/10" />
                     <div className="absolute left-14 top-12 h-[52%] w-px bg-white/10" />
                     <div className="space-y-3">
-                        {(snapshot.tasks.length > 0 ? snapshot.tasks : Array.from({ length: 5 }, () => null as CachedTask | null)).map((task, index) => (
+                        {MINDMAP_SKELETON_DEPTHS.map((depth, index) => (
                             <div
-                                key={task?.id ?? index}
+                                key={index}
                                 className="relative ml-[calc(var(--depth)*22px)] min-h-11 rounded-md border border-white/10 bg-[#153329] px-3 py-2 shadow-sm"
-                                style={{ "--depth": index === 0 ? 0 : Math.min(index % 3, 2) } as CSSProperties & Record<"--depth", number>}
+                                style={{ "--depth": depth } as CSSProperties & Record<"--depth", number>}
                             >
-                                <div className="truncate text-sm font-medium text-neutral-100">
-                                    {task?.title || " "}
-                                </div>
-                                <div className="mt-1 h-1.5 w-24 rounded-full bg-white/10" />
+                                <div className="h-3 w-[68%] rounded-full bg-white/12" />
+                                <div className="mt-2 h-1.5 w-24 rounded-full bg-white/10" />
                             </div>
                         ))}
                     </div>

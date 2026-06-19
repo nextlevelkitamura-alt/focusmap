@@ -137,13 +137,20 @@ export function DashboardClient({
 
     // Restore from localStorage after mount (client-only)
     const selectionRestoredRef = useRef(false)
+    const [isSelectionReady, setIsSelectionReady] = useState(false)
     useEffect(() => {
         queueMicrotask(() => {
-            const savedProject = localStorage.getItem('focusmap:lastProjectId')
-            if (savedProject && initialProjects.some(p => p.id === savedProject)) {
-                setSelectedProjectId(savedProject)
+            try {
+                const savedProject = localStorage.getItem('focusmap:lastProjectId')
+                if (savedProject && initialProjects.some(p => p.id === savedProject)) {
+                    setSelectedProjectId(savedProject)
+                }
+            } catch {
+                // localStorage が使えない環境では初期選択のまま続行する
+            } finally {
+                selectionRestoredRef.current = true
+                setIsSelectionReady(true)
             }
-            selectionRestoredRef.current = true
         })
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -157,6 +164,7 @@ export function DashboardClient({
     // --- View State ---
     // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
     const { activeView, setActiveView, isViewReady } = useView()
+    const isDashboardReady = isViewReady && isSelectionReady
     const isNarrowViewport = useIsNarrowViewport()
     const forceDesktopDashboard = useForceDesktopDashboard()
     const isMobileViewport = isNarrowViewport && !forceDesktopDashboard
@@ -1323,16 +1331,16 @@ export function DashboardClient({
                     onProjectSaved={handleProjectSavedFromSwitcher}
                     onProjectDeleted={handleDeleteProject}
                     onSpaceSaved={handleSpaceSavedFromSwitcher}
-                    showCalendarSplitToggle={activeView === 'map' || activeView === 'long-term'}
+                    showCalendarSplitToggle={isDashboardReady && (activeView === 'map' || activeView === 'long-term')}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
-                    showMapSplitToggle={activeView === 'long-term'}
+                    showMapSplitToggle={isDashboardReady && activeView === 'long-term'}
                     isMapSplitVisible={isMapSplitVisible}
                     onToggleMapSplit={toggleMapSplit}
-                    showMemoSplitToggle={activeView === 'map'}
+                    showMemoSplitToggle={isDashboardReady && activeView === 'map'}
                     isMemoSplitVisible={isMemoSplitVisible}
                     onToggleMemoSplit={toggleMemoSplit}
-                    isProjectChatSidebarVisible={isProjectChatSidebarVisible}
+                    isProjectChatSidebarVisible={isDashboardReady && isProjectChatSidebarVisible}
                     onOpenProjectChatSidebar={toggleProjectChatSidebar}
                     onLogoClick={openTodayBoard}
                 />
@@ -1375,8 +1383,15 @@ export function DashboardClient({
                         onClose={() => setQuickTaskToast(null)}
                     />
                 )}
+
+                {!isDashboardReady && (
+                    <div className="flex min-h-0 flex-1 overflow-hidden">
+                        <DashboardPaneFallback />
+                    </div>
+                )}
+
                 {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
-                {isViewReady && isMobileViewport && activeView === 'today' && (
+                {isDashboardReady && isMobileViewport && activeView === 'today' && (
                     <>
                         {/* Mobile */}
                         <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
@@ -1395,13 +1410,13 @@ export function DashboardClient({
                     </>
                 )}
 
-                {isViewReady && isMobileViewport && activeView === 'habits' && (
+                {isDashboardReady && isMobileViewport && activeView === 'habits' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <HabitsView onUpdateTask={updateTask} />
                     </div>
                 )}
 
-                {isViewReady && isMobileViewport && activeView === 'map' && (
+                {isDashboardReady && isMobileViewport && activeView === 'map' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <MobileAiMapView
                             projects={projects}
@@ -1431,7 +1446,7 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {isViewReady && isMobileViewport && activeView === 'ai' && (
+                {isDashboardReady && isMobileViewport && activeView === 'ai' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <MobileAiExecutionView
                             selectedSpaceId={selectedSpaceId}
@@ -1448,7 +1463,7 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {isViewReady && isMobileViewport && activeView === 'automation' && (
+                {isDashboardReady && isMobileViewport && activeView === 'automation' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <MobileAiExecutionView
                             selectedSpaceId={selectedSpaceId}
@@ -1465,20 +1480,20 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {isViewReady && activeView === 'settings' && (
+                {isDashboardReady && activeView === 'settings' && (
                     <div className="flex-1 min-h-0 overflow-hidden">
                         <SettingsOverview />
                     </div>
                 )}
 
                 {/* === Mobile/Desktop: Ideal View === */}
-                {isViewReady && activeView === 'ideal' && (
+                {isDashboardReady && activeView === 'ideal' && (
                     <div className="flex-1 flex overflow-hidden">
                         <IdealView />
                     </div>
                 )}
 
-                {isViewReady && activeView === 'long-term' && (
+                {isDashboardReady && activeView === 'long-term' && (
                     <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", isRightSidePanelVisible && "md:hidden")}>
                         {isMapSplitVisible ? (
                             <div className="flex h-full min-h-0 overflow-hidden">
@@ -1549,7 +1564,7 @@ export function DashboardClient({
                 )}
 
                 {/* === Desktop: AI View === */}
-                {!isMobileViewport && activeView === 'ai' && (
+                {isDashboardReady && !isMobileViewport && activeView === 'ai' && (
                     <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiView
                             selectedSpaceId={selectedSpaceId}
@@ -1564,7 +1579,7 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {!isMobileViewport && activeView === 'automation' && (
+                {isDashboardReady && !isMobileViewport && activeView === 'automation' && (
                     <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiView
                             selectedSpaceId={selectedSpaceId}
@@ -1580,14 +1595,14 @@ export function DashboardClient({
                 )}
 
                 {/* === Desktop: AI Todos View === */}
-                {!isMobileViewport && activeView === 'ai-todos' && (
+                {isDashboardReady && !isMobileViewport && activeView === 'ai-todos' && (
                     <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiTodosView initialTasks={[]} initialSnapshot={null} sessionDate={getTodayDateString()} />
                     </div>
                 )}
 
                 {/* === Desktop: 3-pane layout === */}
-                {!isMobileViewport && (
+                {isDashboardReady && !isMobileViewport && (
                 <TodayDateProvider selectedDate={todaySelectedDate} setSelectedDate={setTodaySelectedDate}>
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
@@ -1814,11 +1829,11 @@ export function DashboardClient({
             </TodayDateProvider>
                 )}
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
-            {isAiChatOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
+            {isDashboardReady && isAiChatOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
                 <AiChatPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
-            {isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
+            {isDashboardReady && isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
                 <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             <MindmapLinkedMemosDialog
