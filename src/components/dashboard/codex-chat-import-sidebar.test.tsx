@@ -249,6 +249,54 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).getByRole("link", { name: /Codexで開く AI要約の横幅を拡張/ }).className).toContain("min-h-8")
   })
 
+  test("shows local running and fixed work time on history cards without server timing", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-19T00:00:00.000Z"))
+    const runningItem = {
+      ...chatItems[0],
+      id: "chat-running-local-card",
+      status: "running",
+      statusLabel: "実行中",
+      workStartedAt: null,
+      workAwaitingApprovalAt: null,
+      workCompletedAt: null,
+    }
+    const { rerenderSidebar } = renderSidebar({
+      chatItems: [runningItem],
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    let row = screen.getByTestId("codex-chat-import-row-chat-running-local-card")
+    expect(within(row).getByText("実行中")).toBeInTheDocument()
+    expect(within(row).getByText("0s")).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(18_000)
+      await Promise.resolve()
+    })
+
+    row = screen.getByTestId("codex-chat-import-row-chat-running-local-card")
+    expect(within(row).getByText("18s")).toBeInTheDocument()
+
+    rerenderSidebar({
+      chatItems: [{
+        ...runningItem,
+        status: "awaiting_approval",
+        statusLabel: "返信待ち",
+      }],
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    row = screen.getByTestId("codex-chat-import-row-chat-running-local-card")
+    expect(within(row).getByText("作業時間 18s")).toBeInTheDocument()
+  })
+
   test("renders completed work time from one-rally timing on the history card", () => {
     renderSidebar({
       chatItems: [

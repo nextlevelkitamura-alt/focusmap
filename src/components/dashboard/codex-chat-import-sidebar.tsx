@@ -1734,7 +1734,10 @@ export function CodexChatImportSidebar({
                   const statusText = item.statusLabel ?? codexMonitorUiLabel(visualStatus)
                   const threadHref = codexThreadUrl(item.threadId)
                   const updatedLabel = displayUpdatedLabel(item)
-                  const workElapsedMs = codexChatImportWorkElapsedMs(item, workNowMs, uiStatus === "running")
+                  const itemLocalWorkTimer = localWorkTimers[localWorkTimerKey(item)] ?? null
+                  const itemLocalWorkElapsedMs = localWorkElapsedMs(itemLocalWorkTimer, workNowMs)
+                  const itemRallyWorkElapsedMs = codexChatImportWorkElapsedMs(item, workNowMs, uiStatus === "running")
+                  const workElapsedMs = itemLocalWorkElapsedMs ?? itemRallyWorkElapsedMs
                   const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
                   const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
                   return (
