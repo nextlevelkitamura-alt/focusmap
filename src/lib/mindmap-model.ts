@@ -74,6 +74,13 @@ type BuildMindMapModelParams = {
 
 const COLUMN_GAP = 24;
 const COLUMN_GAP_MOBILE = 20;
+const SIBLING_NODE_GAP = 10;
+const SIBLING_NODE_GAP_MOBILE = 14;
+
+type VerticalSubtreeExtent = {
+    top: number;
+    bottom: number;
+};
 
 const hasMemoImages = (task: Task) =>
     Array.isArray(task.memo_images) && task.memo_images.some(url => typeof url === 'string' && url.trim().length > 0);
@@ -106,6 +113,91 @@ const getBounds = (nodes: MindMapModelNode[]) => {
         width: maxX - minX,
         height: maxY - minY,
     };
+};
+
+const alignChildrenAroundParents = (
+    nodes: MindMapModelNode[],
+    projectNodeId: string,
+    siblingGap: number,
+) => {
+    const nodeById = new Map(nodes.map(node => [node.id, node]));
+    const childrenByParent = new Map<string, MindMapModelNode[]>();
+
+    for (const node of nodes) {
+        if (!node.parentId) continue;
+        const children = childrenByParent.get(node.parentId) ?? [];
+        children.push(node);
+        childrenByParent.set(node.parentId, children);
+    }
+
+    const extentById = new Map<string, VerticalSubtreeExtent>();
+    const childPitchByParentId = new Map<string, number>();
+
+    const getExtent = (node: MindMapModelNode, seen = new Set<string>()): VerticalSubtreeExtent => {
+        const cached = extentById.get(node.id);
+        if (cached) return cached;
+
+        if (seen.has(node.id)) {
+            return { top: node.height / 2, bottom: node.height / 2 };
+        }
+        const nextSeen = new Set(seen);
+        nextSeen.add(node.id);
+
+        const children = childrenByParent.get(node.id) ?? [];
+        let top = node.height / 2;
+        let bottom = node.height / 2;
+
+        if (children.length > 0) {
+            const childExtents = children.map(child => getExtent(child, nextSeen));
+            const maxChildHeight = Math.max(...children.map(child => child.height));
+            let pitch = maxChildHeight + siblingGap;
+
+            for (let i = 1; i < children.length; i += 1) {
+                pitch = Math.max(
+                    pitch,
+                    childExtents[i - 1].bottom + childExtents[i].top + siblingGap
+                );
+            }
+            pitch = Math.ceil(pitch / 2) * 2;
+
+            const middleIndex = (children.length - 1) / 2;
+            children.forEach((child, index) => {
+                const offset = (index - middleIndex) * pitch;
+                const childExtent = childExtents[index];
+                top = Math.max(top, childExtent.top - offset);
+                bottom = Math.max(bottom, childExtent.bottom + offset);
+            });
+
+            childPitchByParentId.set(node.id, pitch);
+        }
+
+        const extent = { top, bottom };
+        extentById.set(node.id, extent);
+        return extent;
+    };
+
+    const placeChildren = (node: MindMapModelNode, centerY: number, seen = new Set<string>()) => {
+        if (seen.has(node.id)) return;
+        const nextSeen = new Set(seen);
+        nextSeen.add(node.id);
+
+        node.y = Math.round(centerY - node.height / 2);
+
+        const children = childrenByParent.get(node.id) ?? [];
+        if (children.length === 0) return;
+
+        const pitch = childPitchByParentId.get(node.id) ?? Math.max(...children.map(child => child.height)) + siblingGap;
+        const middleIndex = (children.length - 1) / 2;
+        children.forEach((child, index) => {
+            placeChildren(child, centerY + (index - middleIndex) * pitch, nextSeen);
+        });
+    };
+
+    const projectNode = nodeById.get(projectNodeId);
+    if (!projectNode) return;
+
+    getExtent(projectNode);
+    placeChildren(projectNode, projectNode.y + projectNode.height / 2);
 };
 
 export function buildMindMapModel({
@@ -329,6 +421,12 @@ export function buildMindMapModel({
         const alignedX = leftByDepth.get(node.depth);
         if (alignedX != null) node.x = alignedX;
     }
+
+    alignChildrenAroundParents(
+        nodes,
+        projectNodeId,
+        isMobile ? SIBLING_NODE_GAP_MOBILE : SIBLING_NODE_GAP
+    );
 
     return {
         nodes,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Project, Task } from "@/types/database";
-import { buildMindMapModel } from "./mindmap-model";
+import { buildMindMapModel, type MindMapModel, type MindMapModelNode } from "./mindmap-model";
 import { PROJECT_NODE_MAX_WIDTH, estimateProjectNodeWidth, estimateTaskNodeHeight, estimateTaskNodeWidth } from "./mindmap-geometry";
 
 const project = {
@@ -27,6 +27,31 @@ const makeTask = (overrides: Partial<Task>): Task => ({
     habit_end_date: null,
     ...overrides,
 } as Task);
+
+const getTaskNode = (model: MindMapModel, id: string) => {
+    const node = model.taskById.get(id);
+    if (!node) throw new Error(`Missing task node: ${id}`);
+    return node;
+};
+
+const centerY = (node: MindMapModelNode) => node.y + node.height / 2;
+
+const getSubtreeBounds = (model: MindMapModel, rootId: string) => {
+    const root = getTaskNode(model, rootId);
+    const nodes: MindMapModelNode[] = [];
+    const visit = (node: MindMapModelNode) => {
+        nodes.push(node);
+        for (const child of model.nodes.filter(candidate => candidate.parentId === node.id)) {
+            visit(child);
+        }
+    };
+    visit(root);
+
+    return {
+        minY: Math.min(...nodes.map(node => node.y)),
+        maxY: Math.max(...nodes.map(node => node.y + node.height)),
+    };
+};
 
 describe("buildMindMapModel", () => {
     test("keeps sibling node widths independent when one task has a manual width", () => {
@@ -158,6 +183,120 @@ describe("buildMindMapModel", () => {
         });
 
         expect(model.taskById.get("active-child")?.y).toBeLessThan(model.taskById.get("done-child")?.y ?? 0);
+    });
+
+    test("centers the middle child on the parent when a parent has three children", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const childA = makeTask({
+            id: "child-a",
+            title: "Child A",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+        const childB = makeTask({
+            id: "child-b",
+            title: "Child B",
+            parent_task_id: "parent",
+            order_index: 1,
+        });
+        const childC = makeTask({
+            id: "child-c",
+            title: "Child C",
+            parent_task_id: "parent",
+            order_index: 2,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [childA, childB, childC],
+            isMobile: false,
+        });
+
+        const parentCenter = centerY(getTaskNode(model, "parent"));
+        const childCenters = ["child-a", "child-b", "child-c"].map(id => centerY(getTaskNode(model, id)));
+
+        expect(childCenters[1]).toBe(parentCenter);
+        expect(childCenters[1] - childCenters[0]).toBe(childCenters[2] - childCenters[1]);
+    });
+
+    test("places the parent between the two middle children when a parent has four children", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const children = [0, 1, 2, 3].map(index => makeTask({
+            id: `child-${index}`,
+            title: `Child ${index}`,
+            parent_task_id: "parent",
+            order_index: index,
+        }));
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: children,
+            isMobile: false,
+        });
+
+        const parentCenter = centerY(getTaskNode(model, "parent"));
+        const childCenters = children.map(child => centerY(getTaskNode(model, child.id)));
+        const gaps = childCenters.slice(1).map((value, index) => value - childCenters[index]);
+
+        expect(gaps[1]).toBe(gaps[0]);
+        expect(gaps[2]).toBe(gaps[0]);
+        expect(childCenters[1] + childCenters[2]).toBe(parentCenter * 2);
+    });
+
+    test("widens sibling pitch when a child subtree would otherwise overlap the next sibling", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const branch = makeTask({
+            id: "branch",
+            title: "Branch",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+        const sibling = makeTask({
+            id: "sibling",
+            title: "Sibling",
+            parent_task_id: "parent",
+            order_index: 1,
+        });
+        const grandchildA = makeTask({
+            id: "grandchild-a",
+            title: "Grandchild A",
+            parent_task_id: "branch",
+            order_index: 0,
+        });
+        const grandchildB = makeTask({
+            id: "grandchild-b",
+            title: "Grandchild B",
+            parent_task_id: "branch",
+            order_index: 1,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [branch, sibling, grandchildA, grandchildB],
+            isMobile: false,
+        });
+
+        const leafPitch = getTaskNode(model, "branch").height + 10;
+        expect(centerY(getTaskNode(model, "sibling")) - centerY(getTaskNode(model, "branch"))).toBeGreaterThan(leafPitch);
+
+        const branchBounds = getSubtreeBounds(model, "branch");
+        const siblingBounds = getSubtreeBounds(model, "sibling");
+        expect(branchBounds.maxY + 10).toBeLessThanOrEqual(siblingBounds.minY);
     });
 
     test("uses the widest node in a depth as the basis for the next column", () => {
