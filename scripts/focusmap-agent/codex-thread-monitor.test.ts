@@ -70,8 +70,8 @@ describe('codex-thread-monitor state detection', () => {
     expect(DEFAULT_TARGET_REFRESH_INTERVAL_MS).toBe(3_000);
   });
 
-  test('reconciles missing Codex threads once a minute by default', () => {
-    expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60_000);
+  test('reconciles enabled Codex history repos hourly by default', () => {
+    expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60 * 60 * 1000);
   });
 
   test('prefers the freshest default Codex state DB path', () => {
@@ -245,6 +245,33 @@ describe('codex-thread-monitor state detection', () => {
     expect(summary.state).toBe('awaiting_approval');
     expect(summary.latestTaskCompleteAt).toBe('2026-06-08T15:49:18.368Z');
     expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
+  });
+
+  test('summarizes rollout duration and AI history status without treating task_complete as completed', () => {
+    const raw = [
+      line('2026-06-08T15:49:14.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:41.000Z', { type: 'task_complete', last_agent_message: '確認してください' }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+
+    expect(summary.historyStatus).toBe('awaiting_approval');
+    expect(summary.startedAt).toBe('2026-06-08T15:49:14.000Z');
+    expect(summary.endedAt).toBe('2026-06-08T15:49:41.000Z');
+    expect(summary.workDurationSeconds).toBe(27);
+  });
+
+  test('marks a user message after completion as resumed running metadata', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
+      line('2026-06-08T15:49:15.000Z', { type: 'user_message', message: '追加で見て' }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+
+    expect(summary.historyStatus).toBe('running');
+    expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
   });
 
   test('keeps a running task running until the completion signal is stable without waiting for thread metadata updates', () => {

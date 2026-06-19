@@ -1,4 +1,13 @@
-import type { AgentActivityMessage, AgentCommand, AgentConfig, AiTask, CodexThreadImportPayload, CodexThreadImportScope, TaskResultJson } from './types.js';
+import type {
+  AgentActivityMessage,
+  AgentCommand,
+  AgentConfig,
+  AiHistoryBatchUpsertPayload,
+  AiTask,
+  CodexThreadImportPayload,
+  CodexThreadImportScope,
+  TaskResultJson,
+} from './types.js';
 import type { ScreenshotPreviewBundle } from './screenshot-preview.js';
 
 function normalizeApiUrl(value: string | undefined): string {
@@ -243,6 +252,23 @@ export class AgentApiClient {
     return this.request('/agents/codex-monitor/import-thread', {
       runner_id: runnerId,
       thread,
+    });
+  }
+
+  async batchUpsertAiHistory(
+    runnerId: string,
+    payload: AiHistoryBatchUpsertPayload,
+  ): Promise<{
+    ok: boolean;
+    upserted: number;
+    skipped: number;
+    errors?: Array<{ index: number; error: string }>;
+    scopesUpserted?: number;
+    indexedAt?: string;
+  }> {
+    return this.request('/agents/ai-history/batch-upsert', {
+      runner_id: runnerId,
+      ...payload,
     });
   }
 

@@ -5,7 +5,15 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { AgentApiError, type AgentApiClient } from './api-client.js';
-import type { AgentActivityMessage, AiTask, CodexThreadImportPayload, CodexThreadImportScope, TaskResultJson } from './types.js';
+import type {
+  AgentActivityMessage,
+  AiHistoryBatchUpsertItem,
+  AiHistoryBatchUpsertScope,
+  AiHistoryStatus,
+  AiTask,
+  CodexThreadImportScope,
+  TaskResultJson,
+} from './types.js';
 import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
 import { debug, error as logError, info } from './logger.js';
 
@@ -24,11 +32,17 @@ const syncCache = new Map<string, string>();
 const orphanImportCache = new Map<string, number>();
 const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: string }>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
-export const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
+export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 12_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 12_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
+const AI_HISTORY_PROVIDER = 'codex_app';
+const AI_HISTORY_HOT_SYNC_LIMIT = 3;
+const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
+const AI_HISTORY_BATCH_SIZE = 80;
+const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
+const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
 const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
   ? configuredOrphanImportWindowMs
@@ -42,6 +56,7 @@ let orphanImportApiUnavailableUntil = 0;
 let importScopesApiUnavailableUntil = 0;
 const WORKTREE_PATH_CACHE_TTL_MS = 30_000;
 const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }>();
+const aiHistorySyncCache = new Map<string, { hash: string; sentAt: number; running: boolean }>();
 
 type CodexThreadImportScopeHeartbeat = {
   project_id: string;
@@ -60,6 +75,7 @@ type CodexThreadMonitorHeartbeatState = {
   last_reconcile_at: string | null;
   next_reconcile_at: string | null;
   last_reconcile_imported: number | null;
+  last_reconcile_upserted: number | null;
   last_error: string | null;
 };
 
@@ -73,6 +89,7 @@ const codexThreadMonitorHeartbeatState: CodexThreadMonitorHeartbeatState = {
   last_reconcile_at: null,
   next_reconcile_at: null,
   last_reconcile_imported: null,
+  last_reconcile_upserted: null,
   last_error: null,
 };
 
@@ -93,6 +110,7 @@ function codexThreadImportScopeMetadataFlat() {
     codex_last_reconcile_at: codexThreadMonitorHeartbeatState.last_reconcile_at,
     codex_next_reconcile_at: codexThreadMonitorHeartbeatState.next_reconcile_at,
     codex_last_reconcile_imported: codexThreadMonitorHeartbeatState.last_reconcile_imported,
+    codex_last_reconcile_upserted: codexThreadMonitorHeartbeatState.last_reconcile_upserted,
     codex_monitor_last_error: codexThreadMonitorHeartbeatState.last_error,
   };
 }
@@ -132,6 +150,7 @@ type VisibleMessage = {
 
 type RolloutSummary = {
   state: 'running' | 'awaiting_approval';
+  historyStatus: AiHistoryStatus;
   reviewReason: string;
   currentStep: string;
   lastActivityAt: string | null;
@@ -142,6 +161,10 @@ type RolloutSummary = {
   latestTaskCompleteAt: string | null;
   latestRunningActivityAt: string | null;
   latestAgentMessage: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  activeStartedAt: string | null;
+  workDurationSeconds: number | null;
   visibleMessages: VisibleMessage[];
 };
 
@@ -309,6 +332,22 @@ function looksLikeQuestion(value: string): boolean {
   return /(確認してください|教えてください|選んでください|必要ですか|よいですか|しますか|どちら|どれ)/u.test(text.slice(-160));
 }
 
+function failedRolloutPayload(payload: Record<string, unknown>): boolean {
+  const text = [
+    safeText(payload.error),
+    safeText(payload.reason),
+    safeText(payload.message),
+    safeText(payload),
+  ].join(' ').toLowerCase();
+  return /\b(failed|failure|error|exception|panic)\b|失敗|エラー|例外/u.test(text);
+}
+
+function needsInputRolloutPayload(payloadType: string, payload: Record<string, unknown>): boolean {
+  const type = payloadType.toLowerCase();
+  void payload;
+  return /(needs_input|input_required|approval_required|request_input|user_input)/.test(type);
+}
+
 function isContextMaintenanceEvent(payloadType: string, payload: Record<string, unknown>): boolean {
   const type = payloadType.toLowerCase();
   if (/(context|window).*(compact|compaction|compress|compression|summariz|summary)/.test(type)) return true;
@@ -441,6 +480,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
   const threadArchived = Boolean(row.archived);
   const threadUpdatedAt = timestampToIso(row.updated_at_ms ?? null);
   let state: RolloutSummary['state'] = threadArchived ? 'awaiting_approval' : 'running';
+  let historyStatus: AiHistoryStatus = threadArchived ? 'awaiting_approval' : 'running';
   let reviewReason = threadArchived ? 'archived' : 'started';
   let currentStep = threadArchived ? 'Codex thread は確認待ちです' : 'Codex.appで実行中';
   let lastActivityAt = threadUpdatedAt;
@@ -449,6 +489,31 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
   let latestTaskCompleteAt: string | null = null;
   let latestRunningActivityAt: string | null = null;
   let latestAgentMessage: string | null = null;
+  let startedAt: string | null = null;
+  let endedAt: string | null = null;
+  let activeStartedAt: string | null = null;
+  let activeStartedMs: number | null = null;
+  let workDurationMs = 0;
+
+  const markWorkStarted = (iso: string | null) => {
+    const ms = timeMs(iso);
+    if (ms === null) return;
+    startedAt = startedAt ?? new Date(ms).toISOString();
+    if (activeStartedMs === null || ms < activeStartedMs) {
+      activeStartedAt = new Date(ms).toISOString();
+      activeStartedMs = ms;
+    }
+  };
+  const markWorkEnded = (iso: string | null) => {
+    const ms = timeMs(iso);
+    if (ms === null) return;
+    endedAt = new Date(ms).toISOString();
+    if (activeStartedMs !== null) {
+      workDurationMs += Math.max(0, ms - activeStartedMs);
+      activeStartedMs = null;
+      activeStartedAt = null;
+    }
+  };
 
   let sequence = 0;
   for (const line of rawJsonl.split('\n')) {
@@ -475,16 +540,20 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       latestTaskStartedAt = eventTime;
       latestRunningActivityAt = eventTime;
       state = 'running';
+      historyStatus = 'running';
       reviewReason = 'started';
       currentStep = 'Codexが実行を開始しました';
+      markWorkStarted(eventTime);
       continue;
     }
 
     if (payloadType === 'task_complete') {
       latestTaskCompleteAt = eventTime;
       state = 'awaiting_approval';
+      historyStatus = 'awaiting_approval';
       reviewReason = 'completed';
       currentStep = 'Codexが実行完了し確認待ちです';
+      markWorkEnded(eventTime);
       const text = safeText(payload.last_agent_message);
       if (text) {
         latestAgentMessage = compactText(text, 2_000);
@@ -507,9 +576,41 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     if (payloadType === 'turn_aborted') {
       latestTaskCompleteAt = eventTime;
       state = 'awaiting_approval';
-      reviewReason = 'aborted';
-      currentStep = 'Codexのターンが停止し確認待ちです';
+      historyStatus = failedRolloutPayload(payload) ? 'failed' : 'awaiting_approval';
+      reviewReason = historyStatus === 'failed' ? 'failed' : 'aborted';
+      currentStep = historyStatus === 'failed'
+        ? 'Codexのターンが失敗しました'
+        : 'Codexのターンが停止し確認待ちです';
+      markWorkEnded(eventTime);
       completeLatestCodexVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime, 'turn_aborted');
+      continue;
+    }
+
+    if (payloadType === 'task_failed' || payloadType === 'error') {
+      latestTaskCompleteAt = eventTime;
+      state = 'awaiting_approval';
+      historyStatus = 'failed';
+      reviewReason = 'failed';
+      currentStep = 'Codexの実行が失敗しました';
+      markWorkEnded(eventTime);
+      continue;
+    }
+
+    if (payloadType === 'completed' || payloadType === 'thread_completed' || payloadType === 'task_done' || payloadType === 'task_succeeded') {
+      latestTaskCompleteAt = eventTime;
+      state = 'awaiting_approval';
+      historyStatus = 'completed';
+      reviewReason = 'completed';
+      currentStep = 'Codexの実行が完了しました';
+      markWorkEnded(eventTime);
+      continue;
+    }
+
+    if (needsInputRolloutPayload(payloadType, payload)) {
+      state = 'awaiting_approval';
+      historyStatus = 'needs_input';
+      reviewReason = 'needs_input';
+      currentStep = 'Codexが入力を待っています';
       continue;
     }
 
@@ -522,6 +623,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         }
         latestRunningActivityAt = eventTime;
         state = 'running';
+        historyStatus = 'running';
         reviewReason = 'started';
         latestAgentMessage = compactText(text, 2_000);
         currentStep = compactStep(text);
@@ -542,6 +644,14 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       const text = safeText(payload);
       if (text && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
+        if ((timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
+          latestRunningActivityAt = eventTime;
+          state = 'running';
+          historyStatus = 'running';
+          reviewReason = 'started';
+          currentStep = 'Codexが追加指示を受け取りました';
+          markWorkStarted(eventTime);
+        }
         appendVisibleMessage(visibleMessages, {
           sequence,
           role: 'user',
@@ -561,6 +671,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       }
       latestRunningActivityAt = eventTime;
       state = 'running';
+      historyStatus = 'running';
       reviewReason = 'started';
       currentStep = 'Codexがコンテキストを整理中';
       continue;
@@ -573,6 +684,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       }
       latestRunningActivityAt = eventTime;
       state = 'running';
+      historyStatus = 'running';
       reviewReason = 'started';
       currentStep = 'Codexが内容を検討中';
       continue;
@@ -585,6 +697,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       }
       latestRunningActivityAt = eventTime;
       state = 'running';
+      historyStatus = 'running';
       reviewReason = 'started';
       currentStep = `Codexが${toolStepName(payload.name ?? payload.tool_name)}を実行中`;
       continue;
@@ -597,6 +710,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       }
       latestRunningActivityAt = eventTime;
       state = 'running';
+      historyStatus = 'running';
       reviewReason = 'started';
       currentStep = 'Codexが実行結果を確認中';
       continue;
@@ -613,6 +727,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         }
         latestRunningActivityAt = eventTime;
         state = 'running';
+        historyStatus = 'running';
         reviewReason = 'started';
         latestAgentMessage = compactText(text, 2_000);
         currentStep = compactStep(text);
@@ -627,6 +742,14 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         });
       } else if (role === 'user' && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
+        if ((timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
+          latestRunningActivityAt = eventTime;
+          state = 'running';
+          historyStatus = 'running';
+          reviewReason = 'started';
+          currentStep = 'Codexが追加指示を受け取りました';
+          markWorkStarted(eventTime);
+        }
         appendVisibleMessage(visibleMessages, {
           sequence,
           role: 'user',
@@ -649,6 +772,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
 
   return {
     state,
+    historyStatus,
     reviewReason,
     currentStep,
     lastActivityAt,
@@ -659,6 +783,10 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     latestTaskCompleteAt,
     latestRunningActivityAt,
     latestAgentMessage,
+    startedAt,
+    endedAt,
+    activeStartedAt,
+    workDurationSeconds: workDurationMs > 0 ? Math.floor(workDurationMs / 1000) : null,
     visibleMessages,
   };
 }
@@ -766,28 +894,222 @@ export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiE
   return error instanceof AgentApiError && (error.status === 404 || error.status === 405);
 }
 
-function importPayloadFromThread(
+type PreparedAiHistoryItem = {
+  item: AiHistoryBatchUpsertItem;
+  hash: string;
+  cacheKey: string;
+  running: boolean;
+};
+
+type AiHistorySyncMode = 'hot' | 'reconcile';
+
+function scopeKey(scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>): string {
+  return `${scope.project_id}\u001f${normalizeLocalPath(scope.repo_path)}`;
+}
+
+function prioritizeImportScopesForReconcile(scopes: CodexThreadImportScope[]): CodexThreadImportScope[] {
+  return [...scopes].sort((left, right) => {
+    const enabledDelta = (timeMs(right.enabled_since) ?? 0) - (timeMs(left.enabled_since) ?? 0);
+    if (enabledDelta !== 0) return enabledDelta;
+    return scopeKey(left).localeCompare(scopeKey(right));
+  });
+}
+
+function linkedTaskForThread(
   row: CodexThreadRow,
-  scope: CodexThreadImportScope | null = null,
-  summary: RolloutSummary | null = null,
-): CodexThreadImportPayload {
+  tasks: AiTask[],
+  cwdScopeMap?: Map<string, CodexThreadImportScope>,
+): AiTask | null {
+  const direct = tasks.find(task => taskThreadId(task) === row.id);
+  if (direct) return direct;
+
+  const firstUserMessage = compactText(row.first_user_message ?? '', 8_000);
+  if (!firstUserMessage || isInternalUserMessage(firstUserMessage)) return null;
+  const rowCwd = normalizeLocalPath(row.cwd);
+
+  return tasks.find(task => {
+    if (task.executor !== 'codex_app') return false;
+    if (!task.source_task_id) return false;
+    if (taskThreadId(task)) return false;
+    const result = taskResult(task);
+    if (result.codex_manual_handoff !== true) return false;
+    const taskCwd = normalizeLocalPath(task.cwd);
+    if (rowCwd && taskCwd && !cwdMatchesTask(rowCwd, taskCwd, cwdScopeMap)) return false;
+    if (!isThreadNearManualHandoffTime(row, task)) return false;
+    return promptsLikelyMatch(task.prompt, firstUserMessage);
+  }) ?? null;
+}
+
+function aiHistoryStatusForSummary(rawRollout: string, row: CodexThreadRow, summary: RolloutSummary): AiHistoryStatus {
+  if (!rawRollout.trim()) return row.archived ? 'awaiting_approval' : 'idle';
+  return summary.historyStatus;
+}
+
+function workDurationSecondsForSummary(
+  summary: RolloutSummary,
+  status: AiHistoryStatus,
+  nowMs: number,
+): number | null {
+  const base = summary.workDurationSeconds ?? 0;
+  if (status === 'running') {
+    const activeStartMs = timeMs(summary.activeStartedAt);
+    if (activeStartMs !== null) return Math.max(0, Math.floor((base * 1000 + nowMs - activeStartMs) / 1000));
+  }
+  return base > 0 ? base : null;
+}
+
+function coarseDurationSeconds(row: CodexThreadRow): number | null {
+  const createdMs = timeMs(row.created_at_ms);
+  const updatedMs = timeMs(row.updated_at_ms);
+  if (createdMs === null || updatedMs === null || updatedMs <= createdMs) return null;
+  return Math.floor((updatedMs - createdMs) / 1000);
+}
+
+function aiHistoryTitle(row: CodexThreadRow): string {
+  return codexThreadGeneratedTitle(row) ??
+    oneLineTitle(row.preview, 80) ??
+    `Codex thread ${row.id.slice(0, 8)}`;
+}
+
+function aiHistorySnippet(row: CodexThreadRow): string | null {
+  const preview = compactText(row.preview ?? '', 500);
+  return preview || null;
+}
+
+function aiHistoryItemCacheKey(item: AiHistoryBatchUpsertItem): string {
+  return [
+    item.provider ?? AI_HISTORY_PROVIDER,
+    normalizeLocalPath(item.repoPath),
+    item.externalThreadId,
+  ].join('\u001f');
+}
+
+function aiHistoryItemHash(item: AiHistoryBatchUpsertItem): string {
+  const durationHash = item.status === 'running' && typeof item.workDurationSeconds === 'number'
+    ? Math.floor(item.workDurationSeconds / 60)
+    : item.workDurationSeconds ?? null;
+  return JSON.stringify({
+    provider: item.provider ?? AI_HISTORY_PROVIDER,
+    externalThreadId: item.externalThreadId,
+    repoPath: normalizeLocalPath(item.repoPath),
+    worktreePath: normalizeLocalPath(item.worktreePath),
+    projectId: item.projectId ?? null,
+    sourceTaskId: item.sourceTaskId ?? null,
+    linkedAiTaskId: item.linkedAiTaskId ?? null,
+    title: item.title ?? null,
+    snippet: item.snippet ?? null,
+    status: item.status ?? null,
+    runState: item.runState ?? null,
+    lastActivityAt: item.lastActivityAt ?? null,
+    startedAt: item.startedAt ?? null,
+    endedAt: item.endedAt ?? null,
+    durationHash,
+    archived: item.archived ?? null,
+    archivedAt: item.archivedAt ?? null,
+    detailSyncedAt: item.detailSyncedAt ?? null,
+    detailMessageCount: item.detailMessageCount ?? null,
+  });
+}
+
+function shouldQueueAiHistoryItem(prepared: PreparedAiHistoryItem): boolean {
+  const cached = aiHistorySyncCache.get(prepared.cacheKey);
+  if (!cached) return true;
+  if (cached.hash === prepared.hash) return false;
+  if (
+    prepared.running &&
+    cached.running &&
+    Date.now() - cached.sentAt < AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS
+  ) {
+    const withoutDuration = (hash: string) => hash.replace(/"durationHash":\d+/u, '"durationHash":0');
+    if (withoutDuration(cached.hash) === withoutDuration(prepared.hash)) return false;
+  }
+  return true;
+}
+
+function aiHistoryItemFromThread(input: {
+  row: CodexThreadRow;
+  scope: CodexThreadImportScope;
+  summary: RolloutSummary;
+  rawRollout: string;
+  linkedTask: AiTask | null;
+  nowMs: number;
+}): PreparedAiHistoryItem {
+  const repoPath = normalizeLocalPath(input.scope.repo_path);
+  const cwd = normalizeLocalPath(input.row.cwd);
+  const worktreePath = cwd && cwd !== repoPath ? cwd : null;
+  const hasRollout = input.rawRollout.trim().length > 0;
+  const status = aiHistoryStatusForSummary(input.rawRollout, input.row, input.summary);
+  const lastActivityAt = latestIso(
+    input.summary.lastActivityAt,
+    input.summary.threadUpdatedAt,
+    input.row.updated_at_ms,
+    input.row.created_at_ms,
+  ) ?? new Date(input.nowMs).toISOString();
+  const startedAt = input.summary.startedAt ?? (!hasRollout ? timestampToIso(input.row.created_at_ms) : null);
+  const endedAt = input.summary.endedAt ?? (!hasRollout && status !== 'running' ? timestampToIso(input.row.updated_at_ms) : null);
+  const workDurationSeconds = hasRollout
+    ? workDurationSecondsForSummary(input.summary, status, input.nowMs)
+    : coarseDurationSeconds(input.row);
+  const archived = Boolean(input.row.archived);
+  const item: AiHistoryBatchUpsertItem = {
+    provider: AI_HISTORY_PROVIDER,
+    externalThreadId: input.row.id,
+    repoPath,
+    worktreePath,
+    projectId: input.scope.project_id,
+    sourceTaskId: input.linkedTask?.source_task_id ?? null,
+    linkedAiTaskId: input.linkedTask?.id ?? null,
+    title: aiHistoryTitle(input.row),
+    snippet: aiHistorySnippet(input.row),
+    status,
+    runState: input.summary.reviewReason,
+    lastActivityAt,
+    startedAt,
+    endedAt,
+    workDurationSeconds,
+    archived,
+    archivedAt: archived ? lastActivityAt : null,
+    metadata: {
+      source: 'codex_state_sqlite',
+      metadata_only: true,
+      rollout_state: input.summary.reviewReason,
+      rollout_present: hasRollout,
+      duration_approximate: !hasRollout && workDurationSeconds !== null,
+      thread_updated_at_ms: input.row.updated_at_ms ?? null,
+      thread_created_at_ms: input.row.created_at_ms ?? null,
+      scope_project_id: input.scope.project_id,
+      scope_repo_path: repoPath,
+      worktree_path: worktreePath,
+    },
+  };
+  const hash = aiHistoryItemHash(item);
   return {
-    id: row.id,
-    title: row.title ?? null,
-    preview: row.preview ?? null,
-    first_user_message: row.first_user_message ?? null,
-    cwd: row.cwd ?? null,
-    archived: Boolean(row.archived),
-    updated_at_ms: row.updated_at_ms ?? row.created_at_ms ?? null,
-    codex_run_state: summary?.state ?? (row.archived ? 'awaiting_approval' : 'running'),
-    codex_review_reason: summary?.reviewReason ?? (row.archived ? 'archived' : 'external_thread_import'),
-    current_step: summary?.currentStep ?? null,
-    last_activity_at: latestIso(summary?.lastActivityAt, summary?.threadUpdatedAt, row.updated_at_ms, row.created_at_ms),
-    awaiting_approval_at: summary?.state === 'awaiting_approval'
-      ? latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms, row.created_at_ms)
-      : null,
-    scope_project_id: scope?.project_id ?? null,
-    scope_repo_path: scope?.repo_path ?? null,
+    item,
+    hash,
+    cacheKey: aiHistoryItemCacheKey(item),
+    running: status === 'running',
+  };
+}
+
+function aiHistoryScopePayload(
+  scope: CodexThreadImportScope,
+  scannedAt: string,
+  reconciledAt: string | null,
+): AiHistoryBatchUpsertScope | null {
+  const projectId = typeof scope.project_id === 'string' ? scope.project_id.trim() : '';
+  const repoPath = normalizeLocalPath(scope.repo_path);
+  if (!projectId || !repoPath) return null;
+  return {
+    projectId,
+    provider: AI_HISTORY_PROVIDER,
+    repoPath,
+    syncEnabled: true,
+    lastScannedAt: scannedAt,
+    lastReconciledAt: reconciledAt,
+    settings: {
+      source: 'codex_monitor_import_scopes',
+      enabled_since: scope.enabled_since ?? null,
+    },
   };
 }
 
@@ -1257,10 +1579,16 @@ async function importScopeHeartbeatScopes(importScopes: CodexThreadImportScope[]
   return results;
 }
 
-async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: string[] = []): Promise<CodexThreadRow[]> {
+async function readRecentThreads(
+  dbPath: string,
+  sinceMs: number,
+  repoPaths: string[] = [],
+  limit = ORPHAN_IMPORT_SCAN_LIMIT,
+): Promise<CodexThreadRow[]> {
   const cwdCondition = repoPaths.length > 0
     ? ` AND cwd IN (${repoPaths.map(sqlString).join(', ')})`
     : '';
+  const safeLimit = Math.max(1, Math.min(1_000, Math.floor(limit)));
   return sqliteJson<CodexThreadRow>(
     dbPath,
     [
@@ -1268,7 +1596,7 @@ async function readRecentThreads(dbPath: string, sinceMs: number, repoPaths: str
       'FROM threads',
       `WHERE updated_at_ms >= ${Math.max(0, Math.floor(sinceMs))}${cwdCondition}`,
       'ORDER BY updated_at_ms DESC',
-      `LIMIT ${ORPHAN_IMPORT_SCAN_LIMIT}`,
+      `LIMIT ${safeLimit}`,
     ].join(' '),
   );
 }
@@ -1327,14 +1655,68 @@ async function listThreadImportScopes(
   }
 }
 
-async function importOrphanThreads(
+function isAiHistorySyncApiUnavailable(error: unknown): error is AgentApiError {
+  return error instanceof AgentApiError && (error.status === 404 || error.status === 405 || error.status === 503);
+}
+
+async function sendAiHistoryMetadataBatch(
+  api: AgentApiClient,
+  runnerId: string,
+  preparedItems: PreparedAiHistoryItem[],
+  scopes: AiHistoryBatchUpsertScope[],
+): Promise<number> {
+  if (preparedItems.length === 0 && scopes.length === 0) return 0;
+  if (Date.now() < orphanImportApiUnavailableUntil) return 0;
+
+  let upserted = 0;
+  let scopesSent = false;
+  const chunks = preparedItems.length > 0
+    ? Array.from({ length: Math.ceil(preparedItems.length / AI_HISTORY_BATCH_SIZE) }, (_, index) => (
+      preparedItems.slice(index * AI_HISTORY_BATCH_SIZE, (index + 1) * AI_HISTORY_BATCH_SIZE)
+    ))
+    : [[] as PreparedAiHistoryItem[]];
+
+  for (const chunk of chunks) {
+    try {
+      const response = await api.batchUpsertAiHistory(runnerId, {
+        provider: AI_HISTORY_PROVIDER,
+        items: chunk.map(prepared => prepared.item),
+        scopes: scopesSent ? [] : scopes,
+      });
+      scopesSent = true;
+      const erroredIndexes = new Set((response.errors ?? []).map(error => error.index));
+      chunk.forEach((prepared, index) => {
+        if (erroredIndexes.has(index)) return;
+        aiHistorySyncCache.set(prepared.cacheKey, {
+          hash: prepared.hash,
+          sentAt: Date.now(),
+          running: prepared.running,
+        });
+      });
+      upserted += response.upserted ?? 0;
+    } catch (error) {
+      if (isAiHistorySyncApiUnavailable(error)) {
+        orphanImportApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+        info(`ai history batch upsert API unavailable status=${error.status}; pausing metadata sync for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+        return upserted;
+      }
+      logError('ai history batch upsert failed', error instanceof Error ? error.message : error);
+      return upserted;
+    }
+  }
+
+  return upserted;
+}
+
+async function syncAiHistoryMetadata(
   api: AgentApiClient,
   runnerId: string,
   dbPath: string,
   tasks: AiTask[],
   importScopes: CodexThreadImportScope[],
-  mode: OrphanImportMode = 'hot',
-  maxImports = ORPHAN_IMPORT_LIMIT,
+  mode: AiHistorySyncMode = 'hot',
+  maxItems = AI_HISTORY_HOT_SYNC_LIMIT,
+  includeScopeUpserts = false,
 ): Promise<number> {
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
@@ -1342,44 +1724,55 @@ async function importOrphanThreads(
   const cwdScopeMap = await importScopeCwdMap(importScopes);
   const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
   if (repoPaths.length === 0) return 0;
-  const knownThreadIds = knownCodexThreadIds(tasks);
-  const rows = await readRecentThreads(dbPath, orphanImportSinceMs(importScopes, now, mode), repoPaths);
-  let imported = 0;
+  const sinceMs = mode === 'reconcile' ? 0 : orphanImportSinceMs(importScopes, now, 'hot');
+  const rows = await readRecentThreads(
+    dbPath,
+    sinceMs,
+    repoPaths,
+    mode === 'reconcile' ? ORPHAN_IMPORT_SCAN_LIMIT : 60,
+  );
+  const preparedItems: PreparedAiHistoryItem[] = [];
+  const seenItemKeys = new Set<string>();
+  const scannedAt = new Date(now).toISOString();
+  const scopes = includeScopeUpserts
+    ? importScopes
+      .map(scope => aiHistoryScopePayload(scope, scannedAt, mode === 'reconcile' ? scannedAt : null))
+      .filter((scope): scope is AiHistoryBatchUpsertScope => !!scope)
+    : [];
 
   for (const row of rows) {
-    if (imported >= maxImports) break;
+    if (preparedItems.length >= maxItems) break;
     const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
     const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap);
     if (!matchingScope) continue;
-    if (!isOrphanThreadImportCandidate(row, knownThreadIds, importScopes, now, ORPHAN_IMPORT_WINDOW_MS, tasks, cwdScopeMap)) continue;
-    const cachedAt = orphanImportCache.get(row.id) ?? 0;
-    if (now - cachedAt < ORPHAN_IMPORT_RETRY_MS) continue;
-    orphanImportCache.set(row.id, now);
+    const itemKey = `${row.id}\u001f${normalizeLocalPath(matchingScope.repo_path)}`;
+    if (seenItemKeys.has(itemKey)) continue;
+    seenItemKeys.add(itemKey);
 
     try {
-      const summary = parseRollout(await readRollout(row), row);
-      const result = await api.importCodexThread(runnerId, importPayloadFromThread(row, matchingScope, summary));
-      if (result.imported) {
-        imported += 1;
-        knownThreadIds.add(row.id);
-        info(`codex orphan thread imported thread=${row.id.slice(0, 8)} task=${result.ai_task_id ?? 'unknown'}`);
-      } else if (result.reason === 'already_imported' || result.reason === 'focusmap_manual_handoff') {
-        knownThreadIds.add(row.id);
-      } else {
-        debug(`codex orphan thread skipped thread=${row.id.slice(0, 8)} reason=${result.reason ?? 'unknown'}`);
-      }
+      const rawRollout = await readRollout(row);
+      const summary = parseRollout(rawRollout, row);
+      const linkedTask = linkedTaskForThread(row, tasks, cwdScopeMap);
+      const prepared = aiHistoryItemFromThread({
+        row,
+        scope: matchingScope,
+        summary,
+        rawRollout,
+        linkedTask,
+        nowMs: now,
+      });
+      if (shouldQueueAiHistoryItem(prepared)) preparedItems.push(prepared);
     } catch (error) {
-      if (isOrphanImportApiUnavailable(error)) {
-        orphanImportApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
-        info(`codex orphan import API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
-        return imported;
-      }
-      logError(`codex orphan import failed thread=${row.id.slice(0, 8)}`, error instanceof Error ? error.message : error);
+      logError(`ai history metadata prepare failed thread=${row.id.slice(0, 8)}`, error instanceof Error ? error.message : error);
     }
-    await sleep(20);
+    if (mode === 'reconcile' && preparedItems.length % 20 === 0) await sleep(0);
   }
 
-  return imported;
+  const upserted = await sendAiHistoryMetadataBatch(api, runnerId, preparedItems, scopes);
+  if (upserted > 0) {
+    debug(`ai history metadata ${mode} upserted=${upserted}`);
+  }
+  return upserted;
 }
 
 type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
@@ -1561,6 +1954,7 @@ export function startCodexThreadMonitorLoop(
   let nextTargetRefreshAt = 0;
   let nextReconcileAt = 0;
   let currentImportScopeSignature = '';
+  let reconcileQueue: CodexThreadImportScope[] = [];
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
   let dbPath: string | null = null;
@@ -1595,8 +1989,9 @@ export function startCodexThreadMonitorLoop(
         const scopeHeartbeat = await importScopeHeartbeatScopes(nextImportScopes);
         const nextImportScopeSignature = importScopeSignature(nextImportScopes);
         if (!wasTargetsLoaded || nextImportScopeSignature !== currentImportScopeSignature) {
-          nextReconcileAt = 0;
           currentImportScopeSignature = nextImportScopeSignature;
+          reconcileQueue = prioritizeImportScopesForReconcile(nextImportScopes);
+          nextReconcileAt = 0;
         }
         tasks = nextTasks;
         importScopes = nextImportScopes;
@@ -1625,28 +2020,52 @@ export function startCodexThreadMonitorLoop(
         }
       }
 
-      const shouldReconcile = importScopes.length > 0 &&
-        (nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
       const deferOrphanImport = shouldDeferOrphanImportForTasks(preImportTasks);
-      const imported = importScopes.length === 0
+      const hotUpserted = importScopes.length === 0
         ? 0
-        : await importOrphanThreads(
+        : await syncAiHistoryMetadata(
           api,
           runnerId,
           dbPath,
           tasks,
           importScopes,
-          shouldReconcile && !deferOrphanImport ? 'reconcile' : 'hot',
-          orphanImportLimitForPreImportTasks(preImportTasks),
+          'hot',
+          Math.min(AI_HISTORY_HOT_SYNC_LIMIT, orphanImportLimitForPreImportTasks(preImportTasks)),
+          false,
         );
-      if (shouldReconcile && !deferOrphanImport) {
-        nextReconcileAt = Date.now() + reconcileIntervalMs;
-        updateCodexThreadMonitorHeartbeatState({
-          last_reconcile_at: new Date().toISOString(),
-          next_reconcile_at: new Date(nextReconcileAt).toISOString(),
-          last_reconcile_imported: imported,
-        });
-        debug(`codex orphan reconcile completed imported=${imported} next_in=${Math.round(reconcileIntervalMs / 1000)}s`);
+
+      const shouldReconcile = importScopes.length > 0 &&
+        (reconcileQueue.length > 0 || nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
+      if (shouldReconcile) {
+        if (reconcileQueue.length === 0) {
+          reconcileQueue = prioritizeImportScopesForReconcile(importScopes);
+        }
+        const scope = reconcileQueue.shift();
+        if (scope) {
+          const reconcileUpserted = await syncAiHistoryMetadata(
+            api,
+            runnerId,
+            dbPath,
+            tasks,
+            [scope],
+            'reconcile',
+            AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT,
+            true,
+          );
+          await sleep(AI_HISTORY_RECONCILE_QUEUE_YIELD_MS);
+          if (reconcileQueue.length === 0) {
+            nextReconcileAt = Date.now() + reconcileIntervalMs;
+          } else {
+            nextReconcileAt = 0;
+          }
+          updateCodexThreadMonitorHeartbeatState({
+            last_reconcile_at: new Date().toISOString(),
+            next_reconcile_at: new Date(nextReconcileAt || Date.now()).toISOString(),
+            last_reconcile_imported: hotUpserted + reconcileUpserted,
+            last_reconcile_upserted: hotUpserted + reconcileUpserted,
+          });
+          debug(`ai history metadata reconcile scope=${scope.repo_path} upserted=${reconcileUpserted} queue=${reconcileQueue.length} next_in=${nextReconcileAt ? Math.round((nextReconcileAt - Date.now()) / 1000) : 0}s`);
+        }
       }
       const postImportTasks = deferOrphanImport
         ? []

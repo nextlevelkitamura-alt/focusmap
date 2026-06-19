@@ -155,6 +155,56 @@ export interface CodexThreadImportScope {
   enabled_since?: string | null;
 }
 
+export type AiHistoryStatus =
+  | 'running'
+  | 'awaiting_approval'
+  | 'needs_input'
+  | 'completed'
+  | 'failed'
+  | 'idle';
+
+export interface AiHistoryBatchUpsertItem {
+  provider?: 'codex_app' | string | null;
+  externalThreadId: string;
+  repoPath: string;
+  worktreePath?: string | null;
+  projectId?: string | null;
+  sourceTaskId?: string | null;
+  linkedAiTaskId?: string | null;
+  title?: string | null;
+  snippet?: string | null;
+  status?: AiHistoryStatus | null;
+  runState?: string | null;
+  lastActivityAt?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  workDurationSeconds?: number | null;
+  archived?: boolean | null;
+  archivedAt?: string | null;
+  detailSyncedAt?: string | null;
+  detailMessageCount?: number | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AiHistoryBatchUpsertScope {
+  projectId: string;
+  provider?: 'codex_app' | string | null;
+  repoPath: string;
+  displayName?: string | null;
+  syncEnabled?: boolean | null;
+  lastScannedAt?: string | null;
+  lastReconciledAt?: string | null;
+  settings?: Record<string, unknown> | null;
+}
+
+export interface AiHistoryBatchUpsertPayload {
+  provider?: 'codex_app' | string | null;
+  project_id?: string | null;
+  repo_path?: string | null;
+  items?: AiHistoryBatchUpsertItem[];
+  scopes?: AiHistoryBatchUpsertScope[];
+}
+
 export interface AgentCommand {
   id: string;
   runner_id: string;
