@@ -553,7 +553,6 @@ function ChatCompletedWorkInlineStatus({ elapsedText }: { elapsedText: string | 
         <span className="font-mono tabular-nums">{elapsedText}</span>
         <span>作業しました</span>
       </span>
-      <span className="shrink-0 text-zinc-600" aria-hidden="true">›</span>
       <span className="h-px min-w-0 flex-1 bg-[#303030]" aria-hidden="true" />
     </div>
   )
