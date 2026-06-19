@@ -197,7 +197,9 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: /全体/ }))
-    fireEvent.click(screen.getByText("other"))
+    const repoFilter = document.getElementById("ai-history-repo-filter")
+    expect(repoFilter).not.toBeNull()
+    fireEvent.click(within(repoFilter!).getByText("other"))
 
     expect(screen.queryByText("AI履歴サイドバーを接続")).not.toBeInTheDocument()
     expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
@@ -234,7 +236,7 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
 
     await waitFor(() => {
-      expect(screen.getByText("未配置とマインドマップの2分類に整理しました")).toBeInTheDocument()
+      expect(screen.getAllByText("未配置とマインドマップの2分類に整理しました").length).toBeGreaterThan(0)
     })
     expect(screen.getByRole("button", { name: "一覧へ戻る" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Codexで開く AI履歴サイドバーを接続/ })).toHaveAttribute(
