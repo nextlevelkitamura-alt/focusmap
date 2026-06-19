@@ -146,6 +146,16 @@ function buttonContainingText(text: string | RegExp) {
   return button
 }
 
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+}
+
+function chatMessageText(text: string) {
+  const element = screen.getAllByText(text).find(candidate => candidate.className.includes("text-[15px]"))
+  if (!element) throw new Error(`chat message not found for text: ${text}`)
+  return element
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   runnerStatusMock.ready = false
@@ -473,6 +483,128 @@ describe("CodexChatImportSidebar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "一覧へ戻る" }))
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
+  })
+
+  test("renders the running timer directly under the latest user prompt when activity is available", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-running" })
+      if (url.startsWith("/api/ai-tasks/ai-task-running/activity")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-current-user",
+              task_id: "ai-task-running",
+              user_id: "user-1",
+              role: "user",
+              kind: "user_answer",
+              body: "横の矢印いらない",
+              importance: "important",
+              metadata: {},
+              created_at: minutesAgo(1),
+            },
+            {
+              id: "msg-current-progress",
+              task_id: "ai-task-running",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "Codexが内容を検討中",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(0.5),
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar({
+      chatItems: [{
+        ...chatItems[0],
+        id: "chat-running-prompt",
+        aiTaskId: "ai-task-running",
+        status: "running",
+        statusLabel: "実行中",
+        snippet: "横の矢印いらない",
+        workStartedAt: minutesAgo(1),
+      }],
+    })
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-running-prompt"))
+
+    await waitFor(() => {
+      expect(chatMessageText("横の矢印いらない")).toBeInTheDocument()
+    })
+    const prompt = chatMessageText("横の矢印いらない")
+    const runningStatus = screen.getByLabelText(/作業中/)
+    const progress = chatMessageText("Codexが内容を検討中")
+    expectBefore(prompt, runningStatus)
+    expectBefore(runningStatus, progress)
+  })
+
+  test("shows a temporary current prompt before the running timer when activity has not caught up", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-running" })
+      if (url.startsWith("/api/ai-tasks/ai-task-running/activity")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-old-user",
+              task_id: "ai-task-running",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "前回の依頼",
+              importance: "normal",
+              metadata: {},
+              created_at: minutesAgo(20),
+            },
+            {
+              id: "msg-old-completed",
+              task_id: "ai-task-running",
+              user_id: "user-1",
+              role: "codex",
+              kind: "completed",
+              body: "前回の作業を完了しました",
+              importance: "important",
+              metadata: {
+                turn_started_at: minutesAgo(19),
+                turn_completed_at: minutesAgo(18),
+                work_elapsed_ms: 60_000,
+              },
+              created_at: minutesAgo(18),
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar({
+      chatItems: [{
+        ...chatItems[0],
+        id: "chat-running-fallback",
+        aiTaskId: "ai-task-running",
+        status: "running",
+        statusLabel: "実行中",
+        snippet: "横の矢印いらない",
+        workStartedAt: minutesAgo(1),
+      }],
+    })
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-running-fallback"))
+
+    await waitFor(() => {
+      expect(chatMessageText("前回の作業を完了しました")).toBeInTheDocument()
+    })
+    const previousReport = chatMessageText("前回の作業を完了しました")
+    const prompt = chatMessageText("横の矢印いらない")
+    const runningStatus = screen.getByLabelText(/作業中/)
+    expectBefore(previousReport, prompt)
+    expectBefore(prompt, runningStatus)
   })
 
   test("loads older Codex activity pages when the detail view has a cursor", async () => {

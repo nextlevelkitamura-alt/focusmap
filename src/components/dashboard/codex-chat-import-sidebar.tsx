@@ -91,6 +91,7 @@ const ACTIVITY_DETAIL_PAGE_LIMIT = 30
 const ACTIVITY_DETAIL_MAX_PAGES = 6
 const ACTIVITY_TIME_BREAK_MIN_GAP_MS = 60 * 60 * 1000
 const CHAT_DETAIL_REFRESH_INTERVAL_MS = 5_000
+const RUNNING_PROMPT_START_TOLERANCE_MS = 5 * 60 * 1000
 
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
 const ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
@@ -371,6 +372,20 @@ function isStatusActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "status" || message.role === "system"
 }
 
+function activityMessageCreatedMs(message: AiTaskActivityMessage | null | undefined) {
+  const time = new Date(message?.created_at ?? "").getTime()
+  return Number.isFinite(time) ? time : null
+}
+
+function isCurrentRallyUserMessage(message: AiTaskActivityMessage, workStartedAt: string | null | undefined) {
+  if (!isUserActivityMessage(message)) return false
+  if (!workStartedAt) return true
+  const messageMs = activityMessageCreatedMs(message)
+  const startedMs = new Date(workStartedAt).getTime()
+  if (messageMs === null || !Number.isFinite(startedMs)) return false
+  return messageMs >= startedMs - RUNNING_PROMPT_START_TOLERANCE_MS
+}
+
 function activityMessageWorkElapsedMs(message: AiTaskActivityMessage | null | undefined) {
   const metadata = readRecord(message?.metadata)
   const directValue = readNumber(metadata?.work_elapsed_ms)
@@ -389,12 +404,20 @@ function activityMessageWorkElapsedMs(message: AiTaskActivityMessage | null | un
   return Math.max(0, completedMs - startedMs)
 }
 
-function runningRallyElapsedMs(messages: AiTaskActivityMessage[], nowMs: number) {
+function runningRallyUserMessageIndex(messages: AiTaskActivityMessage[], workStartedAt?: string | null) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
-    if (!message || !isUserActivityMessage(message)) continue
-    const startedMs = new Date(message.created_at).getTime()
-    if (!Number.isFinite(startedMs)) return null
+    if (!message || !isCurrentRallyUserMessage(message, workStartedAt)) continue
+    return index
+  }
+  return -1
+}
+
+function runningRallyElapsedMs(messages: AiTaskActivityMessage[], nowMs: number, workStartedAt?: string | null) {
+  const index = runningRallyUserMessageIndex(messages, workStartedAt)
+  if (index >= 0) {
+    const startedMs = activityMessageCreatedMs(messages[index])
+    if (startedMs === null) return null
     return Math.max(0, nowMs - startedMs)
   }
   return null
@@ -433,6 +456,27 @@ function codexSummaryInput(
       body: message.body,
       created_at: message.created_at,
     })),
+  }
+}
+
+function syntheticRunningPromptMessage(
+  item: CodexChatImportItem,
+  messages: AiTaskActivityMessage[],
+): AiTaskActivityMessage | null {
+  if (runningRallyUserMessageIndex(messages, item.workStartedAt) >= 0) return null
+  const body = item.snippet?.trim()
+  if (!body) return null
+  const createdAt = item.workStartedAt ?? item.sortAt ?? ""
+  return {
+    id: `running-prompt:${item.id}:${createdAt || "current"}`,
+    task_id: item.aiTaskId ?? item.id,
+    user_id: "",
+    role: "user",
+    kind: "sent",
+    body,
+    importance: "normal",
+    metadata: { source: "codex_chat_import_item.snippet", synthetic: true },
+    created_at: createdAt,
   }
 }
 
@@ -946,8 +990,14 @@ export function CodexChatImportSidebar({
   const selectedCompletedWorkElapsedMs = selectedCompletedWorkMessageIndex >= 0
     ? activityMessageWorkElapsedMs(selectedMessages[selectedCompletedWorkMessageIndex])
     : null
+  const selectedRunningUserMessageIndex = selectedUiStatus === "running"
+    ? runningRallyUserMessageIndex(selectedMessages, selectedChatItem?.workStartedAt)
+    : -1
+  const selectedSyntheticRunningPromptMessage = selectedUiStatus === "running" && selectedChatItem
+    ? syntheticRunningPromptMessage(selectedChatItem, selectedMessages)
+    : null
   const selectedRunningWorkElapsedMs = selectedUiStatus === "running"
-    ? runningRallyElapsedMs(selectedMessages, workNowMs)
+    ? runningRallyElapsedMs(selectedMessages, workNowMs, selectedChatItem?.workStartedAt)
     : null
   const selectedWorkElapsedMs = selectedUiStatus === "running"
     ? selectedRunningWorkElapsedMs ?? selectedRallyWorkElapsedMs
@@ -955,6 +1005,7 @@ export function CodexChatImportSidebar({
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
   const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")
+  const selectedHasTimelineMessages = selectedMessages.length > 0 || Boolean(selectedSyntheticRunningPromptMessage)
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
     return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [])
@@ -1406,7 +1457,7 @@ export function CodexChatImportSidebar({
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5">
             <div className="mb-3 text-[12px] font-semibold text-zinc-400">チャット履歴</div>
 
-            {selectedDetail?.loading && selectedMessages.length === 0 && !selectedDetail.text ? (
+            {selectedDetail?.loading && !selectedHasTimelineMessages && !selectedDetail.text ? (
               <div className="flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-3 py-2 text-xs text-zinc-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 チャット内容を取得中
@@ -1419,14 +1470,14 @@ export function CodexChatImportSidebar({
               </div>
             ) : null}
 
-            {selectedDetail?.loading && selectedMessages.length > 0 ? (
+            {selectedDetail?.loading && selectedHasTimelineMessages ? (
               <div className="mb-3 flex items-center gap-2 rounded-xl border border-[#303030] bg-[#111111] px-2 py-1.5 text-[11px] text-zinc-500">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 最新内容を取得中
               </div>
             ) : null}
 
-            {selectedMessages.length > 0 ? (
+            {selectedHasTimelineMessages ? (
               <div className="space-y-5">
                 {(selectedDetail?.hasMore || selectedThreadHref) && (
                   <div className="flex min-w-0 items-center gap-2 rounded-lg border border-dashed border-[#3a3a3a] bg-[#111111] px-3 py-2 text-[12px] text-zinc-400">
@@ -1457,10 +1508,23 @@ export function CodexChatImportSidebar({
                         <ChatCompletedWorkInlineStatus elapsedText={selectedCompletedWorkElapsedText} />
                       )}
                       <ActivityMessageBubble message={message} />
+                      {selectedRunningUserMessageIndex === index && (
+                        <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
+                      )}
                     </React.Fragment>
                   )
                 })}
-                {selectedUiStatus === "running" && (
+                {selectedSyntheticRunningPromptMessage && (
+                  <React.Fragment key={selectedSyntheticRunningPromptMessage.id}>
+                    {shouldShowActivityTimeBreak(
+                      selectedMessages.at(-1) ?? null,
+                      selectedSyntheticRunningPromptMessage,
+                    ) && <ActivityTimeBreak value={selectedSyntheticRunningPromptMessage.created_at} />}
+                    <ActivityMessageBubble message={selectedSyntheticRunningPromptMessage} />
+                    <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
+                  </React.Fragment>
+                )}
+                {selectedUiStatus === "running" && selectedRunningUserMessageIndex < 0 && !selectedSyntheticRunningPromptMessage && (
                   <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
                 )}
               </div>
