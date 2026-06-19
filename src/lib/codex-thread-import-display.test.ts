@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest"
 import {
+  codexThreadRallyWorkTiming,
   codexThreadDisplayTitle,
   codexThreadImportActivityAt,
   codexThreadPromptPreviewFromMemo,
+  getCodexThreadRallyWorkElapsedMs,
   importedCodexThreadUpdatedAtFromMemo,
   markdownSectionBody,
 } from "./codex-thread-import-display"
@@ -140,5 +142,58 @@ describe("codex thread import display helpers", () => {
         updatedAt: "2026-06-18T01:35:00.000Z",
       },
     })).toBeNull()
+  })
+
+  test("calculates rally work timing only from Codex turn timestamps", () => {
+    const timing = codexThreadRallyWorkTiming({
+      aiTask: {
+        result: {
+          codex_turn_started_at: "2026-06-18T00:00:00.000Z",
+          codex_turn_completed_at: "2026-06-18T00:00:27.000Z",
+          awaiting_approval_at: "2026-06-18T00:00:40.000Z",
+          last_activity_at: "2026-06-18T18:00:00.000Z",
+        },
+      },
+    })
+
+    expect(timing).toEqual({
+      workStartedAt: "2026-06-18T00:00:00.000Z",
+      workAwaitingApprovalAt: "2026-06-18T00:00:27.000Z",
+      workCompletedAt: "2026-06-18T00:00:27.000Z",
+      workLastActivityAt: null,
+    })
+    expect(getCodexThreadRallyWorkElapsedMs(timing)).toBe(27_000)
+  })
+
+  test("does not fall back from rally work timing to task-level timestamps", () => {
+    const timing = codexThreadRallyWorkTiming({
+      aiTask: {
+        result: {
+          last_activity_at: "2026-06-18T18:00:00.000Z",
+        },
+      },
+    })
+
+    expect(timing).toEqual({
+      workStartedAt: null,
+      workAwaitingApprovalAt: null,
+      workCompletedAt: null,
+      workLastActivityAt: null,
+    })
+    expect(getCodexThreadRallyWorkElapsedMs(timing)).toBeNull()
+  })
+
+  test("uses now only for active rally work timing", () => {
+    const timing = {
+      workStartedAt: "2026-06-18T00:00:00.000Z",
+      workAwaitingApprovalAt: null,
+      workCompletedAt: null,
+    }
+
+    expect(getCodexThreadRallyWorkElapsedMs(timing, {
+      active: true,
+      nowMs: Date.parse("2026-06-18T00:02:00.000Z"),
+    })).toBe(120_000)
+    expect(getCodexThreadRallyWorkElapsedMs(timing)).toBeNull()
   })
 })

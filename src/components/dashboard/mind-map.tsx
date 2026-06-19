@@ -21,7 +21,12 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion";
-import { codexThreadDisplayTitle, codexThreadImportActivityAt, codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display";
+import {
+    codexThreadDisplayTitle,
+    codexThreadImportActivityAt,
+    codexThreadPromptPreviewFromMemo,
+    codexThreadRallyWorkTiming,
+} from "@/lib/codex-thread-import-display";
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
@@ -192,16 +197,6 @@ function codexChatImportStatusLabel(
     return getCodexMonitorUiStatus(visualStatus) === 'review'
         ? '返信待ち'
         : fallbackLabel ?? codexMonitorUiLabel(visualStatus);
-}
-
-function codexChatImportWorkTiming(aiTask: AiTask | null | undefined, aiResult?: Record<string, unknown> | null) {
-    const result = aiResult ?? recordValue(aiTask?.result);
-    return {
-        workStartedAt: aiTask?.started_at ?? aiTask?.created_at ?? null,
-        workAwaitingApprovalAt: stringValue(result?.awaiting_approval_at),
-        workCompletedAt: aiTask?.completed_at ?? null,
-        workLastActivityAt: stringValue(result?.last_activity_at),
-    };
 }
 
 function codexChatImportTitle(input: {
@@ -1130,7 +1125,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     ),
                     updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                     sortAt: updatedAt,
-                    ...codexChatImportWorkTiming(aiTask, aiResult),
+                    ...codexThreadRallyWorkTiming({ aiTask, aiResult }),
                     placed,
                 }];
             })
@@ -1216,7 +1211,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 ),
                 updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                 sortAt: updatedAt,
-                ...codexChatImportWorkTiming(aiTask, aiResult),
+                ...codexThreadRallyWorkTiming({ aiTask, aiResult }),
                 placed,
             });
         }

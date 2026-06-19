@@ -117,3 +117,60 @@ export function codexThreadImportActivityAt(input: {
     importedCodexThreadUpdatedAtFromMemo(input.task?.memo),
   )
 }
+
+export type CodexThreadRallyWorkTiming = {
+  workStartedAt: string | null
+  workAwaitingApprovalAt: string | null
+  workCompletedAt: string | null
+  workLastActivityAt: string | null
+}
+
+export function codexThreadRallyWorkTiming(input: {
+  aiTask?: {
+    result?: unknown
+  } | null
+  aiResult?: Record<string, unknown> | null
+}): CodexThreadRallyWorkTiming {
+  const result = input.aiResult ?? recordValue(input.aiTask?.result)
+  const startedAt = firstValidTime(result?.codex_turn_started_at)
+  const finishedAt = firstValidTime(
+    result?.codex_turn_completed_at,
+    result?.awaiting_approval_at,
+  )
+
+  return {
+    workStartedAt: startedAt,
+    workAwaitingApprovalAt: finishedAt,
+    workCompletedAt: finishedAt,
+    // Deliberately never use last_activity_at here. It can move because of
+    // background sync/title/summary updates and would turn one-rally time into
+    // whole-thread time.
+    workLastActivityAt: null,
+  }
+}
+
+export function getCodexThreadRallyWorkElapsedMs(
+  timing: {
+    workStartedAt?: string | null
+    workAwaitingApprovalAt?: string | null
+    workCompletedAt?: string | null
+  } | null | undefined,
+  options: { nowMs?: number; active?: boolean } = {},
+) {
+  if (!timing?.workStartedAt) return null
+  const startedAt = firstValidTime(timing.workStartedAt)
+  if (!startedAt) return null
+  const startedMs = Date.parse(startedAt)
+  if (!Number.isFinite(startedMs)) return null
+
+  const finishedMs = options.active
+    ? options.nowMs ?? Date.now()
+    : (() => {
+        const finishedAt = firstValidTime(timing.workCompletedAt, timing.workAwaitingApprovalAt)
+        if (!finishedAt) return null
+        const ms = Date.parse(finishedAt)
+        return Number.isFinite(ms) ? ms : null
+      })()
+  if (finishedMs === null) return null
+  return Math.max(0, finishedMs - startedMs)
+}

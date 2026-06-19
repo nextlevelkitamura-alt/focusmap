@@ -11,7 +11,11 @@ import {
     requestCodexThreadArchiveFromNode,
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion"
-import { codexThreadImportActivityAt, codexThreadPromptPreviewFromMemo } from "@/lib/codex-thread-import-display"
+import {
+    codexThreadImportActivityAt,
+    codexThreadPromptPreviewFromMemo,
+    codexThreadRallyWorkTiming,
+} from "@/lib/codex-thread-import-display"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { getHiddenCodexInboxTaskIds } from "@/lib/codex-inbox-visibility"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
@@ -85,7 +89,7 @@ function codexThreadMatchesSelectedRepo(
     selectedRepoPath: string | null | undefined,
 ) {
     const selected = normalizeRepoPath(selectedRepoPath)
-    if (!selected) return false
+    if (!selected) return true
     const taskWorkDir = normalizeRepoPath(task.codex_work_dir ?? aiTask?.cwd ?? null)
     if (taskWorkDir === selected) return true
     if (codexScopeRepoPathFromAiTask(aiTask) === selected) return true
@@ -102,16 +106,6 @@ function codexChatImportStatusLabel(
     return getCodexMonitorUiStatus(visualStatus) === "review"
         ? "返信待ち"
         : fallbackLabel ?? codexMonitorUiLabel(visualStatus)
-}
-
-function codexChatImportWorkTiming(aiTask: AiTask | null | undefined, aiResult?: Record<string, unknown> | null) {
-    const result = aiResult ?? recordValue(aiTask?.result)
-    return {
-        workStartedAt: aiTask?.started_at ?? aiTask?.created_at ?? null,
-        workAwaitingApprovalAt: stringValue(result?.awaiting_approval_at),
-        workCompletedAt: aiTask?.completed_at ?? null,
-        workLastActivityAt: stringValue(result?.last_activity_at),
-    }
 }
 
 function shouldUseTaskProgressFixture() {
@@ -730,8 +724,6 @@ export function MobileMindMap({
     }, [repoScopedCodexTaskNodes])
 
     const codexChatImportItems = useMemo<TaskProgressImportItem[]>(() => {
-        if (!selectedCodexImportRepoPath) return []
-
         return repoScopedCodexTaskNodes
             .filter(task => task.source === "codex_app_thread" && task.deleted_at == null)
             .filter(task => !hiddenCodexChatImportIds.has(task.id))
@@ -770,7 +762,7 @@ export function MobileMindMap({
                     placed,
                     updatedLabel: formatChatImportUpdatedLabel(updatedAt),
                     updatedAtIso: updatedAt,
-                    ...codexChatImportWorkTiming(aiTask, aiResult),
+                    ...codexThreadRallyWorkTiming({ aiTask, aiResult }),
                 }]
             })
             .sort((a, b) => {

@@ -28,7 +28,8 @@ import {
   codexThreadUrl,
   getCodexMonitorUiStatus,
 } from "@/lib/task-progress-ui"
-import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel, getAiTaskWorkElapsedMs } from "@/lib/ai-task-work-elapsed"
+import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel } from "@/lib/ai-task-work-elapsed"
+import { getCodexThreadRallyWorkElapsedMs } from "@/lib/codex-thread-import-display"
 import { cn } from "@/lib/utils"
 import type { AiTaskActivityKind, AiTaskActivityMessage, AiTaskActivityRole } from "@/types/ai-task"
 
@@ -261,28 +262,6 @@ function latestVisibleActivityMessages(messages: AiTaskActivityMessage[], limit 
   return visibleActivityMessages(dedupeActivityMessages(messages)).slice(-limit)
 }
 
-function latestVisibleActivityAt(messages: AiTaskActivityMessage[]) {
-  let latestAt: string | null = null
-  let latestMs = Number.NEGATIVE_INFINITY
-  for (const message of visibleActivityMessages(messages)) {
-    const time = new Date(message.created_at).getTime()
-    if (!Number.isFinite(time) || time <= latestMs) continue
-    latestAt = message.created_at
-    latestMs = time
-  }
-  return latestAt
-}
-
-function newerActivityAt(current: string | null | undefined, next: string | null | undefined) {
-  if (!next) return current ?? null
-  if (!current) return next
-  const currentTime = new Date(current).getTime()
-  const nextTime = new Date(next).getTime()
-  if (!Number.isFinite(nextTime)) return current
-  if (!Number.isFinite(currentTime)) return next
-  return nextTime > currentTime ? next : current
-}
-
 function formatActivityTime(value: string | null | undefined) {
   if (!value) return ""
   const time = new Date(value).getTime()
@@ -380,22 +359,8 @@ function CodexMonitorRunningOutline() {
   )
 }
 
-function codexChatImportWorkTask(item: CodexChatImportItem) {
-  if (!item.workStartedAt) return null
-  return {
-    created_at: item.workStartedAt,
-    started_at: item.workStartedAt,
-    completed_at: item.workCompletedAt ?? null,
-    result: {
-      awaiting_approval_at: item.workAwaitingApprovalAt ?? undefined,
-      last_activity_at: item.workLastActivityAt ?? undefined,
-    },
-  }
-}
-
 function codexChatImportWorkElapsedMs(item: CodexChatImportItem, nowMs: number, active: boolean) {
-  const task = codexChatImportWorkTask(item)
-  return task ? getAiTaskWorkElapsedMs(task, { nowMs, active }) : null
+  return getCodexThreadRallyWorkElapsedMs(item, { nowMs, active })
 }
 
 function isUserActivityMessage(message: AiTaskActivityMessage) {
@@ -618,7 +583,6 @@ export function CodexChatImportSidebar({
   const [selectedChatId, setSelectedChatId] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
-  const [latestChatActivityAtById, setLatestChatActivityAtById] = React.useState<Record<string, string>>({})
   const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
   const [aiSummaryByChatId, setAiSummaryByChatId] = React.useState<Record<string, {
@@ -627,7 +591,6 @@ export function CodexChatImportSidebar({
     loading: boolean
     source: "ai" | "fallback"
   }>>({})
-  const backgroundSyncedChatIdsRef = React.useRef(new Set<string>())
   const consumedInitialSelectedChatIdRef = React.useRef<string | null>(null)
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const { repos, isLoading, error: reposError, refresh, requestRescan } = useAvailableRepos()
@@ -721,20 +684,7 @@ export function CodexChatImportSidebar({
     if (directAiTaskId) return directAiTaskId
     return linkedAiTaskIdsBySourceId[item.id]?.trim() || null
   }, [linkedAiTaskIdsBySourceId])
-  const displayUpdatedLabel = React.useCallback((item: CodexChatImportItem) => {
-    const latestActivityAt = latestChatActivityAtById[item.id]
-    return latestActivityAt ? formatActivityTime(latestActivityAt) || item.updatedLabel : item.updatedLabel
-  }, [latestChatActivityAtById])
-  const rememberLatestChatActivityAt = React.useCallback((itemId: string, messages: AiTaskActivityMessage[]) => {
-    const latestAt = latestVisibleActivityAt(messages)
-    if (!latestAt) return null
-    setLatestChatActivityAtById(prev => {
-      const nextAt = newerActivityAt(prev[itemId], latestAt)
-      if (!nextAt || nextAt === prev[itemId]) return prev
-      return { ...prev, [itemId]: nextAt }
-    })
-    return latestAt
-  }, [])
+  const displayUpdatedLabel = React.useCallback((item: CodexChatImportItem) => item.updatedLabel, [])
   const fetchChatActivityPage = React.useCallback(async (
     aiTaskId: string,
     cursor: { created_at: string; id: string | null } | null = null,
@@ -752,10 +702,6 @@ export function CodexChatImportSidebar({
       nextCursor: readActivityNextCursor(activityData),
     }
   }, [])
-  const fetchLatestChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
-    const page = await fetchChatActivityPage(aiTaskId)
-    return latestVisibleActivityMessages(page.messages)
-  }, [fetchChatActivityPage])
   const fetchChatActivityMessages = React.useCallback(async (aiTaskId: string) => {
     const messages: AiTaskActivityMessage[] = []
     let cursor: { created_at: string; id: string | null } | null = null
@@ -874,13 +820,6 @@ export function CodexChatImportSidebar({
     return syncedAiTaskId
   }, [resolveAiTaskId])
 
-  const refreshChatActivityTime = React.useCallback(async (item: CodexChatImportItem) => {
-    const aiTaskId = await syncChatActivity(item)
-    if (!aiTaskId) return
-    const messages = await fetchLatestChatActivityMessages(aiTaskId)
-    rememberLatestChatActivityAt(item.id, messages)
-  }, [fetchLatestChatActivityMessages, rememberLatestChatActivityAt, syncChatActivity])
-
   const loadChatDetail = React.useCallback(async (
     item: CodexChatImportItem,
     options: { background?: boolean } = {},
@@ -910,7 +849,6 @@ export function CodexChatImportSidebar({
 
       if (aiTaskId) {
         const { messages, hasMore } = await fetchChatActivityMessages(aiTaskId)
-        rememberLatestChatActivityAt(item.id, messages)
         if (messages.length > 0) {
           setChatDetailsById(prev => ({
             ...prev,
@@ -960,23 +898,7 @@ export function CodexChatImportSidebar({
         }
       })
     }
-  }, [fetchChatActivityMessages, rememberLatestChatActivityAt, resolveAiTaskId, syncChatActivity])
-
-  React.useEffect(() => {
-    if (!codexRunnerStatus.ready || chatItems.length === 0) return
-    const timers: number[] = []
-    for (const [index, item] of chatItems.slice(0, 20).entries()) {
-      if (backgroundSyncedChatIdsRef.current.has(item.id)) continue
-      backgroundSyncedChatIdsRef.current.add(item.id)
-      const timer = window.setTimeout(() => {
-        void refreshChatActivityTime(item).catch(() => undefined)
-      }, index * 250)
-      timers.push(timer)
-    }
-    return () => {
-      timers.forEach(timer => window.clearTimeout(timer))
-    }
-  }, [chatItems, codexRunnerStatus.ready, refreshChatActivityTime])
+  }, [fetchChatActivityMessages, resolveAiTaskId, syncChatActivity])
 
   const handleChatItemClick = React.useCallback((item: CodexChatImportItem) => {
     setSelectedChatId(item.id)
@@ -998,25 +920,26 @@ export function CodexChatImportSidebar({
     void loadChatDetail(item)
   }, [initialSelectedChatId, loadChatDetail, selectableChatItems])
 
-  React.useEffect(() => {
-    if (!selectedChatItem) return
-    const timer = window.setInterval(() => {
-      void loadChatDetail(selectedChatItem, { background: true })
-    }, CHAT_DETAIL_REFRESH_INTERVAL_MS)
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [loadChatDetail, selectedChatItem])
-
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
   const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
   const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
-  const selectedTaskWorkElapsedMs = selectedChatItem
+  const selectedRallyWorkElapsedMs = selectedChatItem
     ? codexChatImportWorkElapsedMs(selectedChatItem, workNowMs, selectedUiStatus === "running")
     : null
+
+  React.useEffect(() => {
+    if (!selectedChatItem || selectedUiStatus !== "running") return
+    const timer = window.setInterval(() => {
+      void loadChatDetail(selectedChatItem, { background: true })
+    }, CHAT_DETAIL_REFRESH_INTERVAL_MS)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [loadChatDetail, selectedChatItem, selectedUiStatus])
+
   const selectedCompletedWorkMessageIndex = completedWorkMessageIndex(
     selectedMessages,
     selectedUiStatus === "running",
@@ -1028,8 +951,8 @@ export function CodexChatImportSidebar({
     ? runningRallyElapsedMs(selectedMessages, workNowMs)
     : null
   const selectedWorkElapsedMs = selectedUiStatus === "running"
-    ? selectedRunningWorkElapsedMs ?? selectedTaskWorkElapsedMs
-    : selectedCompletedWorkElapsedMs ?? selectedTaskWorkElapsedMs
+    ? selectedRunningWorkElapsedMs ?? selectedRallyWorkElapsedMs
+    : selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
   const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")

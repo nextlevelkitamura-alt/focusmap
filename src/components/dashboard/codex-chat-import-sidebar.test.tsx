@@ -237,6 +237,22 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).getByRole("link", { name: /Codexで開く AI要約の横幅を拡張/ }).className).toContain("min-h-8")
   })
 
+  test("renders completed work time from one-rally timing on the history card", () => {
+    renderSidebar({
+      chatItems: [
+        {
+          ...chatItems[0],
+          workStartedAt: "2026-06-18T00:00:00.000Z",
+          workAwaitingApprovalAt: "2026-06-18T00:00:27.000Z",
+          workCompletedAt: "2026-06-18T00:00:27.000Z",
+        },
+      ],
+    })
+
+    const row = screen.getByTestId("codex-chat-import-row-chat-node-1")
+    expect(within(row).getByText("作業時間 27s")).toBeInTheDocument()
+  })
+
   test("marks a chat card as grabbed and writes the drag payload", () => {
     const onChatDragStateChange = vi.fn()
     renderSidebar({ onChatDragStateChange })
@@ -410,8 +426,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("AIチャット履歴")).not.toBeInTheDocument()
     expect(screen.getByText("確認待ち")).toBeInTheDocument()
     expect(screen.getByText("focusmap")).toBeInTheDocument()
-    expect(screen.getAllByText("5分前").length).toBeGreaterThanOrEqual(1)
-    expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
+    expect(screen.getByText("3時間前")).toBeInTheDocument()
     expect(screen.getByRole("region", { name: "AI要約" })).toBeInTheDocument()
     expect(screen.getByText("AI要約")).toBeInTheDocument()
     expect(screen.getByText("実行したこと")).toBeInTheDocument()
@@ -576,61 +591,15 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("配置済みCodex作業")).not.toBeInTheDocument()
   })
 
-  test("saves visible Codex activity in the background when Mac is online", async () => {
+  test("keeps list labels stable instead of background-syncing visible activity", () => {
     runnerStatusMock.ready = true
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-1" })
-      if (url.startsWith("/api/ai-tasks/ai-task-1/activity")) {
-        return jsonResponse({
-          messages: [
-            {
-              id: "msg-status-newer",
-              task_id: "ai-task-1",
-              user_id: "user-1",
-              role: "status",
-              kind: "progress",
-              body: "Codex セッションは確認待ちです",
-              importance: "normal",
-              metadata: {},
-              created_at: minutesAgo(1),
-            },
-            {
-              id: "msg-codex-latest",
-              task_id: "ai-task-1",
-              user_id: "user-1",
-              role: "codex",
-              kind: "progress",
-              body: "一覧の時刻を最新メッセージに寄せます",
-              importance: "normal",
-              metadata: {},
-              created_at: minutesAgo(5),
-            },
-          ],
-        })
-      }
-      return jsonResponse({}, false)
-    })
+    const fetchMock = vi.fn()
     vi.stubGlobal("fetch", fetchMock)
 
     renderSidebar()
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({ method: "POST" }))
-    })
-    const syncCall = fetchMock.mock.calls.find(([input]) => String(input) === "/api/codex/sync-node")
-    expect(JSON.parse(String(syncCall?.[1]?.body))).toEqual({
-      ai_task_id: "ai-task-1",
-      include_visible_activity: true,
-    })
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/api/ai-tasks/ai-task-1/activity?limit=30"),
-        { cache: "no-store" },
-      )
-      expect(screen.getByText("5分前")).toBeInTheDocument()
-    })
-    expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
+    expect(screen.getByText("3時間前")).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   test("does not render detail footer actions in the selected chat view", async () => {

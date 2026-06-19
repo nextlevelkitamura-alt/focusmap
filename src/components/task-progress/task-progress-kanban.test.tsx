@@ -508,7 +508,7 @@ describe('TaskProgressKanban', () => {
     fetchWithSupabaseAuthMock.mockImplementation(async (input) => {
       const url = String(input)
       if (url === '/api/codex/sync-node') return jsonResponse({ success: true, task_id: 'ai-task-1' })
-      if (url === '/api/ai-tasks/ai-task-1/activity') {
+      if (url.startsWith('/api/ai-tasks/ai-task-1/activity')) {
         return jsonResponse({
           messages: [
             {

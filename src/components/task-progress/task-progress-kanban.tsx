@@ -1923,9 +1923,9 @@ export function TaskProgressKanban({
                   )}
                   {visibleMobileImportItems.length === 0 ? (
                     <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
-                      {mobileImportRepoControl && !normalizeRepoPath(mobileImportRepoControl.selectedRepoPath)
-                        ? "リポを選択すると取り込みチャットを表示します"
-                        : "このリポで取り込めるCodexチャットはありません"}
+                      {mobileImportRepoControl && normalizeRepoPath(mobileImportRepoControl.selectedRepoPath)
+                        ? "このリポで取り込めるCodexチャットはありません"
+                        : "取り込めるCodexチャットはありません"}
                     </div>
                   ) : filteredMobileImportItems.length === 0 ? (
                     <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
