@@ -263,6 +263,42 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).getByText("作業時間 27s")).toBeInTheDocument()
   })
 
+  test("shows finished age next to the confirmation status in the detail header", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-finished-age" })
+      if (url.startsWith("/api/ai-tasks/ai-task-finished-age/activity")) {
+        return jsonResponse({ messages: [] })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    renderSidebar({
+      chatItems: [
+        {
+          ...chatItems[0],
+          id: "chat-finished-age",
+          aiTaskId: "ai-task-finished-age",
+          status: "awaiting_approval",
+          statusLabel: "返信待ち",
+          updatedLabel: "3時間前",
+          workStartedAt: minutesAgo(2),
+          workAwaitingApprovalAt: minutesAgo(0.5),
+          workCompletedAt: minutesAgo(0.5),
+        },
+      ],
+    })
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-finished-age"))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("確認待ち 1分前")).toBeInTheDocument()
+    })
+    expect(screen.getByText("focusmap")).toBeInTheDocument()
+    expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
+    expect(screen.queryByText(/作業時間/)).not.toBeInTheDocument()
+  })
+
   test("marks a chat card as grabbed and writes the drag payload", () => {
     const onChatDragStateChange = vi.fn()
     renderSidebar({ onChatDragStateChange })
@@ -436,7 +472,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("AIチャット履歴")).not.toBeInTheDocument()
     expect(screen.getByText("確認待ち")).toBeInTheDocument()
     expect(screen.getByText("focusmap")).toBeInTheDocument()
-    expect(screen.getByText("3時間前")).toBeInTheDocument()
+    expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
     expect(screen.getByRole("region", { name: "AI要約" })).toBeInTheDocument()
     expect(screen.getByText("AI要約")).toBeInTheDocument()
     expect(screen.getByText("実行したこと")).toBeInTheDocument()
@@ -485,7 +521,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByLabelText("チャットを検索")).toBeInTheDocument()
   })
 
-  test("renders the running timer directly under the latest user prompt when activity is available", async () => {
+  test("renders the latest running prompt without a duplicate inline working indicator", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-running" })
@@ -538,13 +574,12 @@ describe("CodexChatImportSidebar", () => {
       expect(chatMessageText("横の矢印いらない")).toBeInTheDocument()
     })
     const prompt = chatMessageText("横の矢印いらない")
-    const runningStatus = screen.getByLabelText(/作業中/)
     const progress = chatMessageText("Codexが内容を検討中")
-    expectBefore(prompt, runningStatus)
-    expectBefore(runningStatus, progress)
+    expectBefore(prompt, progress)
+    expect(screen.queryByLabelText(/作業中/)).not.toBeInTheDocument()
   })
 
-  test("shows a temporary current prompt before the running timer when activity has not caught up", async () => {
+  test("shows a temporary current prompt without a duplicate inline working indicator when activity has not caught up", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-running" })
@@ -602,9 +637,8 @@ describe("CodexChatImportSidebar", () => {
     })
     const previousReport = chatMessageText("前回の作業を完了しました")
     const prompt = chatMessageText("横の矢印いらない")
-    const runningStatus = screen.getByLabelText(/作業中/)
     expectBefore(previousReport, prompt)
-    expectBefore(prompt, runningStatus)
+    expect(screen.queryByLabelText(/作業中/)).not.toBeInTheDocument()
   })
 
   test("loads older Codex activity pages when the detail view has a cursor", async () => {

@@ -279,6 +279,20 @@ function formatActivityTime(value: string | null | undefined) {
   return new Date(time).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
 }
 
+function formatFinishedAgoLabel(value: string | null | undefined, nowMs: number) {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) return null
+  const diff = Math.max(0, nowMs - time)
+  const minute = 60 * 1000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))}分前`
+  if (diff < day) return `${Math.floor(diff / hour)}時間前`
+  if (diff < 7 * day) return `${Math.floor(diff / day)}日前`
+  return new Date(time).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
+}
+
 function shouldShowActivityTimeBreak(previous: AiTaskActivityMessage | null, current: AiTaskActivityMessage) {
   const currentTime = new Date(current.created_at).getTime()
   if (!Number.isFinite(currentTime)) return false
@@ -362,6 +376,10 @@ function CodexMonitorRunningOutline() {
 
 function codexChatImportWorkElapsedMs(item: CodexChatImportItem, nowMs: number, active: boolean) {
   return getCodexThreadRallyWorkElapsedMs(item, { nowMs, active })
+}
+
+function codexChatImportFinishedAt(item: CodexChatImportItem | null | undefined) {
+  return item?.workAwaitingApprovalAt ?? item?.workCompletedAt ?? null
 }
 
 function isUserActivityMessage(message: AiTaskActivityMessage) {
@@ -567,24 +585,6 @@ function ActivityMessageBubble({ message }: { message: AiTaskActivityMessage }) 
   )
 }
 
-function ChatRunningInlineStatus({ elapsedText }: { elapsedText: string | null }) {
-  if (!elapsedText) return null
-
-  return (
-    <div
-      className="!mt-2 flex items-center justify-start gap-1.5 text-[12px] font-medium leading-none text-zinc-500"
-      aria-live="polite"
-      aria-label={`${elapsedText} 作業中`}
-    >
-      <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-300/80" aria-hidden="true" />
-      <span className="min-w-0">
-        <span className="font-mono tabular-nums">{elapsedText}</span>
-        <span className="ml-1">作業中</span>
-      </span>
-    </div>
-  )
-}
-
 function ChatCompletedWorkInlineStatus({ elapsedText }: { elapsedText: string | null }) {
   if (!elapsedText) return null
 
@@ -701,19 +701,23 @@ export function CodexChatImportSidebar({
     if (!selectedChatId) return null
     return selectableChatItems.find(item => item.id === selectedChatId) ?? null
   }, [selectableChatItems, selectedChatId])
-  const hasRunningWorkTimer = React.useMemo(() => (
-    [...filteredChatItems, selectedChatItem].some(item => (
+  const hasLiveWorkTimer = React.useMemo(() => {
+    const hasRunningTimer = [...filteredChatItems, selectedChatItem].some(item => (
       !!item?.workStartedAt && getCodexMonitorUiStatus(item.status ?? null) === "running"
     ))
-  ), [filteredChatItems, selectedChatItem])
+    const hasSelectedFinishedAgoTimer = !!selectedChatItem &&
+      getCodexMonitorUiStatus(selectedChatItem.status ?? null) === "review" &&
+      !!codexChatImportFinishedAt(selectedChatItem)
+    return hasRunningTimer || hasSelectedFinishedAgoTimer
+  }, [filteredChatItems, selectedChatItem])
   const [workNowMs, setWorkNowMs] = React.useState(() => Date.now())
 
   React.useEffect(() => {
     setWorkNowMs(Date.now())
-    if (!hasRunningWorkTimer) return
+    if (!hasLiveWorkTimer) return
     const intervalId = window.setInterval(() => setWorkNowMs(Date.now()), 1000)
     return () => window.clearInterval(intervalId)
-  }, [hasRunningWorkTimer])
+  }, [hasLiveWorkTimer])
 
   React.useEffect(() => {
     if (!selectedChatId) return
@@ -966,9 +970,11 @@ export function CodexChatImportSidebar({
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
   const selectedThreadHref = codexThreadUrl(selectedChatItem?.threadId)
-  const selectedUpdatedLabel = selectedChatItem ? displayUpdatedLabel(selectedChatItem) : null
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
   const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
+  const selectedStatusText = selectedUiStatus === "review"
+    ? "確認待ち"
+    : selectedChatItem?.statusLabel ?? codexMonitorUiLabel(selectedVisualStatus)
   const selectedRallyWorkElapsedMs = selectedChatItem
     ? codexChatImportWorkElapsedMs(selectedChatItem, workNowMs, selectedUiStatus === "running")
     : null
@@ -990,9 +996,6 @@ export function CodexChatImportSidebar({
   const selectedCompletedWorkElapsedMs = selectedCompletedWorkMessageIndex >= 0
     ? activityMessageWorkElapsedMs(selectedMessages[selectedCompletedWorkMessageIndex])
     : null
-  const selectedRunningUserMessageIndex = selectedUiStatus === "running"
-    ? runningRallyUserMessageIndex(selectedMessages, selectedChatItem?.workStartedAt)
-    : -1
   const selectedSyntheticRunningPromptMessage = selectedUiStatus === "running" && selectedChatItem
     ? syntheticRunningPromptMessage(selectedChatItem, selectedMessages)
     : null
@@ -1004,7 +1007,13 @@ export function CodexChatImportSidebar({
     : selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
-  const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")
+  const selectedFinishedAgoLabel = selectedUiStatus === "review"
+    ? formatFinishedAgoLabel(codexChatImportFinishedAt(selectedChatItem), workNowMs)
+    : null
+  const selectedStatusTimeLabel = selectedUiStatus === "running"
+    ? selectedWorkElapsedText
+    : selectedFinishedAgoLabel
+  const selectedStatusAriaLabel = [selectedStatusText, selectedStatusTimeLabel].filter(Boolean).join(" ")
   const selectedHasTimelineMessages = selectedMessages.length > 0 || Boolean(selectedSyntheticRunningPromptMessage)
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
@@ -1397,9 +1406,6 @@ export function CodexChatImportSidebar({
                           <span className="truncate">{repoNameFromPath(selectedChatItem.repoPath)}</span>
                         </span>
                       )}
-                      {selectedUpdatedLabel && (
-                        <span className="text-xs font-medium text-zinc-500">{selectedUpdatedLabel}</span>
-                      )}
                       {selectedThreadHref && (
                         <a
                           href={selectedThreadHref}
@@ -1413,24 +1419,21 @@ export function CodexChatImportSidebar({
                       )}
                     </div>
                   </div>
-                  <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(selectedVisualStatus))}>
+                  <span
+                    className={cn("inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold leading-none", codexMonitorToneClass(selectedVisualStatus))}
+                    aria-label={selectedStatusAriaLabel || undefined}
+                  >
                     {selectedUiStatus === "running" && (
                       <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
                         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-70" />
                         <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
                       </span>
                     )}
-                    <span className="truncate">{selectedChatItem.statusLabel ?? codexMonitorUiLabel(selectedVisualStatus)}</span>
-                    {selectedUiStatus === "running" && selectedWorkElapsedText && (
-                      <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{selectedWorkElapsedText}</span>
+                    <span className="truncate">{selectedStatusText}</span>
+                    {selectedStatusTimeLabel && (
+                      <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{selectedStatusTimeLabel}</span>
                     )}
                   </span>
-                  {selectedUiStatus !== "running" && selectedWorkLabel && (
-                    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
-                      <Clock className="h-3 w-3" />
-                      <span className="truncate">{selectedWorkLabel}</span>
-                    </span>
-                  )}
                 </div>
 
               </div>
@@ -1508,9 +1511,6 @@ export function CodexChatImportSidebar({
                         <ChatCompletedWorkInlineStatus elapsedText={selectedCompletedWorkElapsedText} />
                       )}
                       <ActivityMessageBubble message={message} />
-                      {selectedRunningUserMessageIndex === index && (
-                        <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
-                      )}
                     </React.Fragment>
                   )
                 })}
@@ -1521,11 +1521,7 @@ export function CodexChatImportSidebar({
                       selectedSyntheticRunningPromptMessage,
                     ) && <ActivityTimeBreak value={selectedSyntheticRunningPromptMessage.created_at} />}
                     <ActivityMessageBubble message={selectedSyntheticRunningPromptMessage} />
-                    <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
                   </React.Fragment>
-                )}
-                {selectedUiStatus === "running" && selectedRunningUserMessageIndex < 0 && !selectedSyntheticRunningPromptMessage && (
-                  <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
                 )}
               </div>
             ) : selectedDetail?.text ? (
@@ -1534,9 +1530,6 @@ export function CodexChatImportSidebar({
                 <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-zinc-100">
                   {selectedDetail.text}
                 </div>
-                {selectedUiStatus === "running" && (
-                  <ChatRunningInlineStatus elapsedText={selectedWorkElapsedText} />
-                )}
               </div>
             ) : !selectedDetail?.loading && !selectedDetail?.error ? (
               <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
