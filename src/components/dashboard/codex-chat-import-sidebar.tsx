@@ -384,6 +384,25 @@ function codexChatImportFinishedAt(item: CodexChatImportItem | null | undefined)
   return item?.workAwaitingApprovalAt ?? item?.workCompletedAt ?? null
 }
 
+function codexChatImportSortTime(item: CodexChatImportItem) {
+  const time = new Date(item.sortAt ?? "").getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function codexChatImportSortPriority(item: CodexChatImportItem) {
+  const uiStatus = getCodexMonitorUiStatus(item.status ?? null)
+  if (uiStatus === "running") return 0
+  return 1
+}
+
+function compareCodexChatImportItems(left: CodexChatImportItem, right: CodexChatImportItem) {
+  const priorityDelta = codexChatImportSortPriority(left) - codexChatImportSortPriority(right)
+  if (priorityDelta !== 0) return priorityDelta
+  const timeDelta = codexChatImportSortTime(right) - codexChatImportSortTime(left)
+  if (timeDelta !== 0) return timeDelta
+  return left.id.localeCompare(right.id)
+}
+
 function isUserActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "user" || message.kind === "sent" || message.kind === "user_answer"
 }
@@ -656,7 +675,9 @@ export function CodexChatImportSidebar({
   const historyChatItems = React.useMemo(() => (
     aiHistory.items.map(aiHistoryToChatImportItem)
   ), [aiHistory.items])
-  const visibleHistoryChatItems = historyChatItems
+  const visibleHistoryChatItems = React.useMemo(() => (
+    [...historyChatItems].sort(compareCodexChatImportItems)
+  ), [historyChatItems])
   const initialRepoOption = normalizeAiHistoryRepoPath(initialRepoPath)
   const repoOptions = React.useMemo(() => {
     const byRepo = new Map<string, { repoPath: AiHistoryRepoFilter; label: string }>()

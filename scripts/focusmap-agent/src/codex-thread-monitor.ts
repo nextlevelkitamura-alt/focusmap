@@ -1011,6 +1011,19 @@ function aiHistoryItemHash(item: AiHistoryBatchUpsertItem): string {
   });
 }
 
+function withoutRunningVolatileFields(hash: string): string {
+  try {
+    const parsed = JSON.parse(hash) as Record<string, unknown>;
+    parsed.lastActivityAt = null;
+    parsed.durationHash = null;
+    return JSON.stringify(parsed);
+  } catch {
+    return hash
+      .replace(/"lastActivityAt":"[^"]*"/u, '"lastActivityAt":null')
+      .replace(/"durationHash":(?:\d+|null)/u, '"durationHash":null');
+  }
+}
+
 function shouldQueueAiHistoryItem(prepared: PreparedAiHistoryItem): boolean {
   const cached = aiHistorySyncCache.get(prepared.cacheKey);
   if (!cached) return true;
@@ -1020,8 +1033,7 @@ function shouldQueueAiHistoryItem(prepared: PreparedAiHistoryItem): boolean {
     cached.running &&
     Date.now() - cached.sentAt < AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS
   ) {
-    const withoutDuration = (hash: string) => hash.replace(/"durationHash":\d+/u, '"durationHash":0');
-    if (withoutDuration(cached.hash) === withoutDuration(prepared.hash)) return false;
+    if (withoutRunningVolatileFields(cached.hash) === withoutRunningVolatileFields(prepared.hash)) return false;
   }
   return true;
 }
