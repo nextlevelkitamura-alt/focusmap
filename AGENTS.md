@@ -38,6 +38,8 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - worktree / feature / fix ブランチは作業中の隔離場所。そこにコミットが残っているだけでは完了扱いにしない。ユーザーが「mainへ入れないで」と明示した場合を除き、Integrationまたは担当Codexが `local main` へ取り込む
 - ブランチを切るのは、ユーザーが明示した場合、大きな機能、数日またぐ作業、破壊的変更、DBマイグレーション、本番にすぐ出したくない変更に限る
 - worktree を作る判断は、実質的にブランチを増やす判断でもある。同じ `main` ブランチを複数 worktree に checkout して並行作業する運用はしない
+- worktree / 一時branch を作った場合は、作成から終了までを1セットで扱う。終了時は必ず `integrated`（local mainへ取り込み済み）/ `abandoned`（捨てる判断済み）/ `active`（継続理由あり）のどれかに分類する
+- worktree / 一時branch を `integrated` にしたら、対象worktreeとbranchは片付け対象にする。片付け前に `local main` へ入っていること、未コミット差分が無いこと、必要なら `origin/main` / 本番反映状態を分けて報告する
 - 複数スレッドで同じリポジトリを触る場合も、最終的な正はGit履歴。Codexのスレッド分離だけで変更の整合性が保証されるとは考えない
 
 ### コミットルール
@@ -63,6 +65,16 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 7. 大きい/危険/本番保留の作業だけ、事前にユーザーへ伝えてから `feat/*` / `fix/*` を作る
 8. **迷ったらブランチではなく、小さくコミットして戻せる状態にする**
 
+### worktree lifecycle
+- worktree / 一時branch を作る前に、目的、編集してよい範囲、終了条件、mainへ取り込む条件、捨てる条件を決める
+- 作業中の状態は `active` とし、完了扱いにしない。`active` が続く場合は、継続理由と次に判断するタイミングを残す
+- ひと段落したら、まず対象branchで未コミット差分を残さずコミットするか、不要差分として明示的に捨てる判断をする
+- Integrationまたは担当Codexがcommit内容を確認し、必要なものだけ `local main` に merge / cherry-pick / 再実装で取り込む
+- `local main` に取り込めたら `integrated` とし、worktree / branch は整理対象にする。`origin/main` へのpushと本番反映は別ゲートとして報告する
+- 取り込まないと決めたら `abandoned` とし、理由を残してから整理対象にする。DB migration、外部設定、生成物、未追跡ファイルがある場合は削除前に必ず報告する
+- `active` / `integrated` / `abandoned` の分類ができないworktreeは削除しない。判断不能なものは `main未統合` として、branch、commit hash、worktree path、阻害要因を報告する
+- worktree / branch の削除は、未コミット差分がないことを確認し、ユーザーの明示承認がある場合だけ行う
+
 ### 自動検証ポリシー
 - **Codex は自動で検証を実行しない。** `npm run test:run` / `npm run lint` / `npm run build` / `git diff --check` / `curl` / Playwright / Browser / Arc / Cloudflare表示確認は、ユーザーが明示的に依頼した場合だけ実行する。
 - 変更後に検証が必要だと判断した場合も、勝手に実行せず、完了報告または作業中の短い報告で「必要なら実行できる確認」として提案する。
@@ -77,7 +89,7 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 複数Codexで本当に並列実装する場合は、原則 `1チャット = 1 worktree = 1 branch` にする。同じ `main` worktree を複数チャットで共有して実装しない
 - 並列実装では、各チャットの担当範囲・触ってよいファイル・触らないファイルを先に決める。ユーザーが明示した場合だけ検証コマンドも決める。同じファイルを触りそうなら、先に共通仕様を決めるか直列にする
 - 並列workerのコミットは中間成果物。親チャットまたはIntegration担当が全workerのcommitを確認し、衝突解消と統合判断後に `local main` へ取り込んでから完了報告する
-- `docs/ai/task-board.md` には branch / worktree / owner / status に加えて、必要に応じて `local main 取り込み済み` か `main未統合` かを残す
+- `docs/ai/task-board.md` には branch / worktree / owner / status に加えて、必要に応じて `active` / `integrated` / `abandoned`、`local main 取り込み済み` か `main未統合` かを残す
 - 競合は後で解消してよいが、履歴を壊さないため `rebase` / `push --force` / `reset --hard` は明示承認なしに使わない
 
 ### Task Router Board
