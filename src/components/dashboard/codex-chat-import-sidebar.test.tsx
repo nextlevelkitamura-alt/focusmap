@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { CODEX_CHAT_IMPORT_DRAG_TYPE, readCodexChatImportDragPayload } from "@/lib/codex-chat-import-dnd"
 import { CodexChatImportSidebar, type CodexChatImportItem } from "./codex-chat-import-sidebar"
@@ -163,6 +163,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
+  window.sessionStorage.clear()
   delete (window as Window & { focusmapDesktop?: unknown }).focusmapDesktop
 })
 
@@ -296,7 +298,87 @@ describe("CodexChatImportSidebar", () => {
     })
     expect(screen.getByText("focusmap")).toBeInTheDocument()
     expect(screen.queryByText("3時間前")).not.toBeInTheDocument()
-    expect(screen.queryByText(/作業時間/)).not.toBeInTheDocument()
+    expect(screen.getByText("作業時間 1m 30s")).toBeInTheDocument()
+  })
+
+  test("keeps running and completed work time from local status transitions when server timing is missing", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-19T00:00:00.000Z"))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/codex/sync-node") return jsonResponse({ success: true, task_id: "ai-task-local-timer" })
+      if (url.startsWith("/api/ai-tasks/ai-task-local-timer/activity")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-current-user",
+              task_id: "ai-task-local-timer",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "ローカルで時間を測る",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-19T00:00:00.000Z",
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, false)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    const runningItem = {
+      ...chatItems[0],
+      id: "chat-local-timer",
+      aiTaskId: "ai-task-local-timer",
+      status: "running",
+      statusLabel: "実行中",
+      snippet: "ローカルで時間を測る",
+      workStartedAt: null,
+      workAwaitingApprovalAt: null,
+      workCompletedAt: null,
+    }
+    const { rerenderSidebar } = renderSidebar({
+      chatItems: [runningItem],
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-chat-local-timer"))
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByLabelText("実行中 0s")).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(17_000)
+      await Promise.resolve()
+    })
+    expect(screen.getByLabelText("実行中 17s")).toBeInTheDocument()
+
+    rerenderSidebar({
+      chatItems: [{
+        ...runningItem,
+        status: "awaiting_approval",
+        statusLabel: "返信待ち",
+      }],
+    })
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByLabelText("確認待ち 1分前")).toBeInTheDocument()
+    expect(screen.getByText("作業時間 17s")).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText("作業時間 17s")).toBeInTheDocument()
   })
 
   test("marks a chat card as grabbed and writes the drag payload", () => {

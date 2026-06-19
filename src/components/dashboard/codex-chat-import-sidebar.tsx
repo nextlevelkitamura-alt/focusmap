@@ -92,6 +92,7 @@ const ACTIVITY_DETAIL_MAX_PAGES = 6
 const ACTIVITY_TIME_BREAK_MIN_GAP_MS = 60 * 60 * 1000
 const CHAT_DETAIL_REFRESH_INTERVAL_MS = 5_000
 const RUNNING_PROMPT_START_TOLERANCE_MS = 5 * 60 * 1000
+const LOCAL_WORK_TIMER_STORAGE_KEY = "focusmap:codex-chat-import:local-work-timers"
 
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
 const ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
@@ -134,6 +135,68 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null
+}
+
+type LocalWorkTimer = {
+  state: "running" | "finished"
+  startedAtMs: number
+  finishedAtMs?: number
+  elapsedMs?: number
+}
+
+function readLocalWorkTimers(): Record<string, LocalWorkTimer> {
+  if (typeof window === "undefined") return {}
+  try {
+    const rawValue = window.sessionStorage.getItem(LOCAL_WORK_TIMER_STORAGE_KEY)
+    if (!rawValue) return {}
+    const parsed = JSON.parse(rawValue)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    const timers: Record<string, LocalWorkTimer> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      const record = readRecord(value)
+      const startedAtMs = readNumber(record?.startedAtMs)
+      if (!key || startedAtMs === null) continue
+      const state = record?.state === "finished" ? "finished" : "running"
+      const finishedAtMs = readNumber(record?.finishedAtMs)
+      const elapsedMs = readNumber(record?.elapsedMs)
+      timers[key] = {
+        state,
+        startedAtMs,
+        ...(finishedAtMs !== null ? { finishedAtMs } : {}),
+        ...(elapsedMs !== null ? { elapsedMs } : {}),
+      }
+    }
+    return timers
+  } catch {
+    return {}
+  }
+}
+
+function writeLocalWorkTimers(timers: Record<string, LocalWorkTimer>) {
+  if (typeof window === "undefined") return
+  try {
+    window.sessionStorage.setItem(LOCAL_WORK_TIMER_STORAGE_KEY, JSON.stringify(timers))
+  } catch {
+    // Session storage is a display cache only. Ignore quota/private-mode failures.
+  }
+}
+
+function localWorkTimerKey(item: CodexChatImportItem) {
+  return item.id
+}
+
+function localWorkElapsedMs(timer: LocalWorkTimer | null | undefined, nowMs: number) {
+  if (!timer) return null
+  if (timer.state === "finished") {
+    if (typeof timer.elapsedMs === "number" && Number.isFinite(timer.elapsedMs)) {
+      return Math.max(0, timer.elapsedMs)
+    }
+    if (typeof timer.finishedAtMs === "number" && Number.isFinite(timer.finishedAtMs)) {
+      return Math.max(0, timer.finishedAtMs - timer.startedAtMs)
+    }
+    return null
+  }
+  return Math.max(0, nowMs - timer.startedAtMs)
 }
 
 type CodexThreadImportScopeStatus = {
@@ -279,10 +342,8 @@ function formatActivityTime(value: string | null | undefined) {
   return new Date(time).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
 }
 
-function formatFinishedAgoLabel(value: string | null | undefined, nowMs: number) {
-  if (!value) return null
-  const time = new Date(value).getTime()
-  if (!Number.isFinite(time)) return null
+function formatFinishedAgoLabelFromMs(time: number | null | undefined, nowMs: number) {
+  if (typeof time !== "number" || !Number.isFinite(time)) return null
   const diff = Math.max(0, nowMs - time)
   const minute = 60 * 1000
   const hour = 60 * minute
@@ -291,6 +352,12 @@ function formatFinishedAgoLabel(value: string | null | undefined, nowMs: number)
   if (diff < day) return `${Math.floor(diff / hour)}時間前`
   if (diff < 7 * day) return `${Math.floor(diff / day)}日前`
   return new Date(time).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
+}
+
+function formatFinishedAgoLabel(value: string | null | undefined, nowMs: number) {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  return formatFinishedAgoLabelFromMs(time, nowMs)
 }
 
 function shouldShowActivityTimeBreak(previous: AiTaskActivityMessage | null, current: AiTaskActivityMessage) {
@@ -701,16 +768,54 @@ export function CodexChatImportSidebar({
     if (!selectedChatId) return null
     return selectableChatItems.find(item => item.id === selectedChatId) ?? null
   }, [selectableChatItems, selectedChatId])
+  const [localWorkTimers, setLocalWorkTimers] = React.useState<Record<string, LocalWorkTimer>>(() => readLocalWorkTimers())
   const hasLiveWorkTimer = React.useMemo(() => {
     const hasRunningTimer = [...filteredChatItems, selectedChatItem].some(item => (
-      !!item?.workStartedAt && getCodexMonitorUiStatus(item.status ?? null) === "running"
+      getCodexMonitorUiStatus(item?.status ?? null) === "running"
     ))
     const hasSelectedFinishedAgoTimer = !!selectedChatItem &&
       getCodexMonitorUiStatus(selectedChatItem.status ?? null) === "review" &&
-      !!codexChatImportFinishedAt(selectedChatItem)
+      (!!codexChatImportFinishedAt(selectedChatItem) || !!localWorkTimers[localWorkTimerKey(selectedChatItem)]?.finishedAtMs)
     return hasRunningTimer || hasSelectedFinishedAgoTimer
-  }, [filteredChatItems, selectedChatItem])
+  }, [filteredChatItems, localWorkTimers, selectedChatItem])
   const [workNowMs, setWorkNowMs] = React.useState(() => Date.now())
+
+  React.useEffect(() => {
+    const nowMs = Date.now()
+    setLocalWorkTimers(previousTimers => {
+      let nextTimers = previousTimers
+      let changed = false
+
+      for (const item of selectableChatItems) {
+        const key = localWorkTimerKey(item)
+        const uiStatus = getCodexMonitorUiStatus(item.status ?? null)
+        const current = previousTimers[key]
+
+        if (uiStatus === "running") {
+          if (!current || current.state !== "running") {
+            if (!changed) nextTimers = { ...previousTimers }
+            nextTimers[key] = { state: "running", startedAtMs: nowMs }
+            changed = true
+          }
+          continue
+        }
+
+        if (uiStatus === "review" && current?.state === "running") {
+          if (!changed) nextTimers = { ...previousTimers }
+          nextTimers[key] = {
+            state: "finished",
+            startedAtMs: current.startedAtMs,
+            finishedAtMs: nowMs,
+            elapsedMs: Math.max(0, nowMs - current.startedAtMs),
+          }
+          changed = true
+        }
+      }
+
+      if (changed) writeLocalWorkTimers(nextTimers)
+      return changed ? nextTimers : previousTimers
+    })
+  }, [selectableChatItems])
 
   React.useEffect(() => {
     setWorkNowMs(Date.now())
@@ -975,6 +1080,10 @@ export function CodexChatImportSidebar({
   const selectedStatusText = selectedUiStatus === "review"
     ? "確認待ち"
     : selectedChatItem?.statusLabel ?? codexMonitorUiLabel(selectedVisualStatus)
+  const selectedLocalWorkTimer = selectedChatItem
+    ? localWorkTimers[localWorkTimerKey(selectedChatItem)] ?? null
+    : null
+  const selectedLocalWorkElapsedMs = localWorkElapsedMs(selectedLocalWorkTimer, workNowMs)
   const selectedRallyWorkElapsedMs = selectedChatItem
     ? codexChatImportWorkElapsedMs(selectedChatItem, workNowMs, selectedUiStatus === "running")
     : null
@@ -1003,17 +1112,22 @@ export function CodexChatImportSidebar({
     ? runningRallyElapsedMs(selectedMessages, workNowMs, selectedChatItem?.workStartedAt)
     : null
   const selectedWorkElapsedMs = selectedUiStatus === "running"
-    ? selectedRunningWorkElapsedMs ?? selectedRallyWorkElapsedMs
-    : selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs
+    ? selectedLocalWorkElapsedMs ?? selectedRunningWorkElapsedMs ?? selectedRallyWorkElapsedMs
+    : selectedLocalWorkElapsedMs ?? selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
   const selectedFinishedAgoLabel = selectedUiStatus === "review"
-    ? formatFinishedAgoLabel(codexChatImportFinishedAt(selectedChatItem), workNowMs)
+    ? selectedLocalWorkTimer?.finishedAtMs
+      ? formatFinishedAgoLabelFromMs(selectedLocalWorkTimer.finishedAtMs, workNowMs)
+      : formatFinishedAgoLabel(codexChatImportFinishedAt(selectedChatItem), workNowMs)
     : null
   const selectedStatusTimeLabel = selectedUiStatus === "running"
     ? selectedWorkElapsedText
     : selectedFinishedAgoLabel
   const selectedStatusAriaLabel = [selectedStatusText, selectedStatusTimeLabel].filter(Boolean).join(" ")
+  const selectedReviewWorkLabel = selectedUiStatus !== "running"
+    ? formatAiTaskWorkLabel(selectedWorkElapsedMs, false)
+    : null
   const selectedHasTimelineMessages = selectedMessages.length > 0 || Boolean(selectedSyntheticRunningPromptMessage)
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
@@ -1434,6 +1548,12 @@ export function CodexChatImportSidebar({
                       <span className="border-l border-current/25 pl-1 font-mono tabular-nums">{selectedStatusTimeLabel}</span>
                     )}
                   </span>
+                  {selectedReviewWorkLabel && (
+                    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
+                      <Clock className="h-3 w-3" />
+                      <span className="truncate">{selectedReviewWorkLabel}</span>
+                    </span>
+                  )}
                 </div>
 
               </div>
