@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest"
-import { isPendingCodexArchiveRequest } from "./codex-source-completion"
+import { CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS, isPendingCodexArchiveRequest } from "./codex-source-completion"
 
 describe("isPendingCodexArchiveRequest", () => {
+  test("uses a one minute grace before a node check archives Codex", () => {
+    expect(CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS).toBe(60_000)
+  })
+
   test("requires an uncancelled pending archive request for a completed source task", () => {
     expect(isPendingCodexArchiveRequest({
       codex_source_task_completed: true,

@@ -15,7 +15,7 @@ function isCodexTask(task: AiTask | null | undefined): task is AiTask {
   return task?.executor === "codex" || task?.executor === "codex_app"
 }
 
-export const CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS = 10_000
+export const CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS = 60_000
 
 export function isPendingCodexArchiveRequest(result: unknown) {
   const current = objectValue(result)
@@ -121,7 +121,7 @@ export async function requestCodexThreadArchiveFromNode(task: AiTask | null | un
 
   const nowIso = new Date().toISOString()
   const currentStep = "Codex threadのアーカイブをMacへ依頼しました"
-  const summary = "ノードのチェックが10秒維持されたため、Mac agentへCodex threadアーカイブを依頼しました。"
+  const summary = "ノードのチェックが1分維持されたため、Mac agentへCodex threadアーカイブを依頼しました。"
   const result = {
     ...currentResult,
     codex_run_state: "awaiting_approval",
