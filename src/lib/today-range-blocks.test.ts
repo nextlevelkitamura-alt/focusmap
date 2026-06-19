@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest"
 import type { Task } from "@/types/database"
-import { countScheduleItemsForDay } from "./today-range-blocks"
+import type { CalendarEvent } from "@/types/calendar"
+import { buildTimeBlocksForDay, countScheduleItemsForDay } from "./today-range-blocks"
 
 function task(overrides: Partial<Task>): Task {
   return {
@@ -41,6 +42,24 @@ function task(overrides: Partial<Task>): Task {
   }
 }
 
+function event(overrides: Partial<CalendarEvent>): CalendarEvent {
+  return {
+    id: "event-1",
+    user_id: "user-1",
+    google_event_id: "google-1",
+    calendar_id: "cal-1",
+    title: "予定",
+    start_time: "2026-06-12T10:00:00.000Z",
+    end_time: "2026-06-12T11:00:00.000Z",
+    is_all_day: false,
+    timezone: "Asia/Tokyo",
+    synced_at: "2026-06-12T09:00:00.000Z",
+    created_at: "2026-06-12T09:00:00.000Z",
+    updated_at: "2026-06-12T09:00:00.000Z",
+    ...overrides,
+  }
+}
+
 describe("today-range-blocks", () => {
   test("同じgoogle_event_idを持つ手動タスクと自動取り込みタスクは1件として数える", () => {
     const count = countScheduleItemsForDay({
@@ -53,5 +72,36 @@ describe("today-range-blocks", () => {
     })
 
     expect(count).toBe(1)
+  })
+
+  test("タイトル欠損イベントが3日/月表示の集計に混ざっても例外にしない", () => {
+    const blocks = buildTimeBlocksForDay({
+      date: new Date("2026-06-12T00:00:00.000Z"),
+      events: [
+        event({
+          id: "bad-title",
+          title: null as unknown as string,
+        }),
+      ],
+      tasks: [],
+    })
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].title).toBe("(No title)")
+  })
+
+  test("日時不正イベントは3日/月表示の集計から除外する", () => {
+    const count = countScheduleItemsForDay({
+      date: new Date("2026-06-12T00:00:00.000Z"),
+      events: [
+        event({
+          id: "bad-date",
+          start_time: "not-a-date",
+        }),
+      ],
+      tasks: [],
+    })
+
+    expect(count).toBe(0)
   })
 })

@@ -1,13 +1,14 @@
 import type { CalendarEvent } from "@/types/calendar"
+import { calendarEventDate, calendarEventGoogleId, calendarEventTitle } from "@/lib/calendar-display-normalize"
 
 function hasGoogleEventId(event: CalendarEvent): boolean {
-  return event.google_event_id.trim().length > 0
+  return calendarEventGoogleId(event).trim().length > 0
 }
 
 function eventSignature(event: CalendarEvent): string {
   return [
     event.calendar_id,
-    event.title.trim().toLowerCase(),
+    calendarEventTitle(event).toLowerCase(),
     event.start_time,
     event.end_time,
     event.is_all_day ? "all-day" : "timed",
@@ -15,13 +16,11 @@ function eventSignature(event: CalendarEvent): string {
 }
 
 function googleEventKey(event: CalendarEvent): string {
-  return `${event.calendar_id}::${event.google_event_id}`
+  return `${event.calendar_id}::${calendarEventGoogleId(event)}`
 }
 
-function eventTimeValue(value?: string): number {
-  if (!value) return 0
-  const time = new Date(value).getTime()
-  return Number.isNaN(time) ? 0 : time
+function eventTimeValue(value?: string | null): number {
+  return calendarEventDate(value)?.getTime() ?? 0
 }
 
 function eventRank(event: CalendarEvent): number {
@@ -84,6 +83,6 @@ export function dedupeCalendarEventsForDisplay(events: CalendarEvent[]): Calenda
   }
 
   return deduped.sort(
-    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
+    (a, b) => eventTimeValue(a.start_time) - eventTimeValue(b.start_time),
   )
 }

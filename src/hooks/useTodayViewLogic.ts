@@ -30,6 +30,7 @@ import {
     confirmCalendarEventMemoDeleteScope,
     convertCalendarEventToMemo,
 } from "@/lib/calendar-event-to-memo"
+import { calendarEventDate, calendarEventTitle, taskTitle } from "@/lib/calendar-display-normalize"
 
 // --- Types ---
 
@@ -270,8 +271,9 @@ export function useTodayViewLogic({
     // selectedDate のイベントだけ抽出
     const fetchedCalendarEvents = useMemo(() => {
         return allFetchedEvents.filter(e => {
-            const start = new Date(e.start_time)
-            const end = new Date(e.end_time)
+            const start = calendarEventDate(e.start_time)
+            const end = calendarEventDate(e.end_time)
+            if (!start || !end) return false
             return end.getTime() > today.getTime() && start.getTime() < tomorrow.getTime()
         })
     }, [allFetchedEvents, today, tomorrow])
@@ -693,7 +695,7 @@ export function useTodayViewLogic({
                 .filter(t => t.scheduled_at && t.calendar_id)
                 .map(t => {
                     const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
-                    const title = t.title.trim().toLowerCase()
+                    const title = taskTitle(t).toLowerCase()
                     return `${t.calendar_id || ''}|${title}|${minute}`
                 })
         ),
@@ -705,7 +707,7 @@ export function useTodayViewLogic({
                 .filter(t => t.source === 'google_event' && !!t.scheduled_at)
                 .map(t => {
                     const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
-                    const title = t.title.trim().toLowerCase()
+                    const title = taskTitle(t).toLowerCase()
                     return `${t.calendar_id || ''}|${title}|${minute}`
                 })
         ),
@@ -719,8 +721,11 @@ export function useTodayViewLogic({
             if (event.is_all_day) continue
             if (event.task_id && scheduledTaskIds.has(event.task_id)) continue
             if (taskGoogleEventKeys.has(`${event.calendar_id}::${event.google_event_id}`)) continue
-            const eventMinute = Math.floor(new Date(event.start_time).getTime() / 60000)
-            const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
+            const eventStart = calendarEventDate(event.start_time)
+            const eventEnd = calendarEventDate(event.end_time)
+            if (!eventStart || !eventEnd) continue
+            const eventMinute = Math.floor(eventStart.getTime() / 60000)
+            const eventKey = `${event.calendar_id || ''}|${calendarEventTitle(event).toLowerCase()}|${eventMinute}`
             if (scheduledTaskEventKeys.has(eventKey)) continue
             if (eventLikeTaskKeys.has(eventKey)) continue
 
@@ -728,7 +733,7 @@ export function useTodayViewLogic({
                 stableCalendarColorMap.get(event.calendar_id || '') ||
                 event.background_color ||
                 (event.sync_status === 'pending' ? '#F59E0B' : DEFAULT_CALENDAR_EVENT_COLOR)
-            const block = eventToTimeBlock({ ...event, background_color: calendarColor })
+            const block = eventToTimeBlock({ ...event, title: calendarEventTitle(event), background_color: calendarColor })
             if (block.startTime.getTime() < today.getTime()) block.startTime = new Date(today)
             if (block.endTime.getTime() > tomorrow.getTime()) block.endTime = new Date(tomorrow)
 
@@ -741,7 +746,7 @@ export function useTodayViewLogic({
             if (task.google_event_id && task.calendar_id) {
                 color = stableCalendarColorMap.get(task.calendar_id || '')
             }
-            const block = taskToTimeBlock(task, undefined, color)
+            const block = taskToTimeBlock({ ...task, title: taskTitle(task) }, undefined, color)
             if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
             items.push(block)
         }
@@ -752,7 +757,7 @@ export function useTodayViewLogic({
             if (task.google_event_id && task.calendar_id) {
                 color = stableCalendarColorMap.get(task.calendar_id || '')
             }
-            const block = taskToTimeBlock(task, undefined, color)
+            const block = taskToTimeBlock({ ...task, title: taskTitle(task) }, undefined, color)
             block.startTime = new Date(today)
             if (block.endTime.getTime() > dayAfterTomorrow.getTime()) {
                 block.endTime = new Date(dayAfterTomorrow)
@@ -767,9 +772,10 @@ export function useTodayViewLogic({
     // All-day events
     const allDayEvents = useMemo(() => {
         return calendarEvents
-            .filter(e => e.is_all_day)
+            .filter(e => e.is_all_day && calendarEventDate(e.start_time) && calendarEventDate(e.end_time))
             .map(e => ({
                 ...e,
+                title: calendarEventTitle(e),
                 background_color:
                     stableCalendarColorMap.get(e.calendar_id || '') ||
                     e.background_color ||
@@ -987,13 +993,14 @@ export function useTodayViewLogic({
 
         const candidates = allFetchedEvents.filter(event => {
             if (!event.google_event_id || !event.calendar_id) return false
-            const start = new Date(event.start_time)
+            const start = calendarEventDate(event.start_time)
+            if (!start) return false
             return start >= priorityMin && start < priorityMax
         })
         if (candidates.length === 0) return
 
         const sortedCandidates = [...candidates]
-            .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+            .sort((a, b) => (calendarEventDate(a.start_time)?.getTime() ?? 0) - (calendarEventDate(b.start_time)?.getTime() ?? 0))
             .slice(0, REMINDER_PREFETCH_MAX_EVENTS)
 
         const controller = new AbortController()
@@ -1788,7 +1795,7 @@ export function useTodayViewLogic({
                                 e.id !== currentEvent.id &&
                                 !(e.google_event_id === currentEvent.google_event_id && e.calendar_id === currentEvent.calendar_id)
                             )
-                            return [...next, currentEvent].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                            return [...next, currentEvent].sort((a, b) => (calendarEventDate(a.start_time)?.getTime() ?? 0) - (calendarEventDate(b.start_time)?.getTime() ?? 0))
                         })
 
                             if (linkedTasks.length > 0) {

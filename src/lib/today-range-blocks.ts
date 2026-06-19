@@ -2,6 +2,7 @@ import type { Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { eventToTimeBlock, taskToTimeBlock, type TimeBlock } from "@/lib/time-block"
 import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
+import { calendarEventDate, calendarEventTitle, taskTitle } from "@/lib/calendar-display-normalize"
 
 const DEFAULT_CALENDAR_EVENT_COLOR = "#039BE5"
 
@@ -18,6 +19,7 @@ function endOfDay(date: Date): Date {
 }
 
 function overlapsDay(start: Date, end: Date, dayStart: Date, dayEnd: Date): boolean {
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false
   return end.getTime() > dayStart.getTime() && start.getTime() < dayEnd.getTime()
 }
 
@@ -46,7 +48,8 @@ export function buildTimeBlocksForDay({
   const habitGroupIds = new Set(tasks.filter((task) => task.is_habit).map((task) => task.id))
   const dayTasks = dedupeGoogleEventTasks(tasks.filter((task) => {
     if (!isDisplayableTask(task, habitGroupIds) || !task.scheduled_at) return false
-    const start = new Date(task.scheduled_at)
+    const start = calendarEventDate(task.scheduled_at)
+    if (!start) return false
     const duration = task.estimated_time || 30
     const end = new Date(start.getTime() + duration * 60 * 1000)
     return overlapsDay(start, end, dayStart, dayEnd)
@@ -62,16 +65,16 @@ export function buildTimeBlocksForDay({
     dayTasks
       .filter((task) => task.scheduled_at && task.calendar_id)
       .map((task) => {
-        const minute = Math.floor(new Date(task.scheduled_at!).getTime() / 60000)
-        return `${task.calendar_id || ""}|${task.title.trim().toLowerCase()}|${minute}`
+        const minute = Math.floor((calendarEventDate(task.scheduled_at!)?.getTime() ?? 0) / 60000)
+        return `${task.calendar_id || ""}|${taskTitle(task).toLowerCase()}|${minute}`
       }),
   )
   const eventLikeTaskKeys = new Set(
     dayTasks
       .filter((task) => task.source === "google_event" && !!task.scheduled_at)
       .map((task) => {
-        const minute = Math.floor(new Date(task.scheduled_at!).getTime() / 60000)
-        return `${task.calendar_id || ""}|${task.title.trim().toLowerCase()}|${minute}`
+        const minute = Math.floor((calendarEventDate(task.scheduled_at!)?.getTime() ?? 0) / 60000)
+        return `${task.calendar_id || ""}|${taskTitle(task).toLowerCase()}|${minute}`
       }),
   )
 
@@ -79,14 +82,15 @@ export function buildTimeBlocksForDay({
 
   for (const event of events) {
     if (event.is_all_day) continue
-    const start = new Date(event.start_time)
-    const end = new Date(event.end_time)
+    const start = calendarEventDate(event.start_time)
+    const end = calendarEventDate(event.end_time)
+    if (!start || !end) continue
     if (!overlapsDay(start, end, dayStart, dayEnd)) continue
     if (event.task_id && scheduledTaskIds.has(event.task_id)) continue
     if (event.google_event_id && taskGoogleEventKeys.has(`${event.calendar_id}::${event.google_event_id}`)) continue
 
     const eventMinute = Math.floor(start.getTime() / 60000)
-    const eventKey = `${event.calendar_id || ""}|${event.title.trim().toLowerCase()}|${eventMinute}`
+    const eventKey = `${event.calendar_id || ""}|${calendarEventTitle(event).toLowerCase()}|${eventMinute}`
     if (scheduledTaskEventKeys.has(eventKey)) continue
     if (eventLikeTaskKeys.has(eventKey)) continue
 
@@ -95,7 +99,7 @@ export function buildTimeBlocksForDay({
       event.background_color ||
       (event.sync_status === "pending" ? "#F59E0B" : DEFAULT_CALENDAR_EVENT_COLOR)
 
-    const block = eventToTimeBlock({ ...event, background_color: color })
+    const block = eventToTimeBlock({ ...event, title: calendarEventTitle(event), background_color: color })
     if (block.startTime.getTime() < dayStart.getTime()) block.startTime = new Date(dayStart)
     if (block.endTime.getTime() > dayEnd.getTime()) block.endTime = new Date(dayEnd)
     items.push(block)
@@ -106,7 +110,7 @@ export function buildTimeBlocksForDay({
     const color = task.google_event_id && task.calendar_id
       ? calendarColorMap?.get(task.calendar_id || "")
       : undefined
-    const block = taskToTimeBlock(task, undefined, color)
+    const block = taskToTimeBlock({ ...task, title: taskTitle(task) }, undefined, color)
     if (block.startTime.getTime() < dayStart.getTime()) block.startTime = new Date(dayStart)
     if (block.endTime.getTime() > dayEnd.getTime()) block.endTime = new Date(dayEnd)
     items.push(block)
@@ -130,10 +134,14 @@ export function getAllDayEventsForDay({
   return events
     .filter((event) => {
       if (!event.is_all_day) return false
-      return overlapsDay(new Date(event.start_time), new Date(event.end_time), dayStart, dayEnd)
+      const start = calendarEventDate(event.start_time)
+      const end = calendarEventDate(event.end_time)
+      if (!start || !end) return false
+      return overlapsDay(start, end, dayStart, dayEnd)
     })
     .map((event) => ({
       ...event,
+      title: calendarEventTitle(event),
       background_color: calendarColorMap?.get(event.calendar_id || "") || event.background_color || DEFAULT_CALENDAR_EVENT_COLOR,
     }))
 }

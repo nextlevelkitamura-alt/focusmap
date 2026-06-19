@@ -60,4 +60,17 @@ describe("dedupeCalendarEventsForDisplay", () => {
     expect(events).toHaveLength(1)
     expect(events[0].id).toBe("google")
   })
+
+  test("古いキャッシュに不正なIDやタイトルが混ざっても例外にしない", () => {
+    const events = dedupeCalendarEventsForDisplay([
+      event({
+        id: "cached-bad-shape",
+        google_event_id: null as unknown as string,
+        title: null as unknown as string,
+      }),
+    ])
+
+    expect(events).toHaveLength(1)
+    expect(events[0].id).toBe("cached-bad-shape")
+  })
 })
