@@ -406,6 +406,21 @@ function isStatusActivityMessage(message: AiTaskActivityMessage) {
   return message.role === "status" || message.role === "system"
 }
 
+function completedWorkMessageIndex(messages: AiTaskActivityMessage[], elapsedText: string | null, running: boolean) {
+  if (running || !elapsedText) return -1
+
+  let latestUserIndex = -1
+  messages.forEach((message, index) => {
+    if (isUserActivityMessage(message)) latestUserIndex = index
+  })
+  if (latestUserIndex < 0) return -1
+
+  for (let index = latestUserIndex + 1; index < messages.length; index += 1) {
+    if (!isStatusActivityMessage(messages[index])) return index
+  }
+  return -1
+}
+
 function codexSummaryInput(
   item: CodexChatImportItem,
   messages: AiTaskActivityMessage[],
@@ -526,6 +541,24 @@ function ChatRunningInlineStatus({ elapsedText }: { elapsedText: string | null }
         <span className="font-mono tabular-nums">{elapsedText}</span>
         <span className="ml-1">作業中</span>
       </span>
+    </div>
+  )
+}
+
+function ChatCompletedWorkInlineStatus({ elapsedText }: { elapsedText: string | null }) {
+  if (!elapsedText) return null
+
+  return (
+    <div
+      className="!my-2 flex items-center gap-2 text-[12px] font-medium leading-none text-zinc-500"
+      aria-label={`${elapsedText}作業しました`}
+    >
+      <span className="shrink-0">
+        <span className="font-mono tabular-nums">{elapsedText}</span>
+        <span>作業しました</span>
+      </span>
+      <span className="shrink-0 text-zinc-600" aria-hidden="true">›</span>
+      <span className="h-px min-w-0 flex-1 bg-[#303030]" aria-hidden="true" />
     </div>
   )
 }
@@ -955,6 +988,11 @@ export function CodexChatImportSidebar({
     : null
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedWorkLabel = formatAiTaskWorkLabel(selectedWorkElapsedMs, selectedUiStatus === "running")
+  const selectedCompletedWorkMessageIndex = completedWorkMessageIndex(
+    selectedMessages,
+    selectedWorkElapsedText,
+    selectedUiStatus === "running",
+  )
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
     return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [])
@@ -1453,6 +1491,9 @@ export function CodexChatImportSidebar({
                   return (
                     <React.Fragment key={message.id}>
                       {shouldShowActivityTimeBreak(previous, message) && <ActivityTimeBreak value={message.created_at} />}
+                      {selectedCompletedWorkMessageIndex === index && (
+                        <ChatCompletedWorkInlineStatus elapsedText={selectedWorkElapsedText} />
+                      )}
                       <ActivityMessageBubble message={message} />
                     </React.Fragment>
                   )
