@@ -723,6 +723,7 @@ export function isOrphanThreadImportCandidate(
   cwdScopeMap?: Map<string, CodexThreadImportScope>,
 ): boolean {
   if (!row.id || knownThreadIds.has(row.id)) return false;
+  if (row.archived) return false;
   if (isFocusmapManualHandoffThread(row, focusmapTasks, cwdScopeMap)) return false;
   const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
   if (updatedMs <= 0) return false;
@@ -774,6 +775,7 @@ function importPayloadFromThread(
     preview: row.preview ?? null,
     first_user_message: row.first_user_message ?? null,
     cwd: row.cwd ?? null,
+    archived: Boolean(row.archived),
     updated_at_ms: row.updated_at_ms ?? row.created_at_ms ?? null,
     codex_run_state: summary?.state ?? (row.archived ? 'awaiting_approval' : 'running'),
     codex_review_reason: summary?.reviewReason ?? (row.archived ? 'archived' : 'external_thread_import'),
@@ -1122,6 +1124,7 @@ function resultSnapshot(
     codex_external_origin: codexExternalOrigin,
     codex_run_state: status === 'running' ? 'running' : 'awaiting_approval',
     codex_review_reason: status === 'running' ? 'started' : summary.reviewReason,
+    codex_thread_archived: Boolean(row.archived),
     codex_source_task_id: typeof result.codex_source_task_id === 'string'
       ? result.codex_source_task_id
       : task.source_task_id ?? null,
@@ -1387,9 +1390,16 @@ function isThreadUnavailableMarked(task: AiTask, threadId: string): boolean {
   return currentThreadId === threadId && current.codex_review_reason === 'thread_unavailable';
 }
 
-async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_unavailable' | 'archived'): Promise<void> {
+export async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_unavailable' | 'archived'): Promise<void> {
   const nowIso = new Date().toISOString();
   const current = taskResult(task);
+  const previousLastActivityAt = typeof current.last_activity_at === 'string' && current.last_activity_at.trim()
+    ? current.last_activity_at.trim()
+    : null;
+  const previousAwaitingApprovalAt = typeof current.awaiting_approval_at === 'string' && current.awaiting_approval_at.trim()
+    ? current.awaiting_approval_at.trim()
+    : null;
+  const closureActivityAt = previousLastActivityAt ?? nowIso;
   const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true;
   const sourceTaskCompleted = reason === 'archived' && shouldCompleteSourceFromArchivedThread(task);
   const pendingArchiveRequest = sourceTaskCompleted;
@@ -1405,6 +1415,8 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
     codex_thread_url: `codex://threads/${threadId}`,
     codex_run_state: 'awaiting_approval',
     codex_review_reason: reason,
+    codex_thread_archived: reason === 'archived',
+    codex_archived_at: reason === 'archived' ? nowIso : null,
     codex_source_task_completed: sourceTaskCompleted,
     codex_source_task_id: task.source_task_id ?? null,
     codex_source_task_completion_reason: sourceTaskCompleted ? 'archived' : null,
@@ -1424,8 +1436,12 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
     codex_archive_request_cancelled_at: typeof current.codex_archive_request_cancelled_at === 'string'
       ? current.codex_archive_request_cancelled_at
       : null,
-    last_activity_at: nowIso,
-    awaiting_approval_at: nowIso,
+    last_activity_at: closureActivityAt,
+    awaiting_approval_at: previousAwaitingApprovalAt ?? closureActivityAt,
+    meta: {
+      monitor: 'focusmap-agent',
+      thread_archived: reason === 'archived',
+    },
   };
   await api.updateTaskState(runnerId, task.id, nextStatus, {
     result,

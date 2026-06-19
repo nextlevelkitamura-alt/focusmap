@@ -15,6 +15,7 @@ import {
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
+  markThreadGone,
   matchingThreadImportScope,
   orphanImportLimitForPreImportTasks,
   parseRollout,
@@ -180,6 +181,47 @@ describe('codex-thread-monitor state detection', () => {
         codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
       },
     }))).toBe(true);
+  });
+
+  test('marks archived linked threads for history filtering without moving activity time to sync time', async () => {
+    const updates: unknown[][] = [];
+    const api = {
+      updateTaskState: async (...args: unknown[]) => {
+        updates.push(args);
+      },
+    };
+    const linkedTask = task({
+      status: 'awaiting_approval',
+      source_task_id: 'source-1',
+      codex_thread_id: 'thread-1',
+      result: {
+        codex_run_state: 'awaiting_approval',
+        last_activity_at: '2026-06-10T10:00:00.000Z',
+        awaiting_approval_at: '2026-06-10T10:00:00.000Z',
+      },
+    });
+
+    await markThreadGone(api as never, 'runner-1', linkedTask, 'thread-1', 'archived');
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.[0]).toBe('runner-1');
+    expect(updates[0]?.[1]).toBe('task-1');
+    expect(updates[0]?.[2]).toBe('awaiting_approval');
+    const payload = updates[0]?.[3] as { result?: Record<string, unknown>; activity_messages?: Array<Record<string, unknown>> };
+    expect(payload.result).toMatchObject({
+      codex_review_reason: 'archived',
+      codex_thread_archived: true,
+      codex_source_task_completed: false,
+      last_activity_at: '2026-06-10T10:00:00.000Z',
+      awaiting_approval_at: '2026-06-10T10:00:00.000Z',
+      meta: {
+        thread_archived: true,
+      },
+    });
+    expect(payload.activity_messages?.[0]).toMatchObject({
+      kind: 'approval',
+      dedupe_key: 'thread:thread-1:archived',
+    });
   });
 
   test('keeps a completed Codex answer in awaiting_approval even when thread updated_at is later than completed_at seconds', () => {
@@ -639,7 +681,7 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(isOrphanThreadImportCandidate(base, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
     expect(isOrphanThreadImportCandidate(base, new Set(['thread-new']), importScopes, nowMs, 10 * 60_000)).toBe(false);
-    expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
+    expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({ ...base, cwd: '/Users/me/other' }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({ ...base, updated_at_ms: Date.parse('2026-06-10T08:59:59.000Z') }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({

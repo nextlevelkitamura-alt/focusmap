@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import {
+  codexThreadArchivedForDisplay,
   codexThreadRallyWorkTiming,
   codexThreadDisplayTitle,
   codexThreadImportActivityAt,
@@ -142,6 +143,40 @@ describe("codex thread import display helpers", () => {
         updatedAt: "2026-06-18T01:35:00.000Z",
       },
     })).toBeNull()
+  })
+
+  test("detects Codex archived threads for history filtering", () => {
+    expect(codexThreadArchivedForDisplay({
+      aiTask: {
+        result: {
+          codex_review_reason: "archived",
+        },
+      },
+    })).toBe(true)
+    expect(codexThreadArchivedForDisplay({
+      aiTask: {
+        result: {
+          meta: {
+            thread_archived: true,
+          },
+        },
+      },
+    })).toBe(true)
+    expect(codexThreadArchivedForDisplay({
+      task: {
+        codex_status: "archived",
+      },
+    })).toBe(true)
+    expect(codexThreadArchivedForDisplay({
+      aiTask: {
+        result: {
+          codex_review_reason: "completed",
+          meta: {
+            thread_archived: false,
+          },
+        },
+      },
+    })).toBe(false)
   })
 
   test("calculates rally work timing only from Codex turn timestamps", () => {

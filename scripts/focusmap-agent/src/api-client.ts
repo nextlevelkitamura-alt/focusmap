@@ -70,10 +70,15 @@ export class AgentApiClient {
       executor: result.executor,
       codex_run_state: result.codex_run_state,
       codex_review_reason: result.codex_review_reason,
+      codex_thread_archived: result.codex_thread_archived,
+      codex_archived_at: result.codex_archived_at,
       codex_thread_id: result.codex_thread_id,
       codex_thread_url: result.codex_thread_url,
       last_activity_at: result.last_activity_at,
       awaiting_approval_at: result.awaiting_approval_at,
+      meta: result.meta?.thread_archived === undefined
+        ? undefined
+        : { thread_archived: result.meta.thread_archived },
       steps: result.steps?.slice(-8),
       message_chars: result.message?.length ?? 0,
       live_log_chars: result.live_log?.length ?? 0,

@@ -18,6 +18,7 @@ export type ImportedCodexThread = {
   preview?: string | null
   first_user_message?: string | null
   cwd?: string | null
+  archived?: boolean | null
   updated_at_ms?: number | null
   codex_run_state?: 'running' | 'awaiting_approval' | null
   codex_review_reason?: string | null
@@ -94,6 +95,7 @@ function parseThread(input: unknown): ImportedCodexThread | null {
     preview: compactString(record.preview, 2_000),
     first_user_message: compactString(record.first_user_message, MAX_PROMPT_CHARS),
     cwd: compactString(record.cwd, 500),
+    archived: record.archived === true || record.archived === 1,
     updated_at_ms: updatedAtMs,
     codex_run_state: record.codex_run_state === 'awaiting_approval' ? 'awaiting_approval' : 'running',
     codex_review_reason: compactString(record.codex_review_reason, 120),
@@ -162,6 +164,7 @@ export function threadUpdatedAtIso(thread: ImportedCodexThread, fallback = new D
 }
 
 function importedThreadRunState(thread: ImportedCodexThread): 'running' | 'awaiting_approval' {
+  if (thread.archived) return 'awaiting_approval'
   return thread.codex_run_state === 'awaiting_approval' ? 'awaiting_approval' : 'running'
 }
 
@@ -170,6 +173,7 @@ function importedThreadStatus(thread: ImportedCodexThread): 'running' | 'awaitin
 }
 
 function importedThreadCurrentStep(thread: ImportedCodexThread) {
+  if (thread.archived) return 'Codex thread はアーカイブ済みです'
   const runState = importedThreadRunState(thread)
   return compactString(thread.current_step, 500) ??
     (runState === 'running'
@@ -194,7 +198,8 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
     codex_thread_url: `codex://threads/${thread.id}`,
     codex_run_state: runState,
     codex_review_reason: compactString(thread.codex_review_reason, 120) ??
-      (runState === 'running' ? 'external_thread_import' : 'completed'),
+      (thread.archived ? 'archived' : runState === 'running' ? 'external_thread_import' : 'completed'),
+    codex_thread_archived: thread.archived === true,
     codex_source_task_id: sourceTaskId,
     current_step: importedThreadCurrentStep(thread),
     message: runState === 'running'
@@ -214,6 +219,7 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
       imported_by: 'focusmap-agent',
       thread_title: thread.title ?? null,
       thread_updated_at_ms: thread.updated_at_ms ?? null,
+      thread_archived: thread.archived === true,
       thread_preview_chars: thread.preview?.length ?? 0,
       cwd: thread.cwd ?? null,
       scope_repo_path: thread.scope_repo_path ?? null,
@@ -241,7 +247,8 @@ export function linkedManualHandoffThreadResult(
     codex_thread_url: `codex://threads/${thread.id}`,
     codex_run_state: runState,
     codex_review_reason: compactString(thread.codex_review_reason, 120) ??
-      (runState === 'running' ? 'manual_handoff_thread_detected' : 'completed'),
+      (thread.archived ? 'archived' : runState === 'running' ? 'manual_handoff_thread_detected' : 'completed'),
+    codex_thread_archived: thread.archived === true,
     codex_source_task_id: sourceTaskId,
     current_step: importedThreadCurrentStep(thread),
     message: runState === 'running'
@@ -254,6 +261,7 @@ export function linkedManualHandoffThreadResult(
       linked_by: 'codex-monitor-import-thread',
       thread_title: thread.title ?? null,
       thread_updated_at_ms: thread.updated_at_ms ?? null,
+      thread_archived: thread.archived === true,
       cwd: thread.cwd ?? null,
     },
   }
@@ -604,6 +612,10 @@ export async function POST(request: NextRequest) {
 
     const runnerCheck = await assertRunnerCanImport(supabase, token, runnerId)
     if (!runnerCheck.ok) return NextResponse.json({ error: runnerCheck.error }, { status: runnerCheck.status })
+
+    if (thread.archived) {
+      return NextResponse.json({ imported: false, reason: 'archived' })
+    }
 
     const imported = await existingImport(supabase, token, thread.id)
     if (imported?.ai_task_id) {

@@ -412,6 +412,18 @@ describe("MindMap controls", () => {
       deleted_at: null,
       updated_at: "2026-06-11T00:00:00.000Z",
     } as Task
+    const archivedChat = {
+      ...task,
+      id: "chat-node-archived",
+      title: "Codex側でアーカイブ済み",
+      project_id: "project-2",
+      parent_task_id: "inbox-1",
+      source: "codex_app_thread",
+      codex_work_dir: "/Users/me/focusmap",
+      codex_status: "archived",
+      deleted_at: null,
+      updated_at: "2026-06-12T01:00:00.000Z",
+    } as Task
     const unrelatedChat = {
       ...task,
       id: "chat-node-other",
@@ -448,7 +460,7 @@ describe("MindMap controls", () => {
         projects={[project, otherProject, unrelatedProject]}
         groups={[task]}
         tasks={[]}
-        allTasks={[task, inboxGroup, importedChat, unrelatedInboxGroup, unrelatedChat, placedParent, placedChat]}
+        allTasks={[task, inboxGroup, importedChat, archivedChat, unrelatedInboxGroup, unrelatedChat, placedParent, placedChat]}
         onKanbanUpdateTask={onKanbanUpdateTask}
       />
     )
@@ -462,6 +474,7 @@ describe("MindMap controls", () => {
     expect(screen.queryByText("別リポの相談")).not.toBeInTheDocument()
     expect(screen.queryByText("配置済みの相談")).not.toBeInTheDocument()
     expect(screen.queryByText("配置済み: 既存の親")).not.toBeInTheDocument()
+    expect(screen.queryByText("Codex側でアーカイブ済み")).not.toBeInTheDocument()
 
     const unplacedRow = screen.getByText("SNS運用の相談").closest("div")
     expect(unplacedRow).not.toBeNull()

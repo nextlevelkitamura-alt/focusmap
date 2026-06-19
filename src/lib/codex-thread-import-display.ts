@@ -90,6 +90,7 @@ export function codexThreadImportActivityAt(input: {
     memo?: unknown
     updated_at?: string | null
     created_at?: string | null
+    codex_status?: unknown
   } | null
   aiTask?: {
     result?: unknown
@@ -116,6 +117,39 @@ export function codexThreadImportActivityAt(input: {
     result?.codex_turn_started_at,
     importedCodexThreadUpdatedAtFromMemo(input.task?.memo),
   )
+}
+
+function booleanValue(value: unknown) {
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return value === 1
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === "true" || normalized === "1") return true
+    if (normalized === "false" || normalized === "0") return false
+  }
+  return false
+}
+
+export function codexThreadArchivedForDisplay(input: {
+  task?: {
+    codex_status?: unknown
+  } | null
+  aiTask?: {
+    result?: unknown
+  } | null
+  aiResult?: Record<string, unknown> | null
+  progressTask?: {
+    status?: unknown
+  } | null
+}) {
+  const result = input.aiResult ?? recordValue(input.aiTask?.result)
+  const meta = recordValue(result?.meta)
+  return input.task?.codex_status === "archived" ||
+    input.progressTask?.status === "archived" ||
+    result?.codex_review_reason === "archived" ||
+    booleanValue(result?.codex_thread_archived) ||
+    booleanValue(result?.thread_archived) ||
+    booleanValue(meta?.thread_archived)
 }
 
 export type CodexThreadRallyWorkTiming = {

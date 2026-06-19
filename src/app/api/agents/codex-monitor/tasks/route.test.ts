@@ -71,13 +71,12 @@ describe('shouldReturnCodexMonitorTask', () => {
     })).toBe(true)
   })
 
-  test('does not keep scanning archived threads that were explicitly suppressed', () => {
+  test('does not keep scanning archived threads after the archived state is recorded', () => {
     expect(shouldReturnCodexMonitorTask({
       executor: 'codex_app',
       codex_thread_id: 'thread-archived',
       result: {
         codex_review_reason: 'archived',
-        codex_source_task_completion_suppressed: true,
       },
     })).toBe(false)
   })

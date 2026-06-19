@@ -22,6 +22,7 @@ import {
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion";
 import {
+    codexThreadArchivedForDisplay,
     codexThreadDisplayTitle,
     codexThreadImportActivityAt,
     codexThreadPromptPreviewFromMemo,
@@ -1098,6 +1099,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     : {};
                 const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null;
                 if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return [];
+                if (codexThreadArchivedForDisplay({ task, aiTask, aiResult, progressTask })) return [];
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === 'unsent') return [];
                 if (!progressTask && codexRun?.state === 'prompt_waiting') return [];
                 const placed = !task.parent_task_id || !codexInboxGroupIds.has(task.parent_task_id);
@@ -1175,6 +1177,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 task.source === 'codex_app_thread' ||
                 Boolean(threadId);
             if (!hasCodexDetail) continue;
+            if (codexThreadArchivedForDisplay({ task, aiTask, aiResult, progressTask })) continue;
 
             const visualStatus = progressTask?.status ??
                 codexRun?.state ??

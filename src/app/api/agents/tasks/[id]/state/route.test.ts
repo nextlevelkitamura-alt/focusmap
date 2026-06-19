@@ -5,6 +5,7 @@ import {
   normalizeAgentStateForLegacyThreadMissing,
   shouldApplyCodexThreadTitleToSourceTask,
   shouldCompleteSourceTaskFromAgentState,
+  shouldMarkSourceTaskArchivedFromAgentState,
 } from './route'
 
 describe('isClaimedByOtherActiveRunner', () => {
@@ -68,6 +69,47 @@ describe('shouldCompleteSourceTaskFromAgentState', () => {
       result: {
         codex_review_reason: 'thread_unavailable',
         codex_source_task_completed: true,
+      },
+    })).toBe(false)
+  })
+})
+
+describe('shouldMarkSourceTaskArchivedFromAgentState', () => {
+  test('marks a source task archived when the agent records archived thread state', () => {
+    expect(shouldMarkSourceTaskArchivedFromAgentState({
+      sourceTaskId: 'task-1',
+      result: {
+        codex_review_reason: 'archived',
+      },
+    })).toBe(true)
+
+    expect(shouldMarkSourceTaskArchivedFromAgentState({
+      sourceTaskId: 'task-1',
+      result: {
+        codex_thread_archived: true,
+      },
+    })).toBe(true)
+
+    expect(shouldMarkSourceTaskArchivedFromAgentState({
+      sourceTaskId: 'task-1',
+      result: {
+        meta: {
+          thread_archived: true,
+        },
+      },
+    })).toBe(true)
+
+    expect(shouldMarkSourceTaskArchivedFromAgentState({
+      sourceTaskId: null,
+      result: {
+        codex_review_reason: 'archived',
+      },
+    })).toBe(false)
+
+    expect(shouldMarkSourceTaskArchivedFromAgentState({
+      sourceTaskId: 'task-1',
+      result: {
+        codex_review_reason: 'completed',
       },
     })).toBe(false)
   })

@@ -101,6 +101,8 @@ export interface TaskResultJson {
   codex_thread_url?: string;
   codex_run_state?: 'running' | 'awaiting_approval';
   codex_review_reason?: string;
+  codex_thread_archived?: boolean;
+  codex_archived_at?: string | null;
   codex_turn_started_at?: string;
   codex_turn_completed_at?: string;
   codex_source_task_completed?: boolean;
@@ -135,6 +137,7 @@ export interface CodexThreadImportPayload {
   preview?: string | null;
   first_user_message?: string | null;
   cwd?: string | null;
+  archived?: boolean | null;
   updated_at_ms?: number | null;
   codex_run_state?: 'running' | 'awaiting_approval';
   codex_review_reason?: string | null;

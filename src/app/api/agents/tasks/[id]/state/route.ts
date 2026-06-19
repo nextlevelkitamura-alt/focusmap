@@ -78,6 +78,19 @@ export function shouldCompleteSourceTaskFromAgentState(input: {
     result.codex_source_task_completion_suppressed !== true
 }
 
+export function shouldMarkSourceTaskArchivedFromAgentState(input: {
+  result?: Record<string, unknown> | null
+  sourceTaskId?: unknown
+}) {
+  const sourceTaskId = compactString(input.sourceTaskId, 120)
+  if (!sourceTaskId) return false
+  const result = isRecord(input.result) ? input.result : {}
+  const meta = isRecord(result.meta) ? result.meta : {}
+  return result.codex_review_reason === 'archived' ||
+    result.codex_thread_archived === true ||
+    meta.thread_archived === true
+}
+
 export function normalizeAgentStateForLegacyThreadMissing(input: {
   status: string
   result?: Record<string, unknown> | null
@@ -351,6 +364,27 @@ export async function POST(
         .is('deleted_at', null)
 
       if (sourceUpdateError) return NextResponse.json({ error: sourceUpdateError.message }, { status: 500 })
+    }
+
+    if (shouldMarkSourceTaskArchivedFromAgentState({
+      result: resultForSourceCompletion,
+      sourceTaskId: task.source_task_id,
+    })) {
+      const resultJson = resultForSourceCompletion ?? {}
+      const threadId = compactString(resultJson.codex_thread_id, 200)
+      const taskUpdates: Record<string, unknown> = {
+        codex_status: 'archived',
+        updated_at: new Date().toISOString(),
+      }
+      if (threadId) taskUpdates.codex_thread_id = threadId
+      const { error: sourceArchiveError } = await supabase
+        .from('tasks')
+        .update(taskUpdates)
+        .eq('id', String(task.source_task_id))
+        .eq('user_id', String(task.user_id))
+        .is('deleted_at', null)
+
+      if (sourceArchiveError) return NextResponse.json({ error: sourceArchiveError.message }, { status: 500 })
     }
 
     const { data, error } = await supabase

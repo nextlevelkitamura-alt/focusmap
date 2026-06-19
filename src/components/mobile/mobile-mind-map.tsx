@@ -12,6 +12,7 @@ import {
     setCodexSourceTaskCompletionFromNode,
 } from "@/lib/codex-source-completion"
 import {
+    codexThreadArchivedForDisplay,
     codexThreadImportActivityAt,
     codexThreadPromptPreviewFromMemo,
     codexThreadRallyWorkTiming,
@@ -737,6 +738,7 @@ export function MobileMindMap({
                     : {}
                 const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null
                 if (!codexThreadMatchesSelectedRepo(task, aiTask, taskProject, selectedCodexImportRepoPath)) return []
+                if (codexThreadArchivedForDisplay({ task, aiTask, aiResult, progressTask })) return []
                 if (progressTask && getCodexMonitorUiStatus(progressTask.status) === "unsent") return []
                 if (codexRun?.state === "prompt_waiting") return []
                 const parentTask = placedTask.parent_task_id ? repoScopedTasksById.get(placedTask.parent_task_id) ?? taskMap.get(placedTask.parent_task_id) ?? null : null

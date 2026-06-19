@@ -112,6 +112,21 @@ describe('codex orphan thread import helpers', () => {
     expect(result.meta.thread_updated_at_ms).toBe(thread.updated_at_ms)
   })
 
+  test('marks archived imported thread results so history UI can hide them', () => {
+    const result = importedThreadResult({
+      ...thread,
+      archived: true,
+      codex_run_state: 'awaiting_approval',
+      codex_review_reason: 'archived',
+    }, 'source-task-1', '2026-06-10T10:01:00.000Z')
+
+    expect(result.codex_run_state).toBe('awaiting_approval')
+    expect(result.codex_review_reason).toBe('archived')
+    expect(result.codex_thread_archived).toBe(true)
+    expect(result.current_step).toBe('Codex thread はアーカイブ済みです')
+    expect(result.meta.thread_archived).toBe(true)
+  })
+
   test('stores completed imported threads as awaiting approval immediately', () => {
     const result = importedThreadResult({
       ...thread,
@@ -264,5 +279,23 @@ describe('codex orphan thread import helpers', () => {
     expect(linkedResult.awaiting_approval_at).toBe('2026-06-10T10:03:00.000Z')
     expect(linkedResult.codex_source_task_id).toBe('mindmap-node-1')
     expect(linkedResult.meta.thread_updated_at_ms).toBe(thread.updated_at_ms)
+  })
+
+  test('marks archived manual handoff thread results so history UI can hide them', () => {
+    const linkedResult = linkedManualHandoffThreadResult({
+      ...thread,
+      archived: true,
+      codex_run_state: 'awaiting_approval',
+      codex_review_reason: 'archived',
+    }, {
+      result: {
+        codex_manual_handoff: true,
+      },
+      source_task_id: 'mindmap-node-1',
+    }, '2026-06-10T10:04:00.000Z')
+
+    expect(linkedResult.codex_review_reason).toBe('archived')
+    expect(linkedResult.codex_thread_archived).toBe(true)
+    expect(linkedResult.meta.thread_archived).toBe(true)
   })
 })
