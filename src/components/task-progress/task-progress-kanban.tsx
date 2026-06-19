@@ -78,6 +78,7 @@ type RunnerHeartbeat = {
 }
 
 type RunnerConnectionState = {
+  checked: boolean
   loading: boolean
   online: boolean
   lastSeenAt: string | null
@@ -297,6 +298,7 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
   const refreshInFlightRef = useRef<Promise<void> | null>(null)
   const lastRefreshRequestedAtRef = useRef(0)
   const [state, setState] = useState<RunnerConnectionState>({
+    checked: false,
     loading: true,
     online: false,
     lastSeenAt: null,
@@ -309,7 +311,7 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
     const refreshStartedAt = Date.now()
     if (refreshStartedAt - lastRefreshRequestedAtRef.current < HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS) return
     lastRefreshRequestedAtRef.current = refreshStartedAt
-    setState(previous => previous.loading ? previous : { ...previous, loading: true })
+    setState(previous => (previous.checked || previous.loading ? previous : { ...previous, loading: true }))
 
     const refreshPromise = (async () => {
       try {
@@ -341,13 +343,27 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
         }
 
         setState({
+          checked: true,
           loading: false,
           online,
           lastSeenAt: latest?.seenAt ?? null,
           activeTaskSeenAtById,
         })
       } catch {
-        setState(previous => ({ ...previous, loading: false }))
+        setState(previous => {
+          const lastSeenMs = previous.lastSeenAt ? Date.parse(previous.lastSeenAt) : Number.NaN
+          const keepOnline = previous.online &&
+            Number.isFinite(lastSeenMs) &&
+            lastSeenMs > 0 &&
+            Date.now() - lastSeenMs < HEARTBEAT_ONLINE_WINDOW_MS
+          return {
+            ...previous,
+            checked: true,
+            loading: false,
+            online: keepOnline,
+            activeTaskSeenAtById: keepOnline ? previous.activeTaskSeenAtById : new Map(),
+          }
+        })
       } finally {
         refreshInFlightRef.current = null
       }
@@ -424,7 +440,7 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
 }
 
 function RunnerChip({ state }: { state: RunnerConnectionState }) {
-  if (state.loading) {
+  if (state.loading || !state.checked) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
@@ -449,7 +465,7 @@ function RunnerChip({ state }: { state: RunnerConnectionState }) {
 }
 
 function RunnerCompactStatus({ state }: { state: RunnerConnectionState }) {
-  if (state.loading) {
+  if (state.loading || !state.checked) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-muted bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
@@ -860,8 +876,8 @@ function MobileImportRepoControls({
   const selectedRepoPath = normalizeRepoPath(control.selectedRepoPath)
   const hasRepoPath = selectedRepoPath.length > 0
   const isBusy = Boolean(control.importPending)
-  const runnerUnavailable = runnerState.loading || !runnerState.online
-  const runnerUnavailableMessage = runnerState.loading
+  const runnerUnavailable = !runnerState.checked || !runnerState.online
+  const runnerUnavailableMessage = runnerState.loading || !runnerState.checked
     ? "Macの通信状態を確認中です。確認後にリポ監視を切り替えられます"
     : "Macがオンラインではありません。Focusmap Macを起動するとリポ監視を切り替えられます"
   const selectedRepoLabel = control.selectedRepoLabel || repoNameFromPath(selectedRepoPath) || "リポ未選択"
@@ -1713,7 +1729,7 @@ export function TaskProgressKanban({
             type="button"
             className="absolute bottom-[calc(env(safe-area-inset-bottom)+76px)] right-3 z-40 inline-flex min-h-11 items-center gap-2 rounded-full border bg-background/95 px-3 text-xs font-semibold shadow-lg backdrop-blur"
             onClick={() => openMobileKanban()}
-            aria-label={`Codexを開く。Mac状態は${runnerState.loading ? "確認中" : runnerState.online ? "オンライン" : "オフライン"}です`}
+            aria-label={`Codexを開く。Mac状態は${runnerState.loading || !runnerState.checked ? "確認中" : runnerState.online ? "オンライン" : "オフライン"}です`}
           >
             <Bot className="h-4 w-4 text-emerald-600" />
             Codex

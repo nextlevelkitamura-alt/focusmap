@@ -73,7 +73,7 @@ export function useCodexRunnerStatus(enabled = true): CodexRunnerStatus {
     const requestedAt = Date.now()
     if (requestedAt - lastRefreshRequestedAtRef.current < RUNNER_STATUS_REFRESH_DEDUPE_MS) return undefined
     lastRefreshRequestedAtRef.current = requestedAt
-    setState(previous => ({ ...previous, loading: true }))
+    setState(previous => (previous.checked ? previous : { ...previous, loading: true }))
 
     const refreshPromise = (async () => {
       try {
@@ -93,8 +93,7 @@ export function useCodexRunnerStatus(enabled = true): CodexRunnerStatus {
           ...previous,
           checked: true,
           loading: false,
-          ready: false,
-          metadata: null,
+          ready: previous.ready && isOnlineCodexRunnerHeartbeat({ last_seen_at: previous.lastSeenAt }),
         }))
       } finally {
         refreshInFlightRef.current = null

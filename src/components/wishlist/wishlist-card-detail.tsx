@@ -2116,7 +2116,7 @@ export function WishlistCardDetail({
     const mobileHasCodexDraft = !!(draftTitle.trim() || draftDescription.trim())
     const mobileWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
     const mobileCodexNeedsRunner = Boolean(onLaunchCodex || onLaunchCodexApp)
-    const mobileCodexRunnerUnavailable = mobileCodexNeedsRunner && !codexRunnerStatus.ready
+    const mobileCodexRunnerUnavailable = mobileCodexNeedsRunner && (!codexRunnerStatus.checked || !codexRunnerStatus.ready)
     const mobileCodexRunnerMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
       ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
       : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"
@@ -3148,7 +3148,7 @@ export function WishlistCardDetail({
               const needsRepoConfig = !item.project_id || !repoConfigured
               const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
               const isWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
-              const codexRunnerUnavailable = !codexRunnerStatus.ready
+              const codexRunnerUnavailable = !codexRunnerStatus.checked || !codexRunnerStatus.ready
               const codexRunnerMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
                 ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
                 : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"

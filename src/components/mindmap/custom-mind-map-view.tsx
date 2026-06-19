@@ -3520,7 +3520,7 @@ export function CustomMindMapView({
     }, [activeImportedChatDragTitle, externalImportDragOverMap, externalImportDropTarget, nodeById, stageHeight, stageWidth]);
     const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
     const shouldShowCodexSummary = codexSummary.running > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0;
-    const codexRunnerUnavailable = codexRunnerStatus.loading || !codexRunnerStatus.ready;
+    const codexRunnerUnavailable = !codexRunnerStatus.checked || !codexRunnerStatus.ready;
     const codexRunnerTitle = codexRunnerStatus.loading || !codexRunnerStatus.checked
         ? "Macの通信状態を確認中です"
         : codexRunnerStatus.ready

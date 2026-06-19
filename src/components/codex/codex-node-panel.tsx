@@ -1519,7 +1519,7 @@ export function CodexNodePanel({
   )
   const displayedAttachments: Array<TaskAttachmentPreview | PendingTaskAttachmentPreview> = [...pendingAttachments, ...attachments]
   const isWaitingForImageSave = isUploadingImage || pendingAttachments.length > 0
-  const isCodexRunnerUnavailable = !codexRunnerStatus.ready
+  const isCodexRunnerUnavailable = !codexRunnerStatus.checked || !codexRunnerStatus.ready
   const codexRunnerUnavailableMessage = codexRunnerStatus.loading || !codexRunnerStatus.checked
     ? "Macの通信状態を確認中です。確認後にCodexへ送れます。"
     : "Macがオンラインではありません。Focusmap Macを起動するとCodexへ送れます。"
