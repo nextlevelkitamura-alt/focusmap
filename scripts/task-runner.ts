@@ -78,13 +78,40 @@ loadEnvFile(monitoringEnvPath)
 
 function resolveCodexStateDbPath(): string | null {
   const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim()
+  if (configured && fs.existsSync(configured)) return configured
+
   const candidates = [
-    configured,
     path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
     path.join(os.homedir(), '.codex', 'state_5.sqlite'),
   ].filter((value): value is string => !!value)
 
-  return candidates.find(candidate => fs.existsSync(candidate)) ?? null
+  return candidates
+    .filter(candidate => fs.existsSync(candidate))
+    .map(candidate => ({ candidate, score: codexStateDbFreshnessScore(candidate) }))
+    .sort((a, b) => b.score - a.score)[0]?.candidate ?? null
+}
+
+function codexStateDbFreshnessScore(dbPath: string): number {
+  const latestThreadUpdatedAt = latestCodexThreadUpdatedAtMs(dbPath)
+  if (latestThreadUpdatedAt > 0) return latestThreadUpdatedAt
+  try {
+    return fs.statSync(dbPath).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+function latestCodexThreadUpdatedAtMs(dbPath: string): number {
+  try {
+    const out = execSync(
+      `sqlite3 ${JSON.stringify(dbPath)} "SELECT COALESCE(MAX(updated_at_ms), MAX(updated_at) * 1000, 0) FROM threads;"`,
+      { encoding: 'utf-8', timeout: 2_000 },
+    ).trim()
+    const value = Number(out)
+    return Number.isFinite(value) ? value : 0
+  } catch {
+    return 0
+  }
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL

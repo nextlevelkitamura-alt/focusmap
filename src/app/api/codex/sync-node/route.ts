@@ -69,15 +69,51 @@ function canUseLocalSync(req: NextRequest): boolean {
   })
 }
 
-function resolveCodexStateDbPath() {
+async function resolveCodexStateDbPath() {
   const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim()
+  if (configured && fs.existsSync(configured)) return configured
+
   const candidates = [
-    configured,
     path.join(os.homedir(), '.codex', 'sqlite', 'state_5.sqlite'),
     path.join(os.homedir(), '.codex', 'state_5.sqlite'),
   ].filter((value): value is string => Boolean(value))
 
-  return candidates.find(candidate => fs.existsSync(candidate)) ?? null
+  const scored = await Promise.all(
+    candidates
+      .filter(candidate => fs.existsSync(candidate))
+      .map(async candidate => ({
+        candidate,
+        score: await codexStateDbFreshnessScore(candidate),
+      })),
+  )
+  return scored.sort((a, b) => b.score - a.score)[0]?.candidate ?? null
+}
+
+async function codexStateDbFreshnessScore(dbPath: string) {
+  const latestThreadUpdatedAt = await latestCodexThreadUpdatedAtMs(dbPath)
+  if (latestThreadUpdatedAt > 0) return latestThreadUpdatedAt
+  try {
+    return fs.statSync(dbPath).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+async function latestCodexThreadUpdatedAtMs(dbPath: string) {
+  try {
+    const { stdout } = await execFileAsync(
+      SQLITE_BIN,
+      [
+        dbPath,
+        'SELECT COALESCE(MAX(updated_at_ms), MAX(updated_at) * 1000, 0) FROM threads;',
+      ],
+      { timeout: 2_000, windowsHide: true },
+    )
+    const value = Number(stdout.trim())
+    return Number.isFinite(value) ? value : 0
+  } catch {
+    return 0
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -333,6 +369,16 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
     metadata?: Record<string, unknown>
   }) => {
     if (events.some(existing => existing.dedupeKey === event.dedupeKey)) return
+    const sameBodyIndex = events.findIndex(existing =>
+      existing.role === event.role &&
+      normalizeVisibleText(existing.body) === normalizeVisibleText(event.body),
+    )
+    if (sameBodyIndex >= 0) {
+      if (events[sameBodyIndex].kind === 'progress' && event.kind !== 'progress') {
+        events[sameBodyIndex] = event
+      }
+      return
+    }
     events.push(event)
   }
 
@@ -821,7 +867,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Codex.app の状態同期は macOS でのみ利用できます' }, { status: 400 })
   }
 
-  const dbPath = resolveCodexStateDbPath()
+  const dbPath = await resolveCodexStateDbPath()
   if (!dbPath) {
     return NextResponse.json({ error: 'Codex state DB が見つかりません' }, { status: 404 })
   }

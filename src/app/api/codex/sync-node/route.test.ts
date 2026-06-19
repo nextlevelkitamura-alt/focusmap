@@ -5,6 +5,7 @@ const {
   mockExecFile,
   mockExistsSync,
   mockReadFileSync,
+  mockStatSync,
   mockInsertActivity,
   mockUpsertTursoAiTask,
   mockInsertTaskEvent,
@@ -13,6 +14,7 @@ const {
   setSourceTask,
   setThreadRow,
   setRolloutRaw,
+  setDbFreshness,
   setAiTaskUpdateError,
   getAiTaskUpdates,
   getSourceTaskUpdates,
@@ -23,6 +25,7 @@ const {
   let threadRow: Record<string, unknown> | null = null
   let sourceTaskUpdateId: string | null = null
   let aiTaskUpdateError: { message: string } | null = null
+  const dbFreshnessByPath = new Map<string, number>()
   const aiTaskUpdates: Record<string, unknown>[] = []
   const sourceTaskUpdates: Array<{ id: string | null; payload: Record<string, unknown> }> = []
   let rolloutRaw = ''
@@ -86,7 +89,14 @@ const {
     _options: unknown,
     callback: (error: Error | null, stdout: { stdout: string; stderr: string }, stderr: string) => void,
   ) => {
-    const stdout = threadRow ? JSON.stringify([threadRow]) : '[]'
+    const isFreshnessQuery = _args.length >= 2 &&
+      !_args.includes('-json') &&
+      String(_args[1]).includes('MAX(updated_at_ms)')
+    const stdout = isFreshnessQuery
+      ? String(dbFreshnessByPath.get(String(_args[0])) ?? 0)
+      : threadRow
+        ? JSON.stringify([threadRow])
+        : '[]'
     callback(null, { stdout, stderr: '' }, '')
   })
 
@@ -102,6 +112,7 @@ const {
     mockExecFile,
     mockExistsSync: vi.fn(() => true),
     mockReadFileSync: vi.fn(() => rolloutRaw),
+    mockStatSync: vi.fn(() => ({ mtimeMs: 1 })),
     mockInsertActivity: vi.fn(() => Promise.resolve({ inserted: true })),
     mockUpsertTursoAiTask: vi.fn(() => Promise.resolve()),
     mockInsertTaskEvent: vi.fn(() => Promise.resolve()),
@@ -110,6 +121,7 @@ const {
     setSourceTask: (value: Record<string, unknown> | null) => { sourceTask = value },
     setThreadRow: (value: Record<string, unknown> | null) => { threadRow = value },
     setRolloutRaw: (value: string) => { rolloutRaw = value },
+    setDbFreshness: (path: string, value: number) => { dbFreshnessByPath.set(path, value) },
     setAiTaskUpdateError: (value: { message: string } | null) => { aiTaskUpdateError = value },
     getAiTaskUpdates: () => aiTaskUpdates,
     getSourceTaskUpdates: () => sourceTaskUpdates,
@@ -122,9 +134,11 @@ const {
       aiTaskUpdates.length = 0
       sourceTaskUpdates.length = 0
       rolloutRaw = ''
+      dbFreshnessByPath.clear()
       mockExecFile.mockClear()
       mockExistsSync.mockClear()
       mockReadFileSync.mockClear()
+      mockStatSync.mockClear()
       mockInsertActivity.mockClear()
       mockUpsertTursoAiTask.mockClear()
       mockInsertTaskEvent.mockClear()
@@ -143,6 +157,7 @@ vi.mock('fs', () => ({
   default: {
     existsSync: mockExistsSync,
     readFileSync: mockReadFileSync,
+    statSync: mockStatSync,
   },
 }))
 
@@ -219,6 +234,60 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
     setAiTask(baseTask())
     setSourceTask({ id: 'source-task-1', status: 'todo', stage: 'plan' })
+  })
+
+  test('uses the freshest default Codex state DB when matching a manual handoff thread', async () => {
+    delete process.env.FOCUSMAP_CODEX_STATE_DB_PATH
+    const sqlitePath = '/Users/test/.codex/sqlite/state_5.sqlite'
+    const legacyPath = '/Users/test/.codex/state_5.sqlite'
+    setDbFreshness(sqlitePath, Date.parse('2026-06-17T08:29:38.000Z'))
+    setDbFreshness(legacyPath, Date.parse('2026-06-19T15:02:03.000Z'))
+    setAiTask(baseTask({
+      prompt: 'DB選択を確認して',
+      codex_thread_id: null,
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: 'prompt_waiting',
+      },
+      status: 'needs_input',
+      started_at: '2026-06-19T14:59:00.000Z',
+      created_at: '2026-06-19T14:59:00.000Z',
+    }))
+    setThreadRow({
+      id: 'thread-fresh',
+      title: 'DB選択を確認して',
+      tokens_used: 10,
+      has_user_event: 1,
+      archived: 0,
+      updated_at_ms: Date.parse('2026-06-19T15:02:03.000Z'),
+      preview: '確認しました。',
+      rollout_path: '/tmp/fresh-rollout.jsonl',
+      source: 'codex_app',
+      cwd: '/repo',
+      first_user_message: 'DB選択を確認して',
+    })
+    setRolloutRaw(JSON.stringify({
+      timestamp: '2026-06-19T15:02:03.000Z',
+      type: 'event_msg',
+      payload: { type: 'task_complete', last_agent_message: '確認しました。' },
+    }))
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest('http://localhost:3001/api/codex/sync-node', {
+      ai_task_id: 'ai-task-1',
+    }))
+
+    expect(response.status).toBe(200)
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/usr/bin/sqlite3',
+      expect.arrayContaining(['-json', legacyPath]),
+      expect.anything(),
+      expect.anything(),
+    )
+    expect(getAiTaskUpdates()[0]).toEqual(expect.objectContaining({
+      codex_thread_id: 'thread-fresh',
+      status: 'awaiting_approval',
+    }))
   })
 
   test('keeps the source node unchecked when the Codex thread is archived without a pending Focusmap completion', async () => {
@@ -480,7 +549,10 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(mockInsertActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       kind: 'question',
       body: expect.stringContaining('アンドラについて'),
-      createdAt: '2026-06-06T17:31:01.798Z',
+      createdAt: '2026-06-06T17:31:01.846Z',
+      metadata: expect.objectContaining({
+        turn_completed_at: '2026-06-06T17:31:01.846Z',
+      }),
     }))
   })
 
@@ -570,6 +642,11 @@ describe('/api/codex/sync-node Codex thread closure', () => {
         can_mark_completed: true,
         session_health: 'stopped',
       }),
+    }))
+    expect(mockInsertActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      kind: 'completed',
+      body: '調査しました。',
+      createdAt: '2026-06-07T09:04:16.000Z',
     }))
   })
 
