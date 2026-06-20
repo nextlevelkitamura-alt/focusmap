@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activityMessages,
+  aiHistoryDetailMessages,
   AWAITING_APPROVAL_STABILITY_MS,
   awaitingApprovalAtForSummary,
   codexStateDbPath,
@@ -78,7 +79,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60 * 60 * 1000);
   });
 
-  test('skips unchanged stable AI history rollout reads between hot syncs', () => {
+  test('fast-watches AI history rollout stat without reading unchanged bodies', () => {
     const scope = { project_id: 'project-rollout-cache', repo_path: '/repo-rollout-cache' };
     const row = {
       ...threadRow,
@@ -97,20 +98,59 @@ describe('codex-thread-monitor state detection', () => {
       ...row,
       updated_at_ms: row.updated_at_ms + 1,
     }, scope, 'hot', now + 1_000)).toBe(true);
-    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(true);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(false);
   });
 
-  test('keeps running AI history and task rollouts on a one-second watch', () => {
+  test('inspects fast-watch rollouts only when mtime or size changes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'focusmap-rollout-watch-'));
+    try {
+      const rolloutPath = join(dir, 'rollout.jsonl');
+      writeFileSync(rolloutPath, line('2026-06-10T00:00:00.000Z', { type: 'task_started' }));
+      const scope = { project_id: 'project-running-cache', repo_path: '/repo-running-cache' };
+      const now = Date.parse('2026-06-10T00:00:00.000Z');
+      const row = {
+        ...threadRow,
+        id: 'thread-rollout-cache-running-stat',
+        cwd: '/repo-running-cache',
+        rollout_path: rolloutPath,
+        updated_at_ms: now,
+      };
+      const runningTask = task({
+        id: 'task-rollout-cache-running-stat',
+        codex_thread_id: row.id,
+      });
+
+      markAiHistoryRolloutInspected(row, scope, true, now);
+      markTaskRolloutInspected(runningTask, row, row.id, true, now);
+
+      expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(false);
+      expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(false);
+
+      writeFileSync(rolloutPath, [
+        line('2026-06-10T00:00:00.000Z', { type: 'task_started' }),
+        line('2026-06-10T00:00:01.000Z', { type: 'user_message', message: '追加で確認して' }),
+      ].join('\n'));
+      const changedDate = new Date(now + 2_000);
+      utimesSync(rolloutPath, changedDate, changedDate);
+
+      expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 2_000)).toBe(true);
+      expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 2_000)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps running AI history and task rollouts on a one-second stat watch', () => {
     const scope = { project_id: 'project-running-cache', repo_path: '/repo-running-cache' };
     const now = Date.parse('2026-06-10T00:00:00.000Z');
     const row = {
       ...threadRow,
-      id: 'thread-rollout-cache-running',
+      id: 'thread-rollout-cache-running-missing',
       cwd: '/repo-running-cache',
       updated_at_ms: now,
     };
     const runningTask = task({
-      id: 'task-rollout-cache-running',
+      id: 'task-rollout-cache-running-missing',
       codex_thread_id: row.id,
     });
 
@@ -119,8 +159,8 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 500)).toBe(false);
     expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 500)).toBe(false);
-    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(true);
-    expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(true);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(false);
+    expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(false);
   });
 
   test('slows stale running rollout fallback while still reacting to thread row changes', () => {
@@ -154,8 +194,8 @@ describe('codex-thread-monitor state detection', () => {
       ...staleRow,
       updated_at_ms: now + 1,
     }, staleRow.id, now + 1_000)).toBe(true);
-    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 30_000)).toBe(true);
-    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 30_000)).toBe(true);
+    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 30_000)).toBe(false);
+    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 30_000)).toBe(false);
   });
 
   test('prefers the freshest default Codex state DB path', () => {
@@ -594,6 +634,33 @@ describe('codex-thread-monitor state detection', () => {
       'SNS投稿の改善案を作って',
       '投稿案を3パターン作りました。確認してください。',
     ]);
+  });
+
+  test('converts rollout visible messages into sanitized AI history detail payload', () => {
+    const raw = [
+      line('2026-06-08T15:49:14.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:49:15.000Z', { type: 'user_message', message: 'Detailに出す依頼' }),
+      line('2026-06-08T15:49:41.000Z', { type: 'task_complete', last_agent_message: '確認してください？' }),
+      line('2026-06-08T15:49:42.000Z', { type: 'function_call_output', output: 'raw command output' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const detailMessages = aiHistoryDetailMessages(threadRow, summary);
+
+    expect(detailMessages).toEqual([
+      expect.objectContaining({
+        sequence: 2,
+        role: 'user',
+        kind: 'user_prompt',
+        body: 'Detailに出す依頼',
+      }),
+      expect.objectContaining({
+        sequence: 3,
+        role: 'assistant',
+        kind: 'assistant_question',
+        body: '確認してください？',
+      }),
+    ]);
+    expect(JSON.stringify(detailMessages)).not.toContain('raw command output');
   });
 
   test('adds per-turn work duration metadata to the completed Codex answer after resume', () => {

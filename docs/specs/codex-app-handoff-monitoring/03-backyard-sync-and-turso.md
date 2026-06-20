@@ -232,7 +232,7 @@ type AiHistoryListResponse = {
 
 `GET /api/ai-history/[id]` はdetail shellを返し、`detail.hydrateRequired`、`detail.hydrateReason`、`detail.detailSyncedAt`、`detail.messageCount`、`detail.activityUrl` を示す。`GET /api/ai-history/[id]/activity` は、`linked_ai_task_id` があれば既存 `/api/ai-tasks/[id]/activity` へ307 redirectする。`linked_ai_task_id` が無いhistory itemはTurso `ai_history_detail_messages` のsanitize済みdetail cacheを返す。cacheが空なら `202` と `hydrate.required=true`、cacheが古い場合は既存messagesを返したうえで `hydrate.required=true` にする。古さ判定は `detail_message_count <= 0`、`detail_synced_at` 欠落、または `detail_synced_at < last_activity_at`。`hydrate.required=true` のGETは、detail openというユーザー操作をMac agentへ伝えるため `ai_history_detail_hydrate_requests` に120秒TTL requestをupsertする。既に未期限の同一requestがある間はSQLの `WHERE expires_at < now OR fulfilled_at IS NOT NULL` で更新しないため、Frontendの短周期detail pollが毎回writeにならない。Turso readはdetail cache取得時の既存readに加えて同一requestのupsert試行だけで、writeは初回/期限切れ/完了後の再要求に限定する。
 
-`GET /api/agents/ai-history/detail-hydrate-requests?runner_id=<runner>&limit=50` または同pathへの `POST { runner_id, limit }` はagent専用のhydrate request polling endpoint。Codex対応runnerだけが呼べる。responseは `requests[{ historyItemId, provider, externalThreadId, repoPath, reason, requestedAt, expiresAt, detailSyncedAt, detailMessageCount, lastActivityAt }]` を返す。Agentはこの `historyItemId` を使ってdetail activityをPOSTする。
+`GET /api/agents/ai-history/detail-hydrate-requests?runner_id=<runner>&limit=50` または同pathへの `POST { runner_id, limit }` はagent専用のhydrate request polling endpoint。Codex対応runnerだけが呼べる。responseは `requests[{ historyItemId, provider, externalThreadId, repoPath, reason, requestedAt, expiresAt, detailSyncedAt, detailMessageCount, lastActivityAt }]` を返す。Agentは通常15秒以内、active task/detail watch中は5秒目安でpollし、120秒TTLを取り逃がさない。Agentはこの `historyItemId` を使ってdetail activityをPOSTし、POST後に同endpointを再pollして同じ `historyItemId` がactive requestとして残っていないことを確認する。残る場合はBackend契約不足としてdetail hydrate処理を止めて報告する。
 
 `POST /api/agents/ai-history/[id]/activity` はagent専用のdetail cache差分upsertで、`runner_id` と `messages[]` を受ける。各messageは `sequence`、`role`、`kind`、`body`、任意の `occurred_at` / `metadata` だけを持つ。APIは `full_body`、`full_messages`、`raw_rollout`、`rollout_json`、`command_output`、`screenshot_body`、`image_body`、`base64` などのraw/full系フィールドを400で拒否し、8,000文字超や raw JSON / AGENTS / environment context らしい本文も拒否する。linked history itemへのPOSTは既存 `/api/ai-tasks/[id]/activity` を正にするため拒否する。
 
@@ -241,10 +241,13 @@ type AiHistoryListResponse = {
 - agent起動時 / app start時: 現在projectの有効repoを即reconcileする。
 - dashboard reload / scope diff: 現在project repoを優先reconcileする。repo selector変更だけでは同期scopeを変更しない。
 - hourly: 全enabled repoを順番にmetadata reconcileする。
-- running thread: rollout JSONLを約1秒watchする。
+- hot history: 各enabled repoの直近top 8-10件をfast-watch対象にし、running taskがある時もtop 10のstat watchは維持する。
+- detail hydrate target: hydrate requestで返った `historyItemId` / `externalThreadId` はrequest TTL内のfast-watch対象にする。
+- running/awaiting/needs_input thread: rollout JSONLを約1秒watchする。
+- fast-watch read rule: fast-watch対象はrollout fileの `mtime/size` を1秒ごとにstatし、mtime/sizeまたはCodex thread row fingerprintが変わった時だけrollout本文を読む。fingerprintが同じ時は次のstat予定だけ更新し、cached本文の再parseやcloud writeへ進まない。
 - state transition: `running`、`awaiting_approval`、`needs_input`、`completed`、`failed`、archive、archive解除は次のhourlyを待たず即時small POSTする。
 - latency target: local state transitionは2秒以内、DB/UI反映は3秒以内。
-- write rule: 状態変化、archive変化、archive解除、title変化、repo association変化、meaningful `last_activity_at` 変化、duration変化、detail hydrate完了時だけcloud writeする。毎秒DB書き込み、heartbeat風の同一snapshot書き込み、hourly full body uploadは禁止。
+- write rule: 状態変化、archive変化、archive解除、title変化、repo association変化、meaningful `last_activity_at` 変化、duration bucket変化、detail hydrate完了時だけcloud writeする。同一hash・durationだけの変化、毎秒DB書き込み、heartbeat風の同一snapshot書き込み、hourly full body uploadは禁止。
 - duration: rolloutの `task_started -> task_complete / turn_aborted` を合算し、running中は最新 `task_started -> now` を足す。rolloutが欠ける時だけ `metadata_json.duration_approximate=true` で粗いthread timestamp推定にfallbackする。
 
 ## Turso保存ルール

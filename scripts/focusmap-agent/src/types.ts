@@ -205,6 +205,48 @@ export interface AiHistoryBatchUpsertPayload {
   scopes?: AiHistoryBatchUpsertScope[];
 }
 
+export interface AiHistoryBatchUpsertResponseItem {
+  index: number;
+  historyItemId: string;
+  id?: string;
+  provider: 'codex_app' | string;
+  externalThreadId: string;
+  repoPath: string;
+  projectId?: string | null;
+  sourceTaskId?: string | null;
+  linkedAiTaskId?: string | null;
+}
+
+export interface AiHistoryDetailHydrateRequest {
+  historyItemId: string;
+  provider: 'codex_app' | string;
+  externalThreadId: string;
+  repoPath: string;
+  reason?: string | null;
+  requestedAt?: string | null;
+  expiresAt?: string | null;
+  detailSyncedAt?: string | null;
+  detailMessageCount?: number | null;
+  lastActivityAt?: string | null;
+}
+
+export interface AiHistoryDetailMessage {
+  sequence: number;
+  role: 'user' | 'assistant' | 'system';
+  kind: 'user_prompt' | 'assistant_answer' | 'assistant_question' | 'status' | 'summary';
+  body: string;
+  occurred_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AiHistoryDetailActivityUpsertResponse {
+  ok: boolean;
+  historyItemId: string;
+  upserted: number;
+  messageCount: number;
+  detailSyncedAt: string;
+}
+
 export interface AgentCommand {
   id: string;
   runner_id: string;

@@ -8,7 +8,10 @@ import { AgentApiError, type AgentApiClient } from './api-client.js';
 import type {
   AgentActivityMessage,
   AiHistoryBatchUpsertItem,
+  AiHistoryBatchUpsertResponseItem,
   AiHistoryBatchUpsertScope,
+  AiHistoryDetailHydrateRequest,
+  AiHistoryDetailMessage,
   AiHistoryStatus,
   AiTask,
   CodexThreadImportScope,
@@ -39,15 +42,21 @@ export const AWAITING_APPROVAL_STABILITY_MS = 12_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
-const AI_HISTORY_HOT_SYNC_LIMIT = 3;
+const AI_HISTORY_FAST_WATCH_LIMIT = 10;
+const AI_HISTORY_HOT_SYNC_LIMIT = AI_HISTORY_FAST_WATCH_LIMIT;
 const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
+const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 15_000;
+const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
+const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
+const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
+const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
+const MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST = 50;
 const RUNNING_THREAD_ROLLOUT_RECHECK_MS = 1_000;
 const ACTIVE_RUNNING_ACTIVITY_WINDOW_MS = 30_000;
 const STALE_RUNNING_THREAD_ROLLOUT_RECHECK_MS = 30_000;
-const STABLE_AI_HISTORY_ROLLOUT_RECHECK_MS = 60_000;
 const STABLE_TASK_ROLLOUT_RECHECK_MS = 30_000;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
 const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
@@ -65,6 +74,11 @@ const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }
 const aiHistorySyncCache = new Map<string, { hash: string; sentAt: number; running: boolean }>();
 const aiHistoryRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
 const taskRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
+const aiHistoryDetailSyncCache = new Map<string, { hash: string; sentAt: number }>();
+const aiHistoryDetailWatchRequests = new Map<string, AiHistoryDetailHydrateRequest>();
+const aiHistoryDetailRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
+let aiHistoryDetailHydrateApiUnavailableUntil = 0;
+let aiHistoryDetailHydrateContractFailed = false;
 
 type CodexThreadImportScopeHeartbeat = {
   project_id: string;
@@ -910,6 +924,8 @@ type PreparedAiHistoryItem = {
   rolloutFingerprint: string;
   rolloutRecheckMs: number;
   running: boolean;
+  detailMessages: AiHistoryDetailMessage[];
+  detailSyncedAt: string | null;
 };
 
 export type AiHistorySyncMode = 'hot' | 'reconcile';
@@ -935,7 +951,19 @@ function threadRolloutFingerprint(row: CodexThreadRow): string {
     row.first_user_message ?? '',
     row.tokens_used ?? '',
     row.has_user_event ?? '',
+    rolloutFileFingerprint(row),
   ].join('\u001f');
+}
+
+function rolloutFileFingerprint(row: Pick<CodexThreadRow, 'rollout_path'>): string {
+  if (!row.rollout_path) return '';
+  try {
+    const fileStat = statSync(row.rollout_path);
+    if (!fileStat.isFile()) return 'not_file';
+    return `${Math.floor(fileStat.mtimeMs)}:${fileStat.size}`;
+  } catch {
+    return 'missing';
+  }
 }
 
 function runningThreadRolloutRecheckMs(lastActivityMs: number | null, nowMs: number): number {
@@ -946,9 +974,10 @@ function runningThreadRolloutRecheckMs(lastActivityMs: number | null, nowMs: num
 }
 
 function aiHistoryRolloutRecheckMs(row: CodexThreadRow, running: boolean, nowMs: number): number {
-  if (!running) return STABLE_AI_HISTORY_ROLLOUT_RECHECK_MS;
-  const rowActivityMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms);
-  return runningThreadRolloutRecheckMs(rowActivityMs, nowMs);
+  void row;
+  void running;
+  void nowMs;
+  return AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS;
 }
 
 function aiHistoryRolloutInspectKey(
@@ -970,10 +999,18 @@ export function shouldInspectAiHistoryRollout(
   nowMs = Date.now(),
 ): boolean {
   if (mode === 'reconcile') return true;
+  const key = aiHistoryRolloutInspectKey(row, scope);
+  const fingerprint = threadRolloutFingerprint(row);
   const cached = aiHistoryRolloutInspectCache.get(aiHistoryRolloutInspectKey(row, scope));
   if (!cached) return true;
-  if (cached.fingerprint !== threadRolloutFingerprint(row)) return true;
-  return nowMs >= cached.nextInspectAt;
+  if (cached.fingerprint !== fingerprint) return true;
+  if (nowMs >= cached.nextInspectAt) {
+    aiHistoryRolloutInspectCache.set(key, {
+      fingerprint,
+      nextInspectAt: nowMs + aiHistoryRolloutRecheckMs(row, true, nowMs),
+    });
+  }
+  return false;
 }
 
 export function markAiHistoryRolloutInspected(
@@ -1015,6 +1052,7 @@ function taskRolloutInspectFingerprint(task: AiTask, row: CodexThreadRow, thread
 }
 
 function taskRolloutRecheckMs(task: AiTask, row: CodexThreadRow, running: boolean, nowMs: number): number {
+  if (isFastWatchTask(task)) return RUNNING_THREAD_ROLLOUT_RECHECK_MS;
   if (!running) return STABLE_TASK_ROLLOUT_RECHECK_MS;
   const rowActivityMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
   const taskActivityMs = taskMonitorActivityMs(task);
@@ -1023,8 +1061,16 @@ function taskRolloutRecheckMs(task: AiTask, row: CodexThreadRow, running: boolea
 
 export function shouldInspectTaskRollout(task: AiTask, row: CodexThreadRow, threadId: string, nowMs = Date.now()): boolean {
   const cached = taskRolloutInspectCache.get(task.id);
+  const fingerprint = taskRolloutInspectFingerprint(task, row, threadId);
   if (!cached) return true;
-  if (cached.fingerprint !== taskRolloutInspectFingerprint(task, row, threadId)) return true;
+  if (cached.fingerprint !== fingerprint) return true;
+  if (nowMs >= cached.nextInspectAt && isFastWatchTask(task)) {
+    taskRolloutInspectCache.set(task.id, {
+      fingerprint,
+      nextInspectAt: nowMs + taskRolloutRecheckMs(task, row, true, nowMs),
+    });
+    return false;
+  }
   return nowMs >= cached.nextInspectAt;
 }
 
@@ -1242,6 +1288,8 @@ function aiHistoryItemFromThread(input: {
     rolloutFingerprint: threadRolloutFingerprint(input.row),
     rolloutRecheckMs: aiHistoryRolloutRecheckMs(input.row, status === 'running', input.nowMs),
     running: status === 'running',
+    detailMessages: aiHistoryDetailMessages(input.row, input.summary),
+    detailSyncedAt: aiHistoryDetailSyncedAt(input.row, input.summary),
   };
 }
 
@@ -1371,6 +1419,18 @@ function codexMonitorTaskPriority(task: AiTask): number {
 function isRunningCodexMonitorTask(task: AiTask): boolean {
   const state = codexRunState(task);
   return task.status === 'running' || state === 'running';
+}
+
+function isFastWatchTask(task: AiTask): boolean {
+  const state = codexRunState(task);
+  return task.status === 'running' ||
+    task.status === 'awaiting_approval' ||
+    task.status === 'needs_input' ||
+    state === 'running' ||
+    state === 'awaiting_approval' ||
+    state === 'needs_input' ||
+    state === 'prompt_waiting' ||
+    hasPendingArchiveRequest(task);
 }
 
 function shouldSyncBeforeOrphanImport(task: AiTask): boolean {
@@ -1565,6 +1625,82 @@ function activitySyncBatch(task: AiTask, threadId: string, summary: RolloutSumma
 
 export function activityMessages(task: AiTask, threadId: string, summary: RolloutSummary, resumed: boolean): AgentActivityMessage[] {
   return activitySyncBatch(task, threadId, summary, resumed).messages;
+}
+
+function aiHistoryDetailKindForVisibleMessage(message: VisibleMessage): AiHistoryDetailMessage['kind'] {
+  if (message.role === 'user') return 'user_prompt';
+  if (message.kind === 'question') return 'assistant_question';
+  return 'assistant_answer';
+}
+
+function aiHistoryDetailMessageFromVisible(message: VisibleMessage): AiHistoryDetailMessage {
+  return {
+    sequence: message.sequence,
+    role: message.role === 'user' ? 'user' : 'assistant',
+    kind: aiHistoryDetailKindForVisibleMessage(message),
+    body: compactText(message.body, MAX_ACTIVITY_BODY_CHARS),
+    occurred_at: message.createdAt,
+    metadata: {
+      source: 'codex_thread_monitor',
+      source_event: message.sourceEvent,
+      ...visibleMessageTurnMetadata(message),
+    },
+  };
+}
+
+export function aiHistoryDetailMessages(row: CodexThreadRow, summary: RolloutSummary): AiHistoryDetailMessage[] {
+  const messages = summary.visibleMessages
+    .map(aiHistoryDetailMessageFromVisible)
+    .filter(message => message.body.length > 0);
+  const hasUserPrompt = messages.some(message => message.role === 'user');
+  const firstUserMessage = compactText(row.first_user_message ?? '', MAX_ACTIVITY_BODY_CHARS);
+  if (!hasUserPrompt && firstUserMessage && !isInternalUserMessage(firstUserMessage)) {
+    messages.unshift({
+      sequence: 0,
+      role: 'user',
+      kind: 'user_prompt',
+      body: firstUserMessage,
+      occurred_at: timestampToIso(row.created_at_ms ?? row.updated_at_ms),
+      metadata: {
+        source: 'codex_state_sqlite',
+        source_event: 'first_user_message',
+      },
+    });
+  }
+
+  const hasAssistantAnswer = messages.some(message => message.role === 'assistant');
+  if (!hasAssistantAnswer && summary.latestAgentMessage) {
+    messages.push({
+      sequence: Math.max(1, ...messages.map(message => message.sequence)) + 1,
+      role: 'assistant',
+      kind: looksLikeQuestion(summary.latestAgentMessage) ? 'assistant_question' : 'assistant_answer',
+      body: compactText(summary.latestAgentMessage, MAX_ACTIVITY_BODY_CHARS),
+      occurred_at: summary.latestTaskCompleteAt ?? summary.lastActivityAt,
+      metadata: {
+        source: 'codex_thread_monitor',
+        source_event: 'latest_agent_message',
+      },
+    });
+  }
+
+  return messages
+    .sort((left, right) => left.sequence - right.sequence)
+    .slice(0, MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST);
+}
+
+function aiHistoryDetailSyncedAt(row: CodexThreadRow, summary: RolloutSummary): string | null {
+  return latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms, row.created_at_ms);
+}
+
+function aiHistoryDetailMessagesHash(messages: AiHistoryDetailMessage[]): string {
+  return JSON.stringify(messages.map(message => ({
+    sequence: message.sequence,
+    role: message.role,
+    kind: message.kind,
+    body: message.body,
+    occurred_at: message.occurred_at ?? null,
+    metadata: message.metadata ?? null,
+  })));
 }
 
 function resultSnapshot(
@@ -1813,6 +1949,76 @@ function isAiHistorySyncApiUnavailable(error: unknown): error is AgentApiError {
   return error instanceof AgentApiError && (error.status === 404 || error.status === 405 || error.status === 503);
 }
 
+function normalizedHydrateRequest(value: AiHistoryDetailHydrateRequest): AiHistoryDetailHydrateRequest | null {
+  const historyItemId = typeof value.historyItemId === 'string' ? value.historyItemId.trim() : '';
+  const externalThreadId = typeof value.externalThreadId === 'string' ? value.externalThreadId.trim() : '';
+  const repoPath = normalizeLocalPath(value.repoPath);
+  if (!historyItemId || !externalThreadId || !repoPath) return null;
+  return {
+    ...value,
+    historyItemId,
+    externalThreadId,
+    repoPath,
+    provider: typeof value.provider === 'string' && value.provider.trim() ? value.provider.trim() : AI_HISTORY_PROVIDER,
+  };
+}
+
+function hydrateRequestExpiresAtMs(request: AiHistoryDetailHydrateRequest, nowMs = Date.now()): number {
+  return timeMs(request.expiresAt) ?? nowMs + AI_HISTORY_DETAIL_WATCH_TTL_MS;
+}
+
+async function postAiHistoryDetailMessages(
+  api: AgentApiClient,
+  runnerId: string,
+  historyItemId: string,
+  messages: AiHistoryDetailMessage[],
+  detailSyncedAt: string | null,
+  options: { force?: boolean } = {},
+): Promise<boolean> {
+  if (messages.length === 0) return false;
+  const hash = aiHistoryDetailMessagesHash(messages);
+  const cached = aiHistoryDetailSyncCache.get(historyItemId);
+  if (!options.force && cached?.hash === hash) return false;
+  await api.upsertAiHistoryDetailActivity(runnerId, historyItemId, messages, detailSyncedAt);
+  aiHistoryDetailSyncCache.set(historyItemId, { hash, sentAt: Date.now() });
+  trimCacheToLimit(aiHistoryDetailSyncCache, ROLLOUT_INSPECT_CACHE_LIMIT);
+  return true;
+}
+
+function activeHydrateRequestStillPending(
+  requests: AiHistoryDetailHydrateRequest[],
+  historyItemId: string,
+): boolean {
+  return requests.some(request => request.historyItemId === historyItemId);
+}
+
+async function verifyAiHistoryDetailHydrateFulfilled(
+  api: AgentApiClient,
+  runnerId: string,
+  historyItemId: string,
+): Promise<void> {
+  const requests = await api.listAiHistoryDetailHydrateRequests(runnerId, AI_HISTORY_DETAIL_HYDRATE_LIMIT);
+  if (!activeHydrateRequestStillPending(requests, historyItemId)) return;
+  aiHistoryDetailHydrateContractFailed = true;
+  throw new Error(`Backend contract insufficient: detail hydrate request was not fulfilled historyItemId=${historyItemId}`);
+}
+
+async function postPreparedAiHistoryDetailMessages(
+  api: AgentApiClient,
+  runnerId: string,
+  responseItem: AiHistoryBatchUpsertResponseItem,
+  prepared: PreparedAiHistoryItem,
+): Promise<void> {
+  if (responseItem.linkedAiTaskId || prepared.item.linkedAiTaskId) return;
+  await postAiHistoryDetailMessages(
+    api,
+    runnerId,
+    responseItem.historyItemId,
+    prepared.detailMessages,
+    prepared.detailSyncedAt,
+  );
+}
+
 async function sendAiHistoryMetadataBatch(
   api: AgentApiClient,
   runnerId: string,
@@ -1839,6 +2045,7 @@ async function sendAiHistoryMetadataBatch(
       });
       scopesSent = true;
       const erroredIndexes = new Set((response.errors ?? []).map(error => error.index));
+      const responseItemsByIndex = new Map((response.items ?? []).map(item => [item.index, item]));
       chunk.forEach((prepared, index) => {
         if (erroredIndexes.has(index)) return;
         aiHistorySyncCache.set(prepared.cacheKey, {
@@ -1848,6 +2055,21 @@ async function sendAiHistoryMetadataBatch(
         });
         markPreparedAiHistoryRolloutInspected(prepared);
       });
+      for (const [index, prepared] of chunk.entries()) {
+        if (erroredIndexes.has(index)) continue;
+        const responseItem = responseItemsByIndex.get(index);
+        if (!responseItem?.historyItemId) continue;
+        try {
+          await postPreparedAiHistoryDetailMessages(api, runnerId, responseItem, prepared);
+        } catch (error) {
+          if (isAiHistorySyncApiUnavailable(error)) {
+            aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+            debug(`ai history detail activity API unavailable status=${error.status}`);
+          } else {
+            logError('ai history detail activity upsert failed', error instanceof Error ? error.message : error);
+          }
+        }
+      }
       upserted += response.upserted ?? 0;
     } catch (error) {
       if (isAiHistorySyncApiUnavailable(error)) {
@@ -1884,7 +2106,7 @@ async function syncAiHistoryMetadata(
     dbPath,
     sinceMs,
     repoPaths,
-    mode === 'reconcile' ? ORPHAN_IMPORT_SCAN_LIMIT : 60,
+    mode === 'reconcile' ? ORPHAN_IMPORT_SCAN_LIMIT : AI_HISTORY_FAST_WATCH_LIMIT,
   );
   const preparedItems: PreparedAiHistoryItem[] = [];
   const seenItemKeys = new Set<string>();
@@ -1933,6 +2155,128 @@ async function syncAiHistoryMetadata(
     debug(`ai history metadata ${mode} upserted=${upserted}`);
   }
   return upserted;
+}
+
+async function pollAiHistoryDetailHydrateRequests(
+  api: AgentApiClient,
+  runnerId: string,
+): Promise<number> {
+  if (aiHistoryDetailHydrateContractFailed) return 0;
+  if (Date.now() < aiHistoryDetailHydrateApiUnavailableUntil) return 0;
+  try {
+    const requests = await api.listAiHistoryDetailHydrateRequests(runnerId, AI_HISTORY_DETAIL_HYDRATE_LIMIT);
+    const now = Date.now();
+    for (const request of requests) {
+      const normalized = normalizedHydrateRequest(request);
+      if (!normalized) continue;
+      if (hydrateRequestExpiresAtMs(normalized, now) <= now) continue;
+      aiHistoryDetailWatchRequests.set(normalized.historyItemId, normalized);
+    }
+    trimCacheToLimit(aiHistoryDetailWatchRequests, ROLLOUT_INSPECT_CACHE_LIMIT);
+    return requests.length;
+  } catch (error) {
+    if (isAiHistorySyncApiUnavailable(error)) {
+      aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+      info(`ai history detail hydrate API unavailable status=${error.status}; pausing detail hydrate for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      return 0;
+    }
+    logError('ai history detail hydrate request poll failed', error instanceof Error ? error.message : error);
+    return 0;
+  }
+}
+
+function detailWatchFingerprint(request: AiHistoryDetailHydrateRequest, row: CodexThreadRow): string {
+  return [
+    request.historyItemId,
+    request.requestedAt ?? '',
+    request.expiresAt ?? '',
+    threadRolloutFingerprint(row),
+  ].join('\u001f');
+}
+
+function shouldInspectAiHistoryDetailRollout(
+  request: AiHistoryDetailHydrateRequest,
+  row: CodexThreadRow,
+  nowMs = Date.now(),
+): boolean {
+  const fingerprint = detailWatchFingerprint(request, row);
+  const cached = aiHistoryDetailRolloutInspectCache.get(request.historyItemId);
+  if (!cached) return true;
+  if (cached.fingerprint !== fingerprint) return true;
+  if (nowMs >= cached.nextInspectAt) {
+    aiHistoryDetailRolloutInspectCache.set(request.historyItemId, {
+      fingerprint,
+      nextInspectAt: nowMs + AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS,
+    });
+  }
+  return false;
+}
+
+function markAiHistoryDetailRolloutInspected(
+  request: AiHistoryDetailHydrateRequest,
+  row: CodexThreadRow,
+  nowMs = Date.now(),
+): void {
+  aiHistoryDetailRolloutInspectCache.set(request.historyItemId, {
+    fingerprint: detailWatchFingerprint(request, row),
+    nextInspectAt: nowMs + AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS,
+  });
+  trimCacheToLimit(aiHistoryDetailRolloutInspectCache, ROLLOUT_INSPECT_CACHE_LIMIT);
+}
+
+async function hydrateOneAiHistoryDetailRequest(
+  api: AgentApiClient,
+  runnerId: string,
+  dbPath: string,
+  request: AiHistoryDetailHydrateRequest,
+  nowMs = Date.now(),
+): Promise<boolean> {
+  if (request.provider !== AI_HISTORY_PROVIDER) return false;
+  const row = await readThread(dbPath, request.externalThreadId);
+  if (!row) return false;
+  if (!shouldInspectAiHistoryDetailRollout(request, row, nowMs)) return false;
+  const rawRollout = await readRollout(row);
+  const summary = parseRollout(rawRollout, row);
+  const messages = aiHistoryDetailMessages(row, summary);
+  markAiHistoryDetailRolloutInspected(request, row, nowMs);
+  if (messages.length === 0) return false;
+  const detailSyncedAt = aiHistoryDetailSyncedAt(row, summary) ?? new Date(nowMs).toISOString();
+  await postAiHistoryDetailMessages(api, runnerId, request.historyItemId, messages, detailSyncedAt, { force: true });
+  await verifyAiHistoryDetailHydrateFulfilled(api, runnerId, request.historyItemId);
+  aiHistoryDetailWatchRequests.delete(request.historyItemId);
+  aiHistoryDetailRolloutInspectCache.delete(request.historyItemId);
+  return true;
+}
+
+async function syncAiHistoryDetailHydrateRequests(
+  api: AgentApiClient,
+  runnerId: string,
+  dbPath: string,
+): Promise<number> {
+  if (aiHistoryDetailHydrateContractFailed) return 0;
+  const now = Date.now();
+  let hydrated = 0;
+  for (const [historyItemId, request] of aiHistoryDetailWatchRequests.entries()) {
+    if (hydrateRequestExpiresAtMs(request, now) <= now) {
+      aiHistoryDetailWatchRequests.delete(historyItemId);
+      aiHistoryDetailRolloutInspectCache.delete(historyItemId);
+      continue;
+    }
+    try {
+      if (await hydrateOneAiHistoryDetailRequest(api, runnerId, dbPath, request, now)) {
+        hydrated += 1;
+      }
+    } catch (error) {
+      if (isAiHistorySyncApiUnavailable(error)) {
+        aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+        logError('ai history detail hydrate API unavailable', error.message);
+        return hydrated;
+      }
+      logError('ai history detail hydrate failed', error instanceof Error ? error.message : error);
+      if (aiHistoryDetailHydrateContractFailed) return hydrated;
+    }
+  }
+  return hydrated;
 }
 
 type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
@@ -2122,6 +2466,7 @@ export function startCodexThreadMonitorLoop(
   let nextReconcileAt = 0;
   let currentImportScopeSignature = '';
   let reconcileQueue: CodexThreadImportScope[] = [];
+  let nextDetailHydratePollAt = 0;
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
   let dbPath: string | null = null;
@@ -2187,6 +2532,16 @@ export function startCodexThreadMonitorLoop(
         }
       }
 
+      const detailPollIntervalMs = preImportTasks.length > 0 || aiHistoryDetailWatchRequests.size > 0
+        ? AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS
+        : AI_HISTORY_DETAIL_HYDRATE_POLL_MS;
+      if (Date.now() >= nextDetailHydratePollAt) {
+        await pollAiHistoryDetailHydrateRequests(api, runnerId);
+        nextDetailHydratePollAt = Date.now() + detailPollIntervalMs;
+      }
+      const hydratedDetails = await syncAiHistoryDetailHydrateRequests(api, runnerId, dbPath);
+      if (hydratedDetails > 0) debug(`ai history detail hydrated=${hydratedDetails}`);
+
       const deferOrphanImport = shouldDeferOrphanImportForTasks(preImportTasks);
       const hotUpserted = importScopes.length === 0
         ? 0
@@ -2197,7 +2552,7 @@ export function startCodexThreadMonitorLoop(
           tasks,
           importScopes,
           'hot',
-          Math.min(AI_HISTORY_HOT_SYNC_LIMIT, orphanImportLimitForPreImportTasks(preImportTasks)),
+          AI_HISTORY_HOT_SYNC_LIMIT,
           false,
         );
 

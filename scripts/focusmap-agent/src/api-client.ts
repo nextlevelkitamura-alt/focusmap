@@ -3,6 +3,10 @@ import type {
   AgentCommand,
   AgentConfig,
   AiHistoryBatchUpsertPayload,
+  AiHistoryBatchUpsertResponseItem,
+  AiHistoryDetailActivityUpsertResponse,
+  AiHistoryDetailHydrateRequest,
+  AiHistoryDetailMessage,
   AiTask,
   CodexThreadImportPayload,
   CodexThreadImportScope,
@@ -262,6 +266,7 @@ export class AgentApiClient {
     ok: boolean;
     upserted: number;
     skipped: number;
+    items?: AiHistoryBatchUpsertResponseItem[];
     errors?: Array<{ index: number; error: string }>;
     scopesUpserted?: number;
     indexedAt?: string;
@@ -269,6 +274,33 @@ export class AgentApiClient {
     return this.request('/agents/ai-history/batch-upsert', {
       runner_id: runnerId,
       ...payload,
+    });
+  }
+
+  async listAiHistoryDetailHydrateRequests(
+    runnerId: string,
+    limit = 50,
+  ): Promise<AiHistoryDetailHydrateRequest[]> {
+    const data = await this.request<{ requests?: AiHistoryDetailHydrateRequest[] }>(
+      '/agents/ai-history/detail-hydrate-requests',
+      {
+        runner_id: runnerId,
+        limit,
+      },
+    );
+    return Array.isArray(data.requests) ? data.requests : [];
+  }
+
+  async upsertAiHistoryDetailActivity(
+    runnerId: string,
+    historyItemId: string,
+    messages: AiHistoryDetailMessage[],
+    detailSyncedAt?: string | null,
+  ): Promise<AiHistoryDetailActivityUpsertResponse> {
+    return this.request(`/agents/ai-history/${encodeURIComponent(historyItemId)}/activity`, {
+      runner_id: runnerId,
+      messages,
+      ...(detailSyncedAt ? { detail_synced_at: detailSyncedAt } : {}),
     });
   }
 
