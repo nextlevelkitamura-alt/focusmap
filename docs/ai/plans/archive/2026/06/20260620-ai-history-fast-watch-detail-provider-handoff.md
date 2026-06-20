@@ -1,9 +1,9 @@
 # AI History Fast Watch / Detail Hydrate / Provider Adapter Handoff
 
 - Task ID: TASK-20260620-005
-- Status: planned
+- Status: completed
 - Created: 2026-06-20
-- Completed:
+- Completed: 2026-06-20
 - Board: `docs/ai/task-board.md`
 - Parent plan: `docs/ai/plans/archive/2026/06/20260620-ai-history-sync-foundation.md`
 - Routing decision: HYBRID_PLAN_THEN_PARALLEL
@@ -86,12 +86,12 @@ AI履歴同期基盤の次フェーズとして、以下を実装できる状態
 
 | Area | Owner | Status | Branch / Worktree | Done when | Notes |
 |---|---|---|---|---|---|
-| Backend/API detail cache | Backend Codex | planned | TBD | detail cache migration/API/test committed | 先行必須 |
-| Agent fast-watch + hydrate | Agent Codex | planned | TBD | top-N resume <=2s local設計/test committed | Backend契約後 |
-| Frontend detail UX | Frontend Codex | planned | TBD | 未リンクdetailでもprompt/回答表示、更新中UI/test committed | Backend契約後にAgentと並列可 |
-| Integration | Integration Codex | planned | `main` or integration worktree | 全commit統合、検証、docs更新 | main取り込みの正本 |
-| Provider adapter foundation | Agent/Architecture Codex | planned | separate phase | 挙動不変でCodex adapter分離 | fast-watch完了後 |
-| Mac agent update strategy | Desktop/Agent Codex | planned | separate phase | heartbeat capability/version/source、self-update計画 | provider境界後 |
+| Backend/API detail cache | Backend Codex | completed | `feat/ai-history-detail-cache-backend` | detail cache migration/API/test committed | `a3bda68e` / `dabbf232` をlocal mainへ統合 |
+| Agent fast-watch + hydrate | Agent Codex | completed | `feat/ai-history-fast-watch-agent` | top-N resume <=2s local設計/test committed | `0fcb9f43` をlocal mainへ統合 |
+| Frontend detail UX | Frontend Codex | completed | `feat/ai-history-detail-frontend` | 未リンクdetailでもprompt/回答表示、更新中UI/test committed | `1d143627` をlocal mainへ統合 |
+| Integration | Integration Codex | completed | `main` | 全commit統合、検証、docs更新 | `20260620-1410-ai-history-fast-watch-detail-integration` runで完了 |
+| Provider adapter foundation | Agent/Architecture Codex | follow_up | separate phase | 挙動不変でCodex adapter分離 | 今回の4commit統合には含めない |
+| Mac agent update strategy | Desktop/Agent Codex | follow_up | separate phase | heartbeat capability/version/source、self-update計画 | 今回の4commit統合には含めない |
 
 ## Contracts
 
@@ -617,6 +617,16 @@ Rules:
 - archiveは通常UIから完全非表示、archive解除で同一itemを復元する。
 - provider adapter foundationを実施する場合、Codex挙動不変である。
 - Macアプリ再インストールが必要な変更とCloud Run deployだけで反映される変更が報告されている。
+
+## Integration Result
+
+- Completed: 2026-06-20
+- Merged worker commits: `a3bda68e90ab33a57da15efe49c06edb6a7e90e0`, `dabbf232f05089a22c2e9b6fa3a19e5d6be6fad5`, `0fcb9f43200ea2500312963bc76f94c7fbdaf33b`, `1d1436276111d1386dfe5150f75ea7ab9a2f9484`
+- Local main commits after cherry-pick: `e37f5bb5`, `566d7f7c`, `9884f087`, `46d2c66e`
+- Integration fixes: conflict-free cherry-pick onto latest local main `2e82c50e`; verified migration order `ai_history_metadata` -> `ai_history_detail_messages` -> `ai_history_detail_hydrate_requests`; confirmed Agent uses `historyItemId` for detail activity POST; confirmed Frontend only polls selected detail activity and does not call the agent hydrate request API; confirmed fast-watch uses rollout `mtime/size` stat and hash/dedupe so unchanged duration pulses do not write every second.
+- Verification: `npm run test:run -- src/lib/turso/ai-history.test.ts 'src/app/api/ai-history/[id]/activity/route.test.ts' 'src/app/api/agents/ai-history/[id]/activity/route.test.ts' src/app/api/agents/ai-history/batch-upsert/route.test.ts src/app/api/agents/ai-history/detail-hydrate-requests/route.test.ts scripts/focusmap-agent/codex-thread-monitor.test.ts src/components/dashboard/codex-chat-import-sidebar.test.tsx --test-timeout=30000` passed 59 tests; `npx eslint ...` finished with 0 errors and 2 pre-existing warnings in `scripts/focusmap-agent/src/codex-thread-monitor.ts`; `git diff --check` passed.
+- UI check: not run. The user did not explicitly request Mac/Arc/kimi webbridge/Browser UI confirmation.
+- Follow-up: provider adapter foundation and Mac agent update strategy remain separate future phases; push/deploy not performed.
 
 ## Risks
 
