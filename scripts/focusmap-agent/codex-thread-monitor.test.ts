@@ -15,6 +15,8 @@ import {
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
+  markAiHistoryRolloutInspected,
+  markTaskRolloutInspected,
   markThreadGone,
   matchingThreadImportScope,
   orphanImportLimitForPreImportTasks,
@@ -22,6 +24,8 @@ import {
   preImportCodexMonitorTasks,
   prioritizeCodexMonitorTasks,
   RESUME_RUNNING_VISIBILITY_MS,
+  shouldInspectAiHistoryRollout,
+  shouldInspectTaskRollout,
   shouldCompleteSourceFromArchivedThread,
   shouldDeferOrphanImportForTasks,
   taskStateForSummary,
@@ -72,6 +76,86 @@ describe('codex-thread-monitor state detection', () => {
 
   test('reconciles enabled Codex history repos hourly by default', () => {
     expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60 * 60 * 1000);
+  });
+
+  test('skips unchanged stable AI history rollout reads between hot syncs', () => {
+    const scope = { project_id: 'project-rollout-cache', repo_path: '/repo-rollout-cache' };
+    const row = {
+      ...threadRow,
+      id: 'thread-rollout-cache-stable',
+      cwd: '/repo-rollout-cache',
+    };
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now)).toBe(true);
+
+    markAiHistoryRolloutInspected(row, scope, false, now);
+
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'reconcile', now + 1_000)).toBe(true);
+    expect(shouldInspectAiHistoryRollout({
+      ...row,
+      updated_at_ms: row.updated_at_ms + 1,
+    }, scope, 'hot', now + 1_000)).toBe(true);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(true);
+  });
+
+  test('keeps running AI history and task rollouts on a one-second watch', () => {
+    const scope = { project_id: 'project-running-cache', repo_path: '/repo-running-cache' };
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+    const row = {
+      ...threadRow,
+      id: 'thread-rollout-cache-running',
+      cwd: '/repo-running-cache',
+      updated_at_ms: now,
+    };
+    const runningTask = task({
+      id: 'task-rollout-cache-running',
+      codex_thread_id: row.id,
+    });
+
+    markAiHistoryRolloutInspected(row, scope, true, now);
+    markTaskRolloutInspected(runningTask, row, row.id, true, now);
+
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 500)).toBe(false);
+    expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 500)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(true);
+    expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(true);
+  });
+
+  test('slows stale running rollout fallback while still reacting to thread row changes', () => {
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+    const scope = { project_id: 'project-stale-running-cache', repo_path: '/repo-stale-running-cache' };
+    const staleRow = {
+      ...threadRow,
+      id: 'thread-rollout-cache-stale-running',
+      cwd: '/repo-stale-running-cache',
+      updated_at_ms: now - 5 * 60_000,
+    };
+    const staleTask = task({
+      id: 'task-rollout-cache-stale-running',
+      codex_thread_id: staleRow.id,
+      result: {
+        codex_run_state: 'running',
+        last_activity_at: new Date(now - 5 * 60_000).toISOString(),
+      },
+    });
+
+    markAiHistoryRolloutInspected(staleRow, scope, true, now);
+    markTaskRolloutInspected(staleTask, staleRow, staleRow.id, true, now);
+
+    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 1_000)).toBe(false);
+    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 1_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout({
+      ...staleRow,
+      updated_at_ms: now + 1,
+    }, scope, 'hot', now + 1_000)).toBe(true);
+    expect(shouldInspectTaskRollout(staleTask, {
+      ...staleRow,
+      updated_at_ms: now + 1,
+    }, staleRow.id, now + 1_000)).toBe(true);
+    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 30_000)).toBe(true);
+    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 30_000)).toBe(true);
   });
 
   test('prefers the freshest default Codex state DB path', () => {

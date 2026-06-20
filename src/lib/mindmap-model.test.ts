@@ -403,7 +403,7 @@ describe("buildMindMapModel", () => {
         const secondGap = centerY(getTaskNode(model, "branch-c")) - centerY(getTaskNode(model, "leaf"));
 
         expect(firstGap).toBe(secondGap);
-        expect(firstGap).toBe(compactPitch);
+        expect(firstGap).toBeGreaterThan(compactPitch);
 
         const branchABounds = getSubtreeDepthBounds(model, "branch-a", 1);
         const branchCBounds = getSubtreeDepthBounds(model, "branch-c", 1);

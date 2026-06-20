@@ -195,6 +195,7 @@ describe('useCalendars - fetchCalendars', () => {
       createCalendar({ id: 'cal-1', google_calendar_id: 'a@gmail.com', selected: true }),
       createCalendar({ id: 'cal-2', google_calendar_id: 'b@gmail.com', selected: false }),
     ]
+    mockFetchSuccess(calendars)
     localStorageMock.setItem('focusmap:calendars:list', JSON.stringify({
       calendars,
       cachedAt: Date.now(),
@@ -207,7 +208,13 @@ describe('useCalendars - fetchCalendars', () => {
     expect(result.current.calendars[0].name).toBe('My Calendar')
     expect(result.current.selectedCalendarIds).toEqual(['a@gmail.com'])
     expect(result.current.isLoading).toBe(false)
-    expect(mockFetch).toHaveBeenCalledTimes(0)
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch).toHaveBeenCalledWith('/api/calendars?forceSync=true')
   })
 })
 

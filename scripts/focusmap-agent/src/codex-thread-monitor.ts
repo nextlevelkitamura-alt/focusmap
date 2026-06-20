@@ -24,6 +24,7 @@ const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
 const MAX_ACTIVITY_BODY_CHARS = 8_000;
 const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
 const ROLLOUT_READ_CACHE_LIMIT = 300;
+const ROLLOUT_INSPECT_CACHE_LIMIT = 1_000;
 const PRE_IMPORT_SYNC_LIMIT = 40;
 const POST_IMPORT_SYNC_LIMIT = 80;
 const PRE_IMPORT_SYNC_YIELD_EVERY = 25;
@@ -43,6 +44,11 @@ const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
+const RUNNING_THREAD_ROLLOUT_RECHECK_MS = 1_000;
+const ACTIVE_RUNNING_ACTIVITY_WINDOW_MS = 30_000;
+const STALE_RUNNING_THREAD_ROLLOUT_RECHECK_MS = 30_000;
+const STABLE_AI_HISTORY_ROLLOUT_RECHECK_MS = 60_000;
+const STABLE_TASK_ROLLOUT_RECHECK_MS = 30_000;
 const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_IMPORT_WINDOW_MS);
 const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
   ? configuredOrphanImportWindowMs
@@ -57,6 +63,8 @@ let importScopesApiUnavailableUntil = 0;
 const WORKTREE_PATH_CACHE_TTL_MS = 30_000;
 const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }>();
 const aiHistorySyncCache = new Map<string, { hash: string; sentAt: number; running: boolean }>();
+const aiHistoryRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
+const taskRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
 
 type CodexThreadImportScopeHeartbeat = {
   project_id: string;
@@ -122,7 +130,7 @@ export function getCodexThreadMonitorHeartbeatMetadata(): Record<string, unknown
   };
 }
 
-type CodexThreadRow = {
+export type CodexThreadRow = {
   id: string;
   title?: string | null;
   tokens_used?: number | null;
@@ -898,10 +906,141 @@ type PreparedAiHistoryItem = {
   item: AiHistoryBatchUpsertItem;
   hash: string;
   cacheKey: string;
+  rolloutInspectKey: string;
+  rolloutFingerprint: string;
+  rolloutRecheckMs: number;
   running: boolean;
 };
 
-type AiHistorySyncMode = 'hot' | 'reconcile';
+export type AiHistorySyncMode = 'hot' | 'reconcile';
+
+function trimCacheToLimit<K, V>(cache: Map<K, V>, limit: number): void {
+  while (cache.size > limit) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
+
+function threadRolloutFingerprint(row: CodexThreadRow): string {
+  return [
+    row.updated_at_ms ?? '',
+    row.created_at_ms ?? '',
+    row.archived ? '1' : '0',
+    row.title ?? '',
+    row.preview ?? '',
+    row.rollout_path ?? '',
+    row.source ?? '',
+    row.cwd ?? '',
+    row.first_user_message ?? '',
+    row.tokens_used ?? '',
+    row.has_user_event ?? '',
+  ].join('\u001f');
+}
+
+function runningThreadRolloutRecheckMs(lastActivityMs: number | null, nowMs: number): number {
+  if (lastActivityMs !== null && nowMs - lastActivityMs <= ACTIVE_RUNNING_ACTIVITY_WINDOW_MS) {
+    return RUNNING_THREAD_ROLLOUT_RECHECK_MS;
+  }
+  return STALE_RUNNING_THREAD_ROLLOUT_RECHECK_MS;
+}
+
+function aiHistoryRolloutRecheckMs(row: CodexThreadRow, running: boolean, nowMs: number): number {
+  if (!running) return STABLE_AI_HISTORY_ROLLOUT_RECHECK_MS;
+  const rowActivityMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms);
+  return runningThreadRolloutRecheckMs(rowActivityMs, nowMs);
+}
+
+function aiHistoryRolloutInspectKey(
+  row: CodexThreadRow,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+): string {
+  return [
+    AI_HISTORY_PROVIDER,
+    scope.project_id,
+    normalizeLocalPath(scope.repo_path),
+    row.id,
+  ].join('\u001f');
+}
+
+export function shouldInspectAiHistoryRollout(
+  row: CodexThreadRow,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  mode: AiHistorySyncMode = 'hot',
+  nowMs = Date.now(),
+): boolean {
+  if (mode === 'reconcile') return true;
+  const cached = aiHistoryRolloutInspectCache.get(aiHistoryRolloutInspectKey(row, scope));
+  if (!cached) return true;
+  if (cached.fingerprint !== threadRolloutFingerprint(row)) return true;
+  return nowMs >= cached.nextInspectAt;
+}
+
+export function markAiHistoryRolloutInspected(
+  row: CodexThreadRow,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  running: boolean,
+  nowMs = Date.now(),
+): void {
+  aiHistoryRolloutInspectCache.set(aiHistoryRolloutInspectKey(row, scope), {
+    fingerprint: threadRolloutFingerprint(row),
+    nextInspectAt: nowMs + aiHistoryRolloutRecheckMs(row, running, nowMs),
+  });
+  trimCacheToLimit(aiHistoryRolloutInspectCache, ROLLOUT_INSPECT_CACHE_LIMIT);
+}
+
+function markPreparedAiHistoryRolloutInspected(prepared: PreparedAiHistoryItem, nowMs = Date.now()): void {
+  aiHistoryRolloutInspectCache.set(prepared.rolloutInspectKey, {
+    fingerprint: prepared.rolloutFingerprint,
+    nextInspectAt: nowMs + prepared.rolloutRecheckMs,
+  });
+  trimCacheToLimit(aiHistoryRolloutInspectCache, ROLLOUT_INSPECT_CACHE_LIMIT);
+}
+
+function taskRolloutInspectFingerprint(task: AiTask, row: CodexThreadRow, threadId: string): string {
+  const result = taskResult(task);
+  return [
+    threadId,
+    threadRolloutFingerprint(row),
+    task.status,
+    codexRunState(task),
+    result.current_step ?? '',
+    result.last_activity_at ?? '',
+    result.awaiting_approval_at ?? '',
+    result.codex_review_reason ?? '',
+    result.codex_archive_request_state ?? '',
+    result.codex_archive_requested_at ?? '',
+    result.codex_activity_synced_sequence ?? '',
+  ].join('\u001f');
+}
+
+function taskRolloutRecheckMs(task: AiTask, row: CodexThreadRow, running: boolean, nowMs: number): number {
+  if (!running) return STABLE_TASK_ROLLOUT_RECHECK_MS;
+  const rowActivityMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
+  const taskActivityMs = taskMonitorActivityMs(task);
+  return runningThreadRolloutRecheckMs(Math.max(rowActivityMs, taskActivityMs) || null, nowMs);
+}
+
+export function shouldInspectTaskRollout(task: AiTask, row: CodexThreadRow, threadId: string, nowMs = Date.now()): boolean {
+  const cached = taskRolloutInspectCache.get(task.id);
+  if (!cached) return true;
+  if (cached.fingerprint !== taskRolloutInspectFingerprint(task, row, threadId)) return true;
+  return nowMs >= cached.nextInspectAt;
+}
+
+export function markTaskRolloutInspected(
+  task: AiTask,
+  row: CodexThreadRow,
+  threadId: string,
+  running: boolean,
+  nowMs = Date.now(),
+): void {
+  taskRolloutInspectCache.set(task.id, {
+    fingerprint: taskRolloutInspectFingerprint(task, row, threadId),
+    nextInspectAt: nowMs + taskRolloutRecheckMs(task, row, running, nowMs),
+  });
+  trimCacheToLimit(taskRolloutInspectCache, ROLLOUT_INSPECT_CACHE_LIMIT);
+}
 
 function scopeKey(scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>): string {
   return `${scope.project_id}\u001f${normalizeLocalPath(scope.repo_path)}`;
@@ -1099,6 +1238,9 @@ function aiHistoryItemFromThread(input: {
     item,
     hash,
     cacheKey: aiHistoryItemCacheKey(item),
+    rolloutInspectKey: aiHistoryRolloutInspectKey(input.row, input.scope),
+    rolloutFingerprint: threadRolloutFingerprint(input.row),
+    rolloutRecheckMs: aiHistoryRolloutRecheckMs(input.row, status === 'running', input.nowMs),
     running: status === 'running',
   };
 }
@@ -1704,6 +1846,7 @@ async function sendAiHistoryMetadataBatch(
           sentAt: Date.now(),
           running: prepared.running,
         });
+        markPreparedAiHistoryRolloutInspected(prepared);
       });
       upserted += response.upserted ?? 0;
     } catch (error) {
@@ -1760,6 +1903,7 @@ async function syncAiHistoryMetadata(
     const itemKey = `${row.id}\u001f${normalizeLocalPath(matchingScope.repo_path)}`;
     if (seenItemKeys.has(itemKey)) continue;
     seenItemKeys.add(itemKey);
+    if (!shouldInspectAiHistoryRollout(row, matchingScope, mode, now)) continue;
 
     try {
       const rawRollout = await readRollout(row);
@@ -1773,7 +1917,11 @@ async function syncAiHistoryMetadata(
         linkedTask,
         nowMs: now,
       });
-      if (shouldQueueAiHistoryItem(prepared)) preparedItems.push(prepared);
+      if (shouldQueueAiHistoryItem(prepared)) {
+        preparedItems.push(prepared);
+      } else {
+        markPreparedAiHistoryRolloutInspected(prepared, now);
+      }
     } catch (error) {
       logError(`ai history metadata prepare failed thread=${row.id.slice(0, 8)}`, error instanceof Error ? error.message : error);
     }
@@ -1895,6 +2043,9 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     return 'remove';
   }
 
+  const nowMs = Date.now();
+  if (!shouldInspectTaskRollout(task, row, threadId, nowMs)) return 'unchanged';
+
   const rolloutRaw = await readRollout(row);
   const summary = parseRollout(rolloutRaw, row);
   const { status, resumed } = taskStateForSummary(task, summary);
@@ -1926,7 +2077,10 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     (resumed && task.status !== 'running') ||
     hasNewActivityMessages;
 
-  if (!shouldSync) return 'unchanged';
+  if (!shouldSync) {
+    markTaskRolloutInspected(task, row, threadId, status === 'running', nowMs);
+    return 'unchanged';
+  }
   syncCache.set(task.id, cacheKey);
 
   const nextResult = resultSnapshot(task, threadId, row, summary, status, resumed, activityBatch);
@@ -1945,6 +2099,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   });
   task.status = status;
   task.result = nextResult as unknown as Record<string, unknown>;
+  markTaskRolloutInspected(task, row, threadId, status === 'running', nowMs);
 
   if (resumed) {
     info(`codex thread resumed task=${task.id} thread=${threadId.slice(0, 8)}`);

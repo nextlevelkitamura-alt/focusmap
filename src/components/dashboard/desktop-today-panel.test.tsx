@@ -28,7 +28,7 @@ vi.mock('@/components/today/today-timeline-calendar', () => ({
         taskId: 'task-1',
         title: 'マップノード',
         durationMinutes: 45,
-        calendarId: 'payload-calendar',
+        calendarId: null,
       }, new Date('2026-06-10T10:00:00+09:00'))}
     >
       drop node
@@ -66,7 +66,8 @@ vi.mock('@/components/dashboard/desktop-panel-fab', () => ({
 
 const mockedUseTodayViewLogic = vi.mocked(useTodayViewLogic)
 
-function mockTodayLogic() {
+function mockTodayLogic(options?: { selectedCalendarId?: string }) {
+  const selectedCalendarId = options?.selectedCalendarId ?? 'work-calendar'
   mockedUseTodayViewLogic.mockReturnValue({
     calendarMonth: new Date('2026-06-10T00:00:00+09:00'),
     calendarOpen: false,
@@ -75,13 +76,13 @@ function mockTodayLogic() {
       {
         google_calendar_id: 'work-calendar',
         name: 'Work',
-        selected: true,
+        selected: selectedCalendarId === 'work-calendar',
         access_level: 'owner',
       },
       {
         google_calendar_id: 'private-calendar',
         name: 'Private',
-        selected: false,
+        selected: selectedCalendarId === 'private-calendar',
         access_level: 'writer',
       },
     ],
@@ -153,8 +154,9 @@ describe('DesktopTodayPanel mind map calendar target', () => {
     mockTodayLogic()
   })
 
-  test('右上で選んだカレンダーをマップノードdrop時の保存先に使う', async () => {
+  test('表示カレンダーで選んだカレンダーをマップノードdrop時の保存先に使う', async () => {
     const onUpdateTask = vi.fn(async () => undefined)
+    mockTodayLogic({ selectedCalendarId: 'private-calendar' })
 
     render(
       <DesktopTodayPanel
@@ -165,9 +167,6 @@ describe('DesktopTodayPanel mind map calendar target', () => {
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('ノード予定の追加先カレンダー'), {
-      target: { value: 'private-calendar' },
-    })
     fireEvent.click(screen.getByRole('button', { name: 'drop node' }))
 
     await waitFor(() => {
