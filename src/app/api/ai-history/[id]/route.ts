@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isTursoConfigured, TursoConfigurationError } from '@/lib/turso/client'
-import { getAiHistoryItemForUser, toAiHistoryListItem } from '@/lib/turso/ai-history'
+import {
+  aiHistoryDetailHydrateReason,
+  getAiHistoryItemForUser,
+  isAiHistoryDetailHydrateRequired,
+  toAiHistoryListItem,
+} from '@/lib/turso/ai-history'
 import { authenticateAiHistoryRequest, unauthorized } from '../_shared'
 
 export async function GET(
@@ -18,17 +23,23 @@ export async function GET(
     const item = await getAiHistoryItemForUser(id, auth.user.id)
     if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     const responseItem = toAiHistoryListItem(item)
+    const hydrateRequired = isAiHistoryDetailHydrateRequired(item)
     return NextResponse.json({
       item: responseItem,
       detail: {
-        hydrateRequired: !item.linked_ai_task_id,
+        hydrateRequired,
+        hydrateReason: aiHistoryDetailHydrateReason(item),
+        detailSyncedAt: item.detail_synced_at,
+        messageCount: item.detail_message_count ?? 0,
         linkedAiTaskId: item.linked_ai_task_id,
         activityUrl: item.linked_ai_task_id
           ? `/api/ai-tasks/${encodeURIComponent(item.linked_ai_task_id)}/activity`
           : `/api/ai-history/${encodeURIComponent(item.id)}/activity`,
         policy: item.linked_ai_task_id
           ? 'linked_ai_task_activity'
-          : 'local_agent_detail_hydrate_required',
+          : hydrateRequired
+            ? 'local_agent_detail_hydrate_required'
+            : 'ai_history_detail_cache',
       },
     })
   } catch (error) {

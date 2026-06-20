@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { getTursoClient, jsonOrNull, parseJsonRecord } from './client'
 import type {
+  AiHistoryDetailActivityMessage,
+  AiHistoryDetailMessageKind,
+  AiHistoryDetailMessageRole,
   AiHistoryListItem,
   AiHistoryPlacement,
   AiHistoryStatus,
@@ -14,6 +17,22 @@ export const AI_HISTORY_STATUSES = new Set<AiHistoryStatus>([
   'failed',
   'idle',
 ])
+
+export const AI_HISTORY_DETAIL_ROLES = new Set<AiHistoryDetailMessageRole>([
+  'user',
+  'assistant',
+  'system',
+])
+
+export const AI_HISTORY_DETAIL_KINDS = new Set<AiHistoryDetailMessageKind>([
+  'user_prompt',
+  'assistant_answer',
+  'assistant_question',
+  'status',
+  'summary',
+])
+
+const MAX_AI_HISTORY_DETAIL_BODY_CHARS = 8_000
 
 type Row = Record<string, unknown>
 
@@ -66,6 +85,24 @@ export type TursoProjectRepoScope = {
   updated_at: string
 }
 
+export type TursoAiHistoryDetailMessage = {
+  id: string
+  user_id: string
+  history_item_id: string
+  provider: string
+  external_thread_id: string
+  repo_path: string
+  sequence: number
+  role: AiHistoryDetailMessageRole
+  kind: AiHistoryDetailMessageKind
+  body: string
+  body_hash: string
+  occurred_at: string | null
+  metadata_json: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
 export type AiHistoryUpsertInput = {
   id?: string | null
   user_id: string
@@ -107,6 +144,21 @@ export type ProjectRepoScopeUpsertInput = {
   settings_json?: Record<string, unknown> | null
 }
 
+export type AiHistoryDetailMessageUpsertInput = {
+  sequence: number
+  role: AiHistoryDetailMessageRole
+  kind: AiHistoryDetailMessageKind
+  body: string
+  occurred_at?: string | null
+  metadata_json?: Record<string, unknown> | null
+}
+
+export type AiHistoryDetailCursor = {
+  createdAt?: string | null
+  id?: string | null
+  sequence?: number | null
+}
+
 function nowIso() {
   return new Date().toISOString()
 }
@@ -143,6 +195,20 @@ function asStatus(value: unknown): AiHistoryStatus {
   return status && AI_HISTORY_STATUSES.has(status as AiHistoryStatus)
     ? status as AiHistoryStatus
     : 'idle'
+}
+
+function asDetailRole(value: unknown): AiHistoryDetailMessageRole {
+  const role = asString(value)
+  return role && AI_HISTORY_DETAIL_ROLES.has(role as AiHistoryDetailMessageRole)
+    ? role as AiHistoryDetailMessageRole
+    : 'assistant'
+}
+
+function asDetailKind(value: unknown): AiHistoryDetailMessageKind {
+  const kind = asString(value)
+  return kind && AI_HISTORY_DETAIL_KINDS.has(kind as AiHistoryDetailMessageKind)
+    ? kind as AiHistoryDetailMessageKind
+    : 'assistant_answer'
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -208,6 +274,124 @@ function asScope(row: Row): TursoProjectRepoScope {
     created_at: asString(row.created_at) ?? nowIso(),
     updated_at: asString(row.updated_at) ?? nowIso(),
   }
+}
+
+function asDetailMessage(row: Row): TursoAiHistoryDetailMessage {
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    history_item_id: String(row.history_item_id),
+    provider: asString(row.provider) ?? 'codex_app',
+    external_thread_id: asString(row.external_thread_id) ?? '',
+    repo_path: asString(row.repo_path) ?? '',
+    sequence: asNumber(row.sequence) ?? 0,
+    role: asDetailRole(row.role),
+    kind: asDetailKind(row.kind),
+    body: asString(row.body) ?? '',
+    body_hash: asString(row.body_hash) ?? '',
+    occurred_at: asString(row.occurred_at),
+    metadata_json: parseJsonRecord(row.metadata_json),
+    created_at: asString(row.created_at) ?? nowIso(),
+    updated_at: asString(row.updated_at) ?? nowIso(),
+  }
+}
+
+export function hashAiHistoryDetailBody(body: string) {
+  return createHash('sha256').update(body).digest('hex')
+}
+
+function detailMessageId(input: {
+  userId: string
+  historyItemId: string
+  sequence: number
+  bodyHash: string
+}) {
+  const sequence = String(input.sequence).padStart(8, '0')
+  const digest = createHash('sha256')
+    .update([input.userId, input.historyItemId, String(input.sequence), input.bodyHash].join('\u001f'))
+    .digest('hex')
+    .slice(0, 20)
+  return `aihd_${sequence}_${digest}`
+}
+
+function toActivityRole(role: AiHistoryDetailMessageRole) {
+  if (role === 'user') return 'user' as const
+  if (role === 'system') return 'status' as const
+  return 'codex' as const
+}
+
+function toActivityKind(kind: AiHistoryDetailMessageKind) {
+  if (kind === 'user_prompt') return 'sent' as const
+  if (kind === 'assistant_question') return 'question' as const
+  if (kind === 'summary') return 'completed' as const
+  if (kind === 'status') return 'progress' as const
+  return 'completed' as const
+}
+
+function toActivityImportance(kind: AiHistoryDetailMessageKind) {
+  return kind === 'assistant_question' || kind === 'summary' ? 'important' as const : 'normal' as const
+}
+
+export function toAiHistoryDetailActivityMessage(
+  message: TursoAiHistoryDetailMessage,
+): AiHistoryDetailActivityMessage {
+  const metadata = message.metadata_json ?? {}
+  return {
+    id: message.id,
+    history_item_id: message.history_item_id,
+    task_id: message.history_item_id,
+    user_id: message.user_id,
+    provider: message.provider,
+    external_thread_id: message.external_thread_id,
+    repo_path: message.repo_path,
+    sequence: message.sequence,
+    role: toActivityRole(message.role),
+    detail_role: message.role,
+    kind: toActivityKind(message.kind),
+    detail_kind: message.kind,
+    body: message.body,
+    body_hash: message.body_hash,
+    importance: toActivityImportance(message.kind),
+    metadata: {
+      ...metadata,
+      detailRole: message.role,
+      detailKind: message.kind,
+      detailSequence: message.sequence,
+      bodyHash: message.body_hash,
+    },
+    occurred_at: message.occurred_at,
+    created_at: message.occurred_at ?? message.created_at,
+  }
+}
+
+export function isAiHistoryDetailHydrateRequired(
+  item: Pick<TursoAiHistoryItem, 'linked_ai_task_id' | 'last_activity_at' | 'detail_synced_at' | 'detail_message_count'>,
+  actualMessageCount?: number | null,
+) {
+  if (item.linked_ai_task_id) return false
+  const messageCount = actualMessageCount ?? item.detail_message_count ?? 0
+  if (messageCount <= 0) return true
+  const detailSyncedMs = Date.parse(item.detail_synced_at ?? '')
+  if (!Number.isFinite(detailSyncedMs)) return true
+  const lastActivityMs = Date.parse(item.last_activity_at ?? '')
+  if (!Number.isFinite(lastActivityMs)) return false
+  return detailSyncedMs + 1000 < lastActivityMs
+}
+
+export function aiHistoryDetailHydrateReason(
+  item: Pick<TursoAiHistoryItem, 'linked_ai_task_id' | 'last_activity_at' | 'detail_synced_at' | 'detail_message_count'>,
+  actualMessageCount?: number | null,
+) {
+  if (item.linked_ai_task_id) return null
+  const messageCount = actualMessageCount ?? item.detail_message_count ?? 0
+  if (messageCount <= 0) return 'detail_cache_empty'
+  const detailSyncedMs = Date.parse(item.detail_synced_at ?? '')
+  if (!Number.isFinite(detailSyncedMs)) return 'detail_cache_unsynced'
+  const lastActivityMs = Date.parse(item.last_activity_at ?? '')
+  if (Number.isFinite(lastActivityMs) && detailSyncedMs + 1000 < lastActivityMs) {
+    return 'detail_cache_stale'
+  }
+  return null
 }
 
 export function encodeAiHistoryCursor(item: { indexed_at: string; id: string }) {
@@ -439,6 +623,167 @@ export async function getAiHistoryItemForUser(id: string, userId: string) {
   })
   const row = result.rows[0] as Row | undefined
   return row ? asItem(row) : null
+}
+
+function normalizeDetailBody(body: string) {
+  return body.replace(/\r\n/g, '\n').trim().slice(0, MAX_AI_HISTORY_DETAIL_BODY_CHARS)
+}
+
+export async function listAiHistoryDetailMessages(options: {
+  userId: string
+  historyItemId: string
+  limit?: number
+  before?: AiHistoryDetailCursor | null
+}) {
+  const clauses = ['user_id = ?', 'history_item_id = ?']
+  const args: Array<string | number> = [options.userId, options.historyItemId]
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 200)
+
+  if (options.before?.sequence !== null && options.before?.sequence !== undefined) {
+    clauses.push('(sequence < ? OR (sequence = ? AND id < ?))')
+    args.push(options.before.sequence, options.before.sequence, options.before.id ?? '')
+  } else if (options.before?.createdAt) {
+    clauses.push('(created_at < ? OR (created_at = ? AND id < ?))')
+    args.push(options.before.createdAt, options.before.createdAt, options.before.id ?? '')
+  }
+
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT *
+      FROM ai_history_detail_messages
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY sequence DESC, id DESC
+      LIMIT ?
+    `,
+    args: [...args, limit],
+  })
+  return result.rows.map(row => asDetailMessage(row as Row)).reverse()
+}
+
+export async function countAiHistoryDetailMessages(options: {
+  userId: string
+  historyItemId: string
+}) {
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM ai_history_detail_messages
+      WHERE user_id = ? AND history_item_id = ?
+    `,
+    args: [options.userId, options.historyItemId],
+  })
+  return asNumber((result.rows[0] as Row | undefined)?.count) ?? 0
+}
+
+async function refreshAiHistoryDetailSummary(options: {
+  userId: string
+  historyItemId: string
+  detailSyncedAt: string
+}) {
+  const updatedAt = nowIso()
+  await getTursoClient().execute({
+    sql: `
+      UPDATE ai_history_items
+      SET
+        detail_synced_at = CASE
+          WHEN detail_synced_at IS NULL OR detail_synced_at < ? THEN ?
+          ELSE detail_synced_at
+        END,
+        detail_message_count = (
+          SELECT COUNT(*)
+          FROM ai_history_detail_messages
+          WHERE user_id = ? AND history_item_id = ?
+        ),
+        updated_at = ?
+      WHERE id = ? AND user_id = ?
+    `,
+    args: [
+      options.detailSyncedAt,
+      options.detailSyncedAt,
+      options.userId,
+      options.historyItemId,
+      updatedAt,
+      options.historyItemId,
+      options.userId,
+    ],
+  })
+}
+
+export async function upsertAiHistoryDetailMessages(options: {
+  userId: string
+  historyItemId: string
+  provider: string
+  externalThreadId: string
+  repoPath: string
+  messages: AiHistoryDetailMessageUpsertInput[]
+  detailSyncedAt?: string | null
+}) {
+  const timestamp = nowIso()
+  let upserted = 0
+
+  for (const message of options.messages) {
+    const body = normalizeDetailBody(message.body)
+    if (!body) continue
+    const bodyHash = hashAiHistoryDetailBody(body)
+    const id = detailMessageId({
+      userId: options.userId,
+      historyItemId: options.historyItemId,
+      sequence: message.sequence,
+      bodyHash,
+    })
+    const occurredAt = message.occurred_at ?? null
+    await getTursoClient().execute({
+      sql: `
+        INSERT INTO ai_history_detail_messages (
+          id, user_id, history_item_id, provider, external_thread_id, repo_path,
+          sequence, role, kind, body, body_hash, occurred_at, metadata_json,
+          created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, history_item_id, sequence, body_hash) DO UPDATE SET
+          role = excluded.role,
+          kind = excluded.kind,
+          body = excluded.body,
+          occurred_at = COALESCE(excluded.occurred_at, ai_history_detail_messages.occurred_at),
+          metadata_json = COALESCE(excluded.metadata_json, ai_history_detail_messages.metadata_json),
+          updated_at = excluded.updated_at
+      `,
+      args: [
+        id,
+        options.userId,
+        options.historyItemId,
+        options.provider,
+        options.externalThreadId,
+        options.repoPath,
+        message.sequence,
+        message.role,
+        message.kind,
+        body,
+        bodyHash,
+        occurredAt,
+        jsonOrNull(message.metadata_json),
+        occurredAt ?? timestamp,
+        timestamp,
+      ],
+    })
+    upserted += 1
+  }
+
+  const detailSyncedAt = options.detailSyncedAt ?? timestamp
+  await refreshAiHistoryDetailSummary({
+    userId: options.userId,
+    historyItemId: options.historyItemId,
+    detailSyncedAt,
+  })
+
+  return {
+    upserted,
+    detailSyncedAt,
+    messageCount: await countAiHistoryDetailMessages({
+      userId: options.userId,
+      historyItemId: options.historyItemId,
+    }),
+  }
 }
 
 export async function listAiHistoryItems(options: {

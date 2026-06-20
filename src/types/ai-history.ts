@@ -12,6 +12,15 @@ export type AiHistoryPlacement = 'unplaced' | 'mindmap'
 
 export type AiHistoryRepoFilter = 'all' | string
 
+export type AiHistoryDetailMessageRole = 'user' | 'assistant' | 'system'
+
+export type AiHistoryDetailMessageKind =
+  | 'user_prompt'
+  | 'assistant_answer'
+  | 'assistant_question'
+  | 'status'
+  | 'summary'
+
 export type AiHistoryListItem = {
   id: string
   provider: AiHistoryProvider
@@ -141,4 +150,45 @@ export type AiHistoryBatchUpsertRequest = {
   repo_path?: string | null
   items?: AiHistoryBatchUpsertItem[]
   scopes?: AiHistoryBatchUpsertScope[]
+}
+
+export type AiHistoryDetailUpsertMessage = {
+  sequence?: number | string | null
+  role?: AiHistoryDetailMessageRole | null
+  kind?: AiHistoryDetailMessageKind | null
+  body?: string | null
+  bodyHash?: string | null
+  body_hash?: string | null
+  occurredAt?: string | null
+  occurred_at?: string | null
+  metadata?: Record<string, unknown> | null
+  metadataJson?: Record<string, unknown> | null
+  metadata_json?: Record<string, unknown> | null
+}
+
+export type AiHistoryDetailActivityMessage = {
+  id: string
+  history_item_id: string
+  task_id: string
+  user_id: string
+  provider: AiHistoryProvider
+  external_thread_id: string
+  repo_path: string
+  sequence: number
+  role: 'user' | 'codex' | 'status'
+  detail_role: AiHistoryDetailMessageRole
+  kind: 'sent' | 'progress' | 'question' | 'approval' | 'completed'
+  detail_kind: AiHistoryDetailMessageKind
+  body: string
+  body_hash: string
+  importance: 'normal' | 'important'
+  metadata: Record<string, unknown>
+  occurred_at: string | null
+  created_at: string
+}
+
+export type AiHistoryDetailUpsertRequest = {
+  runner_id?: string | null
+  detail_synced_at?: string | null
+  messages?: AiHistoryDetailUpsertMessage[]
 }

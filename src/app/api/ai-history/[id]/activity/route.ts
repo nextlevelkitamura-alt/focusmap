@@ -1,7 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { codexReportViewMessages } from '@/lib/codex-report-view'
 import { isTursoConfigured, TursoConfigurationError } from '@/lib/turso/client'
-import { getAiHistoryItemForUser } from '@/lib/turso/ai-history'
-import { authenticateAiHistoryRequest, unauthorized } from '../../_shared'
+import {
+  aiHistoryDetailHydrateReason,
+  countAiHistoryDetailMessages,
+  getAiHistoryItemForUser,
+  isAiHistoryDetailHydrateRequired,
+  listAiHistoryDetailMessages,
+  toAiHistoryDetailActivityMessage,
+} from '@/lib/turso/ai-history'
+import { authenticateAiHistoryRequest, parseLimit, unauthorized } from '../../_shared'
+
+function parseBefore(req: NextRequest) {
+  const rawSequence = req.nextUrl.searchParams.get('before_sequence')?.trim()
+  if (rawSequence) {
+    const sequence = Number(rawSequence)
+    if (Number.isInteger(sequence) && sequence >= 0) {
+      return {
+        sequence,
+        id: req.nextUrl.searchParams.get('before_id')?.trim() || null,
+      }
+    }
+  }
+
+  const createdAt = req.nextUrl.searchParams.get('before_created_at')?.trim()
+  if (!createdAt || Number.isNaN(Date.parse(createdAt))) return null
+  return {
+    createdAt: new Date(createdAt).toISOString(),
+    id: req.nextUrl.searchParams.get('before_id')?.trim() || null,
+  }
+}
 
 export async function GET(
   request: NextRequest,
@@ -26,6 +54,53 @@ export async function GET(
       return NextResponse.redirect(target, 307)
     }
 
+    const limit = parseLimit(request.nextUrl.searchParams.get('limit'), 100, 200)
+    const before = parseBefore(request)
+    const reportMode = request.nextUrl.searchParams.get('mode') === 'report'
+    const [messagesPage, totalMessageCount] = await Promise.all([
+      listAiHistoryDetailMessages({
+        userId: auth.user.id,
+        historyItemId: item.id,
+        limit,
+        before,
+      }),
+      countAiHistoryDetailMessages({
+        userId: auth.user.id,
+        historyItemId: item.id,
+      }),
+    ])
+    const activityMessages = messagesPage.map(toAiHistoryDetailActivityMessage)
+    const messages = reportMode ? codexReportViewMessages(activityMessages) : activityMessages
+    const oldest = messagesPage[0]
+    const hasMore = Boolean(oldest && messagesPage.length >= limit)
+    const hydrateRequired = isAiHistoryDetailHydrateRequired(item, totalMessageCount)
+    const hydrateReason = aiHistoryDetailHydrateReason(item, totalMessageCount)
+
+    if (messagesPage.length > 0) {
+      return NextResponse.json({
+        source: 'ai_history_detail_cache',
+        messages,
+        has_more: hasMore,
+        next_cursor: hasMore && oldest
+          ? {
+              created_at: oldest.created_at,
+              id: oldest.id,
+              sequence: oldest.sequence,
+            }
+          : null,
+        hydrate: {
+          required: hydrateRequired,
+          reason: hydrateReason,
+          historyItemId: item.id,
+          provider: item.provider,
+          externalThreadId: item.external_thread_id,
+          repoPath: item.repo_path,
+          detailSyncedAt: item.detail_synced_at,
+          messageCount: totalMessageCount,
+        },
+      })
+    }
+
     return NextResponse.json({
       source: 'hydrate_required',
       messages: [],
@@ -33,11 +108,13 @@ export async function GET(
       next_cursor: null,
       hydrate: {
         required: true,
-        reason: 'linked_ai_task_missing',
+        reason: hydrateReason ?? 'detail_cache_empty',
         historyItemId: item.id,
         provider: item.provider,
         externalThreadId: item.external_thread_id,
         repoPath: item.repo_path,
+        detailSyncedAt: item.detail_synced_at,
+        messageCount: totalMessageCount,
       },
     }, { status: 202 })
   } catch (error) {
