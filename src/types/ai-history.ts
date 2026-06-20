@@ -152,6 +152,18 @@ export type AiHistoryBatchUpsertRequest = {
   scopes?: AiHistoryBatchUpsertScope[]
 }
 
+export type AiHistoryBatchUpsertResponseItem = {
+  index: number
+  historyItemId: string
+  id: string
+  provider: AiHistoryProvider
+  externalThreadId: string
+  repoPath: string
+  projectId: string | null
+  sourceTaskId: string | null
+  linkedAiTaskId: string | null
+}
+
 export type AiHistoryDetailUpsertMessage = {
   sequence?: number | string | null
   role?: AiHistoryDetailMessageRole | null
@@ -191,4 +203,23 @@ export type AiHistoryDetailUpsertRequest = {
   runner_id?: string | null
   detail_synced_at?: string | null
   messages?: AiHistoryDetailUpsertMessage[]
+}
+
+export type AiHistoryDetailHydrateRequestReason =
+  | 'detail_cache_empty'
+  | 'detail_cache_unsynced'
+  | 'detail_cache_stale'
+
+export type AiHistoryDetailHydrateRequestItem = {
+  id: string
+  historyItemId: string
+  provider: AiHistoryProvider
+  externalThreadId: string
+  repoPath: string
+  reason: AiHistoryDetailHydrateRequestReason
+  requestedAt: string
+  expiresAt: string
+  detailSyncedAt: string | null
+  detailMessageCount: number | null
+  lastActivityAt: string
 }

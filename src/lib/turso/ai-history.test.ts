@@ -123,4 +123,50 @@ describe('AI history detail cache helpers', () => {
       messageCount: 1,
     })
   })
+
+  test('returns the actual ai_history_items id from metadata upsert', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [{ id: 'history-existing' }] })
+    const { upsertAiHistoryItem } = await import('./ai-history')
+
+    await expect(upsertAiHistoryItem({
+      user_id: 'user-1',
+      provider: 'codex_app',
+      external_thread_id: 'thread-1',
+      repo_path: '/repo',
+      title: '履歴',
+      status: 'completed',
+      last_activity_at: '2026-06-20T00:00:00.000Z',
+    })).resolves.toBe('history-existing')
+
+    expect((mockExecute.mock.calls[0]?.[0] as { sql: string }).sql).toContain('RETURNING id')
+  })
+
+  test('records hydrate requests without refreshing an active unexpired request', async () => {
+    const { upsertAiHistoryDetailHydrateRequest } = await import('./ai-history')
+
+    await upsertAiHistoryDetailHydrateRequest({
+      userId: 'user-1',
+      item: {
+        id: 'history-1',
+        provider: 'codex_app',
+        external_thread_id: 'thread-1',
+        repo_path: '/repo',
+      },
+      reason: 'detail_cache_empty',
+      ttlSeconds: 120,
+    })
+
+    const call = mockExecute.mock.calls[0]?.[0] as { sql: string; args: unknown[] }
+    expect(call.sql).toContain('INSERT INTO ai_history_detail_hydrate_requests')
+    expect(call.sql).toContain('WHERE ai_history_detail_hydrate_requests.expires_at < ?')
+    expect(call.args).toEqual(expect.arrayContaining([
+      'user-1',
+      'history-1',
+      'codex_app',
+      'thread-1',
+      '/repo',
+      'detail_cache_empty',
+      'web',
+    ]))
+  })
 })

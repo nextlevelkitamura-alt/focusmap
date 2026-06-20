@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { getTursoClient, jsonOrNull, parseJsonRecord } from './client'
 import type {
   AiHistoryDetailActivityMessage,
+  AiHistoryDetailHydrateRequestItem,
+  AiHistoryDetailHydrateRequestReason,
   AiHistoryDetailMessageKind,
   AiHistoryDetailMessageRole,
   AiHistoryListItem,
@@ -101,6 +103,25 @@ export type TursoAiHistoryDetailMessage = {
   metadata_json: Record<string, unknown> | null
   created_at: string
   updated_at: string
+}
+
+export type TursoAiHistoryDetailHydrateRequest = {
+  id: string
+  user_id: string
+  history_item_id: string
+  provider: string
+  external_thread_id: string
+  repo_path: string
+  reason: AiHistoryDetailHydrateRequestReason
+  requested_by: string
+  requested_at: string
+  expires_at: string
+  fulfilled_at: string | null
+  created_at: string
+  updated_at: string
+  detail_synced_at: string | null
+  detail_message_count: number | null
+  last_activity_at: string
 }
 
 export type AiHistoryUpsertInput = {
@@ -296,6 +317,32 @@ function asDetailMessage(row: Row): TursoAiHistoryDetailMessage {
   }
 }
 
+function asHydrateRequest(row: Row): TursoAiHistoryDetailHydrateRequest {
+  const reason = asString(row.reason)
+  const hydrateReason: AiHistoryDetailHydrateRequestReason =
+    reason === 'detail_cache_unsynced' || reason === 'detail_cache_stale'
+      ? reason
+      : 'detail_cache_empty'
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    history_item_id: String(row.history_item_id),
+    provider: asString(row.provider) ?? 'codex_app',
+    external_thread_id: asString(row.external_thread_id) ?? '',
+    repo_path: asString(row.repo_path) ?? '',
+    reason: hydrateReason,
+    requested_by: asString(row.requested_by) ?? 'web',
+    requested_at: asString(row.requested_at) ?? nowIso(),
+    expires_at: asString(row.expires_at) ?? nowIso(),
+    fulfilled_at: asString(row.fulfilled_at),
+    created_at: asString(row.created_at) ?? nowIso(),
+    updated_at: asString(row.updated_at) ?? nowIso(),
+    detail_synced_at: asString(row.detail_synced_at),
+    detail_message_count: asNumber(row.detail_message_count),
+    last_activity_at: asString(row.last_activity_at) ?? nowIso(),
+  }
+}
+
 export function hashAiHistoryDetailBody(body: string) {
   return createHash('sha256').update(body).digest('hex')
 }
@@ -312,6 +359,14 @@ function detailMessageId(input: {
     .digest('hex')
     .slice(0, 20)
   return `aihd_${sequence}_${digest}`
+}
+
+function hydrateRequestId(input: { userId: string; historyItemId: string }) {
+  const digest = createHash('sha256')
+    .update([input.userId, input.historyItemId].join('\u001f'))
+    .digest('hex')
+    .slice(0, 32)
+  return `aihreq_${digest}`
 }
 
 function toActivityRole(role: AiHistoryDetailMessageRole) {
@@ -392,6 +447,24 @@ export function aiHistoryDetailHydrateReason(
     return 'detail_cache_stale'
   }
   return null
+}
+
+export function toAiHistoryDetailHydrateRequestItem(
+  request: TursoAiHistoryDetailHydrateRequest,
+): AiHistoryDetailHydrateRequestItem {
+  return {
+    id: request.id,
+    historyItemId: request.history_item_id,
+    provider: request.provider,
+    externalThreadId: request.external_thread_id,
+    repoPath: request.repo_path,
+    reason: request.reason,
+    requestedAt: request.requested_at,
+    expiresAt: request.expires_at,
+    detailSyncedAt: request.detail_synced_at,
+    detailMessageCount: request.detail_message_count,
+    lastActivityAt: request.last_activity_at,
+  }
 }
 
 export function encodeAiHistoryCursor(item: { indexed_at: string; id: string }) {
@@ -546,7 +619,7 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
   const archived = input.archived === true
   const archivedAt = archived ? (input.archived_at ?? indexedAt) : null
   const id = input.id ?? stableId('aih', [input.user_id, input.provider, input.external_thread_id, input.repo_path])
-  await getTursoClient().execute({
+  const result = await getTursoClient().execute({
     sql: `
       INSERT INTO ai_history_items (
         id, user_id, provider, external_thread_id, repo_path, worktree_path, project_id,
@@ -583,6 +656,7 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
         detail_message_count = COALESCE(excluded.detail_message_count, ai_history_items.detail_message_count),
         metadata_json = COALESCE(excluded.metadata_json, ai_history_items.metadata_json),
         updated_at = excluded.updated_at
+      RETURNING id
     `,
     args: [
       id,
@@ -614,6 +688,7 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
       input.clear_source_task_id ? 1 : 0,
     ],
   })
+  return asString((result.rows[0] as Row | undefined)?.id) ?? id
 }
 
 export async function getAiHistoryItemForUser(id: string, userId: string) {
@@ -673,6 +748,120 @@ export async function countAiHistoryDetailMessages(options: {
     args: [options.userId, options.historyItemId],
   })
   return asNumber((result.rows[0] as Row | undefined)?.count) ?? 0
+}
+
+export async function upsertAiHistoryDetailHydrateRequest(options: {
+  userId: string
+  item: Pick<TursoAiHistoryItem, 'id' | 'provider' | 'external_thread_id' | 'repo_path'>
+  reason: AiHistoryDetailHydrateRequestReason
+  requestedBy?: 'web' | 'agent' | 'system'
+  ttlSeconds?: number
+}) {
+  const timestamp = nowIso()
+  const ttlSeconds = Math.min(Math.max(options.ttlSeconds ?? 120, 30), 10 * 60)
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString()
+  const id = hydrateRequestId({ userId: options.userId, historyItemId: options.item.id })
+  await getTursoClient().execute({
+    sql: `
+      INSERT INTO ai_history_detail_hydrate_requests (
+        id, user_id, history_item_id, provider, external_thread_id, repo_path,
+        reason, requested_by, requested_at, expires_at, fulfilled_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+      ON CONFLICT(user_id, history_item_id) DO UPDATE SET
+        provider = excluded.provider,
+        external_thread_id = excluded.external_thread_id,
+        repo_path = excluded.repo_path,
+        reason = excluded.reason,
+        requested_by = excluded.requested_by,
+        requested_at = excluded.requested_at,
+        expires_at = excluded.expires_at,
+        fulfilled_at = NULL,
+        updated_at = excluded.updated_at
+      WHERE ai_history_detail_hydrate_requests.expires_at < ?
+        OR ai_history_detail_hydrate_requests.fulfilled_at IS NOT NULL
+    `,
+    args: [
+      id,
+      options.userId,
+      options.item.id,
+      options.item.provider,
+      options.item.external_thread_id,
+      options.item.repo_path,
+      options.reason,
+      options.requestedBy ?? 'web',
+      timestamp,
+      expiresAt,
+      timestamp,
+      timestamp,
+      timestamp,
+    ],
+  })
+  return {
+    id,
+    requestedAt: timestamp,
+    expiresAt,
+  }
+}
+
+export async function listAiHistoryDetailHydrateRequests(options: {
+  userId: string
+  limit?: number
+  now?: string
+}) {
+  const now = options.now ?? nowIso()
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT
+        hydrate_request.id,
+        hydrate_request.user_id,
+        hydrate_request.history_item_id,
+        hydrate_request.provider,
+        hydrate_request.external_thread_id,
+        hydrate_request.repo_path,
+        hydrate_request.reason,
+        hydrate_request.requested_by,
+        hydrate_request.requested_at,
+        hydrate_request.expires_at,
+        hydrate_request.fulfilled_at,
+        hydrate_request.created_at,
+        hydrate_request.updated_at,
+        item.detail_synced_at,
+        item.detail_message_count,
+        item.last_activity_at
+      FROM ai_history_detail_hydrate_requests hydrate_request
+      INNER JOIN ai_history_items item
+        ON item.id = hydrate_request.history_item_id
+        AND item.user_id = hydrate_request.user_id
+      WHERE hydrate_request.user_id = ?
+        AND hydrate_request.fulfilled_at IS NULL
+        AND hydrate_request.expires_at >= ?
+        AND item.linked_ai_task_id IS NULL
+        AND item.archived = 0
+        AND item.deleted_at IS NULL
+      ORDER BY hydrate_request.requested_at DESC, hydrate_request.id DESC
+      LIMIT ?
+    `,
+    args: [options.userId, now, limit],
+  })
+  return result.rows.map(row => asHydrateRequest(row as Row))
+}
+
+export async function markAiHistoryDetailHydrateRequestFulfilled(options: {
+  userId: string
+  historyItemId: string
+  fulfilledAt?: string
+}) {
+  const fulfilledAt = options.fulfilledAt ?? nowIso()
+  await getTursoClient().execute({
+    sql: `
+      UPDATE ai_history_detail_hydrate_requests
+      SET fulfilled_at = ?, updated_at = ?
+      WHERE user_id = ? AND history_item_id = ? AND fulfilled_at IS NULL
+    `,
+    args: [fulfilledAt, fulfilledAt, options.userId, options.historyItemId],
+  })
 }
 
 async function refreshAiHistoryDetailSummary(options: {
@@ -775,6 +964,13 @@ export async function upsertAiHistoryDetailMessages(options: {
     historyItemId: options.historyItemId,
     detailSyncedAt,
   })
+  if (upserted > 0) {
+    await markAiHistoryDetailHydrateRequestFulfilled({
+      userId: options.userId,
+      historyItemId: options.historyItemId,
+      fulfilledAt: detailSyncedAt,
+    })
+  }
 
   return {
     upserted,

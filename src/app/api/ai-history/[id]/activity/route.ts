@@ -8,6 +8,7 @@ import {
   isAiHistoryDetailHydrateRequired,
   listAiHistoryDetailMessages,
   toAiHistoryDetailActivityMessage,
+  upsertAiHistoryDetailHydrateRequest,
 } from '@/lib/turso/ai-history'
 import { authenticateAiHistoryRequest, parseLimit, unauthorized } from '../../_shared'
 
@@ -28,6 +29,25 @@ function parseBefore(req: NextRequest) {
   return {
     createdAt: new Date(createdAt).toISOString(),
     id: req.nextUrl.searchParams.get('before_id')?.trim() || null,
+  }
+}
+
+async function recordHydrateRequest(input: {
+  userId: string
+  item: Awaited<ReturnType<typeof getAiHistoryItemForUser>>
+  reason: ReturnType<typeof aiHistoryDetailHydrateReason>
+}) {
+  if (!input.item || !input.reason) return
+  try {
+    await upsertAiHistoryDetailHydrateRequest({
+      userId: input.userId,
+      item: input.item,
+      reason: input.reason,
+      requestedBy: 'web',
+      ttlSeconds: 120,
+    })
+  } catch (error) {
+    console.error('[ai-history activity hydrate request]', error)
   }
 }
 
@@ -75,6 +95,13 @@ export async function GET(
     const hasMore = Boolean(oldest && messagesPage.length >= limit)
     const hydrateRequired = isAiHistoryDetailHydrateRequired(item, totalMessageCount)
     const hydrateReason = aiHistoryDetailHydrateReason(item, totalMessageCount)
+    if (hydrateRequired) {
+      await recordHydrateRequest({
+        userId: auth.user.id,
+        item,
+        reason: hydrateReason,
+      })
+    }
 
     if (messagesPage.length > 0) {
       return NextResponse.json({

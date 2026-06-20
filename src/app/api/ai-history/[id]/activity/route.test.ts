@@ -8,6 +8,7 @@ import {
   isAiHistoryDetailHydrateRequired,
   listAiHistoryDetailMessages,
   toAiHistoryDetailActivityMessage,
+  upsertAiHistoryDetailHydrateRequest,
 } from '@/lib/turso/ai-history'
 import { authenticateAiHistoryRequest } from '../../_shared'
 
@@ -22,6 +23,7 @@ vi.mock('@/lib/turso/ai-history', () => ({
   countAiHistoryDetailMessages: vi.fn(),
   isAiHistoryDetailHydrateRequired: vi.fn(),
   aiHistoryDetailHydrateReason: vi.fn(),
+  upsertAiHistoryDetailHydrateRequest: vi.fn(),
   toAiHistoryDetailActivityMessage: vi.fn((message: Record<string, unknown>) => ({
     id: message.id,
     task_id: message.history_item_id,
@@ -53,6 +55,7 @@ const countAiHistoryDetailMessagesMock = vi.mocked(countAiHistoryDetailMessages)
 const isAiHistoryDetailHydrateRequiredMock = vi.mocked(isAiHistoryDetailHydrateRequired)
 const aiHistoryDetailHydrateReasonMock = vi.mocked(aiHistoryDetailHydrateReason)
 const toAiHistoryDetailActivityMessageMock = vi.mocked(toAiHistoryDetailActivityMessage)
+const upsertAiHistoryDetailHydrateRequestMock = vi.mocked(upsertAiHistoryDetailHydrateRequest)
 
 const baseItem = {
   id: 'history-1',
@@ -99,6 +102,11 @@ describe('GET /api/ai-history/[id]/activity', () => {
     countAiHistoryDetailMessagesMock.mockResolvedValue(0)
     isAiHistoryDetailHydrateRequiredMock.mockReturnValue(true)
     aiHistoryDetailHydrateReasonMock.mockReturnValue('detail_cache_empty')
+    upsertAiHistoryDetailHydrateRequestMock.mockResolvedValue({
+      id: 'aihreq-1',
+      requestedAt: '2026-06-20T00:00:00.000Z',
+      expiresAt: '2026-06-20T00:02:00.000Z',
+    })
   })
 
   test('keeps linked AI history redirected to existing ai_tasks activity', async () => {
@@ -189,5 +197,12 @@ describe('GET /api/ai-history/[id]/activity', () => {
       repoPath: '/repo',
       messageCount: 0,
     })
+    expect(upsertAiHistoryDetailHydrateRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'user-1',
+      item: expect.objectContaining({ id: 'history-1' }),
+      reason: 'detail_cache_empty',
+      requestedBy: 'web',
+      ttlSeconds: 120,
+    }))
   })
 })

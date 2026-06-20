@@ -8,6 +8,7 @@ import {
   type AiHistoryUpsertInput,
 } from '@/lib/turso/ai-history'
 import type {
+  AiHistoryBatchUpsertResponseItem,
   AiHistoryBatchUpsertItem,
   AiHistoryBatchUpsertRequest,
   AiHistoryBatchUpsertScope,
@@ -396,6 +397,7 @@ export async function POST(request: NextRequest) {
     }
 
     const errors: Array<{ index: number; error: string }> = []
+    const responseItems: AiHistoryBatchUpsertResponseItem[] = []
     let upserted = 0
     const indexedAt = new Date().toISOString()
     for (let index = 0; index < rawItems.length; index += 1) {
@@ -404,10 +406,21 @@ export async function POST(request: NextRequest) {
         errors.push({ index, error: normalized.error })
         continue
       }
-      await upsertAiHistoryItem({
+      const historyItemId = await upsertAiHistoryItem({
         ...normalized.item,
         user_id: token.user_id,
         indexed_at: indexedAt,
+      })
+      responseItems.push({
+        index,
+        historyItemId,
+        id: historyItemId,
+        provider: normalized.item.provider,
+        externalThreadId: normalized.item.external_thread_id,
+        repoPath: normalized.item.repo_path,
+        projectId: normalized.item.project_id,
+        sourceTaskId: normalized.item.source_task_id,
+        linkedAiTaskId: normalized.item.linked_ai_task_id,
       })
       upserted += 1
 
@@ -428,12 +441,14 @@ export async function POST(request: NextRequest) {
       upserted,
       skipped: rawItems.length - upserted,
       errors,
+      items: responseItems,
       scopesUpserted,
       indexedAt,
       policy: {
         metadataOnly: true,
         rawBodiesAccepted: false,
         cursor: 'indexed_at|id',
+        idField: 'historyItemId',
         legacyCodexInboxSource: 'linked_ai_task_kept_source_task_cleared',
       },
     })
