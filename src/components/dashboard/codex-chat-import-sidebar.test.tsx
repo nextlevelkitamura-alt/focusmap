@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { beforeEach, describe, expect, test, vi } from "vitest"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { CodexChatImportSidebar } from "./codex-chat-import-sidebar"
 import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryRepoFilter } from "@/types/ai-history"
 
@@ -41,6 +41,11 @@ const baseHistoryItem: AiHistoryListItem = {
 
 let historyItems: AiHistoryListItem[] = []
 let lastHookOptions: Array<{ projectId: string | null; repo: AiHistoryRepoFilter; placement: AiHistoryPlacement }> = []
+let syncState = {
+  featureEnabled: true,
+  aiOnline: true,
+  agentConnected: true,
+}
 
 function repoMatches(item: AiHistoryListItem, repo: AiHistoryRepoFilter) {
   return repo === "all" || item.repoPath === repo
@@ -62,9 +67,7 @@ function mockUseAiHistory() {
         mindmap: scopedItems.filter(item => item.placement === "mindmap").length,
       },
       sync: {
-        featureEnabled: true,
-        aiOnline: true,
-        agentConnected: true,
+        ...syncState,
         selectedRepo: options.repo,
         repoOptions: [
           { repoPath: "/Users/me/focusmap", label: "focusmap", enabled: true, agentSeen: true },
@@ -108,6 +111,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   lastHookOptions = []
   historyItems = [baseHistoryItem]
+  syncState = {
+    featureEnabled: true,
+    aiOnline: true,
+    agentConnected: true,
+  }
   mockUseAiHistory()
   fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input)
@@ -151,6 +159,14 @@ beforeEach(() => {
       })
     }
     return jsonResponse({}, 404)
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: "visible",
   })
 })
 
@@ -252,5 +268,232 @@ describe("CodexChatImportSidebar", () => {
       "/api/codex/sync-node",
       expect.anything(),
     )
+  })
+
+  test("shows cached unlinked AI history prompt and answer immediately", async () => {
+    historyItems = [{
+      ...baseHistoryItem,
+      linkedAiTaskId: null,
+      detailHydrated: true,
+      detailSyncedAt: "2026-06-20T00:02:00.000Z",
+    }]
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/ai-history/history-1") {
+        return jsonResponse({
+          item: { ...baseHistoryItem, linkedAiTaskId: null },
+          detail: {
+            hydrateRequired: false,
+            hydrateReason: null,
+            detailSyncedAt: "2026-06-20T00:02:00.000Z",
+            messageCount: 2,
+            linkedAiTaskId: null,
+            activityUrl: "/api/ai-history/history-1/activity",
+            policy: "ai_history_detail_cache",
+          },
+        })
+      }
+      if (url.startsWith("/api/ai-history/history-1/activity")) {
+        return jsonResponse({
+          source: "ai_history_detail_cache",
+          messages: [
+            {
+              id: "history-msg-user",
+              task_id: "history-1",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "キャッシュ済みの依頼本文",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-20T00:00:00.000Z",
+            },
+            {
+              id: "history-msg-codex",
+              task_id: "history-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "キャッシュ済みの回答本文",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-20T00:01:00.000Z",
+            },
+          ],
+          hydrate: {
+            required: false,
+            reason: null,
+            detailSyncedAt: "2026-06-20T00:02:00.000Z",
+            messageCount: 2,
+          },
+        })
+      }
+      return jsonResponse({}, 404)
+    })
+    renderSidebar()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
+
+    await waitFor(() => {
+      expect(screen.getByText("キャッシュ済みの依頼本文")).toBeInTheDocument()
+    })
+    expect(screen.getAllByText("キャッシュ済みの回答本文").length).toBeGreaterThan(0)
+    expect(screen.queryByText("更新中")).not.toBeInTheDocument()
+    expect(fetchWithSupabaseAuthMock).not.toHaveBeenCalledWith(
+      "/api/codex/sync-node",
+      expect.anything(),
+    )
+  })
+
+  test("keeps cache or snippet visible while hydrate is required and shows offline update state", async () => {
+    syncState = {
+      featureEnabled: true,
+      aiOnline: false,
+      agentConnected: false,
+    }
+    historyItems = [{
+      ...baseHistoryItem,
+      linkedAiTaskId: null,
+      detailHydrated: false,
+      detailSyncedAt: null,
+      snippet: "一覧に残っている依頼の要約",
+    }]
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/ai-history/history-1") {
+        return jsonResponse({
+          item: { ...baseHistoryItem, linkedAiTaskId: null },
+          detail: {
+            hydrateRequired: true,
+            hydrateReason: "detail_cache_empty",
+            detailSyncedAt: null,
+            messageCount: 0,
+            linkedAiTaskId: null,
+            activityUrl: "/api/ai-history/history-1/activity",
+            policy: "local_agent_detail_hydrate_required",
+          },
+        })
+      }
+      if (url.startsWith("/api/ai-history/history-1/activity")) {
+        return jsonResponse({
+          source: "hydrate_required",
+          messages: [],
+          has_more: false,
+          next_cursor: null,
+          hydrate: {
+            required: true,
+            reason: "detail_cache_empty",
+            detailSyncedAt: null,
+            messageCount: 0,
+          },
+        }, 202)
+      }
+      return jsonResponse({}, 404)
+    })
+    renderSidebar()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
+
+    await waitFor(() => {
+      expect(screen.getByText("Macエージェント待ち")).toBeInTheDocument()
+    })
+    expect(screen.getAllByText("一覧に残っている依頼の要約").length).toBeGreaterThan(0)
+    expect(screen.getByText(/更新不能/)).toBeInTheDocument()
+    expect(screen.queryByText(/詳細本文はまだ取得されていません/)).not.toBeInTheDocument()
+  })
+
+  test("polls only the visible selected detail while hydrate is required", async () => {
+    historyItems = [{
+      ...baseHistoryItem,
+      linkedAiTaskId: null,
+      detailHydrated: false,
+      detailSyncedAt: null,
+      snippet: null,
+    }]
+    let activityCalls = 0
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/ai-history/history-1") {
+        return jsonResponse({
+          item: { ...baseHistoryItem, linkedAiTaskId: null },
+          detail: {
+            hydrateRequired: true,
+            hydrateReason: "detail_cache_empty",
+            detailSyncedAt: null,
+            messageCount: 0,
+            linkedAiTaskId: null,
+            activityUrl: "/api/ai-history/history-1/activity",
+            policy: "local_agent_detail_hydrate_required",
+          },
+        })
+      }
+      if (url.startsWith("/api/ai-history/history-1/activity")) {
+        activityCalls += 1
+        if (activityCalls === 1) {
+          return jsonResponse({
+            source: "hydrate_required",
+            messages: [],
+            hydrate: {
+              required: true,
+              reason: "detail_cache_empty",
+              detailSyncedAt: null,
+              messageCount: 0,
+            },
+          }, 202)
+        }
+        return jsonResponse({
+          source: "ai_history_detail_cache",
+          messages: [
+            {
+              id: "hydrated-msg",
+              task_id: "history-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "progress",
+              body: "hydrate後の回答本文",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-20T00:03:00.000Z",
+            },
+          ],
+          hydrate: {
+            required: false,
+            reason: null,
+            detailSyncedAt: "2026-06-20T00:03:00.000Z",
+            messageCount: 1,
+          },
+        })
+      }
+      return jsonResponse({}, 404)
+    })
+    renderSidebar()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
+
+    await waitFor(() => {
+      expect(screen.getByText("更新中")).toBeInTheDocument()
+    })
+    expect(activityCalls).toBe(1)
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    })
+    await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 3200))
+    })
+    expect(activityCalls).toBe(1)
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    })
+    await act(async () => {
+      await new Promise(resolve => window.setTimeout(resolve, 3200))
+    })
+    await waitFor(() => {
+      expect(screen.getAllByText("hydrate後の回答本文").length).toBeGreaterThan(0)
+    })
+    expect(activityCalls).toBe(2)
   })
 })

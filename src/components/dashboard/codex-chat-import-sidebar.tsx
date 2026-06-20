@@ -82,6 +82,10 @@ type ChatDetailState = {
   text: string | null
   hasMore: boolean
   error: string | null
+  hydrateRequired: boolean
+  hydrateReason: string | null
+  detailSyncedAt: string | null
+  messageCount: number | null
 }
 
 const CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT = 30
@@ -89,6 +93,7 @@ const ACTIVITY_DETAIL_PAGE_LIMIT = 30
 const ACTIVITY_DETAIL_MAX_PAGES = 6
 const ACTIVITY_TIME_BREAK_MIN_GAP_MS = 60 * 60 * 1000
 const CHAT_DETAIL_REFRESH_INTERVAL_MS = 5_000
+const AI_HISTORY_DETAIL_HYDRATE_POLL_INTERVAL_MS = 3_000
 const RUNNING_PROMPT_START_TOLERANCE_MS = 5 * 60 * 1000
 const LOCAL_WORK_TIMER_STORAGE_KEY = "focusmap:codex-chat-import:local-work-timers"
 
@@ -146,6 +151,10 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function readBoolean(value: unknown) {
+  return typeof value === "boolean" ? value : null
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -232,6 +241,66 @@ function readTaskDetailText(data: unknown, fallback: string | null) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isBrowserDocumentVisible() {
+  return typeof document === "undefined" || document.visibilityState === "visible"
+}
+
+type ChatDetailHydrateState = Pick<ChatDetailState, "hydrateRequired" | "hydrateReason" | "detailSyncedAt" | "messageCount">
+type ActivityHydrateState = ChatDetailHydrateState & { hydrateKnown: boolean }
+
+const EMPTY_ACTIVITY_HYDRATE_STATE: ActivityHydrateState = {
+  hydrateRequired: false,
+  hydrateReason: null,
+  detailSyncedAt: null,
+  messageCount: null,
+  hydrateKnown: false,
+}
+
+function readActivityHydrateState(data: unknown): ActivityHydrateState {
+  const hydrate = isRecord(data) ? readRecord(data.hydrate) : null
+  if (!hydrate) return EMPTY_ACTIVITY_HYDRATE_STATE
+  return {
+    hydrateRequired: readBoolean(hydrate.required) ?? false,
+    hydrateReason: readString(hydrate.reason),
+    detailSyncedAt: readString(hydrate.detailSyncedAt),
+    messageCount: readNumber(hydrate.messageCount),
+    hydrateKnown: true,
+  }
+}
+
+function readDetailHydrateState(detail: Record<string, unknown> | null): ActivityHydrateState {
+  if (!detail) return EMPTY_ACTIVITY_HYDRATE_STATE
+  return {
+    hydrateRequired: readBoolean(detail.hydrateRequired) ?? false,
+    hydrateReason: readString(detail.hydrateReason),
+    detailSyncedAt: readString(detail.detailSyncedAt),
+    messageCount: readNumber(detail.messageCount),
+    hydrateKnown: true,
+  }
+}
+
+function mergeActivityHydrateState(current: ActivityHydrateState, next: ActivityHydrateState): ActivityHydrateState {
+  if (next.hydrateKnown) return next
+  if (!current.hydrateKnown) return EMPTY_ACTIVITY_HYDRATE_STATE
+  return current
+}
+
+function chatDetailHydrateState(state: ActivityHydrateState): ChatDetailHydrateState {
+  return {
+    hydrateRequired: state.hydrateRequired,
+    hydrateReason: state.hydrateReason,
+    detailSyncedAt: state.detailSyncedAt,
+    messageCount: state.messageCount,
+  }
+}
+
+function aiHistoryDetailFallbackText(item: CodexChatImportItem, hydrateRequired: boolean) {
+  const snippet = sanitizeCodexDisplayText(item.snippet, { maxChars: 1_200, fallback: "" }).text
+  if (snippet) return snippet
+  if (hydrateRequired) return null
+  return "表示できるチャット内容がありません"
 }
 
 function readActivityMessages(data: unknown): AiTaskActivityMessage[] {
@@ -641,6 +710,42 @@ function ChatRunningWorkInlineStatus({ elapsedText }: { elapsedText: string | nu
   )
 }
 
+function DetailHydrateNotice({
+  hydrateRequired,
+  canHydrate,
+  hasCachedContent,
+}: {
+  hydrateRequired: boolean
+  canHydrate: boolean
+  hasCachedContent: boolean
+}) {
+  if (!hydrateRequired) return null
+
+  return (
+    <div className="mb-3 flex items-center gap-2 rounded-lg border border-[#303030] bg-[#111111] px-2.5 py-1.5 text-[11px] text-zinc-500">
+      {canHydrate ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-emerald-300/80" aria-hidden="true" />
+      ) : (
+        <Clock className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden="true" />
+      )}
+      <span className="min-w-0">
+        <span className="font-semibold text-zinc-300">
+          {canHydrate ? "更新中" : "Macエージェント待ち"}
+        </span>
+        <span className="ml-1">
+          {canHydrate
+            ? hasCachedContent
+              ? "取得済みの内容を表示したまま詳細本文を更新しています。"
+              : "詳細本文を取得しています。"
+            : hasCachedContent
+              ? "Mac/agent offline のため更新不能です。取得済みの内容を表示しています。"
+              : "Mac/agent offline のため更新不能です。"}
+        </span>
+      </span>
+    </div>
+  )
+}
+
 export function CodexChatImportSidebar({
   projectId,
   projectTitle,
@@ -666,6 +771,7 @@ export function CodexChatImportSidebar({
   }>>({})
   const consumedInitialSelectedChatIdRef = React.useRef<string | null>(null)
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
+  const hydratePollInFlightRef = React.useRef(false)
 
   const aiHistory = useAiHistory({
     projectId,
@@ -794,34 +900,46 @@ export function CodexChatImportSidebar({
     }
     const activityRes = await fetchWithSupabaseAuth(`${url.pathname}${url.search}`, { cache: "no-store" })
     const activityData = await activityRes.json().catch(() => ({}))
-    if (!activityRes.ok && activityRes.status !== 202) return { messages: [] as AiTaskActivityMessage[], nextCursor: null }
+    if (!activityRes.ok && activityRes.status !== 202) {
+      return {
+        messages: [] as AiTaskActivityMessage[],
+        nextCursor: null,
+        hydrate: EMPTY_ACTIVITY_HYDRATE_STATE,
+      }
+    }
     return {
       messages: readActivityMessages(activityData),
       nextCursor: readActivityNextCursor(activityData),
+      hydrate: readActivityHydrateState(activityData),
     }
   }, [])
-  const fetchChatActivityMessages = React.useCallback(async (activityUrl: string) => {
+  const fetchChatActivityMessages = React.useCallback(async (
+    activityUrl: string,
+    initialHydrate: ActivityHydrateState = EMPTY_ACTIVITY_HYDRATE_STATE,
+  ) => {
     const messages: AiTaskActivityMessage[] = []
     let cursor: { created_at: string; id: string | null } | null = null
     let hasMore = false
+    let hydrate = initialHydrate
     for (let page = 0; page < ACTIVITY_DETAIL_MAX_PAGES; page += 1) {
       const activityPage = await fetchChatActivityPage(activityUrl, cursor)
+      hydrate = mergeActivityHydrateState(hydrate, activityPage.hydrate)
       messages.push(...activityPage.messages)
       const visibleMessages = latestVisibleActivityMessages(messages)
       const allVisibleMessages = visibleActivityMessages(dedupeActivityMessages(messages))
       if (allVisibleMessages.length > CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT) {
-        return { messages: visibleMessages, hasMore: true }
+        return { messages: visibleMessages, hasMore: true, hydrate }
       }
       if (!activityPage.nextCursor) {
-        return { messages: visibleMessages, hasMore: false }
+        return { messages: visibleMessages, hasMore: false, hydrate }
       }
       hasMore = true
       cursor = activityPage.nextCursor
       if (allVisibleMessages.length >= CHAT_DETAIL_VISIBLE_MESSAGE_LIMIT) {
-        return { messages: visibleMessages, hasMore: true }
+        return { messages: visibleMessages, hasMore: true, hydrate }
       }
     }
-    return { messages: latestVisibleActivityMessages(messages), hasMore }
+    return { messages: latestVisibleActivityMessages(messages), hasMore, hydrate }
   }, [fetchChatActivityPage])
 
   const syncLegacyChatActivity = React.useCallback(async (item: CodexChatImportItem) => {
@@ -869,6 +987,10 @@ export function CodexChatImportSidebar({
           text: previous?.text ?? null,
           hasMore: previous?.hasMore ?? false,
           error: background ? previous?.error ?? null : null,
+          hydrateRequired: previous?.hydrateRequired ?? false,
+          hydrateReason: previous?.hydrateReason ?? null,
+          detailSyncedAt: previous?.detailSyncedAt ?? null,
+          messageCount: previous?.messageCount ?? null,
         },
       }
     })
@@ -884,27 +1006,34 @@ export function CodexChatImportSidebar({
           throw new Error(message)
         }
         const detail = isRecord(detailData) ? readRecord(detailData.detail) : null
+        const detailHydrate = readDetailHydrateState(detail)
         const activityUrl = readString(detail?.activityUrl) ??
           `/api/ai-history/${encodeURIComponent(item.historyItemId)}/activity`
-        const { messages, hasMore } = await fetchChatActivityMessages(activityUrl)
+        const { messages, hasMore, hydrate } = await fetchChatActivityMessages(activityUrl, detailHydrate)
         if (messages.length > 0) {
           setChatDetailsById(prev => ({
             ...prev,
-            [item.id]: { loading: false, messages, text: null, hasMore, error: null },
+            [item.id]: {
+              loading: false,
+              messages,
+              text: null,
+              hasMore,
+              error: null,
+              ...chatDetailHydrateState(hydrate),
+            },
           }))
           return
         }
+        const fallbackText = aiHistoryDetailFallbackText(item, hydrate.hydrateRequired)
         setChatDetailsById(prev => ({
           ...prev,
           [item.id]: {
             loading: false,
             messages: [],
-            text: sanitizeCodexDisplayText(item.snippet, {
-              maxChars: 1_200,
-              fallback: "詳細本文はまだ取得されていません。Codexで開くから確認できます。",
-            }).text,
+            text: fallbackText,
             hasMore: false,
             error: null,
+            ...chatDetailHydrateState(hydrate),
           },
         }))
         return
@@ -918,11 +1047,18 @@ export function CodexChatImportSidebar({
       }
 
       if (aiTaskId) {
-        const { messages, hasMore } = await fetchChatActivityMessages(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`)
+        const { messages, hasMore, hydrate } = await fetchChatActivityMessages(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`)
         if (messages.length > 0) {
           setChatDetailsById(prev => ({
             ...prev,
-            [item.id]: { loading: false, messages, text: null, hasMore, error: null },
+            [item.id]: {
+              loading: false,
+              messages,
+              text: null,
+              hasMore,
+              error: null,
+              ...chatDetailHydrateState(hydrate),
+            },
           }))
           return
         }
@@ -942,6 +1078,7 @@ export function CodexChatImportSidebar({
           text: readTaskDetailText(fallbackData, item.snippet),
           hasMore: false,
           error: null,
+          ...chatDetailHydrateState(EMPTY_ACTIVITY_HYDRATE_STATE),
         },
       }))
     } catch (error) {
@@ -964,6 +1101,7 @@ export function CodexChatImportSidebar({
             text: null,
             hasMore: false,
             error: error instanceof Error ? error.message : "チャット詳細を取得できませんでした",
+            ...chatDetailHydrateState(EMPTY_ACTIVITY_HYDRATE_STATE),
           },
         }
       })
@@ -995,6 +1133,11 @@ export function CodexChatImportSidebar({
   const selectedThreadHref = selectedChatItem?.codexOpenUrl ?? codexThreadUrl(selectedChatItem?.threadId)
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
   const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
+  const selectedCanHydrateDetail = Boolean(
+    aiHistory.sync.featureEnabled &&
+    aiHistory.sync.aiOnline &&
+    aiHistory.sync.agentConnected,
+  )
   const selectedStatusText = selectedUiStatus === "review"
     ? "確認待ち"
     : selectedChatItem?.statusLabel ?? codexMonitorUiLabel(selectedVisualStatus)
@@ -1009,12 +1152,33 @@ export function CodexChatImportSidebar({
   React.useEffect(() => {
     if (!selectedChatItem || selectedUiStatus !== "running") return
     const timer = window.setInterval(() => {
+      if (!isBrowserDocumentVisible()) return
       void loadChatDetail(selectedChatItem, { background: true })
     }, CHAT_DETAIL_REFRESH_INTERVAL_MS)
     return () => {
       window.clearInterval(timer)
     }
   }, [loadChatDetail, selectedChatItem, selectedUiStatus])
+
+  React.useEffect(() => {
+    if (!selectedChatItem || !selectedDetail?.hydrateRequired || !selectedCanHydrateDetail) return
+    const poll = async () => {
+      if (!isBrowserDocumentVisible()) return
+      if (hydratePollInFlightRef.current) return
+      hydratePollInFlightRef.current = true
+      try {
+        await loadChatDetail(selectedChatItem, { background: true })
+      } finally {
+        hydratePollInFlightRef.current = false
+      }
+    }
+    const timer = window.setInterval(() => {
+      void poll()
+    }, AI_HISTORY_DETAIL_HYDRATE_POLL_INTERVAL_MS)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [loadChatDetail, selectedCanHydrateDetail, selectedChatItem, selectedDetail?.hydrateRequired])
 
   const selectedCompletedWorkMessageIndex = completedWorkMessageIndex(
     selectedMessages,
@@ -1051,6 +1215,7 @@ export function CodexChatImportSidebar({
     ? formatAiTaskWorkLabel(selectedWorkElapsedMs, false)
     : null
   const selectedHasTimelineMessages = selectedMessages.length > 0 || Boolean(selectedSyntheticRunningPromptMessage)
+  const selectedHasCachedDetailContent = selectedMessages.length > 0 || Boolean(selectedDetail?.text)
   const selectedSummaryInput = React.useMemo(() => {
     if (!selectedChatItem) return null
     return codexSummaryInput(selectedChatItem, selectedDetail?.messages ?? [])
@@ -1416,6 +1581,12 @@ export function CodexChatImportSidebar({
               </div>
             ) : null}
 
+            <DetailHydrateNotice
+              hydrateRequired={selectedDetail?.hydrateRequired === true}
+              canHydrate={selectedCanHydrateDetail}
+              hasCachedContent={selectedHasCachedDetailContent}
+            />
+
             {selectedHasTimelineMessages ? (
               <div className="space-y-5">
                 {(selectedDetail?.hasMore || selectedThreadHref) && (
@@ -1479,7 +1650,11 @@ export function CodexChatImportSidebar({
               </div>
             ) : !selectedDetail?.loading && !selectedDetail?.error ? (
               <div className="rounded-xl border border-dashed border-[#303030] p-4 text-center text-xs text-zinc-500">
-                表示できるチャット内容がありません
+                {selectedDetail?.hydrateRequired
+                  ? selectedCanHydrateDetail
+                    ? "Macエージェントが本文を取得するとここに表示されます"
+                    : "取得済みの詳細本文はまだありません。Macエージェントがonlineになると更新できます。"
+                  : "表示できるチャット内容がありません"}
               </div>
             ) : null}
           </div>
