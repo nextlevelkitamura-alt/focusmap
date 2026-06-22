@@ -283,7 +283,7 @@ describe("CodexChatImportSidebar", () => {
     )
     expect(fetchWithSupabaseAuthMock).toHaveBeenCalledWith("/api/ai-history/history-1", { cache: "no-store" })
     expect(fetchWithSupabaseAuthMock).toHaveBeenCalledWith(
-      "/api/ai-history/history-1/activity?limit=30&mode=report",
+      "/api/ai-history/history-1/activity?limit=30&mode=report&watch=1",
       { cache: "no-store" },
     )
     expect(fetchWithSupabaseAuthMock).not.toHaveBeenCalledWith(

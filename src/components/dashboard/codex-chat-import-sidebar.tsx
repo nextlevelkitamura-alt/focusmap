@@ -1006,10 +1006,12 @@ export function CodexChatImportSidebar({
   const fetchChatActivityPage = React.useCallback(async (
     activityUrl: string,
     cursor: { created_at: string; id: string | null } | null = null,
+    options: { watch?: boolean } = {},
   ) => {
     const url = new URL(activityUrl, window.location.origin)
     url.searchParams.set("limit", String(ACTIVITY_DETAIL_PAGE_LIMIT))
     url.searchParams.set("mode", "report")
+    if (options.watch === true && !cursor) url.searchParams.set("watch", "1")
     if (cursor) {
       url.searchParams.set("before_created_at", cursor.created_at)
       if (cursor.id) url.searchParams.set("before_id", cursor.id)
@@ -1032,13 +1034,14 @@ export function CodexChatImportSidebar({
   const fetchChatActivityMessages = React.useCallback(async (
     activityUrl: string,
     initialHydrate: ActivityHydrateState = EMPTY_ACTIVITY_HYDRATE_STATE,
+    options: { watch?: boolean } = {},
   ) => {
     const messages: AiTaskActivityMessage[] = []
     let cursor: { created_at: string; id: string | null } | null = null
     let hasMore = false
     let hydrate = initialHydrate
     for (let page = 0; page < ACTIVITY_DETAIL_MAX_PAGES; page += 1) {
-      const activityPage = await fetchChatActivityPage(activityUrl, cursor)
+      const activityPage = await fetchChatActivityPage(activityUrl, cursor, { watch: options.watch === true && page === 0 })
       hydrate = mergeActivityHydrateState(hydrate, activityPage.hydrate)
       messages.push(...activityPage.messages)
       const visibleMessages = latestVisibleActivityMessages(messages)
@@ -1125,7 +1128,7 @@ export function CodexChatImportSidebar({
         const detailHydrate = readDetailHydrateState(detail)
         const activityUrl = readString(detail?.activityUrl) ??
           `/api/ai-history/${encodeURIComponent(item.historyItemId)}/activity`
-        const { messages, hasMore, hydrate } = await fetchChatActivityMessages(activityUrl, detailHydrate)
+        const { messages, hasMore, hydrate } = await fetchChatActivityMessages(activityUrl, detailHydrate, { watch: !background })
         if (messages.length > 0) {
           setChatDetailsById(prev => ({
             ...prev,

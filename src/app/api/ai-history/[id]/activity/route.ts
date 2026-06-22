@@ -95,11 +95,12 @@ export async function GET(
     const hasMore = Boolean(oldest && messagesPage.length >= limit)
     const hydrateRequired = isAiHistoryDetailHydrateRequired(item, totalMessageCount)
     const hydrateReason = aiHistoryDetailHydrateReason(item, totalMessageCount)
-    if (hydrateRequired) {
+    const watchRequested = request.nextUrl.searchParams.get('watch') === '1'
+    if (hydrateRequired || watchRequested) {
       await recordHydrateRequest({
         userId: auth.user.id,
         item,
-        reason: hydrateReason,
+        reason: hydrateReason ?? 'detail_cache_stale',
       })
     }
 

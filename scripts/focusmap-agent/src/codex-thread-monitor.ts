@@ -42,13 +42,13 @@ export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
-const AI_HISTORY_FAST_WATCH_LIMIT = 10;
+const AI_HISTORY_FAST_WATCH_LIMIT = 20;
 const AI_HISTORY_HOT_SYNC_LIMIT = AI_HISTORY_FAST_WATCH_LIMIT;
 const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
-const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 15_000;
+const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
 const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
@@ -2304,6 +2304,23 @@ async function syncAiHistoryMetadata(
   const watchedRows: CodexThreadRow[] = [];
   const watchedRowIds = new Set<string>();
   if (mode === 'hot') {
+    for (const [historyItemId, request] of aiHistoryDetailWatchRequests.entries()) {
+      if (hydrateRequestExpiresAtMs(request, now) <= now) {
+        aiHistoryDetailWatchRequests.delete(historyItemId);
+        aiHistoryDetailRolloutInspectCache.delete(historyItemId);
+        continue;
+      }
+      try {
+        const watchedRow = rowsById.get(request.externalThreadId) ?? await readThread(dbPath, request.externalThreadId);
+        if (watchedRow) {
+          rowsById.set(watchedRow.id, watchedRow);
+          watchedRows.push(watchedRow);
+          watchedRowIds.add(watchedRow.id);
+        }
+      } catch (error) {
+        logError(`ai history detail watch failed thread=${request.externalThreadId.slice(0, 8)}`, error instanceof Error ? error.message : error);
+      }
+    }
     for (const watch of activeAiHistoryPlaceholderTitleWatches(now)) {
       const scopeStillEnabled = importScopes.some(scope => (
         typeof scope.project_id === 'string' &&
@@ -2467,8 +2484,6 @@ async function hydrateOneAiHistoryDetailRequest(
   const detailSyncedAt = aiHistoryDetailSyncedAt(row, summary) ?? new Date(nowMs).toISOString();
   await postAiHistoryDetailMessages(api, runnerId, request.historyItemId, messages, detailSyncedAt, { force: true });
   await verifyAiHistoryDetailHydrateFulfilled(api, runnerId, request.historyItemId);
-  aiHistoryDetailWatchRequests.delete(request.historyItemId);
-  aiHistoryDetailRolloutInspectCache.delete(request.historyItemId);
   return true;
 }
 

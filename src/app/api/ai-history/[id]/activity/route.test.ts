@@ -177,6 +177,47 @@ describe('GET /api/ai-history/[id]/activity', () => {
       messageCount: 2,
     })
     expect(toAiHistoryDetailActivityMessageMock).toHaveBeenCalledTimes(2)
+    expect(upsertAiHistoryDetailHydrateRequestMock).not.toHaveBeenCalled()
+  })
+
+  test('records a short watch request for opened detail even when cache is current', async () => {
+    listAiHistoryDetailMessagesMock.mockResolvedValue([
+      {
+        id: 'detail-1',
+        user_id: 'user-1',
+        history_item_id: 'history-1',
+        provider: 'codex_app',
+        external_thread_id: 'thread-1',
+        repo_path: '/repo',
+        sequence: 0,
+        role: 'user',
+        kind: 'user_prompt',
+        body: '実装して',
+        body_hash: 'hash-user',
+        occurred_at: '2026-06-20T00:00:00.000Z',
+        metadata_json: null,
+        created_at: '2026-06-20T00:00:00.000Z',
+        updated_at: '2026-06-20T00:00:00.000Z',
+      },
+    ])
+    countAiHistoryDetailMessagesMock.mockResolvedValue(1)
+    isAiHistoryDetailHydrateRequiredMock.mockReturnValue(false)
+    aiHistoryDetailHydrateReasonMock.mockReturnValue(null)
+
+    const response = await GET(request('/api/ai-history/history-1/activity?limit=30&mode=report&watch=1'), {
+      params: Promise.resolve({ id: 'history-1' }),
+    })
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.hydrate).toMatchObject({ required: false, reason: null })
+    expect(upsertAiHistoryDetailHydrateRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'user-1',
+      item: expect.objectContaining({ id: 'history-1' }),
+      reason: 'detail_cache_stale',
+      requestedBy: 'web',
+      ttlSeconds: 120,
+    }))
   })
 
   test('returns hydrate required when unlinked cache is empty', async () => {
