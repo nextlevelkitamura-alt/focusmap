@@ -42,7 +42,7 @@ Macローカル:
 - `focusmap-agent` は既知の監視対象threadを1秒ごとにローカル確認するが、`/api/agents/codex-monitor/tasks` の対象リスト取得は既定3秒キャッシュにする。これによりCodex sqlite/rollout監視は1秒化しつつ、Supabaseの監視対象selectを毎tickへ増やさない。
 - Codex.appで直接開始された未配置threadを初回metadata同期する時も、`focusmap-agent` がrollout JSONLを先に読んで `task_complete` / `turn_aborted` / archive を確認し、`/api/agents/ai-history/batch-upsert` へ `status`、`run_state`、`archived`、durationを送る。既存 `/api/agents/codex-monitor/import-thread` は移行元/互換fallbackとしてだけ使い、新しいmetadata同期では未配置threadのために `tasks` ノードや `Codex Inbox` を自動作成しない。これにより、過去履歴のreconcile/backfillで完了済みthreadが緑の実行中カードとして表示される状態を防ぐ。
 - runner heartbeatはTurso `runner_heartbeats` へ実行中5秒・アイドル30秒で1 row upsertする。作業中/待機中の切替時は即時upsertし、正常終了時は可能なら `status='offline'` を1回送る。クラッシュ、強制終了、スリープ時はoffline送信できないため、Web/スマホは `last_seen_at` が90秒以上古い場合もofflineと解釈する。
-- Codexチャット取り込みのrepo選択は、通常UIではCodex Desktop state DBの `threads.cwd` から得たCodexプロジェクト候補だけを新規選択対象にする。保存済み `projects.repo_path` が候補外の場合は自動削除せず、`Codex候補外` として解除だけ可能にする。Finderは任意フォルダー選択ではなく、選択中repoを開く操作に限定する。
+- Codexチャット取り込みのrepo選択は、通常UIではCodex Desktop state DBの `threads.cwd` から得たCodexプロジェクト候補だけを新規選択対象にする。候補はGit repo/worktreeならGit rootへまとめ、`~/Private` のようにGit repoではない実在cwdならそのフォルダ自体を候補に残す。保存済み `projects.repo_path` が候補外の場合は自動削除せず、`Codex候補外` として解除だけ可能にする。Finderは任意フォルダー選択ではなく、選択中repoを開く操作に限定する。
 - runner heartbeat metadataにはCodex取り込み診断を載せる。`codex_thread_import` に `state_db_found`、`last_scope_refresh_at`、`last_scope_refresh_error`、`scopes[{ project_id, repo_path, enabled_since, cwd_paths }]`、`last_reconcile_at`、`next_reconcile_at`、`last_reconcile_imported`、`last_error` を入れ、互換用に `codex_import_scope_repo_paths`、`codex_import_scope_cwd_paths`、`codex_last_scope_refresh_at`、`codex_last_reconcile_at` も残す。UIはMac onlineだけで監視成功とみなさず、選択repoがheartbeat metadataのscopeへ入っている時だけ `agent反映済み` と表示する。
 - チャット取り込み一覧のrepo照合は `tasks.codex_work_dir` 完全一致だけにしない。`ai_tasks.result.meta.scope_repo_path` と対象projectの `repo_path` も選択repoと照合し、親repoを選んだ時はそのrepoのworktree pathで開始されたCodex threadも同じ履歴一覧へ表示する。実際のworktree pathは `codex_work_dir` に残し、親repo分類はscope/project側で判断する。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
@@ -241,7 +241,7 @@ type AiHistoryListResponse = {
 - agent起動時 / app start時: 現在projectの有効repoを即reconcileし、Codex state SQLiteの全cwdもhot metadata同期対象にする。
 - dashboard reload / scope diff: 現在project repoを優先reconcileする。repo selector変更は表示フィルタだけで、同期scopeやproject repo設定を変更しない。
 - hourly: 全enabled repoを順番にmetadata reconcileし、最後に全cwdの最近履歴も補完する。
-- hot history: Codex state SQLiteの全cwdから最近履歴を読み、enabled repoに一致するcwd/worktreeはproject scopeへ、scope外cwdは `project_id=null` のAI履歴へ保存する。running taskがある時もAI履歴上位threadのstat watchは維持する。
+- hot history: Codex state SQLiteの全cwdから最近履歴を読み、enabled repoに一致するcwd/worktreeはproject scopeへ、scope外cwdは `project_id=null` のAI履歴へ保存する。Git repo/worktreeとして解決できるcwdはGit rootを `repo_path`、実cwd差分を `worktree_path` にし、Git repoではないcwdはcwdフォルダ自体を `repo_path` にする。running taskがある時もAI履歴上位threadのstat watchは維持する。
 - detail hydrate/watch target: hydrate requestで返った `historyItemId` / `externalThreadId` はrequest TTL内のfast-watch対象にする。detailを開いた時はcacheが最新でも `watch=1` 付きactivity GETで短TTL requestを作り、古いthreadがtop 20外でも再開を検知できるようにする。
 - running/awaiting/needs_input thread: rollout JSONLを約1秒watchする。
 - fast-watch read rule: fast-watch対象はrollout fileの `mtime/size` を1秒ごとにstatし、mtime/sizeまたはCodex thread row fingerprintが変わった時だけrollout本文を読む。fingerprintが同じ時は次のstat予定だけ更新し、cached本文の再parseやcloud writeへ進まない。

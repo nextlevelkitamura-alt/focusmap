@@ -1020,7 +1020,9 @@ async function listCodexReposFromBridge() {
         continue;
       }
       const gitRoot = await resolveGitRoot(resolved);
-      const repoPath = normalizeLocalPath(gitRoot);
+      // Codex can group chats by a plain cwd folder such as ~/Private.
+      // Keep non-git folders selectable instead of dropping them from the AI history filter.
+      const repoPath = normalizeLocalPath(gitRoot) || normalizeLocalPath(resolved);
       if (!repoPath || seen.has(repoPath)) continue;
       seen.add(repoPath);
       const updatedMs = Number(row.updated_at_ms);
