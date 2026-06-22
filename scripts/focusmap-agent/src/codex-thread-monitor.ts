@@ -172,6 +172,7 @@ export type CodexThreadRow = {
   preview?: string | null;
   rollout_path?: string | null;
   source?: string | null;
+  thread_source?: string | null;
   cwd?: string | null;
   first_user_message?: string | null;
 };
@@ -530,6 +531,15 @@ function normalizeLocalPath(value: string | null | undefined): string {
   return value?.trim().replace(/\/+$/, '') ?? '';
 }
 
+function isUserCodexThread(row: Pick<CodexThreadRow, 'thread_source'>): boolean {
+  const threadSource = typeof row.thread_source === 'string' ? row.thread_source.trim() : '';
+  return !threadSource || threadSource === 'user';
+}
+
+export function shouldArchiveAiHistoryThread(row: Pick<CodexThreadRow, 'archived' | 'thread_source'>): boolean {
+  return Boolean(row.archived) || !isUserCodexThread(row);
+}
+
 async function sqliteJson<T>(dbPath: string, sql: string): Promise<T[]> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= SQLITE_READ_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -556,7 +566,7 @@ async function readThread(dbPath: string, threadId: string): Promise<CodexThread
   const rows = await sqliteJson<CodexThreadRow>(
     dbPath,
     [
-      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, cwd, first_user_message',
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, thread_source, cwd, first_user_message',
       'FROM threads',
       `WHERE id = ${sqlString(threadId)}`,
       'LIMIT 1',
@@ -1069,6 +1079,7 @@ export function isOrphanThreadImportCandidate(
   cwdScopeMap?: Map<string, CodexThreadImportScope>,
 ): boolean {
   if (!row.id || knownThreadIds.has(row.id)) return false;
+  if (!isUserCodexThread(row)) return false;
   if (row.archived) return false;
   if (isFocusmapManualHandoffThread(row, focusmapTasks, cwdScopeMap)) return false;
   const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? 0;
@@ -1615,7 +1626,10 @@ function aiHistoryItemFromThread(input: {
   const startedAt = presentation.startedAt;
   const endedAt = presentation.endedAt;
   const workDurationSeconds = presentation.workDurationSeconds;
-  const archived = Boolean(input.row.archived);
+  const archived = shouldArchiveAiHistoryThread(input.row);
+  const threadSource = typeof input.row.thread_source === 'string' && input.row.thread_source.trim()
+    ? input.row.thread_source.trim()
+    : 'user';
   const titleInfo = aiHistoryTitleInfo(input.row, input.sessionThreadNames);
   const item: AiHistoryBatchUpsertItem = {
     provider: AI_HISTORY_PROVIDER,
@@ -1644,6 +1658,7 @@ function aiHistoryItemFromThread(input: {
       stale_running_last_activity_at: presentation.staleRunningLastActivityAt,
       stale_running_threshold_ms: presentation.staleRunningThresholdMs,
       title_source: titleInfo.source,
+      thread_source: threadSource,
       duration_approximate: !hasRollout && workDurationSeconds !== null,
       thread_updated_at_ms: input.row.updated_at_ms ?? null,
       thread_created_at_ms: input.row.created_at_ms ?? null,
@@ -2258,7 +2273,7 @@ async function readRecentThreads(
   return sqliteJson<CodexThreadRow>(
     dbPath,
     [
-      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, cwd, first_user_message',
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, thread_source, cwd, first_user_message',
       'FROM threads',
       `WHERE updated_at_ms >= ${Math.max(0, Math.floor(sinceMs))}${cwdCondition}`,
       'ORDER BY updated_at_ms DESC',

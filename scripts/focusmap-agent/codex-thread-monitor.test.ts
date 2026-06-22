@@ -40,6 +40,7 @@ import {
   shouldInspectAiHistoryRollout,
   shouldInspectAiHistoryPlaceholderTitle,
   shouldInspectTaskRollout,
+  shouldArchiveAiHistoryThread,
   shouldCompleteSourceFromArchivedThread,
   shouldDeferOrphanImportForTasks,
   taskStateForSummary,
@@ -1098,6 +1099,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(isOrphanThreadImportCandidate(base, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
     expect(isOrphanThreadImportCandidate(base, new Set(['thread-new']), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({ ...base, archived: 1 }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
+    expect(isOrphanThreadImportCandidate({ ...base, thread_source: 'subagent' }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({ ...base, cwd: '/Users/me/other' }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({ ...base, updated_at_ms: Date.parse('2026-06-10T08:59:59.000Z') }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(false);
     expect(isOrphanThreadImportCandidate({
@@ -1113,6 +1115,12 @@ describe('codex-thread-monitor state detection', () => {
       title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
       first_user_message: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
     }, new Set(), importScopes, nowMs, 10 * 60_000)).toBe(true);
+  });
+
+  test('archives non-user Codex threads in AI history metadata', () => {
+    expect(shouldArchiveAiHistoryThread({ archived: 0, thread_source: 'user' })).toBe(false);
+    expect(shouldArchiveAiHistoryThread({ archived: 1, thread_source: 'user' })).toBe(true);
+    expect(shouldArchiveAiHistoryThread({ archived: 0, thread_source: 'subagent' })).toBe(true);
   });
 
   test('does not import Focusmap manual handoff threads as orphan repo chats', () => {
