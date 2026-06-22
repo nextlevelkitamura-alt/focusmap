@@ -21,6 +21,8 @@ export const AI_HISTORY_STATUSES = new Set<AiHistoryStatus>([
   'idle',
 ])
 
+const AI_HISTORY_PLACEHOLDER_TITLE = '新しいチャット'
+
 export const AI_HISTORY_DETAIL_ROLES = new Set<AiHistoryDetailMessageRole>([
   'user',
   'assistant',
@@ -261,7 +263,7 @@ function asItem(row: Row): TursoAiHistoryItem {
     project_id: asString(row.project_id),
     source_task_id: asString(row.source_task_id),
     linked_ai_task_id: asString(row.linked_ai_task_id),
-    title: asString(row.title) ?? (externalThreadId ? `Codex thread ${externalThreadId.slice(0, 8)}` : 'AI履歴'),
+    title: asString(row.title) ?? AI_HISTORY_PLACEHOLDER_TITLE,
     snippet: asString(row.snippet),
     status: asStatus(row.status),
     run_state: asString(row.run_state),

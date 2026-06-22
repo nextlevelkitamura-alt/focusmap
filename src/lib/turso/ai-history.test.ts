@@ -145,6 +145,34 @@ describe('AI history detail cache helpers', () => {
     expect(sql).toContain('work_duration_seconds = excluded.work_duration_seconds')
   })
 
+  test('uses a generic new-chat title when a stored history title is missing', async () => {
+    mockExecute.mockResolvedValueOnce({
+      rows: [{
+        id: 'history-untitled',
+        user_id: 'user-1',
+        provider: 'codex_app',
+        external_thread_id: '019eed07-0217-7a53-90aa-706b29a08df9',
+        repo_path: '/repo',
+        project_id: 'project-1',
+        title: null,
+        status: 'awaiting_approval',
+        last_activity_at: '2026-06-22T00:00:00.000Z',
+        indexed_at: '2026-06-22T00:00:00.000Z',
+      }],
+    })
+    const { listAiHistoryItems } = await import('./ai-history')
+
+    await expect(listAiHistoryItems({
+      userId: 'user-1',
+      projectId: 'project-1',
+    })).resolves.toEqual([
+      expect.objectContaining({
+        external_thread_id: '019eed07-0217-7a53-90aa-706b29a08df9',
+        title: '新しいチャット',
+      }),
+    ])
+  })
+
   test('records hydrate requests without refreshing an active unexpired request', async () => {
     const { upsertAiHistoryDetailHydrateRequest } = await import('./ai-history')
 

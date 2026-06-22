@@ -88,6 +88,11 @@ const aiHistoryPlaceholderTitleWatch = new Map<string, {
   externalThreadId: string;
   expiresAt: number;
 }>();
+const codexSessionThreadNameCache = new Map<string, {
+  mtimeMs: number;
+  size: number;
+  names: Map<string, string>;
+}>();
 let aiHistoryDetailHydrateApiUnavailableUntil = 0;
 let aiHistoryDetailHydrateContractFailed = false;
 
@@ -294,11 +299,99 @@ function oneLineTitle(value: unknown, maxChars = 80): string | null {
   return text || null;
 }
 
-export function codexThreadGeneratedTitle(row: { title?: string | null; first_user_message?: string | null }): string | null {
-  const title = compactText(row.title ?? '', 8_000);
+function comparableTitleText(value: unknown): string {
+  return compactText(typeof value === 'string' ? value : '', 8_000)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function isCodexThreadPromptDerivedTitle(
+  row: { title?: string | null; first_user_message?: string | null; preview?: string | null },
+  candidateValue: unknown = row.title,
+): boolean {
+  const candidate = comparableTitleText(candidateValue);
+  if (!candidate) return false;
+  for (const sourceValue of [row.first_user_message, row.preview]) {
+    const source = comparableTitleText(sourceValue);
+    if (!source) continue;
+    if (candidate === source) return true;
+    if (candidate.length >= 24 && source.startsWith(candidate)) return true;
+  }
+  return false;
+}
+
+function codexThreadTitleCandidate(
+  value: unknown,
+  row: { first_user_message?: string | null; preview?: string | null },
+): string | null {
+  const title = compactText(typeof value === 'string' ? value : '', 8_000);
   if (!title || isInternalUserMessage(title)) return null;
+  if (isCodexThreadPromptDerivedTitle(row, title)) return null;
   const firstLine = title.split(/\r?\n/).map(line => line.trim()).find(Boolean);
   return oneLineTitle(firstLine);
+}
+
+export function codexThreadGeneratedTitle(row: { title?: string | null; first_user_message?: string | null; preview?: string | null }): string | null {
+  return codexThreadTitleCandidate(row.title, row);
+}
+
+export function codexSessionIndexPath(homeDir = homedir()): string {
+  const configured = process.env.FOCUSMAP_CODEX_SESSION_INDEX_PATH?.trim();
+  return configured || join(homeDir, '.codex', 'session_index.jsonl');
+}
+
+export function codexSessionThreadNamesFromJsonl(raw: string): Map<string, string> {
+  const names = new Map<string, { name: string; updatedAtMs: number; order: number }>();
+  let order = 0;
+  for (const line of raw.split(/\r?\n/)) {
+    order += 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!isRecord(parsed) || typeof parsed.id !== 'string') continue;
+      const name = oneLineTitle(parsed.thread_name, 120);
+      if (!name || isInternalUserMessage(name)) continue;
+      const updatedAtMs = timeMs(parsed.updated_at) ?? 0;
+      const previous = names.get(parsed.id);
+      if (!previous || updatedAtMs > previous.updatedAtMs || (updatedAtMs === previous.updatedAtMs && order > previous.order)) {
+        names.set(parsed.id, { name, updatedAtMs, order });
+      }
+    } catch {
+      continue;
+    }
+  }
+  return new Map([...names.entries()].map(([id, entry]) => [id, entry.name]));
+}
+
+async function readCodexSessionThreadNames(indexPath = codexSessionIndexPath()): Promise<ReadonlyMap<string, string>> {
+  try {
+    const fileStat = await stat(indexPath);
+    const cached = codexSessionThreadNameCache.get(indexPath);
+    if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached.names;
+    const names = codexSessionThreadNamesFromJsonl(await readFile(indexPath, 'utf8'));
+    codexSessionThreadNameCache.set(indexPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, names });
+    trimCacheToLimit(codexSessionThreadNameCache, 4);
+    return names;
+  } catch {
+    return new Map<string, string>();
+  }
+}
+
+function codexSessionThreadTitle(
+  row: Pick<CodexThreadRow, 'id' | 'first_user_message' | 'preview'>,
+  sessionThreadNames?: ReadonlyMap<string, string> | null,
+): string | null {
+  const threadName = sessionThreadNames?.get(row.id);
+  return codexThreadTitleCandidate(threadName, row);
+}
+
+function codexThreadTitleForMetadata(
+  row: CodexThreadRow,
+  sessionThreadNames?: ReadonlyMap<string, string> | null,
+): string | null {
+  return codexSessionThreadTitle(row, sessionThreadNames) ?? codexThreadGeneratedTitle(row);
 }
 
 function textFingerprint(value: string): string {
@@ -506,6 +599,22 @@ function shouldTreatCodexActivityAsRunning(input: {
   return restartMs > completeMs;
 }
 
+function isPostCompleteToolContinuation(input: {
+  eventTime: string | null;
+  latestTaskCompleteAt: string | null;
+  pendingPostCompleteReasoningAt: string | null;
+}): boolean {
+  const completeMs = timeMs(input.latestTaskCompleteAt);
+  const eventMs = timeMs(input.eventTime);
+  const reasoningMs = timeMs(input.pendingPostCompleteReasoningAt);
+  return completeMs !== null &&
+    eventMs !== null &&
+    reasoningMs !== null &&
+    reasoningMs > completeMs &&
+    eventMs > completeMs &&
+    reasoningMs <= eventMs;
+}
+
 export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
   const visibleMessages: VisibleMessage[] = [];
   const threadArchived = Boolean(row.archived);
@@ -525,6 +634,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
   let activeStartedAt: string | null = null;
   let activeStartedMs: number | null = null;
   let workDurationMs = 0;
+  let pendingPostCompleteReasoningAt: string | null = null;
+  let passivePostCompleteMaintenanceSeen = false;
 
   const markWorkStarted = (iso: string | null) => {
     const ms = timeMs(iso);
@@ -568,6 +679,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     if (eventTime) lastActivityAt = eventTime;
 
     if (payloadType === 'task_started') {
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestTaskStartedAt = eventTime;
       latestRunningActivityAt = eventTime;
       state = 'running';
@@ -579,6 +692,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'task_complete') {
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestTaskCompleteAt = eventTime;
       state = 'awaiting_approval';
       historyStatus = 'awaiting_approval';
@@ -605,6 +720,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'turn_aborted') {
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestTaskCompleteAt = eventTime;
       state = 'awaiting_approval';
       historyStatus = failedRolloutPayload(payload) ? 'failed' : 'awaiting_approval';
@@ -618,6 +735,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'task_failed' || payloadType === 'error') {
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestTaskCompleteAt = eventTime;
       state = 'awaiting_approval';
       historyStatus = 'failed';
@@ -628,6 +747,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'completed' || payloadType === 'thread_completed' || payloadType === 'task_done' || payloadType === 'task_succeeded') {
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestTaskCompleteAt = eventTime;
       state = 'awaiting_approval';
       historyStatus = 'completed';
@@ -676,6 +797,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       if (text && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
         if ((timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
+          pendingPostCompleteReasoningAt = null;
+          passivePostCompleteMaintenanceSeen = false;
           latestRunningActivityAt = eventTime;
           state = 'running';
           historyStatus = 'running';
@@ -697,9 +820,15 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
 
     if (isContextMaintenanceEvent(payloadType, payload)) {
       if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        if ((timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
+          pendingPostCompleteReasoningAt = null;
+          passivePostCompleteMaintenanceSeen = true;
+        }
         lastActivityAt = previousLastActivityAt;
         continue;
       }
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestRunningActivityAt = eventTime;
       state = 'running';
       historyStatus = 'running';
@@ -710,9 +839,14 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
 
     if (payloadType === 'reasoning') {
       if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+        if (!passivePostCompleteMaintenanceSeen && (timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
+          pendingPostCompleteReasoningAt = eventTime;
+        }
         lastActivityAt = previousLastActivityAt;
         continue;
       }
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestRunningActivityAt = eventTime;
       state = 'running';
       historyStatus = 'running';
@@ -722,10 +856,21 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
-      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
+      const isContinuation = isPostCompleteToolContinuation({
+        eventTime,
+        latestTaskCompleteAt,
+        pendingPostCompleteReasoningAt,
+      });
+      if (!isContinuation && !shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
         lastActivityAt = previousLastActivityAt;
         continue;
       }
+      if (isContinuation) {
+        latestTaskStartedAt = eventTime;
+        markWorkStarted(eventTime);
+      }
+      pendingPostCompleteReasoningAt = null;
+      passivePostCompleteMaintenanceSeen = false;
       latestRunningActivityAt = eventTime;
       state = 'running';
       historyStatus = 'running';
@@ -1323,9 +1468,11 @@ export function isAiHistoryPlaceholderTitle(value: string | null | undefined): b
   return title === AI_HISTORY_PLACEHOLDER_TITLE || /^Codex thread [0-9a-z-]+$/iu.test(title);
 }
 
-export function aiHistoryTitle(row: CodexThreadRow): string {
-  return codexThreadGeneratedTitle(row) ??
-    oneLineTitle(row.preview, 80) ??
+export function aiHistoryTitle(
+  row: CodexThreadRow,
+  sessionThreadNames?: ReadonlyMap<string, string> | null,
+): string {
+  return codexThreadTitleForMetadata(row, sessionThreadNames) ??
     AI_HISTORY_PLACEHOLDER_TITLE;
 }
 
@@ -1416,6 +1563,7 @@ function aiHistoryItemFromThread(input: {
   summary: RolloutSummary;
   rawRollout: string;
   linkedTask: AiTask | null;
+  sessionThreadNames?: ReadonlyMap<string, string> | null;
   nowMs: number;
 }): PreparedAiHistoryItem {
   const repoPath = normalizeLocalPath(input.scope.repo_path);
@@ -1442,7 +1590,7 @@ function aiHistoryItemFromThread(input: {
     projectId: input.scope.project_id,
     sourceTaskId: input.linkedTask?.source_task_id ?? null,
     linkedAiTaskId: input.linkedTask?.id ?? null,
-    title: aiHistoryTitle(input.row),
+    title: aiHistoryTitle(input.row, input.sessionThreadNames),
     snippet: aiHistorySnippet(input.row),
     status,
     runState: presentation.runState,
@@ -2302,6 +2450,7 @@ async function syncAiHistoryMetadata(
     repoPaths,
     mode === 'reconcile' ? ORPHAN_IMPORT_SCAN_LIMIT : AI_HISTORY_FAST_WATCH_LIMIT,
   );
+  const sessionThreadNames = await readCodexSessionThreadNames();
   const rowsById = new Map(recentRows.map(row => [row.id, row]));
   const watchedRows: CodexThreadRow[] = [];
   const watchedRowIds = new Set<string>();
@@ -2380,6 +2529,7 @@ async function syncAiHistoryMetadata(
         summary,
         rawRollout,
         linkedTask,
+        sessionThreadNames,
         nowMs: now,
       });
       if (shouldQueueAiHistoryItem(prepared)) {

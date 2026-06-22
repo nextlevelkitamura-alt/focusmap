@@ -13,12 +13,14 @@ import {
   AWAITING_APPROVAL_STABILITY_MS,
   awaitingApprovalAtForSummary,
   codexStateDbPath,
+  codexSessionThreadNamesFromJsonl,
   codexThreadGeneratedTitle,
   DEFAULT_RECONCILE_INTERVAL_MS,
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   hasPendingArchiveRequest,
   isFocusmapManualHandoffThread,
   isAiHistoryPlaceholderTitle,
+  isCodexThreadPromptDerivedTitle,
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
@@ -99,9 +101,42 @@ describe('codex-thread-monitor state detection', () => {
       title: null,
       preview: null,
     })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
+    expect(aiHistoryTitle({
+      ...threadRow,
+      id: 'thread-prompt-derived-title',
+      title: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+      first_user_message: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+      preview: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+    })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
     expect(isAiHistoryPlaceholderTitle(AI_HISTORY_PLACEHOLDER_TITLE)).toBe(true);
     expect(isAiHistoryPlaceholderTitle('Codex thread abc12345')).toBe(true);
     expect(isAiHistoryPlaceholderTitle('AI履歴のUIを見やすくする')).toBe(false);
+  });
+
+  test('prefers Codex session_index thread_name over prompt-derived SQLite titles', () => {
+    const row = {
+      ...threadRow,
+      id: 'thread-session-index-title',
+      title: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+      first_user_message: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+      preview: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+    };
+    const threadNames = codexSessionThreadNamesFromJsonl([
+      JSON.stringify({
+        id: row.id,
+        thread_name: '古い見出し',
+        updated_at: '2026-06-21T00:00:00.000Z',
+      }),
+      JSON.stringify({
+        id: row.id,
+        thread_name: 'マインドマップ幅を調整',
+        updated_at: '2026-06-22T01:52:33.175Z',
+      }),
+    ].join('\n'));
+
+    expect(isCodexThreadPromptDerivedTitle(row)).toBe(true);
+    expect(codexThreadGeneratedTitle(row)).toBeNull();
+    expect(aiHistoryTitle(row, threadNames)).toBe('マインドマップ幅を調整');
   });
 
   test('keeps placeholder-title AI history threads on a short title refresh watch', () => {
@@ -293,7 +328,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(codexThreadGeneratedTitle({
       title: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう',
       first_user_message: 'このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももうちょっと整えてほしい。詳細も続きます。',
-    })).toBe('このメモの下の部分なんだけども、このチャットのなんかモダンな雰囲気に合わせて、ボタンとかももう');
+    })).toBeNull();
   });
 
   test('only treats completed tasks with pending archive request as archive candidates', () => {
