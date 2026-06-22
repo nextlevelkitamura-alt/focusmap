@@ -8,6 +8,7 @@ import type {
   AiHistoryDetailMessageRole,
   AiHistoryListItem,
   AiHistoryPlacement,
+  AiHistoryScopeFilter,
   AiHistoryStatus,
 } from '@/types/ai-history'
 
@@ -517,6 +518,8 @@ export function toAiHistoryListItem(
 function scopedHistoryWhere(options: {
   userId: string
   projectId: string
+  scope?: AiHistoryScopeFilter
+  provider?: string | null
   repo?: string | null
   repoPaths?: string[]
   includeArchived?: boolean
@@ -528,17 +531,24 @@ function scopedHistoryWhere(options: {
   const args: Array<string | number> = [options.userId]
   const scopeRepoPaths = uniqueStrings(options.repoPaths ?? [])
 
+  if (options.provider) {
+    clauses.push('provider = ?')
+    args.push(options.provider)
+  }
+
   if (options.repo && options.repo !== 'all') {
     clauses.push('repo_path = ?')
     args.push(options.repo)
   }
 
-  if (scopeRepoPaths.length > 0) {
-    clauses.push(`(project_id = ? OR repo_path IN (${placeholders(scopeRepoPaths)}))`)
-    args.push(options.projectId, ...scopeRepoPaths)
-  } else {
-    clauses.push('project_id = ?')
-    args.push(options.projectId)
+  if (options.scope !== 'global') {
+    if (scopeRepoPaths.length > 0) {
+      clauses.push(`(project_id = ? OR repo_path IN (${placeholders(scopeRepoPaths)}))`)
+      args.push(options.projectId, ...scopeRepoPaths)
+    } else {
+      clauses.push('project_id = ?')
+      args.push(options.projectId)
+    }
   }
 
   if (!options.includeArchived) clauses.push('archived = 0')
@@ -985,6 +995,8 @@ export async function upsertAiHistoryDetailMessages(options: {
 export async function listAiHistoryItems(options: {
   userId: string
   projectId: string
+  scope?: AiHistoryScopeFilter
+  provider?: string | null
   repo?: string | null
   repoPaths?: string[]
   placement?: AiHistoryPlacement | 'all'
@@ -995,6 +1007,8 @@ export async function listAiHistoryItems(options: {
   const where = scopedHistoryWhere({
     userId: options.userId,
     projectId: options.projectId,
+    scope: options.scope,
+    provider: options.provider,
     repo: options.repo,
     repoPaths: options.repoPaths,
     placement: options.placement ?? 'unplaced',
@@ -1021,12 +1035,16 @@ export async function listAiHistoryItems(options: {
 export async function countAiHistoryBuckets(options: {
   userId: string
   projectId: string
+  scope?: AiHistoryScopeFilter
+  provider?: string | null
   repo?: string | null
   repoPaths?: string[]
 }) {
   const where = scopedHistoryWhere({
     userId: options.userId,
     projectId: options.projectId,
+    scope: options.scope,
+    provider: options.provider,
     repo: options.repo,
     repoPaths: options.repoPaths,
     placement: 'all',
@@ -1052,6 +1070,8 @@ export async function countAiHistoryBuckets(options: {
 export async function listAiHistorySnapshot(options: {
   userId: string
   projectId: string
+  scope?: AiHistoryScopeFilter
+  provider?: string | null
   repo?: string | null
   repoPaths?: string[]
   cursor?: AiHistoryCursor | null
@@ -1061,6 +1081,8 @@ export async function listAiHistorySnapshot(options: {
   const where = scopedHistoryWhere({
     userId: options.userId,
     projectId: options.projectId,
+    scope: options.scope,
+    provider: options.provider,
     repo: options.repo,
     repoPaths: options.repoPaths,
     includeArchived: options.includeDeleted === true,
@@ -1091,12 +1113,16 @@ export async function listAiHistorySnapshot(options: {
 export async function latestAiHistoryIndex(options: {
   userId: string
   projectId: string
+  scope?: AiHistoryScopeFilter
+  provider?: string | null
   repo?: string | null
   repoPaths?: string[]
 }) {
   const where = scopedHistoryWhere({
     userId: options.userId,
     projectId: options.projectId,
+    scope: options.scope,
+    provider: options.provider,
     repo: options.repo,
     repoPaths: options.repoPaths,
     placement: 'all',

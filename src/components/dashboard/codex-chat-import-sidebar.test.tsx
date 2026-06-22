@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { CodexChatImportSidebar } from "./codex-chat-import-sidebar"
-import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryRepoFilter } from "@/types/ai-history"
+import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryProvider, AiHistoryRepoFilter, AiHistoryScopeFilter } from "@/types/ai-history"
 
 const useAiHistoryMock = vi.hoisted(() => vi.fn())
 const fetchWithSupabaseAuthMock = vi.hoisted(() => vi.fn())
@@ -40,7 +40,13 @@ const baseHistoryItem: AiHistoryListItem = {
 }
 
 let historyItems: AiHistoryListItem[] = []
-let lastHookOptions: Array<{ projectId: string | null; repo: AiHistoryRepoFilter; placement: AiHistoryPlacement }> = []
+let lastHookOptions: Array<{
+  projectId: string | null
+  provider?: AiHistoryProvider
+  repo: AiHistoryRepoFilter
+  scope?: AiHistoryScopeFilter
+  placement: AiHistoryPlacement
+}> = []
 let syncState = {
   featureEnabled: true,
   aiOnline: true,
@@ -54,7 +60,9 @@ function repoMatches(item: AiHistoryListItem, repo: AiHistoryRepoFilter) {
 function mockUseAiHistory() {
   useAiHistoryMock.mockImplementation((options: {
     projectId: string | null
+    provider?: AiHistoryProvider
     repo: AiHistoryRepoFilter
+    scope?: AiHistoryScopeFilter
     placement: AiHistoryPlacement
   }) => {
     lastHookOptions.push(options)
@@ -69,6 +77,13 @@ function mockUseAiHistory() {
       sync: {
         ...syncState,
         selectedRepo: options.repo,
+        selectedScope: options.scope ?? "project",
+        selectedProvider: options.provider ?? "codex_app",
+        providerOptions: [
+          { provider: "codex_app", label: "Codex", enabled: true, agentSeen: true },
+          { provider: "claude_code", label: "Claude Code", enabled: false, agentSeen: false },
+          { provider: "antigravity", label: "Antigravity", enabled: false, agentSeen: false },
+        ],
         repoOptions: [
           { repoPath: "/Users/me/focusmap", label: "focusmap", enabled: true, agentSeen: true },
           { repoPath: "/Users/me/other", label: "other", enabled: true, agentSeen: true },
@@ -194,7 +209,7 @@ describe("CodexChatImportSidebar", () => {
     )
   })
 
-  test("uses the repo selector as a display filter only", () => {
+  test("defaults to the project repo and shows all Codex chats when 全体 is selected", () => {
     historyItems = [
       baseHistoryItem,
       {
@@ -210,16 +225,23 @@ describe("CodexChatImportSidebar", () => {
     renderSidebar()
 
     expect(screen.getByText("AI履歴サイドバーを接続")).toBeInTheDocument()
-    expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
+    expect(screen.queryByText("別リポの履歴")).not.toBeInTheDocument()
+    expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/focusmap")
+    expect(lastHookOptions.at(-1)?.scope).toBe("project")
 
-    fireEvent.click(screen.getByRole("button", { name: /全体/ }))
-    const repoFilter = document.getElementById("ai-history-repo-filter")
-    expect(repoFilter).not.toBeNull()
-    fireEvent.click(within(repoFilter!).getByText("other"))
+    const scopeButton = screen.getAllByRole("button").find(button => (
+      button.getAttribute("aria-controls") === "ai-history-scope-filter"
+    ))
+    expect(scopeButton).toBeDefined()
+    fireEvent.click(scopeButton!)
+    const scopeFilter = document.getElementById("ai-history-scope-filter")
+    expect(scopeFilter).not.toBeNull()
+    fireEvent.click(within(scopeFilter!).getByText("全体"))
 
-    expect(screen.queryByText("AI履歴サイドバーを接続")).not.toBeInTheDocument()
+    expect(screen.getByText("AI履歴サイドバーを接続")).toBeInTheDocument()
     expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
-    expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/other")
+    expect(lastHookOptions.at(-1)?.repo).toBe("all")
+    expect(lastHookOptions.at(-1)?.scope).toBe("global")
   })
 
   test("defaults to unplaced and switches to the mindmap bucket", () => {

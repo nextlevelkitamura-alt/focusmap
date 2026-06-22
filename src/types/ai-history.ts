@@ -1,5 +1,7 @@
 export type AiHistoryProvider = 'codex_app' | string
 
+export type AiHistoryScopeFilter = 'project' | 'global'
+
 export type AiHistoryStatus =
   | 'running'
   | 'awaiting_approval'
@@ -58,6 +60,14 @@ export type AiHistoryListResponse = {
     aiOnline: boolean
     agentConnected: boolean
     selectedRepo: AiHistoryRepoFilter
+    selectedScope: AiHistoryScopeFilter
+    selectedProvider: AiHistoryProvider
+    providerOptions: Array<{
+      provider: AiHistoryProvider
+      label: string
+      enabled: boolean
+      agentSeen: boolean
+    }>
     repoOptions: Array<{
       repoPath: string
       label: string

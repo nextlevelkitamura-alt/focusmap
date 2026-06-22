@@ -5,7 +5,9 @@ import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type {
   AiHistoryListResponse,
   AiHistoryPlacement,
+  AiHistoryProvider,
   AiHistoryRepoFilter,
+  AiHistoryScopeFilter,
 } from "@/types/ai-history"
 
 const DEFAULT_LIMIT = 100
@@ -20,6 +22,11 @@ const EMPTY_RESPONSE: AiHistoryListResponse = {
     aiOnline: false,
     agentConnected: false,
     selectedRepo: "all",
+    selectedScope: "project",
+    selectedProvider: "codex_app",
+    providerOptions: [
+      { provider: "codex_app", label: "Codex", enabled: true, agentSeen: false },
+    ],
     repoOptions: [],
     lastIndexedAt: null,
     lastReconciledAt: null,
@@ -38,6 +45,8 @@ function isPageVisible() {
 type UseAiHistoryOptions = {
   projectId: string | null
   repo: AiHistoryRepoFilter
+  scope?: AiHistoryScopeFilter
+  provider?: AiHistoryProvider
   placement: AiHistoryPlacement
   enabled?: boolean
   limit?: number
@@ -47,6 +56,8 @@ type UseAiHistoryOptions = {
 export function useAiHistory({
   projectId,
   repo,
+  scope = "project",
+  provider = "codex_app",
   placement,
   enabled = true,
   limit = DEFAULT_LIMIT,
@@ -74,6 +85,8 @@ export function useAiHistory({
       const params = new URLSearchParams({
         project_id: projectId,
         repo,
+        scope,
+        provider,
         placement,
         status: "all",
         limit: String(limit),
@@ -95,7 +108,7 @@ export function useAiHistory({
       if (inFlightRef.current === controller) inFlightRef.current = null
       if (!controller.signal.aborted) setIsLoading(false)
     }
-  }, [enabled, limit, placement, projectId, repo])
+  }, [enabled, limit, placement, projectId, provider, repo, scope])
 
   useEffect(() => {
     void refresh()

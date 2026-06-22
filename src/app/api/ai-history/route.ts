@@ -17,10 +17,12 @@ import {
   parseStatus,
   unauthorized,
 } from './_shared'
-import type { AiHistoryListResponse } from '@/types/ai-history'
+import type { AiHistoryListResponse, AiHistoryProvider, AiHistoryScopeFilter } from '@/types/ai-history'
 
 function emptyResponse(input: {
   selectedRepo: 'all' | string
+  selectedScope: AiHistoryScopeFilter
+  selectedProvider: AiHistoryProvider
   limit: number
   cursor: string | null
   sync?: AiHistoryListResponse['sync']
@@ -34,6 +36,11 @@ function emptyResponse(input: {
       aiOnline: false,
       agentConnected: false,
       selectedRepo: input.selectedRepo,
+      selectedScope: input.selectedScope,
+      selectedProvider: input.selectedProvider,
+      providerOptions: [
+        { provider: 'codex_app', label: 'Codex', enabled: true, agentSeen: false },
+      ],
       repoOptions: [],
       lastIndexedAt: null,
       lastReconciledAt: null,
@@ -56,6 +63,8 @@ export async function GET(request: NextRequest) {
 
   const repo = searchParams.get('repo')?.trim() || 'all'
   const selectedRepo = repo === 'all' ? 'all' : repo
+  const selectedScope: AiHistoryScopeFilter = searchParams.get('scope') === 'global' ? 'global' : 'project'
+  const selectedProvider = (searchParams.get('provider')?.trim() || 'codex_app') as AiHistoryProvider
   const placement = parsePlacement(searchParams.get('placement'))
   if (!placement) return NextResponse.json({ error: 'invalid placement' }, { status: 400 })
   const status = parseStatus(searchParams.get('status'))
@@ -75,10 +84,12 @@ export async function GET(request: NextRequest) {
     const sync = await buildAiHistorySyncState({
       userId: auth.user.id,
       selectedRepo,
+      selectedScope,
+      selectedProvider,
       scopes: context.scopes,
       lastIndexedAt: null,
     })
-    return NextResponse.json(emptyResponse({ selectedRepo, limit, cursor: cursorParam, sync }))
+    return NextResponse.json(emptyResponse({ selectedRepo, selectedScope, selectedProvider, limit, cursor: cursorParam, sync }))
   }
 
   try {
@@ -86,8 +97,10 @@ export async function GET(request: NextRequest) {
       listAiHistoryItems({
         userId: auth.user.id,
         projectId,
+        scope: selectedScope,
+        provider: selectedProvider,
         repo: selectedRepo,
-        repoPaths: context.repoPaths,
+        repoPaths: selectedScope === 'global' ? [] : context.repoPaths,
         placement,
         status,
         cursor,
@@ -96,19 +109,25 @@ export async function GET(request: NextRequest) {
       countAiHistoryBuckets({
         userId: auth.user.id,
         projectId,
+        scope: selectedScope,
+        provider: selectedProvider,
         repo: selectedRepo,
-        repoPaths: context.repoPaths,
+        repoPaths: selectedScope === 'global' ? [] : context.repoPaths,
       }),
       latestAiHistoryIndex({
         userId: auth.user.id,
         projectId,
+        scope: selectedScope,
+        provider: selectedProvider,
         repo: selectedRepo,
-        repoPaths: context.repoPaths,
+        repoPaths: selectedScope === 'global' ? [] : context.repoPaths,
       }),
     ])
     const sync = await buildAiHistorySyncState({
       userId: auth.user.id,
       selectedRepo,
+      selectedScope,
+      selectedProvider,
       scopes: context.scopes,
       lastIndexedAt,
     })
@@ -128,10 +147,12 @@ export async function GET(request: NextRequest) {
       const sync = await buildAiHistorySyncState({
         userId: auth.user.id,
         selectedRepo,
+        selectedScope,
+        selectedProvider,
         scopes: context.scopes,
         lastIndexedAt: null,
       })
-      return NextResponse.json(emptyResponse({ selectedRepo, limit, cursor: cursorParam, sync }))
+      return NextResponse.json(emptyResponse({ selectedRepo, selectedScope, selectedProvider, limit, cursor: cursorParam, sync }))
     }
     console.error('[ai-history GET]', error)
     return NextResponse.json({ error: 'AI history fetch failed' }, { status: 500 })

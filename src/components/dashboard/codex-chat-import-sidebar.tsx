@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, Settings, Trash2, X } from "lucide-react"
+import { ArrowLeft, Bot, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, Settings, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiHistory } from "@/hooks/useAiHistory"
@@ -33,7 +33,7 @@ import { formatAiTaskWorkElapsedMs, formatAiTaskWorkLabel } from "@/lib/ai-task-
 import { getCodexThreadRallyWorkElapsedMs } from "@/lib/codex-thread-import-display"
 import { cn } from "@/lib/utils"
 import type { AiTaskActivityKind, AiTaskActivityMessage, AiTaskActivityRole } from "@/types/ai-task"
-import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryRepoFilter } from "@/types/ai-history"
+import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryProvider, AiHistoryRepoFilter, AiHistoryScopeFilter } from "@/types/ai-history"
 
 export type CodexChatImportItem = {
   id: string
@@ -96,6 +96,16 @@ const CHAT_DETAIL_REFRESH_INTERVAL_MS = 5_000
 const AI_HISTORY_DETAIL_HYDRATE_POLL_INTERVAL_MS = 3_000
 const RUNNING_PROMPT_START_TOLERANCE_MS = 5 * 60 * 1000
 const LOCAL_WORK_TIMER_STORAGE_KEY = "focusmap:codex-chat-import:local-work-timers"
+
+const AI_HISTORY_PROVIDER_OPTIONS: Array<{
+  provider: AiHistoryProvider
+  label: string
+  enabled: boolean
+}> = [
+  { provider: "codex_app", label: "Codex", enabled: true },
+  { provider: "claude_code", label: "Claude Code", enabled: false },
+  { provider: "antigravity", label: "Antigravity", enabled: false },
+]
 
 const ACTIVITY_ROLES = new Set<AiTaskActivityRole>(["system", "codex", "user", "status"])
 const ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
@@ -756,8 +766,12 @@ export function CodexChatImportSidebar({
   onClose,
   onOpenSettings,
 }: CodexChatImportSidebarProps) {
-  const [repoPickerOpen, setRepoPickerOpen] = React.useState(false)
-  const [repoFilter, setRepoFilter] = React.useState<AiHistoryRepoFilter>("all")
+  const initialRepoOption = normalizeAiHistoryRepoPath(initialRepoPath)
+  const [providerPickerOpen, setProviderPickerOpen] = React.useState(false)
+  const [scopePickerOpen, setScopePickerOpen] = React.useState(false)
+  const [providerFilter, setProviderFilter] = React.useState<AiHistoryProvider>("codex_app")
+  const [historyScope, setHistoryScope] = React.useState<AiHistoryScopeFilter>(initialRepoOption ? "project" : "global")
+  const [repoFilter, setRepoFilter] = React.useState<AiHistoryRepoFilter>(initialRepoOption ?? "all")
   const [activePlacement, setActivePlacement] = React.useState<AiHistoryPlacement>("unplaced")
   const [selectedChatId, setSelectedChatId] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
@@ -770,12 +784,16 @@ export function CodexChatImportSidebar({
     source: "ai" | "fallback"
   }>>({})
   const consumedInitialSelectedChatIdRef = React.useRef<string | null>(null)
+  const previousInitialRepoPathRef = React.useRef<string | null | undefined>(initialRepoPath)
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const hydratePollInFlightRef = React.useRef(false)
+  const queryRepoFilter = historyScope === "global" ? "all" : repoFilter
 
   const aiHistory = useAiHistory({
     projectId,
-    repo: repoFilter,
+    provider: providerFilter,
+    scope: historyScope,
+    repo: queryRepoFilter,
     placement: activePlacement,
   })
   const historyChatItems = React.useMemo(() => (
@@ -784,26 +802,48 @@ export function CodexChatImportSidebar({
   const visibleHistoryChatItems = React.useMemo(() => (
     [...historyChatItems].sort(compareCodexChatImportItems)
   ), [historyChatItems])
-  const initialRepoOption = normalizeAiHistoryRepoPath(initialRepoPath)
-  const repoOptions = React.useMemo(() => {
-    const byRepo = new Map<string, { repoPath: AiHistoryRepoFilter; label: string }>()
-    byRepo.set("all", { repoPath: "all", label: "全体" })
-    for (const option of aiHistory.sync.repoOptions) {
-      const repoPath = normalizeAiHistoryRepoPath(option.repoPath)
-      if (!repoPath) continue
-      byRepo.set(repoPath, { repoPath, label: option.label || aiHistoryRepoName(repoPath) })
+  const providerOptions = React.useMemo(() => {
+    const byProvider = new Map<string, { provider: AiHistoryProvider; label: string; enabled: boolean }>()
+    for (const option of AI_HISTORY_PROVIDER_OPTIONS) byProvider.set(option.provider, option)
+    for (const option of aiHistory.sync.providerOptions ?? []) {
+      byProvider.set(option.provider, {
+        provider: option.provider,
+        label: option.label,
+        enabled: option.enabled,
+      })
     }
-    if (initialRepoOption && !byRepo.has(initialRepoOption)) {
-      byRepo.set(initialRepoOption, { repoPath: initialRepoOption, label: aiHistoryRepoName(initialRepoOption) })
+    return Array.from(byProvider.values())
+  }, [aiHistory.sync.providerOptions])
+  const currentProviderLabel = React.useMemo(() => (
+    providerOptions.find(option => option.provider === providerFilter)?.label ?? "Codex"
+  ), [providerFilter, providerOptions])
+  const scopeOptions = React.useMemo(() => {
+    const options: Array<{ scope: AiHistoryScopeFilter; repoPath: AiHistoryRepoFilter; label: string; title: string }> = []
+    if (initialRepoOption) {
+      const projectRepo = aiHistory.sync.repoOptions
+        .map(option => ({
+          repoPath: normalizeAiHistoryRepoPath(option.repoPath),
+          label: option.label,
+        }))
+        .find(option => option.repoPath === initialRepoOption)
+      options.push({
+        scope: "project",
+        repoPath: initialRepoOption,
+        label: projectRepo?.label || aiHistoryRepoName(initialRepoOption),
+        title: initialRepoOption,
+      })
     }
-    if (repoFilter !== "all" && !byRepo.has(repoFilter)) {
-      byRepo.set(repoFilter, { repoPath: repoFilter, label: aiHistoryRepoName(repoFilter) })
-    }
-    return Array.from(byRepo.values())
-  }, [aiHistory.sync.repoOptions, initialRepoOption, repoFilter])
-  const currentRepoLabel = React.useMemo(() => (
-    repoOptions.find(option => option.repoPath === repoFilter)?.label ?? (repoFilter === "all" ? "全体" : aiHistoryRepoName(repoFilter))
-  ), [repoFilter, repoOptions])
+    options.push({
+      scope: "global",
+      repoPath: "all",
+      label: "全体",
+      title: `${currentProviderLabel}の非アーカイブチャット全体`,
+    })
+    return options
+  }, [aiHistory.sync.repoOptions, currentProviderLabel, initialRepoOption])
+  const currentScopeOption = React.useMemo(() => (
+    scopeOptions.find(option => option.scope === historyScope) ?? scopeOptions.at(-1)
+  ), [historyScope, scopeOptions])
   const aiOnlineLabel = aiHistory.sync.aiOnline ? "AI online" : "AI offline"
   const selectableChatItems = React.useMemo(() => {
     const byId = new Map<string, CodexChatImportItem>()
@@ -829,6 +869,20 @@ export function CodexChatImportSidebar({
     return hasRunningTimer || hasSelectedFinishedAgoTimer
   }, [visibleHistoryChatItems, localWorkTimers, selectedChatItem])
   const [workNowMs, setWorkNowMs] = React.useState(() => Date.now())
+
+  React.useEffect(() => {
+    if (previousInitialRepoPathRef.current === initialRepoPath) return
+    previousInitialRepoPathRef.current = initialRepoPath
+    const nextRepo = normalizeAiHistoryRepoPath(initialRepoPath)
+    setHistoryScope(nextRepo ? "project" : "global")
+    setRepoFilter(nextRepo ?? "all")
+    setProviderFilter("codex_app")
+    setProviderPickerOpen(false)
+    setScopePickerOpen(false)
+    setSelectedChatId(null)
+    setChatDetailsById({})
+    onInitialSelectedChatClear?.()
+  }, [initialRepoPath, onInitialSelectedChatClear])
 
   React.useEffect(() => {
     const nowMs = Date.now()
@@ -1110,7 +1164,8 @@ export function CodexChatImportSidebar({
 
   const handleChatItemClick = React.useCallback((item: CodexChatImportItem) => {
     setSelectedChatId(item.id)
-    setRepoPickerOpen(false)
+    setProviderPickerOpen(false)
+    setScopePickerOpen(false)
     void loadChatDetail(item)
   }, [loadChatDetail])
 
@@ -1124,7 +1179,8 @@ export function CodexChatImportSidebar({
     if (!item) return
     consumedInitialSelectedChatIdRef.current = initialSelectedChatId
     setSelectedChatId(item.id)
-    setRepoPickerOpen(false)
+    setProviderPickerOpen(false)
+    setScopePickerOpen(false)
     void loadChatDetail(item)
   }, [initialSelectedChatId, loadChatDetail, selectableChatItems])
 
@@ -1365,37 +1421,98 @@ export function CodexChatImportSidebar({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-8 max-w-[150px] justify-start gap-1.5 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
-                onClick={() => setRepoPickerOpen(open => !open)}
-                aria-expanded={repoPickerOpen}
-                aria-controls="ai-history-repo-filter"
-                title={repoFilter === "all" ? "全体" : repoFilter}
+                className="h-8 max-w-[105px] justify-start gap-1.5 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
+                onClick={() => {
+                  setProviderPickerOpen(open => !open)
+                  setScopePickerOpen(false)
+                }}
+                aria-expanded={providerPickerOpen}
+                aria-controls="ai-history-provider-filter"
+                title={currentProviderLabel}
               >
-                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                <span className="min-w-0 truncate text-xs">{currentRepoLabel}</span>
+                <Bot className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                <span className="min-w-0 truncate text-xs">{currentProviderLabel}</span>
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
               </Button>
-              {repoPickerOpen && (
+              {providerPickerOpen && (
                 <div
-                  id="ai-history-repo-filter"
-                  className="absolute right-0 top-full z-20 mt-1 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
+                  id="ai-history-provider-filter"
+                  className="absolute right-0 top-full z-20 mt-1 w-48 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
                 >
                   <div className="max-h-64 overflow-auto">
-                    {repoOptions.map(option => {
-                      const selected = option.repoPath === repoFilter
+                    {providerOptions.map(option => {
+                      const selected = option.provider === providerFilter
                       return (
                         <button
-                          key={option.repoPath}
+                          key={option.provider}
+                          type="button"
+                          className={cn(
+                            "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
+                            selected && "bg-white/10 text-white",
+                            !option.enabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-zinc-300",
+                          )}
+                          disabled={!option.enabled}
+                          onClick={() => {
+                            setProviderFilter(option.provider)
+                            setProviderPickerOpen(false)
+                            setSelectedChatId(null)
+                            setChatDetailsById({})
+                          }}
+                          title={option.enabled ? option.label : `${option.label}は未対応`}
+                        >
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                            {option.label}
+                          </span>
+                          {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="relative min-w-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 max-w-[120px] justify-start gap-1.5 border-[#303030] bg-[#111111] px-2 text-zinc-200 hover:bg-white/10 hover:text-white"
+                onClick={() => {
+                  setScopePickerOpen(open => !open)
+                  setProviderPickerOpen(false)
+                }}
+                aria-expanded={scopePickerOpen}
+                aria-controls="ai-history-scope-filter"
+                title={currentScopeOption?.title ?? "全体"}
+              >
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                <span className="min-w-0 truncate text-xs">{currentScopeOption?.label ?? "全体"}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+              </Button>
+              {scopePickerOpen && (
+                <div
+                  id="ai-history-scope-filter"
+                  className="absolute right-0 top-full z-20 mt-1 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[#303030] bg-[#171717] p-1 shadow-xl shadow-black/40"
+                >
+                  <div className="max-h-64 overflow-auto">
+                    {scopeOptions.map(option => {
+                      const selected = option.scope === historyScope
+                      return (
+                        <button
+                          key={`${option.scope}:${option.repoPath}`}
                           type="button"
                           className={cn(
                             "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
                             selected && "bg-white/10 text-white",
                           )}
                           onClick={() => {
+                            setHistoryScope(option.scope)
                             setRepoFilter(option.repoPath)
-                            setRepoPickerOpen(false)
+                            setScopePickerOpen(false)
+                            setSelectedChatId(null)
+                            setChatDetailsById({})
                           }}
-                          title={option.repoPath === "all" ? "全体" : option.repoPath}
+                          title={option.title}
                         >
                           <span className="min-w-0 flex-1 truncate text-xs font-medium">
                             {option.label}

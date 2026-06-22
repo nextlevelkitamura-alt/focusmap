@@ -8,7 +8,7 @@ import {
   type TursoProjectRepoScope,
 } from '@/lib/turso/ai-history'
 import { createClient } from '@/utils/supabase/server'
-import type { AiHistoryPlacement, AiHistoryStatus } from '@/types/ai-history'
+import type { AiHistoryPlacement, AiHistoryProvider, AiHistoryScopeFilter, AiHistoryStatus } from '@/types/ai-history'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -161,6 +161,8 @@ export async function loadAiHistoryProjectContext(input: {
 export async function buildAiHistorySyncState(input: {
   userId: string
   selectedRepo: 'all' | string
+  selectedScope: AiHistoryScopeFilter
+  selectedProvider: AiHistoryProvider
   scopes: TursoProjectRepoScope[]
   lastIndexedAt: string | null
 }) {
@@ -189,6 +191,26 @@ export async function buildAiHistorySyncState(input: {
     enabled: scope.sync_enabled,
     agentSeen: agentSeenRepos.has(scope.repo_path),
   }))
+  const providerOptions = [
+    {
+      provider: 'codex_app',
+      label: 'Codex',
+      enabled: true,
+      agentSeen: freshHeartbeats.length > 0,
+    },
+    {
+      provider: 'claude_code',
+      label: 'Claude Code',
+      enabled: false,
+      agentSeen: false,
+    },
+    {
+      provider: 'antigravity',
+      label: 'Antigravity',
+      enabled: false,
+      agentSeen: false,
+    },
+  ]
   const featureEnabled = repoOptions.some(option => option.enabled)
   const agentConnected = freshHeartbeats.length > 0
 
@@ -197,6 +219,9 @@ export async function buildAiHistorySyncState(input: {
     aiOnline: featureEnabled && agentConnected,
     agentConnected,
     selectedRepo: input.selectedRepo,
+    selectedScope: input.selectedScope,
+    selectedProvider: input.selectedProvider,
+    providerOptions,
     repoOptions,
     lastIndexedAt: input.lastIndexedAt,
     lastReconciledAt: maxIso(input.scopes.map(scope => scope.last_reconciled_at)),
