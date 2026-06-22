@@ -82,6 +82,11 @@ describe('codex-thread-monitor state detection', () => {
     expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60 * 60 * 1000);
   });
 
+  test('keeps Codex completion debounce below the visible UI lag target', () => {
+    expect(AWAITING_APPROVAL_STABILITY_MS).toBe(1_000);
+    expect(RESUME_RUNNING_VISIBILITY_MS).toBe(2_000);
+  });
+
   test('fast-watches AI history rollout stat without reading unchanged bodies', () => {
     const scope = { project_id: 'project-rollout-cache', repo_path: '/repo-rollout-cache' };
     const row = {
@@ -456,7 +461,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
   });
 
-  test('keeps a running task running until the completion signal is stable without waiting for thread metadata updates', () => {
+  test('briefly debounces a running task completion without waiting for thread metadata updates', () => {
     const raw = [
       line('2026-06-08T15:49:14.929Z', { type: 'task_started', started_at: 1780933754 }),
       line('2026-06-08T15:49:15.264Z', { type: 'user_message', message: 'やてひねす' }),
@@ -475,7 +480,7 @@ describe('codex-thread-monitor state detection', () => {
     const runningTask = task();
 
     expect(summary.state).toBe('awaiting_approval');
-    expect(taskStateForSummary(runningTask, summary, completeMs + 5_000))
+    expect(taskStateForSummary(runningTask, summary, completeMs + 500))
       .toEqual({ status: 'running', resumed: false });
     expect(taskStateForSummary(runningTask, summary, completeMs + AWAITING_APPROVAL_STABILITY_MS + 1))
       .toEqual({ status: 'awaiting_approval', resumed: false });
@@ -600,11 +605,11 @@ describe('codex-thread-monitor state detection', () => {
     });
     const resumeMs = Date.parse('2026-06-08T15:49:15.264Z');
 
-    expect(taskStateForSummary(oldAwaitingTask, summary, resumeMs + 5_000))
+    expect(taskStateForSummary(oldAwaitingTask, summary, resumeMs + 1_000))
       .toEqual({ status: 'running', resumed: true });
-    expect(taskStateForSummary(oldAwaitingTask, summary, resumeMs + RESUME_RUNNING_VISIBILITY_MS + 1))
+    expect(taskStateForSummary(oldAwaitingTask, summary, Date.parse('2026-06-08T15:49:18.368Z') + 500))
       .toEqual({ status: 'running', resumed: true });
-    expect(taskStateForSummary(oldAwaitingTask, summary, Date.parse('2026-06-08T15:49:18.370Z') + AWAITING_APPROVAL_STABILITY_MS + 1))
+    expect(taskStateForSummary(oldAwaitingTask, summary, Date.parse('2026-06-08T15:49:18.368Z') + AWAITING_APPROVAL_STABILITY_MS + 1))
       .toEqual({ status: 'awaiting_approval', resumed: true });
   });
 

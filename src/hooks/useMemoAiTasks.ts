@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { AiTask } from '@/types/ai-task'
-import { canUseLocalCodexOpenApi } from '@/lib/codex-app-launch'
+import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
 import { getCodexTaskUiState } from '@/lib/codex-run-state'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const RUNNING_CODEX_REFRESH_INTERVAL_MS = 3_000
-const REVIEW_CODEX_REFRESH_INTERVAL_MS = 3_000
+const RUNNING_CODEX_REFRESH_INTERVAL_MS = 1_000
+const REVIEW_CODEX_REFRESH_INTERVAL_MS = 1_000
 const RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS = 5_000
 const PROMPT_WAITING_FAST_SYNC_WINDOW_MS = 3 * 60_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
@@ -87,6 +87,10 @@ function nextPromptWaitingExpiryMs(tasks: Map<string, AiTask>, now = Date.now())
 
 function isPageVisible() {
   return typeof document === 'undefined' || document.visibilityState === 'visible'
+}
+
+function canUseLocalCodexSyncNodeApi() {
+  return typeof window !== 'undefined' && isLocalCodexOpenHost(window.location.hostname)
 }
 
 function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
@@ -223,7 +227,7 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
   ), [localSyncTargets])
 
   useEffect(() => {
-    if (!canUseLocalCodexOpenApi()) return
+    if (!canUseLocalCodexSyncNodeApi()) return
     const targets = localSyncTargets
     if (targets.length === 0) {
       return

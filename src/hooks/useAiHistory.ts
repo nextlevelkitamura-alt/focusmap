@@ -11,7 +11,7 @@ import type {
 } from "@/types/ai-history"
 
 const DEFAULT_LIMIT = 100
-const DEFAULT_POLL_INTERVAL_MS = 3_000
+const DEFAULT_POLL_INTERVAL_MS = 2_000
 
 const EMPTY_RESPONSE: AiHistoryListResponse = {
   items: [],
