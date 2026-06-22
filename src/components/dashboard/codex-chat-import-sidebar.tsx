@@ -2083,7 +2083,7 @@ export function CodexChatImportSidebar({
                             className={cn(
                               "ml-auto h-8 shrink-0 overflow-hidden border border-white/10 bg-white/[0.04] text-zinc-400 transition-[width,background-color,border-color,color] duration-150 hover:border-amber-300/30 hover:bg-amber-400/10 hover:text-amber-100 focus-visible:ring-amber-300/40 disabled:cursor-wait disabled:opacity-70",
                               archiveExpanded
-                                ? "w-[132px] justify-start gap-1.5 px-2.5 text-[11px] font-semibold text-amber-100"
+                                ? "w-[168px] justify-start gap-1.5 px-3 text-[11px] font-semibold text-amber-100"
                                 : "w-8 px-0",
                             )}
                             aria-label={archiveExpanded ? `チャットをアーカイブ ${item.title}` : `アーカイブ操作を開く ${item.title}`}

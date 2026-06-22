@@ -210,6 +210,17 @@ describe("CodexChatImportSidebar", () => {
     )
   })
 
+  test("keeps the expanded archive action wide enough for the Japanese label", () => {
+    renderSidebar()
+
+    const row = screen.getByTestId("codex-chat-import-row-history-1")
+    fireEvent.click(within(row).getByRole("button", { name: /アーカイブ操作を開く AI履歴サイドバーを接続/ }))
+
+    const archiveButton = within(row).getByRole("button", { name: /チャットをアーカイブ AI履歴サイドバーを接続/ })
+    expect(archiveButton).toHaveClass("w-[168px]")
+    expect(within(archiveButton).getByText("チャットをアーカイブ")).toBeInTheDocument()
+  })
+
   test("uses synced current-rally duration for running cards instead of old thread started_at", () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-06-20T00:02:00.000Z"))
