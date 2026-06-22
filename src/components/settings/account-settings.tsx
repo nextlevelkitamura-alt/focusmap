@@ -20,6 +20,7 @@ import {
   SettingsSection,
   SettingsStatusChip,
 } from "@/components/settings/settings-primitives"
+import { clearNativeAuthSession } from "@/lib/external-auth-launch"
 
 interface AccountSettingsProps {
   userEmail: string | undefined
@@ -40,6 +41,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
     setAccountError(null)
     try {
       await window.focusmapDesktop?.clearAuthSession?.().catch(() => undefined)
+      clearNativeAuthSession()
       const res = await fetch('/api/auth/logout', { method: 'POST' })
       if (res.ok) {
         router.push('/login')

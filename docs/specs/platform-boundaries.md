@@ -12,7 +12,7 @@ Verdict: folder separation is good enough to build on, but not yet safe enough t
 |---|---|---|---|
 | Web app / PWA | `src/`, `public/` | separated | Owns product UI, API routes, Supabase/Turso access, service worker, and PWA manifest. Must stay deployable to Cloud Run without any desktop/mobile runtime. |
 | Mac desktop shell | `desktop/focusmap-mac/` | separated but Mac-specific | Electron shell. Owns local Next startup, auth session restore, local process supervision, OS clipboard, `codex://`, and Codex app-server startup. The folder name is accurate: this is not a Windows shell yet. |
-| iOS app shell | `mobile/focusmap-app/` | separated | Expo/React Native WebView wrapper. Owns native external-open and clipboard bridges for iOS. It should stay a thin shell over the Web app. |
+| iOS app shell | `mobile/focusmap-app/` | separated | Expo/React Native WebView wrapper. Owns native external-open, clipboard, and Keychain auth-session bridges for iOS. It should stay a thin shell over the Web app. |
 | Local agent | `scripts/focusmap-agent/` | separated but Mac-biased | Node CLI sidecar. Owns ai_task claiming, heartbeat, Playwright/GWS/local command execution, and Codex monitoring. The code should become platform-adapted here before Windows automation is shipped. |
 | Legacy Mac install scripts | `scripts/install.sh`, `scripts/run-*.sh`, `scripts/*.plist` | Mac-specific | Keep these as Mac setup/compatibility paths. Do not reuse them for Windows packaging. |
 
@@ -75,6 +75,7 @@ Allowed responsibilities:
 - Load `https://focusmap-official.com/dashboard` or configured preview URL in a WebView.
 - Add `source=ios-app&standalone=1`.
 - Handle iOS external URL opening and clipboard bridge messages.
+- Store and restore the Focusmap Supabase session in iOS Keychain through a narrow WebView message bridge.
 - Inject resume/focus events into the WebView.
 
 Forbidden responsibilities:

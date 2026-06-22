@@ -64,6 +64,14 @@ export type FocusmapDesktopAuthSession = {
   user_id?: string | null
 }
 
+export type FocusmapNativeAuthSession = FocusmapDesktopAuthSession
+
+type NativeAuthSessionResponse = {
+  requestId?: string
+  session?: FocusmapNativeAuthSession | null
+  error?: string | null
+}
+
 export type FocusmapDesktopAutomationServiceStatus = {
   ready?: boolean
   enabled?: boolean
@@ -168,6 +176,12 @@ export function isFocusmapDesktopShell() {
   )
 }
 
+function postNativeWebViewMessage(message: Record<string, unknown>) {
+  if (typeof window === 'undefined' || !window.ReactNativeWebView?.postMessage) return false
+  window.ReactNativeWebView.postMessage(JSON.stringify(message))
+  return true
+}
+
 export async function openExternalAuthUrl(url: string) {
   if (typeof window === 'undefined') return
 
@@ -176,15 +190,63 @@ export async function openExternalAuthUrl(url: string) {
     return
   }
 
-  if (window.ReactNativeWebView?.postMessage) {
-    window.ReactNativeWebView.postMessage(JSON.stringify({
+  if (postNativeWebViewMessage({
       type: 'focusmap:openExternal',
       url,
-    }))
+    })
+  ) {
     return
   }
 
   window.location.href = url
+}
+
+export function saveNativeAuthSession(session: FocusmapNativeAuthSession) {
+  if (!session.access_token || !session.refresh_token) return false
+  return postNativeWebViewMessage({
+    type: 'focusmap:saveAuthSession',
+    session,
+  })
+}
+
+export function clearNativeAuthSession() {
+  return postNativeWebViewMessage({
+    type: 'focusmap:clearAuthSession',
+  })
+}
+
+export function loadNativeAuthSession(timeoutMs = 1800): Promise<FocusmapNativeAuthSession | null> {
+  if (typeof window === 'undefined' || !window.ReactNativeWebView?.postMessage) {
+    return Promise.resolve(null)
+  }
+
+  const requestId = crypto.randomUUID()
+
+  return new Promise(resolve => {
+    let settled = false
+    let timeout: number | undefined
+
+    function finish(session: FocusmapNativeAuthSession | null) {
+      if (settled) return
+      settled = true
+      window.removeEventListener('focusmap:native-auth-session', handleResponse)
+      if (timeout !== undefined) clearTimeout(timeout)
+      resolve(session)
+    }
+
+    function handleResponse(event: Event) {
+      const detail = (event as CustomEvent<NativeAuthSessionResponse>).detail
+      if (!detail || detail.requestId !== requestId) return
+      finish(detail.session?.access_token && detail.session.refresh_token ? detail.session : null)
+    }
+
+    timeout = window.setTimeout(() => finish(null), timeoutMs)
+    window.addEventListener('focusmap:native-auth-session', handleResponse)
+    postNativeWebViewMessage({
+      type: 'focusmap:loadAuthSession',
+      requestId,
+    })
+  })
 }
 
 function currentCalendarOAuthNext() {

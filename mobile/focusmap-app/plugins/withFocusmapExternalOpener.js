@@ -9,10 +9,14 @@ const BRIDGING_IMPORT = "#import <React/RCTBridgeModule.h>";
 
 const SWIFT_SOURCE = `import Foundation
 import UIKit
+import Security
 import UniformTypeIdentifiers
 
 @objc(FocusmapExternalOpener)
 class FocusmapExternalOpener: NSObject {
+  private let authSessionService = "com.focusmap.mobile.auth-session"
+  private let authSessionAccount = "focusmap-session"
+
   @objc
   static func requiresMainQueueSetup() -> Bool {
     return true
@@ -37,6 +41,61 @@ class FocusmapExternalOpener: NSObject {
           reject("universal_link_unavailable", "Universal link was not handled by an installed app", nil)
         }
       }
+    }
+  }
+
+  @objc(saveAuthSession:resolver:rejecter:)
+  func saveAuthSession(
+    session: NSDictionary,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    guard JSONSerialization.isValidJSONObject(session) else {
+      reject("invalid_session", "Invalid auth session payload", nil)
+      return
+    }
+
+    do {
+      let data = try JSONSerialization.data(withJSONObject: session, options: [])
+      try saveAuthSessionData(data)
+      resolve(true)
+    } catch {
+      reject("save_failed", "Failed to save auth session", error)
+    }
+  }
+
+  @objc(loadAuthSession:rejecter:)
+  func loadAuthSession(
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    guard let data = loadAuthSessionData() else {
+      resolve(nil)
+      return
+    }
+
+    do {
+      let object = try JSONSerialization.jsonObject(with: data, options: [])
+      guard let session = object as? [String: Any] else {
+        resolve(nil)
+        return
+      }
+      resolve(session)
+    } catch {
+      reject("load_failed", "Failed to load auth session", error)
+    }
+  }
+
+  @objc(clearAuthSession:rejecter:)
+  func clearAuthSession(
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    do {
+      try clearAuthSessionData()
+      resolve(true)
+    } catch {
+      reject("clear_failed", "Failed to clear auth session", error)
     }
   }
 
@@ -124,6 +183,54 @@ class FocusmapExternalOpener: NSObject {
       completion(image.pngData())
     }.resume()
   }
+
+  private func authSessionKeychainQuery() -> [String: Any] {
+    return [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: authSessionService,
+      kSecAttrAccount as String: authSessionAccount
+    ]
+  }
+
+  private func saveAuthSessionData(_ data: Data) throws {
+    let query = authSessionKeychainQuery()
+    SecItemDelete(query as CFDictionary)
+
+    var item = query
+    item[kSecValueData as String] = data
+    item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+
+    let status = SecItemAdd(item as CFDictionary, nil)
+    if status != errSecSuccess {
+      throw NSError(
+        domain: "FocusmapExternalOpener",
+        code: Int(status),
+        userInfo: [NSLocalizedDescriptionKey: "Keychain save failed: \\(status)"]
+      )
+    }
+  }
+
+  private func loadAuthSessionData() -> Data? {
+    var query = authSessionKeychainQuery()
+    query[kSecReturnData as String] = true
+    query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+    var result: AnyObject?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    guard status == errSecSuccess else { return nil }
+    return result as? Data
+  }
+
+  private func clearAuthSessionData() throws {
+    let status = SecItemDelete(authSessionKeychainQuery() as CFDictionary)
+    if status != errSecSuccess && status != errSecItemNotFound {
+      throw NSError(
+        domain: "FocusmapExternalOpener",
+        code: Int(status),
+        userInfo: [NSLocalizedDescriptionKey: "Keychain delete failed: \\(status)"]
+      )
+    }
+  }
 }
 `;
 
@@ -142,6 +249,16 @@ RCT_EXTERN_METHOD(copyCodexHandoff:(NSString *)text
 
 RCT_EXTERN_METHOD(copyCodexImage:(NSString *)imageUrl
                   resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(saveAuthSession:(NSDictionary *)session
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(loadAuthSession:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(clearAuthSession:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
 @end

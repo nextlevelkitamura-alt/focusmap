@@ -7,7 +7,13 @@ import { useState, useEffect, Suspense, useCallback, useMemo } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { isFocusmapIosAppShell, openExternalAuthUrl } from "@/lib/external-auth-launch"
+import {
+    clearNativeAuthSession,
+    isFocusmapIosAppShell,
+    loadNativeAuthSession,
+    openExternalAuthUrl,
+    saveNativeAuthSession,
+} from "@/lib/external-auth-launch"
 import type { Session } from "@supabase/supabase-js"
 
 const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
@@ -86,38 +92,61 @@ function LoginContent() {
         return text
     }
 
-    const saveDesktopSession = useCallback(async (session: Session | {
+    const saveShellSession = useCallback(async (session: Session | {
         access_token?: string | null
         refresh_token?: string | null
         expires_at?: number | null
         user?: { id?: string | null } | null
         user_id?: string | null
     } | null) => {
-        if (!isDesktopShell || !window.focusmapDesktop?.saveAuthSession || !session?.access_token || !session.refresh_token) {
+        if (!session?.access_token || !session.refresh_token) {
             return
         }
-        await window.focusmapDesktop.saveAuthSession({
+        const payload = {
             access_token: session.access_token,
             refresh_token: session.refresh_token,
             expires_at: typeof session.expires_at === 'number' ? session.expires_at : null,
             user_id: session.user?.id ?? ('user_id' in session ? session.user_id ?? null : null),
-        })
-    }, [isDesktopShell])
-
-    const restoreDesktopSession = useCallback(async () => {
-        if (!isDesktopShell || !window.focusmapDesktop?.loadAuthSession) return false
-        const saved = await window.focusmapDesktop.loadAuthSession()
-        if (!saved.ok || !saved.session?.access_token || !saved.session.refresh_token) return false
-        const { error } = await supabase.auth.setSession({
-            access_token: saved.session.access_token,
-            refresh_token: saved.session.refresh_token,
-        })
-        if (error) {
-            await window.focusmapDesktop.clearAuthSession?.()
-            return false
         }
-        return true
-    }, [isDesktopShell, supabase])
+        if (isDesktopShell && window.focusmapDesktop?.saveAuthSession) {
+            await window.focusmapDesktop.saveAuthSession(payload)
+        }
+        if (isIosAppShell) {
+            saveNativeAuthSession(payload)
+        }
+    }, [isDesktopShell, isIosAppShell])
+
+    const restoreShellSession = useCallback(async () => {
+        if (isDesktopShell && window.focusmapDesktop?.loadAuthSession) {
+            const saved = await window.focusmapDesktop.loadAuthSession()
+            if (!saved.ok || !saved.session?.access_token || !saved.session.refresh_token) return false
+            const { error } = await supabase.auth.setSession({
+                access_token: saved.session.access_token,
+                refresh_token: saved.session.refresh_token,
+            })
+            if (error) {
+                await window.focusmapDesktop.clearAuthSession?.()
+                return false
+            }
+            return true
+        }
+
+        if (isIosAppShell) {
+            const saved = await loadNativeAuthSession()
+            if (!saved?.access_token || !saved.refresh_token) return false
+            const { error } = await supabase.auth.setSession({
+                access_token: saved.access_token,
+                refresh_token: saved.refresh_token,
+            })
+            if (error) {
+                clearNativeAuthSession()
+                return false
+            }
+            return true
+        }
+
+        return false
+    }, [isDesktopShell, isIosAppShell, supabase])
 
     const checkSupabaseAuthAvailable = async () => {
         const response = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
@@ -149,7 +178,7 @@ function LoginContent() {
         const checkUser = async () => {
             let { data: { user } } = await supabase.auth.getUser()
             if (!user) {
-                const restored = await restoreDesktopSession()
+                const restored = await restoreShellSession()
                 if (restored) {
                     const restoredUser = await supabase.auth.getUser()
                     user = restoredUser.data.user
@@ -164,21 +193,22 @@ function LoginContent() {
         return () => {
             cancelled = true
         }
-    }, [supabase, router, dashboardPath, restoreDesktopSession])
+    }, [supabase, router, dashboardPath, restoreShellSession])
 
     useEffect(() => {
-        if (!isDesktopShell) return
+        if (!isDesktopShell && !isIosAppShell) return
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === 'SIGNED_OUT') {
                 window.focusmapDesktop?.clearAuthSession?.()
+                clearNativeAuthSession()
                 return
             }
             if (session) {
-                saveDesktopSession(session).catch(() => {})
+                saveShellSession(session).catch(() => {})
             }
         })
         return () => subscription.unsubscribe()
-    }, [supabase, isDesktopShell, saveDesktopSession])
+    }, [supabase, isDesktopShell, isIosAppShell, saveShellSession])
 
     const handleGoogleLogin = async () => {
         setLoading(true)
@@ -208,7 +238,7 @@ function LoginContent() {
                             refresh_token: payload.refresh_token,
                         })
                         if (sessionError) throw sessionError
-                        await saveDesktopSession({
+                        await saveShellSession({
                             access_token: payload.access_token,
                             refresh_token: payload.refresh_token,
                             expires_at: typeof payload.expires_at === 'number' ? payload.expires_at : null,
@@ -257,7 +287,7 @@ function LoginContent() {
                 password,
             })
             if (error) throw error
-            await saveDesktopSession(data.session)
+            await saveShellSession(data.session)
             router.push(dashboardPath)
         } catch (error: unknown) {
             setMessage({ type: 'error', text: formatAuthError(error) })

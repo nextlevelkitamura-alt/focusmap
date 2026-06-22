@@ -32,6 +32,8 @@ npm run ios:install:free
 
 GoogleログインとGoogle Calendar連携は、アプリ内WebViewではなくSafariで認証します。認証が完了すると `focusmap://...` でFocusmapアプリへ戻り、WebView側にログイン状態またはカレンダー連携状態を反映します。
 
+Googleログイン後のFocusmapセッションはiOS Keychainにも保存されます。次回起動時は最初にWebView内の復元ページを通り、WebViewのcookieが消えていても保存済みセッションから自動でログイン状態を戻します。明示的にログアウトした場合はKeychain側の保存セッションも削除されます。
+
 Safariから自動で戻らない場合は、画面内の「アプリへ戻る」をタップしてください。
 
 Xcodeのダウンロード完了後、明朝にまとめて進める場合:

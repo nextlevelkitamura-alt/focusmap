@@ -78,9 +78,19 @@ type FocusmapExternalOpenerModule = {
   openUniversalLink?: (url: string) => Promise<boolean>;
   copyCodexHandoff?: (text: string, imageUrl?: string | null) => Promise<boolean>;
   copyCodexImage?: (imageUrl?: string | null) => Promise<boolean>;
+  saveAuthSession?: (session: NativeAuthSession) => Promise<boolean>;
+  loadAuthSession?: () => Promise<NativeAuthSession | null>;
+  clearAuthSession?: () => Promise<boolean>;
 };
 
 const focusmapExternalOpener = NativeModules.FocusmapExternalOpener as FocusmapExternalOpenerModule | undefined;
+
+type NativeAuthSession = {
+  access_token: string;
+  refresh_token: string;
+  expires_at?: number | null;
+  user_id?: string | null;
+};
 
 function buildFocusmapUrl() {
   const configuredUrl = process.env.EXPO_PUBLIC_FOCUSMAP_URL?.trim() || DEFAULT_FOCUSMAP_URL;
@@ -92,6 +102,19 @@ function buildFocusmapUrl() {
     return url.toString();
   } catch {
     return `${DEFAULT_FOCUSMAP_URL}?source=ios-app&standalone=1`;
+  }
+}
+
+function buildStartupUrl(targetUrl: string) {
+  try {
+    const target = new URL(targetUrl);
+    const url = new URL("/auth/native-bridge", target.origin);
+    url.searchParams.set("restore", "1");
+    url.searchParams.set("next", `${target.pathname}${target.search}${target.hash}`);
+    withAppParams(url);
+    return url.toString();
+  } catch {
+    return targetUrl;
   }
 }
 
@@ -115,6 +138,61 @@ function normalizeExternalUrlCandidates(primaryUrl: string, urls?: string[]) {
   return [...new Set([primaryUrl, ...(urls || [])]
     .map(url => url.trim())
     .filter(Boolean))];
+}
+
+function normalizeNativeAuthSession(value: unknown): NativeAuthSession | null {
+  const session = value as Partial<NativeAuthSession> | null;
+  if (!session || typeof session !== "object") return null;
+  if (typeof session.access_token !== "string" || typeof session.refresh_token !== "string") return null;
+  if (!session.access_token || !session.refresh_token) return null;
+  return {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_at: typeof session.expires_at === "number" ? session.expires_at : null,
+    user_id: typeof session.user_id === "string" ? session.user_id : null,
+  };
+}
+
+function decodeNativeAuthSessionPayload(value: string | null): NativeAuthSession | null {
+  if (!value) return null;
+  try {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const atobFn = (globalThis as typeof globalThis & { atob?: (data: string) => string }).atob;
+    if (typeof atobFn !== "function") return null;
+    const decoded = atobFn(padded);
+    return normalizeNativeAuthSession(JSON.parse(decoded));
+  } catch {
+    return null;
+  }
+}
+
+async function saveAuthSessionToNative(session: NativeAuthSession | null) {
+  if (!session || !focusmapExternalOpener?.saveAuthSession) return false;
+  try {
+    await focusmapExternalOpener.saveAuthSession(session);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadAuthSessionFromNative() {
+  if (!focusmapExternalOpener?.loadAuthSession) return null;
+  try {
+    return normalizeNativeAuthSession(await focusmapExternalOpener.loadAuthSession());
+  } catch {
+    return null;
+  }
+}
+
+async function clearAuthSessionFromNative() {
+  if (!focusmapExternalOpener?.clearAuthSession) return;
+  try {
+    await focusmapExternalOpener.clearAuthSession();
+  } catch {
+    // Ignore native storage cleanup failures; the Web session is still signed out.
+  }
 }
 
 function shouldOpenAsUniversalLinkOnly(url: string) {
@@ -395,7 +473,7 @@ export default function App() {
   const hasPresentedWebContentRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [focusmapUrl] = useState(buildFocusmapUrl);
-  const [webViewUrl, setWebViewUrl] = useState(focusmapUrl);
+  const [webViewUrl, setWebViewUrl] = useState(() => buildStartupUrl(focusmapUrl));
   const [loadProgress, setLoadProgress] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
   const [hasPresentedWebContent, setHasPresentedWebContent] = useState(false);
@@ -446,6 +524,27 @@ export default function App() {
     setWebViewUrl(buildInternalUrl(pathOrUrl, params));
   }, [buildInternalUrl, prepareForWebViewLoad]);
 
+  const emitNativeAuthSessionResponse = useCallback((
+    requestId: string | undefined,
+    session: NativeAuthSession | null,
+    errorMessage?: string | null,
+  ) => {
+    if (!requestId) return;
+    const detail = JSON.stringify({
+      requestId,
+      session,
+      error: errorMessage || null,
+    });
+    webViewRef.current?.injectJavaScript(`
+      (() => {
+        try {
+          window.dispatchEvent(new CustomEvent("focusmap:native-auth-session", { detail: ${detail} }));
+        } catch {}
+        return true;
+      })();
+    `);
+  }, []);
+
   const handleShouldStartLoad = (request: WebViewNavigation) => {
     if (!request.url || request.url === "about:blank") return true;
 
@@ -472,11 +571,20 @@ export default function App() {
       if (url.hostname === "auth-complete") {
         const nonce = url.searchParams.get("nonce");
         const next = url.searchParams.get("next") || "/dashboard";
+        const payload = url.searchParams.get("payload");
         if (!nonce) {
           Alert.alert("ログインを反映できません", "ログイン情報が見つかりませんでした。");
           return;
         }
-        navigateInsideApp("/auth/native-bridge", { nonce, next });
+        void (async () => {
+          const session = decodeNativeAuthSessionPayload(payload);
+          if (session) await saveAuthSessionToNative(session);
+          navigateInsideApp("/auth/native-bridge", {
+            nonce,
+            next,
+            ...(payload ? { payload } : {}),
+          });
+        })();
         return;
       }
 
@@ -497,6 +605,8 @@ export default function App() {
         urls?: string[];
         text?: string;
         imageUrl?: string | null;
+        requestId?: string;
+        session?: unknown;
       };
       if (payload.type === "focusmap:web-content-ready") {
         markWebContentPresented();
@@ -517,6 +627,23 @@ export default function App() {
       }
       if (payload.type === "focusmap:copyCodexImage") {
         void copyCodexImageToClipboard(payload.imageUrl);
+        return;
+      }
+      if (payload.type === "focusmap:saveAuthSession") {
+        void saveAuthSessionToNative(normalizeNativeAuthSession(payload.session));
+        return;
+      }
+      if (payload.type === "focusmap:loadAuthSession") {
+        void loadAuthSessionFromNative()
+          .then(session => emitNativeAuthSessionResponse(payload.requestId, session))
+          .catch(error => {
+            const detail = error instanceof Error ? error.message : String(error);
+            emitNativeAuthSessionResponse(payload.requestId, null, detail);
+          });
+        return;
+      }
+      if (payload.type === "focusmap:clearAuthSession") {
+        void clearAuthSessionFromNative();
         return;
       }
       if (payload.type === "focusmap:copyCodexHandoffAndOpenExternal" && payload.url) {

@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
-import { isFocusmapDesktopShell } from "@/lib/external-auth-launch"
+import { clearNativeAuthSession, isFocusmapDesktopShell } from "@/lib/external-auth-launch"
 import { useAgentConnection, type AgentConnectionState } from "@/components/chat/agent-status-chip"
 import { OPEN_CODEX_CHAT_IMPORT_EVENT } from "@/lib/codex-chat-import-events"
 
@@ -91,6 +91,7 @@ export function Header({
 
     const handleLogout = async () => {
         await window.focusmapDesktop?.clearAuthSession?.().catch(() => undefined)
+        clearNativeAuthSession()
         await supabase.auth.signOut()
         router.refresh()
         router.push("/login")

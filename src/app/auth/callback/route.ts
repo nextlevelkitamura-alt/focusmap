@@ -49,10 +49,26 @@ function desktopAuthDonePage(payload?: {
 </html>`
 }
 
-function nativeAuthDonePage(nonce: string, next: string) {
+function nativeAuthDonePage(payload: {
+    nonce: string
+    next: string
+    access_token?: string | null
+    refresh_token?: string | null
+    expires_at?: number | null
+    user_id?: string | null
+}) {
     const deepLink = new URL('focusmap://auth-complete')
-    deepLink.searchParams.set('nonce', nonce)
-    deepLink.searchParams.set('next', next || '/dashboard')
+    deepLink.searchParams.set('nonce', payload.nonce)
+    deepLink.searchParams.set('next', payload.next || '/dashboard')
+    if (payload.access_token && payload.refresh_token) {
+        deepLink.searchParams.set('payload', encodeDesktopDeepLinkPayload({
+            nonce: payload.nonce,
+            access_token: payload.access_token,
+            refresh_token: payload.refresh_token,
+            expires_at: payload.expires_at ?? null,
+            user_id: payload.user_id ?? null,
+        }))
+    }
     const safeDeepLink = deepLink.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;')
     const scriptDeepLink = JSON.stringify(deepLink.toString())
 
@@ -154,7 +170,14 @@ export async function GET(request: Request) {
                     userId: data.user.id,
                     expiresAt: data.session.expires_at ?? null,
                 })
-                return new NextResponse(nativeAuthDonePage(nativeNonce, next), {
+                return new NextResponse(nativeAuthDonePage({
+                    nonce: nativeNonce,
+                    next,
+                    access_token: data.session.access_token,
+                    refresh_token: data.session.refresh_token,
+                    expires_at: data.session.expires_at ?? null,
+                    user_id: data.user.id,
+                }), {
                     headers: { 'Content-Type': 'text/html; charset=utf-8' },
                 })
             }
