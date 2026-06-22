@@ -106,4 +106,23 @@ describe('POST /api/agents/ai-history/batch-upsert', () => {
       repo_path: '/repo',
     }))
   })
+
+  test('uses a friendly placeholder title when runner omits title', async () => {
+    const response = await POST(request({
+      runner_id: 'runner-1',
+      provider: 'codex_app',
+      items: [{
+        externalThreadId: 'thread-no-title',
+        repoPath: '/repo',
+        status: 'idle',
+        lastActivityAt: '2026-06-20T00:00:00.000Z',
+      }],
+    }))
+
+    expect(response.status).toBe(200)
+    expect(upsertAiHistoryItemMock).toHaveBeenCalledWith(expect.objectContaining({
+      external_thread_id: 'thread-no-title',
+      title: '新しいチャット',
+    }))
+  })
 })

@@ -21,6 +21,7 @@ const VALID_EXECUTORS = ['codex_app', 'codex'] as const
 const MAX_ITEMS = 200
 const MAX_SCOPES = 100
 const MAX_METADATA_JSON_CHARS = 8_000
+const AI_HISTORY_PLACEHOLDER_TITLE = '新しいチャット'
 const BLOCKED_METADATA_KEYS = new Set([
   'body',
   'full_body',
@@ -305,7 +306,7 @@ function normalizedItem(
   const sourceTaskId = usableSourceTaskId(rawSourceTaskId, sourceTasks)
   const preferredProjectId = compactString(field(record, 'projectId', 'project_id'), 120) ?? defaults.projectId
   const projectId = projectIdFor(preferredProjectId, allowedProjects, rawSourceTaskId, sourceTasks)
-  const title = compactString(field(record, 'title'), 300) ?? `Codex thread ${externalThreadId.slice(0, 8)}`
+  const title = compactString(field(record, 'title'), 300) ?? AI_HISTORY_PLACEHOLDER_TITLE
   const lastActivityAt = isoString(field(record, 'lastActivityAt', 'last_activity_at')) ?? new Date().toISOString()
   const archived = booleanValue(field(record, 'archived')) ?? false
   const metadata = sanitizeMetadata(field(record, 'metadata', 'metadataJson', 'metadata_json'))

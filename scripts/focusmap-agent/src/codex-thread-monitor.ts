@@ -53,6 +53,8 @@ const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
 const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
+export const AI_HISTORY_PLACEHOLDER_TITLE = '新しいチャット';
+const AI_HISTORY_PLACEHOLDER_TITLE_WATCH_TTL_MS = 5 * 60 * 1000;
 const MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST = 50;
 export const AI_HISTORY_STALE_RUNNING_GENERAL_MS = 2 * 60 * 60 * 1000;
 export const AI_HISTORY_STALE_RUNNING_AUTOMATION_MS = 30 * 60 * 1000;
@@ -79,6 +81,12 @@ const taskRolloutInspectCache = new Map<string, { fingerprint: string; nextInspe
 const aiHistoryDetailSyncCache = new Map<string, { hash: string; sentAt: number }>();
 const aiHistoryDetailWatchRequests = new Map<string, AiHistoryDetailHydrateRequest>();
 const aiHistoryDetailRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
+const aiHistoryPlaceholderTitleWatch = new Map<string, {
+  projectId: string;
+  repoPath: string;
+  externalThreadId: string;
+  expiresAt: number;
+}>();
 let aiHistoryDetailHydrateApiUnavailableUntil = 0;
 let aiHistoryDetailHydrateContractFailed = false;
 
@@ -414,7 +422,7 @@ async function readThread(dbPath: string, threadId: string): Promise<CodexThread
   const rows = await sqliteJson<CodexThreadRow>(
     dbPath,
     [
-      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, preview, rollout_path, source, cwd, first_user_message',
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, cwd, first_user_message',
       'FROM threads',
       `WHERE id = ${sqlString(threadId)}`,
       'LIMIT 1',
@@ -994,6 +1002,75 @@ function aiHistoryRolloutInspectKey(
   ].join('\u001f');
 }
 
+function aiHistoryPlaceholderTitleWatchKey(
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  externalThreadId: string,
+): string {
+  return [
+    AI_HISTORY_PROVIDER,
+    typeof scope.project_id === 'string' ? scope.project_id.trim() : '',
+    normalizeLocalPath(scope.repo_path),
+    externalThreadId,
+  ].join('\u001f');
+}
+
+function activeAiHistoryPlaceholderTitleWatches(nowMs = Date.now()) {
+  const entries: Array<{
+    key: string;
+    projectId: string;
+    repoPath: string;
+    externalThreadId: string;
+  }> = [];
+  for (const [key, watch] of aiHistoryPlaceholderTitleWatch.entries()) {
+    if (watch.expiresAt <= nowMs) {
+      aiHistoryPlaceholderTitleWatch.delete(key);
+      continue;
+    }
+    entries.push({ key, ...watch });
+  }
+  return entries;
+}
+
+export function markAiHistoryPlaceholderTitleWatch(
+  row: Pick<CodexThreadRow, 'id'>,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  nowMs = Date.now(),
+): void {
+  const projectId = typeof scope.project_id === 'string' ? scope.project_id.trim() : '';
+  const repoPath = normalizeLocalPath(scope.repo_path);
+  if (!row.id || !projectId || !repoPath) return;
+  aiHistoryPlaceholderTitleWatch.set(aiHistoryPlaceholderTitleWatchKey(scope, row.id), {
+    projectId,
+    repoPath,
+    externalThreadId: row.id,
+    expiresAt: nowMs + AI_HISTORY_PLACEHOLDER_TITLE_WATCH_TTL_MS,
+  });
+}
+
+function clearAiHistoryPlaceholderTitleWatch(
+  row: Pick<CodexThreadRow, 'id'>,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+): void {
+  if (!row.id) return;
+  aiHistoryPlaceholderTitleWatch.delete(aiHistoryPlaceholderTitleWatchKey(scope, row.id));
+}
+
+export function shouldInspectAiHistoryPlaceholderTitle(
+  row: Pick<CodexThreadRow, 'id'>,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  nowMs = Date.now(),
+): boolean {
+  if (!row.id) return false;
+  const key = aiHistoryPlaceholderTitleWatchKey(scope, row.id);
+  const watch = aiHistoryPlaceholderTitleWatch.get(key);
+  if (!watch) return false;
+  if (watch.expiresAt <= nowMs) {
+    aiHistoryPlaceholderTitleWatch.delete(key);
+    return false;
+  }
+  return true;
+}
+
 export function shouldInspectAiHistoryRollout(
   row: CodexThreadRow,
   scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
@@ -1246,10 +1323,15 @@ export function aiHistoryPresentationForThread(input: {
   };
 }
 
-function aiHistoryTitle(row: CodexThreadRow): string {
+export function isAiHistoryPlaceholderTitle(value: string | null | undefined): boolean {
+  const title = compactText(value ?? '', 300);
+  return title === AI_HISTORY_PLACEHOLDER_TITLE || /^Codex thread [0-9a-z-]+$/iu.test(title);
+}
+
+export function aiHistoryTitle(row: CodexThreadRow): string {
   return codexThreadGeneratedTitle(row) ??
     oneLineTitle(row.preview, 80) ??
-    `Codex thread ${row.id.slice(0, 8)}`;
+    AI_HISTORY_PLACEHOLDER_TITLE;
 }
 
 function aiHistorySnippet(row: CodexThreadRow): string | null {
@@ -1317,6 +1399,20 @@ function shouldQueueAiHistoryItem(prepared: PreparedAiHistoryItem): boolean {
     if (withoutRunningVolatileFields(cached.hash) === withoutRunningVolatileFields(prepared.hash)) return false;
   }
   return true;
+}
+
+function updateAiHistoryPlaceholderTitleWatch(prepared: PreparedAiHistoryItem, nowMs = Date.now()): void {
+  const externalThreadId = typeof prepared.item.externalThreadId === 'string' ? prepared.item.externalThreadId : '';
+  const scope = {
+    project_id: typeof prepared.item.projectId === 'string' ? prepared.item.projectId : '',
+    repo_path: typeof prepared.item.repoPath === 'string' ? prepared.item.repoPath : '',
+  };
+  if (!externalThreadId || !scope.project_id || !scope.repo_path) return;
+  if (isAiHistoryPlaceholderTitle(prepared.item.title ?? null)) {
+    markAiHistoryPlaceholderTitleWatch({ id: externalThreadId }, scope, nowMs);
+  } else {
+    clearAiHistoryPlaceholderTitleWatch({ id: externalThreadId }, scope);
+  }
 }
 
 function aiHistoryItemFromThread(input: {
@@ -2146,11 +2242,13 @@ async function sendAiHistoryMetadataBatch(
       const responseItemsByIndex = new Map((response.items ?? []).map(item => [item.index, item]));
       chunk.forEach((prepared, index) => {
         if (erroredIndexes.has(index)) return;
+        const sentAt = Date.now();
         aiHistorySyncCache.set(prepared.cacheKey, {
           hash: prepared.hash,
-          sentAt: Date.now(),
+          sentAt,
           running: prepared.running,
         });
+        updateAiHistoryPlaceholderTitleWatch(prepared, sentAt);
         markPreparedAiHistoryRolloutInspected(prepared);
       });
       for (const [index, prepared] of chunk.entries()) {
@@ -2200,12 +2298,43 @@ async function syncAiHistoryMetadata(
   const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
   if (repoPaths.length === 0) return 0;
   const sinceMs = mode === 'reconcile' ? 0 : orphanImportSinceMs(importScopes, now, 'hot');
-  const rows = await readRecentThreads(
+  const recentRows = await readRecentThreads(
     dbPath,
     sinceMs,
     repoPaths,
     mode === 'reconcile' ? ORPHAN_IMPORT_SCAN_LIMIT : AI_HISTORY_FAST_WATCH_LIMIT,
   );
+  const rowsById = new Map(recentRows.map(row => [row.id, row]));
+  const watchedRows: CodexThreadRow[] = [];
+  const watchedRowIds = new Set<string>();
+  if (mode === 'hot') {
+    for (const watch of activeAiHistoryPlaceholderTitleWatches(now)) {
+      const scopeStillEnabled = importScopes.some(scope => (
+        typeof scope.project_id === 'string' &&
+        scope.project_id.trim() === watch.projectId &&
+        normalizeLocalPath(scope.repo_path) === watch.repoPath
+      ));
+      if (!scopeStillEnabled) {
+        aiHistoryPlaceholderTitleWatch.delete(watch.key);
+        continue;
+      }
+      try {
+        const watchedRow = rowsById.get(watch.externalThreadId) ?? await readThread(dbPath, watch.externalThreadId);
+        if (watchedRow) {
+          rowsById.set(watchedRow.id, watchedRow);
+          watchedRows.push(watchedRow);
+          watchedRowIds.add(watchedRow.id);
+        }
+        else aiHistoryPlaceholderTitleWatch.delete(watch.key);
+      } catch (error) {
+        logError(`ai history placeholder title watch failed thread=${watch.externalThreadId.slice(0, 8)}`, error instanceof Error ? error.message : error);
+      }
+    }
+  }
+  const rows = [
+    ...watchedRows,
+    ...recentRows.filter(row => !watchedRowIds.has(row.id)),
+  ];
   const preparedItems: PreparedAiHistoryItem[] = [];
   const seenItemKeys = new Set<string>();
   const scannedAt = new Date(now).toISOString();
@@ -2223,7 +2352,8 @@ async function syncAiHistoryMetadata(
     const itemKey = `${row.id}\u001f${normalizeLocalPath(matchingScope.repo_path)}`;
     if (seenItemKeys.has(itemKey)) continue;
     seenItemKeys.add(itemKey);
-    if (!shouldInspectAiHistoryRollout(row, matchingScope, mode, now)) continue;
+    const forcePlaceholderTitleRefresh = shouldInspectAiHistoryPlaceholderTitle(row, matchingScope, now);
+    if (!forcePlaceholderTitleRefresh && !shouldInspectAiHistoryRollout(row, matchingScope, mode, now)) continue;
 
     try {
       const rawRollout = await readRollout(row);

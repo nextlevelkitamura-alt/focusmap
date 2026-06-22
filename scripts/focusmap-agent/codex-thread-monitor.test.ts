@@ -6,8 +6,10 @@ import {
   activityMessages,
   aiHistoryDetailMessages,
   aiHistoryPresentationForThread,
+  aiHistoryTitle,
   AI_HISTORY_STALE_RUNNING_AUTOMATION_MS,
   AI_HISTORY_STALE_RUNNING_GENERAL_MS,
+  AI_HISTORY_PLACEHOLDER_TITLE,
   AWAITING_APPROVAL_STABILITY_MS,
   awaitingApprovalAtForSummary,
   codexStateDbPath,
@@ -16,9 +18,11 @@ import {
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   hasPendingArchiveRequest,
   isFocusmapManualHandoffThread,
+  isAiHistoryPlaceholderTitle,
   isOrphanImportApiUnavailable,
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
+  markAiHistoryPlaceholderTitleWatch,
   markAiHistoryRolloutInspected,
   markTaskRolloutInspected,
   markThreadGone,
@@ -29,6 +33,7 @@ import {
   prioritizeCodexMonitorTasks,
   RESUME_RUNNING_VISIBILITY_MS,
   shouldInspectAiHistoryRollout,
+  shouldInspectAiHistoryPlaceholderTitle,
   shouldInspectTaskRollout,
   shouldCompleteSourceFromArchivedThread,
   shouldDeferOrphanImportForTasks,
@@ -85,6 +90,35 @@ describe('codex-thread-monitor state detection', () => {
   test('keeps Codex completion debounce below the visible UI lag target', () => {
     expect(AWAITING_APPROVAL_STABILITY_MS).toBe(1_000);
     expect(RESUME_RUNNING_VISIBILITY_MS).toBe(2_000);
+  });
+
+  test('uses a friendly placeholder title until Codex generates a sidebar title', () => {
+    expect(aiHistoryTitle({
+      ...threadRow,
+      id: 'thread-placeholder-title',
+      title: null,
+      preview: null,
+    })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
+    expect(isAiHistoryPlaceholderTitle(AI_HISTORY_PLACEHOLDER_TITLE)).toBe(true);
+    expect(isAiHistoryPlaceholderTitle('Codex thread abc12345')).toBe(true);
+    expect(isAiHistoryPlaceholderTitle('AI履歴のUIを見やすくする')).toBe(false);
+  });
+
+  test('keeps placeholder-title AI history threads on a short title refresh watch', () => {
+    const scope = { project_id: 'project-placeholder-title', repo_path: '/repo-placeholder-title' };
+    const row = {
+      ...threadRow,
+      id: 'thread-placeholder-title-watch',
+      cwd: '/repo-placeholder-title',
+      title: null,
+      preview: null,
+    };
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+
+    expect(shouldInspectAiHistoryPlaceholderTitle(row, scope, now)).toBe(false);
+    markAiHistoryPlaceholderTitleWatch(row, scope, now);
+    expect(shouldInspectAiHistoryPlaceholderTitle(row, scope, now + 1_000)).toBe(true);
+    expect(shouldInspectAiHistoryPlaceholderTitle(row, scope, now + 6 * 60_000)).toBe(false);
   });
 
   test('fast-watches AI history rollout stat without reading unchanged bodies', () => {
