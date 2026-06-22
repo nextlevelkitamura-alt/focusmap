@@ -495,6 +495,49 @@ describe('codex-thread-monitor state detection', () => {
     expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
   });
 
+  test('shows only the latest completed Codex turn duration in AI history presentation', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:50:00.000Z', { type: 'task_complete', last_agent_message: '初回完了' }),
+      line('2026-06-08T16:00:00.000Z', { type: 'user_message', message: '追加で直して' }),
+      line('2026-06-08T16:00:30.000Z', { type: 'task_started' }),
+      line('2026-06-08T16:02:00.000Z', { type: 'task_complete', last_agent_message: '追加対応完了' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row: threadRow,
+      summary,
+      nowMs: Date.parse('2026-06-08T16:02:05.000Z'),
+    });
+
+    expect(summary.workDurationSeconds).toBe(720);
+    expect(presentation.startedAt).toBe('2026-06-08T16:00:30.000Z');
+    expect(presentation.endedAt).toBe('2026-06-08T16:02:00.000Z');
+    expect(presentation.workDurationSeconds).toBe(90);
+  });
+
+  test('starts running AI history duration from the resumed user message when no new task_started exists yet', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
+      line('2026-06-08T15:49:15.000Z', { type: 'user_message', message: '追加で見て' }),
+      line('2026-06-08T15:49:20.000Z', { type: 'agent_message', message: '調査中です' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row: threadRow,
+      summary,
+      nowMs: Date.parse('2026-06-08T15:50:00.000Z'),
+    });
+
+    expect(presentation.status).toBe('running');
+    expect(presentation.startedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(presentation.endedAt).toBeNull();
+    expect(presentation.workDurationSeconds).toBe(45);
+  });
+
   test('briefly debounces a running task completion without waiting for thread metadata updates', () => {
     const raw = [
       line('2026-06-08T15:49:14.929Z', { type: 'task_started', started_at: 1780933754 }),

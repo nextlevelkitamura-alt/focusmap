@@ -59,20 +59,6 @@ export function aiHistoryWorkTiming(item: Pick<AiHistoryListItem, "startedAt" | 
     }
   }
 
-  if (typeof item.workDurationSeconds === "number" && Number.isFinite(item.workDurationSeconds) && item.lastActivityAt) {
-    const finishedMs = Date.parse(item.lastActivityAt)
-    if (Number.isFinite(finishedMs)) {
-      return {
-        workStartedAt: new Date(finishedMs - Math.max(0, item.workDurationSeconds) * 1000).toISOString(),
-        workAwaitingApprovalAt: item.status === "awaiting_approval" || item.status === "needs_input"
-          ? item.lastActivityAt
-          : null,
-        workCompletedAt: item.status === "completed" ? item.lastActivityAt : null,
-        workLastActivityAt: item.lastActivityAt,
-      }
-    }
-  }
-
   return {
     workStartedAt: null,
     workAwaitingApprovalAt: null,

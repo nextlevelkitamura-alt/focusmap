@@ -653,9 +653,9 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
         run_state = excluded.run_state,
         last_activity_at = excluded.last_activity_at,
         indexed_at = excluded.indexed_at,
-        started_at = COALESCE(excluded.started_at, ai_history_items.started_at),
-        ended_at = COALESCE(excluded.ended_at, ai_history_items.ended_at),
-        work_duration_seconds = COALESCE(excluded.work_duration_seconds, ai_history_items.work_duration_seconds),
+        started_at = excluded.started_at,
+        ended_at = excluded.ended_at,
+        work_duration_seconds = excluded.work_duration_seconds,
         archived = excluded.archived,
         archived_at = CASE
           WHEN excluded.archived = 1 THEN COALESCE(excluded.archived_at, ai_history_items.archived_at, excluded.indexed_at)

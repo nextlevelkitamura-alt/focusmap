@@ -1244,39 +1244,33 @@ function staleRunningAiHistoryEndedAt(input: {
   return new Date(lastActivityMs).toISOString();
 }
 
-function workDurationSecondsForSummary(
-  summary: RolloutSummary,
-  status: AiHistoryStatus,
-  nowMs: number,
-): number | null {
-  const base = summary.workDurationSeconds ?? 0;
-  if (status === 'running') {
-    const activeStartMs = timeMs(summary.activeStartedAt);
-    if (activeStartMs !== null) return Math.max(0, Math.floor((base * 1000 + nowMs - activeStartMs) / 1000));
-  }
-  return base > 0 ? base : null;
-}
-
-function coarseDurationSeconds(row: CodexThreadRow): number | null {
-  const createdMs = timeMs(row.created_at_ms);
-  const updatedMs = timeMs(row.updated_at_ms);
-  if (createdMs === null || updatedMs === null || updatedMs <= createdMs) return null;
-  return Math.floor((updatedMs - createdMs) / 1000);
-}
-
-function workDurationSecondsForStaleRunning(summary: RolloutSummary, row: CodexThreadRow, endedAt: string): number | null {
-  const base = summary.workDurationSeconds ?? 0;
-  const activeStartMs = timeMs(
-    summary.activeStartedAt ??
-    summary.startedAt ??
-    summary.latestTaskStartedAt ??
-    row.created_at_ms,
-  );
+function durationSecondsBetween(startedAt: string | null, endedAt: string | null): number | null {
+  const startMs = timeMs(startedAt);
   const endMs = timeMs(endedAt);
-  if (activeStartMs !== null && endMs !== null && endMs >= activeStartMs) {
-    return Math.floor((base * 1000 + endMs - activeStartMs) / 1000);
-  }
-  return base > 0 ? base : coarseDurationSeconds(row);
+  if (startMs === null || endMs === null || endMs < startMs) return null;
+  return Math.floor((endMs - startMs) / 1000);
+}
+
+function aiHistoryCurrentRallyTiming(input: {
+  summary: RolloutSummary;
+  status: AiHistoryStatus;
+  staleRunningEndedAt: string | null;
+  nowMs: number;
+}) {
+  const startedAt = input.status === 'running' || input.staleRunningEndedAt
+    ? latestIso(input.summary.activeStartedAt, input.summary.latestTaskStartedAt)
+    : input.summary.latestTaskStartedAt;
+  const endedAt = input.status === 'running'
+    ? null
+    : input.staleRunningEndedAt ?? input.summary.latestTaskCompleteAt;
+  const elapsedEndAt = input.status === 'running'
+    ? new Date(input.nowMs).toISOString()
+    : endedAt;
+  return {
+    startedAt,
+    endedAt,
+    workDurationSeconds: durationSecondsBetween(startedAt, elapsedEndAt),
+  };
 }
 
 export function aiHistoryPresentationForThread(input: {
@@ -1287,6 +1281,7 @@ export function aiHistoryPresentationForThread(input: {
 }): {
   status: AiHistoryStatus;
   runState: string;
+  startedAt: string | null;
   endedAt: string | null;
   workDurationSeconds: number | null;
   staleRunning: boolean;
@@ -1304,19 +1299,20 @@ export function aiHistoryPresentationForThread(input: {
     })
     : null;
   const status = staleRunningEndedAt ? 'awaiting_approval' : baseStatus;
-  const endedAt = staleRunningEndedAt ??
-    input.summary.endedAt ??
-    (!hasRollout && status !== 'running' ? timestampToIso(input.row.updated_at_ms) : null);
-  const workDurationSeconds = hasRollout
-    ? staleRunningEndedAt
-      ? workDurationSecondsForStaleRunning(input.summary, input.row, staleRunningEndedAt)
-      : workDurationSecondsForSummary(input.summary, status, input.nowMs)
-    : coarseDurationSeconds(input.row);
+  const timing = hasRollout
+    ? aiHistoryCurrentRallyTiming({
+      summary: input.summary,
+      status,
+      staleRunningEndedAt,
+      nowMs: input.nowMs,
+    })
+    : { startedAt: null, endedAt: null, workDurationSeconds: null };
   return {
     status,
     runState: staleRunningEndedAt ? 'stale_no_terminal_event' : input.summary.reviewReason,
-    endedAt,
-    workDurationSeconds,
+    startedAt: timing.startedAt,
+    endedAt: timing.endedAt,
+    workDurationSeconds: timing.workDurationSeconds,
     staleRunning: Boolean(staleRunningEndedAt),
     staleRunningLastActivityAt: staleRunningEndedAt,
     staleRunningThresholdMs: staleRunningEndedAt ? aiHistoryStaleRunningThresholdMs(input.row) : null,
@@ -1435,7 +1431,7 @@ function aiHistoryItemFromThread(input: {
     input.row.updated_at_ms,
     input.row.created_at_ms,
   ) ?? new Date(input.nowMs).toISOString();
-  const startedAt = input.summary.startedAt ?? (!hasRollout ? timestampToIso(input.row.created_at_ms) : null);
+  const startedAt = presentation.startedAt;
   const endedAt = presentation.endedAt;
   const workDurationSeconds = presentation.workDurationSeconds;
   const archived = Boolean(input.row.archived);

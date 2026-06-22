@@ -138,7 +138,11 @@ describe('AI history detail cache helpers', () => {
       last_activity_at: '2026-06-20T00:00:00.000Z',
     })).resolves.toBe('history-existing')
 
-    expect((mockExecute.mock.calls[0]?.[0] as { sql: string }).sql).toContain('RETURNING id')
+    const sql = (mockExecute.mock.calls[0]?.[0] as { sql: string }).sql
+    expect(sql).toContain('RETURNING id')
+    expect(sql).toContain('started_at = excluded.started_at')
+    expect(sql).toContain('ended_at = excluded.ended_at')
+    expect(sql).toContain('work_duration_seconds = excluded.work_duration_seconds')
   })
 
   test('records hydrate requests without refreshing an active unexpired request', async () => {
