@@ -143,6 +143,11 @@ describe('AI history detail cache helpers', () => {
     expect(sql).toContain('started_at = excluded.started_at')
     expect(sql).toContain('ended_at = excluded.ended_at')
     expect(sql).toContain('work_duration_seconds = excluded.work_duration_seconds')
+    expect(sql).toContain('WHEN excluded.title = ?')
+    expect(sql).toContain('OR ?')
+    expect(sql).toContain('THEN ai_history_items.title')
+    const args = (mockExecute.mock.calls[0]?.[0] as { args: unknown[] }).args
+    expect(args.slice(-4)).toEqual([0, '新しいチャット', 0, '新しいチャット'])
   })
 
   test('uses a generic new-chat title when a stored history title is missing', async () => {

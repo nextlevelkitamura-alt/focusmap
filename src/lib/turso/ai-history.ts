@@ -637,6 +637,8 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
   const archived = input.archived === true
   const archivedAt = archived ? (input.archived_at ?? indexedAt) : null
   const id = input.id ?? stableId('aih', [input.user_id, input.provider, input.external_thread_id, input.repo_path])
+  const titleSource = typeof input.metadata_json?.title_source === 'string' ? input.metadata_json.title_source : null
+  const preserveExistingTitle = titleSource === 'prompt_fallback' || titleSource === 'placeholder'
   const result = await getTursoClient().execute({
     sql: `
       INSERT INTO ai_history_items (
@@ -655,7 +657,11 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
           ELSE COALESCE(excluded.source_task_id, ai_history_items.source_task_id)
         END,
         linked_ai_task_id = COALESCE(excluded.linked_ai_task_id, ai_history_items.linked_ai_task_id),
-        title = excluded.title,
+        title = CASE
+          WHEN (excluded.title = ? OR ?) AND ai_history_items.title IS NOT NULL AND trim(ai_history_items.title) <> '' AND ai_history_items.title <> ?
+            THEN ai_history_items.title
+          ELSE excluded.title
+        END,
         snippet = excluded.snippet,
         status = excluded.status,
         run_state = excluded.run_state,
@@ -704,6 +710,9 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
       timestamp,
       timestamp,
       input.clear_source_task_id ? 1 : 0,
+      AI_HISTORY_PLACEHOLDER_TITLE,
+      preserveExistingTitle ? 1 : 0,
+      AI_HISTORY_PLACEHOLDER_TITLE,
     ],
   })
   return asString((result.rows[0] as Row | undefined)?.id) ?? id

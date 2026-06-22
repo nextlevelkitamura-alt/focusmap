@@ -335,6 +335,39 @@ export function codexThreadGeneratedTitle(row: { title?: string | null; first_us
   return codexThreadTitleCandidate(row.title, row);
 }
 
+function extractVisiblePromptText(value: unknown): string | null {
+  let text = compactText(typeof value === 'string' ? value : '', 60_000);
+  if (!text) return null;
+
+  const requestMatch = text.match(/(?:^|\n)#+\s*My request for Codex:\s*/iu)
+    ?? text.match(/(?:^|\n)My request for Codex:\s*/iu);
+  if (requestMatch?.index !== undefined) {
+    text = text.slice(requestMatch.index + requestMatch[0].length);
+  } else if (isInternalUserMessage(text)) {
+    return null;
+  }
+
+  text = text
+    .replace(/<skill>[\s\S]*?<\/skill>/giu, '\n')
+    .replace(/<environment_context>[\s\S]*?<\/environment_context>/giu, '\n')
+    .replace(/<appshot[\s\S]*?<\/appshot>/giu, '\n')
+    .replace(/#\s*AGENTS\.md instructions[\s\S]*?(?=\n#+\s|\nMy request for Codex:|$)/iu, '\n');
+
+  const firstLine = text
+    .split(/\r?\n/)
+    .map(line => line.replace(/^[-*]\s+/u, '').trim())
+    .find(line => line && !line.startsWith('<') && !/^#+\s/.test(line));
+  return oneLineTitle(firstLine, 80);
+}
+
+function codexThreadPromptFallbackTitle(row: { first_user_message?: string | null; preview?: string | null }): string | null {
+  for (const value of [row.first_user_message, row.preview]) {
+    const title = extractVisiblePromptText(value);
+    if (title) return title;
+  }
+  return null;
+}
+
 export function codexSessionIndexPath(homeDir = homedir()): string {
   const configured = process.env.FOCUSMAP_CODEX_SESSION_INDEX_PATH?.trim();
   return configured || join(homeDir, '.codex', 'session_index.jsonl');
@@ -386,11 +419,19 @@ function codexSessionThreadTitle(
   return codexThreadTitleCandidate(threadName, row);
 }
 
-function codexThreadTitleForMetadata(
+type AiHistoryTitleSource = 'session_index' | 'codex_title' | 'prompt_fallback' | 'placeholder';
+
+function aiHistoryTitleInfo(
   row: CodexThreadRow,
   sessionThreadNames?: ReadonlyMap<string, string> | null,
-): string | null {
-  return codexSessionThreadTitle(row, sessionThreadNames) ?? codexThreadGeneratedTitle(row);
+): { title: string; source: AiHistoryTitleSource } {
+  const sessionTitle = codexSessionThreadTitle(row, sessionThreadNames);
+  if (sessionTitle) return { title: sessionTitle, source: 'session_index' };
+  const generatedTitle = codexThreadGeneratedTitle(row);
+  if (generatedTitle) return { title: generatedTitle, source: 'codex_title' };
+  const promptFallbackTitle = codexThreadPromptFallbackTitle(row);
+  if (promptFallbackTitle) return { title: promptFallbackTitle, source: 'prompt_fallback' };
+  return { title: AI_HISTORY_PLACEHOLDER_TITLE, source: 'placeholder' };
 }
 
 function textFingerprint(value: string): string {
@@ -1224,14 +1265,11 @@ export function shouldInspectAiHistoryRollout(
   if (mode === 'reconcile') return true;
   const key = aiHistoryRolloutInspectKey(row, scope);
   const fingerprint = threadRolloutFingerprint(row);
-  const cached = aiHistoryRolloutInspectCache.get(aiHistoryRolloutInspectKey(row, scope));
+  const cached = aiHistoryRolloutInspectCache.get(key);
   if (!cached) return true;
   if (cached.fingerprint !== fingerprint) return true;
   if (nowMs >= cached.nextInspectAt) {
-    aiHistoryRolloutInspectCache.set(key, {
-      fingerprint,
-      nextInspectAt: nowMs + aiHistoryRolloutRecheckMs(row, true, nowMs),
-    });
+    return true;
   }
   return false;
 }
@@ -1288,11 +1326,7 @@ export function shouldInspectTaskRollout(task: AiTask, row: CodexThreadRow, thre
   if (!cached) return true;
   if (cached.fingerprint !== fingerprint) return true;
   if (nowMs >= cached.nextInspectAt && isFastWatchTask(task)) {
-    taskRolloutInspectCache.set(task.id, {
-      fingerprint,
-      nextInspectAt: nowMs + taskRolloutRecheckMs(task, row, true, nowMs),
-    });
-    return false;
+    return true;
   }
   return nowMs >= cached.nextInspectAt;
 }
@@ -1472,8 +1506,7 @@ export function aiHistoryTitle(
   row: CodexThreadRow,
   sessionThreadNames?: ReadonlyMap<string, string> | null,
 ): string {
-  return codexThreadTitleForMetadata(row, sessionThreadNames) ??
-    AI_HISTORY_PLACEHOLDER_TITLE;
+  return aiHistoryTitleInfo(row, sessionThreadNames).title;
 }
 
 function aiHistorySnippet(row: CodexThreadRow): string | null {
@@ -1550,7 +1583,8 @@ function updateAiHistoryPlaceholderTitleWatch(prepared: PreparedAiHistoryItem, n
     repo_path: typeof prepared.item.repoPath === 'string' ? prepared.item.repoPath : '',
   };
   if (!externalThreadId || !scope.project_id || !scope.repo_path) return;
-  if (isAiHistoryPlaceholderTitle(prepared.item.title ?? null)) {
+  const titleSource = prepared.item.metadata?.title_source;
+  if (isAiHistoryPlaceholderTitle(prepared.item.title ?? null) || titleSource === 'prompt_fallback') {
     markAiHistoryPlaceholderTitleWatch({ id: externalThreadId }, scope, nowMs);
   } else {
     clearAiHistoryPlaceholderTitleWatch({ id: externalThreadId }, scope);
@@ -1582,6 +1616,7 @@ function aiHistoryItemFromThread(input: {
   const endedAt = presentation.endedAt;
   const workDurationSeconds = presentation.workDurationSeconds;
   const archived = Boolean(input.row.archived);
+  const titleInfo = aiHistoryTitleInfo(input.row, input.sessionThreadNames);
   const item: AiHistoryBatchUpsertItem = {
     provider: AI_HISTORY_PROVIDER,
     externalThreadId: input.row.id,
@@ -1590,7 +1625,7 @@ function aiHistoryItemFromThread(input: {
     projectId: input.scope.project_id,
     sourceTaskId: input.linkedTask?.source_task_id ?? null,
     linkedAiTaskId: input.linkedTask?.id ?? null,
-    title: aiHistoryTitle(input.row, input.sessionThreadNames),
+    title: titleInfo.title,
     snippet: aiHistorySnippet(input.row),
     status,
     runState: presentation.runState,
@@ -1608,6 +1643,7 @@ function aiHistoryItemFromThread(input: {
       stale_running: presentation.staleRunning,
       stale_running_last_activity_at: presentation.staleRunningLastActivityAt,
       stale_running_threshold_ms: presentation.staleRunningThresholdMs,
+      title_source: titleInfo.source,
       duration_approximate: !hasRollout && workDurationSeconds !== null,
       thread_updated_at_ms: input.row.updated_at_ms ?? null,
       thread_created_at_ms: input.row.created_at_ms ?? null,

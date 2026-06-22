@@ -94,11 +94,12 @@ describe('codex-thread-monitor state detection', () => {
     expect(RESUME_RUNNING_VISIBILITY_MS).toBe(2_000);
   });
 
-  test('uses a friendly placeholder title until Codex generates a sidebar title', () => {
+  test('uses a visible prompt title until Codex generates a sidebar title', () => {
     expect(aiHistoryTitle({
       ...threadRow,
       id: 'thread-placeholder-title',
       title: null,
+      first_user_message: null,
       preview: null,
     })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
     expect(aiHistoryTitle({
@@ -107,7 +108,14 @@ describe('codex-thread-monitor state detection', () => {
       title: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
       first_user_message: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
       preview: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
-    })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
+    })).toBe('結構幅が広いから');
+    expect(aiHistoryTitle({
+      ...threadRow,
+      id: 'thread-wrapped-prompt-title',
+      title: '# AGENTS.md instructions\n<environment_context>\n## My request for Codex:\nAI履歴の検知を2秒以内に戻してほしい\n<skill>hidden</skill>',
+      first_user_message: '# AGENTS.md instructions\n<environment_context>\n## My request for Codex:\nAI履歴の検知を2秒以内に戻してほしい\n<skill>hidden</skill>',
+      preview: null,
+    })).toBe('AI履歴の検知を2秒以内に戻してほしい');
     expect(isAiHistoryPlaceholderTitle(AI_HISTORY_PLACEHOLDER_TITLE)).toBe(true);
     expect(isAiHistoryPlaceholderTitle('Codex thread abc12345')).toBe(true);
     expect(isAiHistoryPlaceholderTitle('AI履歴のUIを見やすくする')).toBe(false);
@@ -156,7 +164,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(shouldInspectAiHistoryPlaceholderTitle(row, scope, now + 6 * 60_000)).toBe(false);
   });
 
-  test('fast-watches AI history rollout stat without reading unchanged bodies', () => {
+  test('fast-watches AI history rollouts every second', () => {
     const scope = { project_id: 'project-rollout-cache', repo_path: '/repo-rollout-cache' };
     const row = {
       ...threadRow,
@@ -169,16 +177,16 @@ describe('codex-thread-monitor state detection', () => {
 
     markAiHistoryRolloutInspected(row, scope, false, now);
 
-    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(true);
     expect(shouldInspectAiHistoryRollout(row, scope, 'reconcile', now + 1_000)).toBe(true);
     expect(shouldInspectAiHistoryRollout({
       ...row,
       updated_at_ms: row.updated_at_ms + 1,
     }, scope, 'hot', now + 1_000)).toBe(true);
-    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(true);
   });
 
-  test('inspects fast-watch rollouts only when mtime or size changes', () => {
+  test('inspects fast-watch rollouts again after one second', () => {
     const dir = mkdtempSync(join(tmpdir(), 'focusmap-rollout-watch-'));
     try {
       const rolloutPath = join(dir, 'rollout.jsonl');
@@ -200,8 +208,8 @@ describe('codex-thread-monitor state detection', () => {
       markAiHistoryRolloutInspected(row, scope, true, now);
       markTaskRolloutInspected(runningTask, row, row.id, true, now);
 
-      expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(false);
-      expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(false);
+      expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(true);
+      expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(true);
 
       writeFileSync(rolloutPath, [
         line('2026-06-10T00:00:00.000Z', { type: 'task_started' }),
@@ -217,7 +225,7 @@ describe('codex-thread-monitor state detection', () => {
     }
   });
 
-  test('keeps running AI history and task rollouts on a one-second stat watch', () => {
+  test('keeps running AI history and task rollouts on a one-second deep watch', () => {
     const scope = { project_id: 'project-running-cache', repo_path: '/repo-running-cache' };
     const now = Date.parse('2026-06-10T00:00:00.000Z');
     const row = {
@@ -236,11 +244,11 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 500)).toBe(false);
     expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 500)).toBe(false);
-    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(false);
-    expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 1_000)).toBe(true);
+    expect(shouldInspectTaskRollout(runningTask, row, row.id, now + 1_000)).toBe(true);
   });
 
-  test('slows stale running rollout fallback while still reacting to thread row changes', () => {
+  test('keeps stale running rollout fallback on one-second deep watch', () => {
     const now = Date.parse('2026-06-10T00:00:00.000Z');
     const scope = { project_id: 'project-stale-running-cache', repo_path: '/repo-stale-running-cache' };
     const staleRow = {
@@ -261,8 +269,8 @@ describe('codex-thread-monitor state detection', () => {
     markAiHistoryRolloutInspected(staleRow, scope, true, now);
     markTaskRolloutInspected(staleTask, staleRow, staleRow.id, true, now);
 
-    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 1_000)).toBe(false);
-    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 1_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 1_000)).toBe(true);
+    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 1_000)).toBe(true);
     expect(shouldInspectAiHistoryRollout({
       ...staleRow,
       updated_at_ms: now + 1,
@@ -271,8 +279,8 @@ describe('codex-thread-monitor state detection', () => {
       ...staleRow,
       updated_at_ms: now + 1,
     }, staleRow.id, now + 1_000)).toBe(true);
-    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 30_000)).toBe(false);
-    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 30_000)).toBe(false);
+    expect(shouldInspectAiHistoryRollout(staleRow, scope, 'hot', now + 30_000)).toBe(true);
+    expect(shouldInspectTaskRollout(staleTask, staleRow, staleRow.id, now + 30_000)).toBe(true);
   });
 
   test('prefers the freshest default Codex state DB path', () => {
