@@ -11,6 +11,7 @@ export interface AvailableRepo {
   last_seen_at: string
   source?: "codex" | "agent"
   thread_count?: number
+  total_thread_count?: number
 }
 
 type DesktopCodexRepoResult = {

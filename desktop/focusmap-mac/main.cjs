@@ -7,6 +7,7 @@ const https = require('node:https');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { codexRepoListSql } = require('./codex-repos.cjs');
 
 const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
 const LOCAL_APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`;
@@ -1001,14 +1002,7 @@ async function listCodexReposFromBridge() {
   const dbPath = await codexStateDbPath();
   if (!dbPath) return { ok: false, repos: [], error: 'Codex state DB が見つかりません' };
 
-  const sql = [
-    'SELECT cwd AS absolute_path, COUNT(*) AS thread_count, MAX(updated_at_ms) AS updated_at_ms',
-    'FROM threads',
-    "WHERE cwd IS NOT NULL AND trim(cwd) <> ''",
-    'GROUP BY cwd',
-    'ORDER BY MAX(updated_at_ms) DESC',
-    'LIMIT 80',
-  ].join(' ');
+  const sql = codexRepoListSql();
 
   try {
     const stdout = await execFileText('/usr/bin/sqlite3', ['-json', dbPath, sql], { timeout: 5000 });
@@ -1039,6 +1033,7 @@ async function listCodexReposFromBridge() {
         last_seen_at: Number.isFinite(updatedMs) && updatedMs > 0 ? new Date(updatedMs).toISOString() : new Date().toISOString(),
         source: 'codex',
         thread_count: Number(row.thread_count) || 0,
+        total_thread_count: Number(row.total_thread_count) || Number(row.thread_count) || 0,
       });
     }
     return { ok: true, repos };

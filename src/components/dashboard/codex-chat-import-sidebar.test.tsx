@@ -57,6 +57,8 @@ let syncState = {
   aiOnline: true,
   agentConnected: true,
 }
+let aiHistoryRefreshMock: ReturnType<typeof vi.fn>
+let availableReposRefreshMock: ReturnType<typeof vi.fn>
 
 function repoMatches(item: AiHistoryListItem, repo: AiHistoryRepoFilter) {
   return repo === "all" || item.repoPath === repo
@@ -101,7 +103,7 @@ function mockUseAiHistory() {
       nextCursor: null,
       isLoading: false,
       error: null,
-      refresh: vi.fn(),
+      refresh: aiHistoryRefreshMock,
     }
   })
 }
@@ -139,12 +141,14 @@ beforeEach(() => {
     aiOnline: true,
     agentConnected: true,
   }
+  aiHistoryRefreshMock = vi.fn()
+  availableReposRefreshMock = vi.fn()
   mockUseAiHistory()
   useAvailableReposMock.mockReturnValue({
     repos: [],
     isLoading: false,
     error: null,
-    refresh: vi.fn(),
+    refresh: availableReposRefreshMock,
     requestRescan: vi.fn(),
   })
   fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -208,7 +212,8 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByRole("complementary", { name: "AI履歴" })).toBeInTheDocument()
     expect(screen.getByText("AI online")).toBeInTheDocument()
     expect(screen.queryByText("AI履歴")).not.toBeInTheDocument()
-    expect(document.querySelector('button[aria-label="AI履歴を更新"]')).toBeInTheDocument()
+    const refreshButton = document.querySelector('button[aria-label="AI履歴を更新"]')
+    expect(refreshButton).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "AI履歴設定" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "AI履歴を閉じる" })).toBeInTheDocument()
     expect(screen.getByText("未配置 1件")).toBeInTheDocument()
@@ -225,6 +230,9 @@ describe("CodexChatImportSidebar", () => {
       "href",
       "codex://threads/thread-abcdef123456",
     )
+    fireEvent.click(refreshButton!)
+    expect(aiHistoryRefreshMock).toHaveBeenCalled()
+    expect(availableReposRefreshMock).toHaveBeenCalled()
   }, 15_000)
 
   test("keeps the expanded archive action wide enough for the Japanese label", () => {
@@ -372,6 +380,37 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("AI履歴サイドバーを接続")).not.toBeInTheDocument()
     expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/side-business")
     expect(lastHookOptions.at(-1)?.scope).toBe("project")
+  })
+
+  test("merges current project, saved scope, and Codex repo count into one repo option", () => {
+    useAvailableReposMock.mockReturnValue({
+      repos: [{
+        id: "codex:/Users/me/focusmap",
+        hostname: "Codex",
+        absolute_path: "/Users/me/focusmap",
+        display_name: "focusmap",
+        last_git_commit_at: null,
+        last_seen_at: "2026-06-20T00:00:00.000Z",
+        source: "codex",
+        thread_count: 1,
+      }],
+      isLoading: false,
+      error: null,
+      refresh: availableReposRefreshMock,
+      requestRescan: vi.fn(),
+    })
+    renderSidebar()
+
+    const scopeButton = screen.getAllByRole("button").find(button => (
+      button.getAttribute("aria-controls") === "ai-history-scope-filter"
+    ))
+    expect(scopeButton).toBeDefined()
+    fireEvent.click(scopeButton!)
+    const scopeFilter = document.getElementById("ai-history-scope-filter")
+    expect(scopeFilter).not.toBeNull()
+
+    expect(within(scopeFilter!).getAllByText("focusmap")).toHaveLength(1)
+    expect(within(scopeFilter!).getByText("Project / 保存済み / Codex 1件")).toBeInTheDocument()
   })
 
   test("defaults to unplaced and switches to the mindmap bucket", () => {

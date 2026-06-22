@@ -147,6 +147,18 @@ function repoNameFromPath(value: string | null | undefined) {
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized
 }
 
+function mergeSourceLabels(current: string | null | undefined, next: string | null | undefined) {
+  const labels: string[] = []
+  for (const value of [current, next]) {
+    if (!value) continue
+    for (const label of value.split("/")) {
+      const trimmed = label.trim()
+      if (trimmed && !labels.includes(trimmed)) labels.push(trimmed)
+    }
+  }
+  return labels.length > 0 ? labels.join(" / ") : null
+}
+
 function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem {
   const visualStatus = item.status === "completed" ? "done" : item.status
   return {
@@ -892,7 +904,11 @@ export function CodexChatImportSidebar({
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const hydratePollInFlightRef = React.useRef(false)
   const queryRepoFilter = repoFilter
-  const { repos: availableRepos } = useAvailableRepos()
+  const {
+    repos: availableRepos,
+    isLoading: availableReposLoading,
+    refresh: refreshAvailableRepos,
+  } = useAvailableRepos()
 
   const aiHistory = useAiHistory({
     projectId,
@@ -939,7 +955,16 @@ export function CodexChatImportSidebar({
       sourceLabel?: string | null
     }) => {
       const repoPath = normalizeAiHistoryRepoPath(input.repoPath)
-      if (!repoPath || seenRepoPaths.has(repoPath)) return
+      if (!repoPath) return
+      const existing = options.find(option => option.repoPath === repoPath)
+      if (existing) {
+        if (existing.scope !== "project" && input.scope === "project") existing.scope = "project"
+        existing.label = existing.label || input.label?.trim() || aiHistoryRepoName(repoPath)
+        existing.title = existing.title || input.title?.trim() || repoPath
+        existing.sourceLabel = mergeSourceLabels(existing.sourceLabel, input.sourceLabel)
+        return
+      }
+      if (seenRepoPaths.has(repoPath)) return
       seenRepoPaths.add(repoPath)
       options.push({
         scope: input.scope,
@@ -1776,13 +1801,16 @@ export function CodexChatImportSidebar({
               size="icon"
               className="ml-auto h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
               onClick={() => {
-                void aiHistory.refresh()
+                void Promise.allSettled([
+                  aiHistory.refresh(),
+                  refreshAvailableRepos(),
+                ])
               }}
-              disabled={aiHistory.isLoading}
+              disabled={aiHistory.isLoading || availableReposLoading}
               aria-label="AI履歴を更新"
               title="更新"
             >
-              <RefreshCw className={cn("h-4 w-4", aiHistory.isLoading && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", (aiHistory.isLoading || availableReposLoading) && "animate-spin")} />
             </Button>
             <Button
               type="button"
