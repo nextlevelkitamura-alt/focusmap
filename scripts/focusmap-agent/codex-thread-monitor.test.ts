@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import {
   activityMessages,
   aiHistoryDetailMessages,
+  aiHistoryPresentationForThread,
+  AI_HISTORY_STALE_RUNNING_AUTOMATION_MS,
+  AI_HISTORY_STALE_RUNNING_GENERAL_MS,
   AWAITING_APPROVAL_STABILITY_MS,
   awaitingApprovalAtForSummary,
   codexStateDbPath,
@@ -383,6 +386,61 @@ describe('codex-thread-monitor state detection', () => {
     expect(summary.startedAt).toBe('2026-06-08T15:49:14.000Z');
     expect(summary.endedAt).toBe('2026-06-08T15:49:41.000Z');
     expect(summary.workDurationSeconds).toBe(27);
+  });
+
+  test('marks old Automation AI history without a terminal event as stale awaiting approval metadata', () => {
+    const raw = [
+      line('2026-06-14T12:35:57.000Z', { type: 'task_started' }),
+      line('2026-06-14T12:35:58.000Z', { type: 'user_message', message: 'Automation: LINE派遣面談監査' }),
+      line('2026-06-14T12:36:07.000Z', { type: 'function_call_output', output: 'done' }),
+    ].join('\n');
+    const row = {
+      ...threadRow,
+      title: 'Automation: LINE派遣面談監査',
+      first_user_message: 'Automation ID: line',
+      updated_at_ms: Date.parse('2026-06-14T12:36:07.000Z'),
+    };
+    const summary = parseRollout(raw, row);
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row,
+      summary,
+      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + AI_HISTORY_STALE_RUNNING_AUTOMATION_MS + 1,
+    });
+
+    expect(summary.historyStatus).toBe('running');
+    expect(presentation.status).toBe('awaiting_approval');
+    expect(presentation.runState).toBe('stale_no_terminal_event');
+    expect(presentation.endedAt).toBe('2026-06-14T12:36:07.000Z');
+    expect(presentation.workDurationSeconds).toBe(10);
+    expect(presentation.staleRunningLastActivityAt).toBe('2026-06-14T12:36:07.000Z');
+  });
+
+  test('keeps non-Automation running AI history inside the general stale window', () => {
+    const raw = [
+      line('2026-06-14T12:35:57.000Z', { type: 'task_started' }),
+      line('2026-06-14T12:36:07.000Z', { type: 'function_call_output', output: 'ok' }),
+    ].join('\n');
+    const row = {
+      ...threadRow,
+      title: '通常のCodex作業',
+      first_user_message: '通常の依頼',
+      updated_at_ms: Date.parse('2026-06-14T12:36:07.000Z'),
+    };
+    const summary = parseRollout(raw, row);
+
+    expect(aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row,
+      summary,
+      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + AI_HISTORY_STALE_RUNNING_AUTOMATION_MS + 1,
+    }).status).toBe('running');
+    expect(aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row,
+      summary,
+      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + AI_HISTORY_STALE_RUNNING_GENERAL_MS + 1,
+    }).status).toBe('awaiting_approval');
   });
 
   test('marks a user message after completion as resumed running metadata', () => {

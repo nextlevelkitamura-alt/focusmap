@@ -54,6 +54,8 @@ const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
 const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
 const MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST = 50;
+export const AI_HISTORY_STALE_RUNNING_GENERAL_MS = 2 * 60 * 60 * 1000;
+export const AI_HISTORY_STALE_RUNNING_AUTOMATION_MS = 30 * 60 * 1000;
 const RUNNING_THREAD_ROLLOUT_RECHECK_MS = 1_000;
 const ACTIVE_RUNNING_ACTIVITY_WINDOW_MS = 30_000;
 const STALE_RUNNING_THREAD_ROLLOUT_RECHECK_MS = 30_000;
@@ -170,7 +172,7 @@ type VisibleMessage = {
   turnCompletedAt?: string | null;
 };
 
-type RolloutSummary = {
+export type RolloutSummary = {
   state: 'running' | 'awaiting_approval';
   historyStatus: AiHistoryStatus;
   reviewReason: string;
@@ -1130,6 +1132,41 @@ function aiHistoryStatusForSummary(rawRollout: string, row: CodexThreadRow, summ
   return summary.historyStatus;
 }
 
+function isAutomationAiHistoryThread(row: CodexThreadRow): boolean {
+  const text = compactText([
+    row.title ?? '',
+    row.preview ?? '',
+    row.first_user_message ?? '',
+  ].filter(Boolean).join('\n'), 2_000);
+  return /^Automation:/iu.test(text.trim()) || /\bAutomation ID:/iu.test(text);
+}
+
+function aiHistoryStaleRunningThresholdMs(row: CodexThreadRow): number {
+  return isAutomationAiHistoryThread(row)
+    ? AI_HISTORY_STALE_RUNNING_AUTOMATION_MS
+    : AI_HISTORY_STALE_RUNNING_GENERAL_MS;
+}
+
+function staleRunningAiHistoryEndedAt(input: {
+  row: CodexThreadRow;
+  summary: RolloutSummary;
+  status: AiHistoryStatus;
+  nowMs: number;
+}): string | null {
+  if (input.status !== 'running') return null;
+  if (input.summary.threadArchived) return null;
+  const lastActivityAt = latestIso(
+    input.summary.lastActivityAt,
+    input.summary.threadUpdatedAt,
+    input.row.updated_at_ms,
+    input.row.created_at_ms,
+  );
+  const lastActivityMs = timeMs(lastActivityAt);
+  if (lastActivityMs === null) return null;
+  if (input.nowMs - lastActivityMs < aiHistoryStaleRunningThresholdMs(input.row)) return null;
+  return new Date(lastActivityMs).toISOString();
+}
+
 function workDurationSecondsForSummary(
   summary: RolloutSummary,
   status: AiHistoryStatus,
@@ -1148,6 +1185,65 @@ function coarseDurationSeconds(row: CodexThreadRow): number | null {
   const updatedMs = timeMs(row.updated_at_ms);
   if (createdMs === null || updatedMs === null || updatedMs <= createdMs) return null;
   return Math.floor((updatedMs - createdMs) / 1000);
+}
+
+function workDurationSecondsForStaleRunning(summary: RolloutSummary, row: CodexThreadRow, endedAt: string): number | null {
+  const base = summary.workDurationSeconds ?? 0;
+  const activeStartMs = timeMs(
+    summary.activeStartedAt ??
+    summary.startedAt ??
+    summary.latestTaskStartedAt ??
+    row.created_at_ms,
+  );
+  const endMs = timeMs(endedAt);
+  if (activeStartMs !== null && endMs !== null && endMs >= activeStartMs) {
+    return Math.floor((base * 1000 + endMs - activeStartMs) / 1000);
+  }
+  return base > 0 ? base : coarseDurationSeconds(row);
+}
+
+export function aiHistoryPresentationForThread(input: {
+  rawRollout: string;
+  row: CodexThreadRow;
+  summary: RolloutSummary;
+  nowMs: number;
+}): {
+  status: AiHistoryStatus;
+  runState: string;
+  endedAt: string | null;
+  workDurationSeconds: number | null;
+  staleRunning: boolean;
+  staleRunningLastActivityAt: string | null;
+  staleRunningThresholdMs: number | null;
+} {
+  const hasRollout = input.rawRollout.trim().length > 0;
+  const baseStatus = aiHistoryStatusForSummary(input.rawRollout, input.row, input.summary);
+  const staleRunningEndedAt = hasRollout
+    ? staleRunningAiHistoryEndedAt({
+      row: input.row,
+      summary: input.summary,
+      status: baseStatus,
+      nowMs: input.nowMs,
+    })
+    : null;
+  const status = staleRunningEndedAt ? 'awaiting_approval' : baseStatus;
+  const endedAt = staleRunningEndedAt ??
+    input.summary.endedAt ??
+    (!hasRollout && status !== 'running' ? timestampToIso(input.row.updated_at_ms) : null);
+  const workDurationSeconds = hasRollout
+    ? staleRunningEndedAt
+      ? workDurationSecondsForStaleRunning(input.summary, input.row, staleRunningEndedAt)
+      : workDurationSecondsForSummary(input.summary, status, input.nowMs)
+    : coarseDurationSeconds(input.row);
+  return {
+    status,
+    runState: staleRunningEndedAt ? 'stale_no_terminal_event' : input.summary.reviewReason,
+    endedAt,
+    workDurationSeconds,
+    staleRunning: Boolean(staleRunningEndedAt),
+    staleRunningLastActivityAt: staleRunningEndedAt,
+    staleRunningThresholdMs: staleRunningEndedAt ? aiHistoryStaleRunningThresholdMs(input.row) : null,
+  };
 }
 
 function aiHistoryTitle(row: CodexThreadRow): string {
@@ -1235,7 +1331,8 @@ function aiHistoryItemFromThread(input: {
   const cwd = normalizeLocalPath(input.row.cwd);
   const worktreePath = cwd && cwd !== repoPath ? cwd : null;
   const hasRollout = input.rawRollout.trim().length > 0;
-  const status = aiHistoryStatusForSummary(input.rawRollout, input.row, input.summary);
+  const presentation = aiHistoryPresentationForThread(input);
+  const status = presentation.status;
   const lastActivityAt = latestIso(
     input.summary.lastActivityAt,
     input.summary.threadUpdatedAt,
@@ -1243,10 +1340,8 @@ function aiHistoryItemFromThread(input: {
     input.row.created_at_ms,
   ) ?? new Date(input.nowMs).toISOString();
   const startedAt = input.summary.startedAt ?? (!hasRollout ? timestampToIso(input.row.created_at_ms) : null);
-  const endedAt = input.summary.endedAt ?? (!hasRollout && status !== 'running' ? timestampToIso(input.row.updated_at_ms) : null);
-  const workDurationSeconds = hasRollout
-    ? workDurationSecondsForSummary(input.summary, status, input.nowMs)
-    : coarseDurationSeconds(input.row);
+  const endedAt = presentation.endedAt;
+  const workDurationSeconds = presentation.workDurationSeconds;
   const archived = Boolean(input.row.archived);
   const item: AiHistoryBatchUpsertItem = {
     provider: AI_HISTORY_PROVIDER,
@@ -1259,7 +1354,7 @@ function aiHistoryItemFromThread(input: {
     title: aiHistoryTitle(input.row),
     snippet: aiHistorySnippet(input.row),
     status,
-    runState: input.summary.reviewReason,
+    runState: presentation.runState,
     lastActivityAt,
     startedAt,
     endedAt,
@@ -1269,8 +1364,11 @@ function aiHistoryItemFromThread(input: {
     metadata: {
       source: 'codex_state_sqlite',
       metadata_only: true,
-      rollout_state: input.summary.reviewReason,
+      rollout_state: presentation.runState,
       rollout_present: hasRollout,
+      stale_running: presentation.staleRunning,
+      stale_running_last_activity_at: presentation.staleRunningLastActivityAt,
+      stale_running_threshold_ms: presentation.staleRunningThresholdMs,
       duration_approximate: !hasRollout && workDurationSeconds !== null,
       thread_updated_at_ms: input.row.updated_at_ms ?? null,
       thread_created_at_ms: input.row.created_at_ms ?? null,
