@@ -19,6 +19,10 @@ import {
   formatAiHistoryRelativeTime,
   normalizeAiHistoryRepoPath,
 } from "@/lib/ai-history-display"
+import {
+  CODEX_CHAT_IMPORT_DRAG_TYPE,
+  encodeCodexChatImportDragPayload,
+} from "@/lib/codex-chat-import-dnd"
 import { sanitizeCodexDisplayText } from "@/lib/codex-display-sanitize"
 import { codexReportViewMessages, codexReportViewSummaryMessages } from "@/lib/codex-report-view"
 import {
@@ -69,6 +73,8 @@ type CodexChatImportSidebarProps = {
   onInitialSelectedChatClear?: () => void
   onClose: () => void
   onOpenSettings?: () => void
+  onChatDragStateChange?: (state: { itemId: string; title: string } | null) => void
+  hiddenItemIds?: ReadonlySet<string>
 }
 
 type FocusmapDesktopFolderBridge = {
@@ -435,6 +441,46 @@ function ActivityTimeBreak({ value }: { value: string }) {
   )
 }
 
+function createChatDragImage(item: CodexChatImportItem) {
+  if (typeof document === "undefined") return null
+  const preview = document.createElement("div")
+  preview.style.cssText = [
+    "position:fixed",
+    "left:-9999px",
+    "top:-9999px",
+    "z-index:999999",
+    "width:220px",
+    "max-width:220px",
+    "border:1px solid rgba(56,189,248,0.9)",
+    "border-radius:8px",
+    "background:rgba(10,20,28,0.96)",
+    "box-shadow:0 18px 42px rgba(0,0,0,0.35),0 0 0 3px rgba(56,189,248,0.18)",
+    "color:white",
+    "padding:8px 10px",
+    "font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+    "line-height:1.35",
+    "pointer-events:none",
+  ].join(";")
+
+  const status = document.createElement("div")
+  status.textContent = "マップへ配置"
+  status.style.cssText = "margin-bottom:4px;color:rgb(125,211,252);font-size:10px;font-weight:700"
+
+  const title = document.createElement("div")
+  title.textContent = item.title
+  title.style.cssText = "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"
+
+  preview.append(status, title)
+  document.body.appendChild(preview)
+  const removePreview = () => preview.remove()
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(removePreview)
+  } else {
+    window.setTimeout(removePreview, 0)
+  }
+  return preview
+}
+
 function CodexMonitorRunningOutline() {
   return (
     <span className="codex-monitor-running-orbit" aria-label="Codex 実行中">
@@ -765,6 +811,8 @@ export function CodexChatImportSidebar({
   onInitialSelectedChatClear,
   onClose,
   onOpenSettings,
+  onChatDragStateChange,
+  hiddenItemIds,
 }: CodexChatImportSidebarProps) {
   const initialRepoOption = normalizeAiHistoryRepoPath(initialRepoPath)
   const [providerPickerOpen, setProviderPickerOpen] = React.useState(false)
@@ -774,6 +822,7 @@ export function CodexChatImportSidebar({
   const [repoFilter, setRepoFilter] = React.useState<AiHistoryRepoFilter>(initialRepoOption ?? "all")
   const [activePlacement, setActivePlacement] = React.useState<AiHistoryPlacement>("unplaced")
   const [selectedChatId, setSelectedChatId] = React.useState<string | null>(null)
+  const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
@@ -800,8 +849,10 @@ export function CodexChatImportSidebar({
     aiHistory.items.map(aiHistoryToChatImportItem)
   ), [aiHistory.items])
   const visibleHistoryChatItems = React.useMemo(() => (
-    [...historyChatItems].sort(compareCodexChatImportItems)
-  ), [historyChatItems])
+    historyChatItems
+      .filter(item => !hiddenItemIds?.has(item.id) && !(item.sourceTaskId && hiddenItemIds?.has(item.sourceTaskId)))
+      .sort(compareCodexChatImportItems)
+  ), [hiddenItemIds, historyChatItems])
   const providerOptions = React.useMemo(() => {
     const byProvider = new Map<string, { provider: AiHistoryProvider; label: string; enabled: boolean }>()
     for (const option of AI_HISTORY_PROVIDER_OPTIONS) byProvider.set(option.provider, option)
@@ -934,6 +985,17 @@ export function CodexChatImportSidebar({
     setSelectedChatId(null)
     onInitialSelectedChatClear?.()
   }, [onInitialSelectedChatClear, selectableChatItems, selectedChatId])
+
+  const finishChatDrag = React.useCallback(() => {
+    setDraggingChatId(null)
+    onChatDragStateChange?.(null)
+  }, [onChatDragStateChange])
+
+  React.useEffect(() => {
+    if (!draggingChatId) return
+    if (selectableChatItems.some(item => item.id === draggingChatId || item.sourceTaskId === draggingChatId)) return
+    finishChatDrag()
+  }, [draggingChatId, finishChatDrag, selectableChatItems])
 
   const resolveAiTaskId = React.useCallback((item: CodexChatImportItem) => {
     const directAiTaskId = item.aiTaskId?.trim()
@@ -1791,6 +1853,10 @@ export function CodexChatImportSidebar({
             ) : (
               <div className="space-y-2.5">
                 {visibleHistoryChatItems.map(item => {
+                  const dragTaskId = item.sourceTaskId?.trim() || (item.placed ? item.id : "")
+                  const dragHistoryItemId = item.historyItemId?.trim() || (!dragTaskId ? item.id : "")
+                  const canDragToMindMap = Boolean(dragTaskId || dragHistoryItemId)
+                  const isDragging = draggingChatId === item.id
                   const visualStatus = item.status ?? "awaiting_approval"
                   const uiStatus = getCodexMonitorUiStatus(visualStatus)
                   const statusText = item.statusLabel ?? codexMonitorUiLabel(visualStatus)
@@ -1805,26 +1871,54 @@ export function CodexChatImportSidebar({
                   return (
                     <div
                       key={item.id}
+                      draggable={canDragToMindMap}
                       role="button"
                       tabIndex={0}
                       className={cn(
-                        "group relative flex w-full cursor-pointer flex-col gap-1 overflow-visible rounded-lg border px-3 py-2 pl-4 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500",
+                        "group relative flex w-full flex-col gap-1 overflow-visible rounded-lg border px-3 py-2 pl-4 text-left text-zinc-200 transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500",
+                        canDragToMindMap ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
                         codexMonitorCardClass(visualStatus),
+                        isDragging && "scale-[0.985] opacity-70 shadow-inner ring-1 ring-sky-400/60",
                       )}
                       data-testid={`codex-chat-import-row-${item.id}`}
+                      aria-grabbed={isDragging}
                       onClick={() => handleChatItemClick(item)}
                       onKeyDown={event => {
                         if (event.key !== "Enter" && event.key !== " ") return
                         event.preventDefault()
                         handleChatItemClick(item)
                       }}
+                      onDragStart={event => {
+                        if (!canDragToMindMap) {
+                          event.preventDefault()
+                          return
+                        }
+                        setDraggingChatId(item.id)
+                        onChatDragStateChange?.({ itemId: item.id, title: item.title })
+                        event.dataTransfer.effectAllowed = "move"
+                        event.dataTransfer.setData(
+                          CODEX_CHAT_IMPORT_DRAG_TYPE,
+                          encodeCodexChatImportDragPayload({
+                            taskId: dragTaskId || undefined,
+                            historyItemId: dragHistoryItemId || undefined,
+                            title: item.title,
+                            snippet: item.snippet,
+                          }),
+                        )
+                        event.dataTransfer.setData("text/plain", item.title)
+                        const dragImage = createChatDragImage(item)
+                        if (dragImage && typeof event.dataTransfer.setDragImage === "function") {
+                          event.dataTransfer.setDragImage(dragImage, 24, 18)
+                        }
+                      }}
+                      onDragEnd={finishChatDrag}
                       title={item.snippet ?? item.title}
                     >
                     {uiStatus === "running" && <CodexMonitorRunningOutline />}
                     <span className={cn("absolute bottom-2 left-0 top-2 w-1 rounded-r-full", codexMonitorAccentClass(visualStatus))} aria-hidden="true" />
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex min-w-0 flex-1 items-start gap-1.5">
-                        <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", uiStatus === "running" && "text-emerald-200")} />
+                        <GitBranch className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors", uiStatus === "running" && "text-emerald-200", isDragging && "text-sky-300")} />
                         <div className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</div>
                       </div>
                       {updatedLabel && <span className="shrink-0 text-[10px] text-zinc-500">{updatedLabel}</span>}
@@ -1898,6 +1992,16 @@ export function CodexChatImportSidebar({
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {!selectedChatItem && (
+        <div className="flex min-h-12 items-center justify-end border-t border-[#303030] bg-[#171717] px-3 py-2">
+          <div className={cn(
+            "flex min-w-0 items-center justify-end truncate text-[11px] text-zinc-500 transition-colors",
+            draggingChatId && "text-sky-300",
+          )}>
+            {draggingChatId ? "マップ外で離すとカードに戻ります" : "ドラッグしてマインドマップへ配置"}
           </div>
         </div>
       )}

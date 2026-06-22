@@ -710,6 +710,34 @@ export async function getAiHistoryItemForUser(id: string, userId: string) {
   return row ? asItem(row) : null
 }
 
+export async function setAiHistorySourceTaskIdForUser(input: {
+  id: string
+  userId: string
+  sourceTaskId: string | null
+  projectId?: string | null
+}) {
+  const timestamp = nowIso()
+  const result = await getTursoClient().execute({
+    sql: `
+      UPDATE ai_history_items
+      SET source_task_id = ?,
+          project_id = COALESCE(?, project_id),
+          updated_at = ?
+      WHERE id = ? AND user_id = ?
+      RETURNING *
+    `,
+    args: [
+      input.sourceTaskId,
+      input.projectId ?? null,
+      timestamp,
+      input.id,
+      input.userId,
+    ],
+  })
+  const row = result.rows[0] as Row | undefined
+  return row ? asItem(row) : null
+}
+
 function normalizeDetailBody(body: string) {
   return body.replace(/\r\n/g, '\n').trim().slice(0, MAX_AI_HISTORY_DETAIL_BODY_CHARS)
 }

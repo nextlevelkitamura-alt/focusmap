@@ -90,11 +90,7 @@ type CustomMindMapViewProps = {
     }) => void | Promise<void>;
     importedChatDragTitle?: string | null;
     mobileImportedChatDragEvent?: CustomMindMapImportedChatDragEvent | null;
-    onDropImportedChatNode?: (params: {
-        taskId: string;
-        targetId: string;
-        position: CustomDropPosition;
-    }) => void | Promise<void>;
+    onDropImportedChatNode?: (params: CustomImportedChatDropPayload) => void | Promise<void>;
 };
 
 type CustomMindMapDraftMeta = {
@@ -130,11 +126,18 @@ const MOBILE_FLOATING_TASK_MIN_HEIGHT = 34;
 const MOBILE_FLOATING_PROJECT_MIN_HEIGHT = 36;
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+type CustomImportedChatDropPayload = {
+    taskId?: string;
+    historyItemId?: string;
+    targetId: string;
+    position: CustomDropPosition;
+};
 
 export type CustomMindMapImportedChatDragEvent = {
     sequence: number;
     phase: "start" | "move" | "end" | "cancel";
     taskId: string;
+    historyItemId?: string;
     title?: string | null;
     snippet?: string | null;
     clientX: number;
@@ -562,7 +565,7 @@ function CustomTaskNode({
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
     onPreviewTitleChange?: (taskId: string, title: string | null) => void;
-    onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
+    onDropImportedChatNode?: (params: CustomImportedChatDropPayload) => void | Promise<void>;
     externalImportResetKey: number;
     mobilePlacementMode?: boolean;
 }) {
@@ -915,6 +918,7 @@ function CustomTaskNode({
         if (!payload) return;
         void Promise.resolve(onDropImportedChatNode?.({
             taskId: payload.taskId,
+            historyItemId: payload.historyItemId,
             targetId: node.id,
             position: "as-child",
         })).catch(error => {
@@ -1237,7 +1241,7 @@ function CustomProjectNode({
     onEditingChange?: (nodeId: string, isEditing: boolean) => void;
     onRegisterEditController?: (nodeId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
-    onDropImportedChatNode?: (params: { taskId: string; targetId: string; position: CustomDropPosition }) => void | Promise<void>;
+    onDropImportedChatNode?: (params: CustomImportedChatDropPayload) => void | Promise<void>;
     externalImportResetKey: number;
     mobilePlacementMode?: boolean;
 }) {
@@ -1478,6 +1482,7 @@ function CustomProjectNode({
         if (!payload) return;
         void Promise.resolve(onDropImportedChatNode?.({
             taskId: payload.taskId,
+            historyItemId: payload.historyItemId,
             targetId: "project-root",
             position: "as-child",
         })).catch(error => {
@@ -1613,6 +1618,7 @@ export function CustomMindMapView({
     const [externalImportDragOverMap, setExternalImportDragOverMap] = useState(false);
     const [mobileExternalImportDrag, setMobileExternalImportDrag] = useState<{
         taskId: string;
+        historyItemId?: string;
         title: string | null;
         clientX: number;
         clientY: number;
@@ -3380,6 +3386,7 @@ export function CustomMindMapView({
             const target = getExternalImportDropTarget(dragEvent.clientX, dragEvent.clientY);
             setMobileExternalImportDrag({
                 taskId: dragEvent.taskId,
+                historyItemId: dragEvent.historyItemId,
                 title: dragEvent.title?.trim() || null,
                 clientX: dragEvent.clientX,
                 clientY: dragEvent.clientY,
@@ -3398,6 +3405,7 @@ export function CustomMindMapView({
             setMobileExternalImportDrag(null);
             void Promise.resolve(onDropImportedChatNode?.({
                 taskId: dragEvent.taskId,
+                historyItemId: dragEvent.historyItemId,
                 targetId: target?.nodeId ?? "project-root",
                 position: target?.position ?? "as-child",
             })).catch(error => {
@@ -3438,6 +3446,7 @@ export function CustomMindMapView({
         const target = getExternalImportDropTarget(event.clientX, event.clientY) ?? externalImportDropTargetRef.current ?? externalImportDropTarget;
         void Promise.resolve(onDropImportedChatNode?.({
             taskId: payload.taskId,
+            historyItemId: payload.historyItemId,
             targetId: target?.nodeId ?? "project-root",
             position: target?.position ?? "as-child",
         })).catch(error => {

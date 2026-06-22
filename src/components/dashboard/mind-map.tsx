@@ -2631,15 +2631,63 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
 
     const handleDropImportedChatNode = useCallback(async ({
         taskId,
+        historyItemId,
         targetId,
         position,
     }: {
-        taskId: string;
+        taskId?: string;
+        historyItemId?: string;
         targetId: string;
         position: 'above' | 'below' | 'as-child';
     }) => {
         setActiveCodexChatDrag(null);
         if (!project?.id) return;
+        if (!taskId && historyItemId) {
+            const targetTask = targetId === 'project-root' ? null : getTaskById(targetId);
+            if (targetId !== 'project-root' && !targetTask) return;
+            const parentTaskId = targetId === 'project-root'
+                ? null
+                : position === 'as-child'
+                    ? targetId
+                    : targetTask?.parent_task_id ?? null;
+            setHiddenCodexChatImportIds(prev => {
+                const next = new Set(prev);
+                next.add(historyItemId);
+                return next;
+            });
+            try {
+                if (parentTaskId) {
+                    setTaskCollapsed(parentTaskId, false);
+                }
+                const response = await fetch(`/api/ai-history/${encodeURIComponent(historyItemId)}/place`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        projectId: project.id,
+                        targetId,
+                        position,
+                    }),
+                });
+                const payload = await response.json().catch(() => ({})) as { task?: { id?: unknown }; error?: unknown };
+                if (!response.ok) {
+                    throw new Error(typeof payload.error === 'string' ? payload.error : `POST /api/ai-history/${historyItemId}/place failed: ${response.status}`);
+                }
+                const placedTaskId = typeof payload.task?.id === 'string' ? payload.task.id : null;
+                if (!placedTaskId) throw new Error('AI history placement response did not include task id');
+                await onMindmapUpdated?.({ force: true, silent: true });
+                applySelection(new Set([placedTaskId]), placedTaskId);
+                focusNodeWithPollingV2(placedTaskId, 500, false);
+            } catch (error) {
+                setHiddenCodexChatImportIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(historyItemId);
+                    return next;
+                });
+                console.error('[MindMap] Failed to place AI history item:', error);
+            }
+            return;
+        }
+        if (!taskId) return;
         const importedTask = repoScopedTasksById.get(taskId) ?? getTaskById(taskId);
         if (!importedTask) return;
         if (taskId === targetId) return;
@@ -2714,6 +2762,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         focusNodeWithPollingV2,
         getTaskById,
         groups,
+        onMindmapUpdated,
         project?.id,
         repoScopedTasksById,
         setTaskCollapsed,
@@ -3006,6 +3055,8 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 initialSelectedChatId={selectedCodexChatDetailId}
                                 onInitialSelectedChatClear={() => setSelectedCodexChatDetailId(null)}
                                 onClose={closeCodexChatImportSidebar}
+                                onChatDragStateChange={setActiveCodexChatDrag}
+                                hiddenItemIds={hiddenCodexChatImportIds}
                             />
                         </div>
                     )}

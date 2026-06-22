@@ -1,7 +1,8 @@
 export const CODEX_CHAT_IMPORT_DRAG_TYPE = "application/x-focusmap-codex-chat-import"
 
 export type CodexChatImportDragPayload = {
-  taskId: string
+  taskId?: string
+  historyItemId?: string
   title?: string
   snippet?: string | null
 }
@@ -21,9 +22,12 @@ export function readCodexChatImportDragPayload(dataTransfer: DataTransfer | null
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as Partial<CodexChatImportDragPayload>
-    if (typeof parsed.taskId === "string" && parsed.taskId.trim()) {
+    const taskId = typeof parsed.taskId === "string" ? parsed.taskId.trim() : ""
+    const historyItemId = typeof parsed.historyItemId === "string" ? parsed.historyItemId.trim() : ""
+    if (taskId || historyItemId) {
       return {
-        taskId: parsed.taskId.trim(),
+        ...(taskId ? { taskId } : {}),
+        ...(historyItemId ? { historyItemId } : {}),
         title: typeof parsed.title === "string" ? parsed.title.trim() : undefined,
         snippet: typeof parsed.snippet === "string" ? parsed.snippet.trim() : null,
       }
