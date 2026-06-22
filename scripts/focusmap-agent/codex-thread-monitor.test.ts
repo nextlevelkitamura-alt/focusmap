@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activityMessages,
+  aiHistoryHotSyncPreparedItemLimit,
   aiHistoryDetailMessages,
   aiHistoryPresentationForThread,
   aiHistoryTitle,
+  AI_HISTORY_FAST_WATCH_LIMIT,
   AI_HISTORY_STALE_RUNNING_AUTOMATION_MS,
   AI_HISTORY_STALE_RUNNING_GENERAL_MS,
   AI_HISTORY_PLACEHOLDER_TITLE,
@@ -28,6 +30,7 @@ import {
   markAiHistoryRolloutInspected,
   markTaskRolloutInspected,
   markThreadGone,
+  mergeRecentThreadsForHotSync,
   matchingThreadImportScope,
   orphanImportLimitForPreImportTasks,
   parseRollout,
@@ -92,6 +95,36 @@ describe('codex-thread-monitor state detection', () => {
   test('keeps Codex completion debounce below the visible UI lag target', () => {
     expect(AWAITING_APPROVAL_STABILITY_MS).toBe(1_000);
     expect(RESUME_RUNNING_VISIBILITY_MS).toBe(2_000);
+  });
+
+  test('keeps hot sync capacity for the latest 20 threads per project scope plus global head', () => {
+    expect(AI_HISTORY_FAST_WATCH_LIMIT).toBe(20);
+    expect(aiHistoryHotSyncPreparedItemLimit({
+      maxItems: AI_HISTORY_FAST_WATCH_LIMIT,
+      importScopeCount: 3,
+      includeAllCodexCwds: true,
+    })).toBe(80);
+    expect(aiHistoryHotSyncPreparedItemLimit({
+      maxItems: AI_HISTORY_FAST_WATCH_LIMIT,
+      importScopeCount: 3,
+      includeAllCodexCwds: false,
+    })).toBe(60);
+  });
+
+  test('merges global and per-scope recent threads without losing scope-only rows', () => {
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+    const globalRow = { ...threadRow, id: 'thread-global', updated_at_ms: now + 30_000 };
+    const sharedRow = { ...threadRow, id: 'thread-shared', updated_at_ms: now + 20_000 };
+    const scopeOnlyRow = { ...threadRow, id: 'thread-scope-only', updated_at_ms: now + 10_000 };
+
+    expect(mergeRecentThreadsForHotSync(
+      [globalRow, sharedRow],
+      [sharedRow, scopeOnlyRow],
+    ).map(row => row.id)).toEqual([
+      'thread-global',
+      'thread-shared',
+      'thread-scope-only',
+    ]);
   });
 
   test('uses a visible prompt title until Codex generates a sidebar title', () => {

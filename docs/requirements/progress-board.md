@@ -1,6 +1,6 @@
 # Progress Board
 
-Last updated: 2026-05-30
+Last updated: 2026-06-23
 
 ## Session Resume Protocol
 
@@ -25,6 +25,7 @@ Last updated: 2026-05-30
 - CALENDAR-EVENT-TO-MEMO recurring-event and RLS behavior still needs verification.
 - REQ-015: Recurring event warning and this-occurrence vs whole-series deletion.
 - REQ-016: Conversion audit table and RLS behavior.
+- REQ-018: AI履歴hot同期が監視中project/repo/worktree scopeごとの最新20件を3秒級でrunning反映すること。
 - MEMO-STRUCTURE end-to-end behavior exists in code but needs verification.
 - REQ-001: Raw memo separation.
 - REQ-002: Wishlist/note source support.

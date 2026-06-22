@@ -42,7 +42,7 @@ export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
-const AI_HISTORY_FAST_WATCH_LIMIT = 20;
+export const AI_HISTORY_FAST_WATCH_LIMIT = 20;
 const AI_HISTORY_HOT_SYNC_LIMIT = AI_HISTORY_FAST_WATCH_LIMIT;
 const AI_HISTORY_HOT_SYNC_TOTAL_LIMIT = ORPHAN_IMPORT_SCAN_LIMIT;
 const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
@@ -2274,6 +2274,33 @@ function compareThreadsByRecentActivity(left: CodexThreadRow, right: CodexThread
   return right.id.localeCompare(left.id);
 }
 
+export function aiHistoryHotSyncPreparedItemLimit(input: {
+  maxItems: number;
+  importScopeCount: number;
+  includeAllCodexCwds: boolean;
+}): number {
+  const maxItems = Math.max(1, Math.floor(input.maxItems));
+  const importScopeCount = Math.max(0, Math.floor(input.importScopeCount));
+  const scopedWatchLimit = importScopeCount > 0
+    ? AI_HISTORY_FAST_WATCH_LIMIT * importScopeCount
+    : 0;
+  const allCwdWatchLimit = input.includeAllCodexCwds ? AI_HISTORY_FAST_WATCH_LIMIT : 0;
+  return Math.min(
+    AI_HISTORY_HOT_SYNC_TOTAL_LIMIT,
+    Math.max(maxItems, scopedWatchLimit + allCwdWatchLimit, AI_HISTORY_FAST_WATCH_LIMIT),
+  );
+}
+
+export function mergeRecentThreadsForHotSync(...groups: CodexThreadRow[][]): CodexThreadRow[] {
+  const rowsById = new Map<string, CodexThreadRow>();
+  for (const group of groups) {
+    for (const row of group) {
+      if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
+    }
+  }
+  return Array.from(rowsById.values()).sort(compareThreadsByRecentActivity);
+}
+
 async function readRecentThreadsByImportScope(
   dbPath: string,
   sinceMs: number,
@@ -2528,23 +2555,33 @@ async function syncAiHistoryMetadata(
   if (!includeAllCodexCwds && repoPaths.length === 0) return 0;
   const sinceMs = 0;
   const preparedItemLimit = mode === 'hot'
-    ? Math.min(
-      AI_HISTORY_HOT_SYNC_TOTAL_LIMIT,
-      includeAllCodexCwds
-        ? Math.max(maxItems, AI_HISTORY_FAST_WATCH_LIMIT)
-        : Math.max(maxItems, AI_HISTORY_FAST_WATCH_LIMIT * Math.max(1, importScopes.length)),
-    )
+    ? aiHistoryHotSyncPreparedItemLimit({
+      maxItems,
+      importScopeCount: importScopes.length,
+      includeAllCodexCwds,
+    })
     : maxItems;
-  const recentRows = includeAllCodexCwds
-    ? await readRecentThreads(dbPath, sinceMs, [], Math.max(preparedItemLimit, AI_HISTORY_FAST_WATCH_LIMIT))
-    : mode === 'hot'
-      ? await readRecentThreadsByImportScope(dbPath, sinceMs, importScopes, AI_HISTORY_FAST_WATCH_LIMIT)
-      : await readRecentThreads(
-        dbPath,
-        sinceMs,
-        repoPaths,
-        ORPHAN_IMPORT_SCAN_LIMIT,
-      );
+  let recentRows: CodexThreadRow[];
+  if (mode === 'hot' && includeAllCodexCwds) {
+    const [allCwdRows, scopedRows] = await Promise.all([
+      readRecentThreads(dbPath, sinceMs, [], AI_HISTORY_FAST_WATCH_LIMIT),
+      importScopes.length > 0
+        ? readRecentThreadsByImportScope(dbPath, sinceMs, importScopes, AI_HISTORY_FAST_WATCH_LIMIT)
+        : Promise.resolve([] as CodexThreadRow[]),
+    ]);
+    recentRows = mergeRecentThreadsForHotSync(allCwdRows, scopedRows).slice(0, preparedItemLimit);
+  } else if (includeAllCodexCwds) {
+    recentRows = await readRecentThreads(dbPath, sinceMs, [], Math.max(preparedItemLimit, AI_HISTORY_FAST_WATCH_LIMIT));
+  } else if (mode === 'hot') {
+    recentRows = await readRecentThreadsByImportScope(dbPath, sinceMs, importScopes, AI_HISTORY_FAST_WATCH_LIMIT);
+  } else {
+    recentRows = await readRecentThreads(
+      dbPath,
+      sinceMs,
+      repoPaths,
+      ORPHAN_IMPORT_SCAN_LIMIT,
+    );
+  }
   const syncScopes = includeAllCodexCwds
     ? aiHistoryScopesForRows(importScopes, recentRows, cwdScopeMap)
     : importScopes;

@@ -1,6 +1,6 @@
 # Requirements Ledger
 
-Last updated: 2026-06-17
+Last updated: 2026-06-23
 
 | ID | Type | Requirement | Status | Priority | Evidence | Notes |
 |---|---|---|---|---|---|---|
@@ -21,3 +21,4 @@ Last updated: 2026-06-17
 | REQ-015 | product | Recurring Google Calendar event conversion asks whether to delete one occurrence or the whole series. | needs_verification | high | `confirmCalendarEventMemoDeleteScope()` passes `deleteScope` and `recurringEventId` to the conversion API. | Current UI uses browser confirm: OK = series, Cancel = this occurrence. Consider a custom dialog for clearer two-button labels. |
 | REQ-016 | data | Calendar event to memo conversions are auditable after the source event is deleted. | deployed_needs_rls_verification | medium | `calendar_event_memo_conversions` stores memo id, calendar/event ids, delete scope, event snapshot, status, and timestamps; Supabase migration `20260530143000` is applied. | RLS visibility test is still pending. |
 | REQ-017 | product | PC / Mac desktop Todo can be simplified to a calendar-only view that defaults to full-width 3days with no overflow chips. | needs_verification | high | `src/app/dashboard/dashboard-client.tsx`; `src/components/dashboard/desktop-today-panel.tsx`; `src/components/today/today-3days-calendar.tsx`; `src/components/calendar/calendar-selector.tsx`; `src/hooks/useCalendars.ts`; `docs/specs/desktop-todo-calendar-only/mockup-desktop-3days-calendar-only.png`. | Implemented without DB schema changes. Display calendars use existing `user_calendars.selected`; lint/build/browser checks are pending by policy. |
+| REQ-018 | product | AI履歴のhot同期は全体最新20件だけでなく、監視中project/repo/worktree scopeごとの最新20件も短周期対象にし、返信待ちthreadの再開を3秒級でrunning反映する。 | needs_verification | high | `scripts/focusmap-agent/src/codex-thread-monitor.ts`; `scripts/focusmap-agent/codex-thread-monitor.test.ts`; `docs/CONTEXT.md`. | 回帰テストは追加済みだが、AGENTS.mdの自動検証ポリシーにより未実行。 |
