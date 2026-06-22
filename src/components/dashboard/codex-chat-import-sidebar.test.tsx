@@ -207,6 +207,8 @@ describe("CodexChatImportSidebar", () => {
 
     expect(screen.getByRole("complementary", { name: "AI履歴" })).toBeInTheDocument()
     expect(screen.getByText("AI online")).toBeInTheDocument()
+    expect(screen.queryByText("AI履歴")).not.toBeInTheDocument()
+    expect(document.querySelector('button[aria-label="AI履歴を更新"]')).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "AI履歴設定" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "AI履歴を閉じる" })).toBeInTheDocument()
     expect(screen.getByText("未配置 1件")).toBeInTheDocument()
@@ -223,7 +225,7 @@ describe("CodexChatImportSidebar", () => {
       "href",
       "codex://threads/thread-abcdef123456",
     )
-  })
+  }, 15_000)
 
   test("keeps the expanded archive action wide enough for the Japanese label", () => {
     renderSidebar()

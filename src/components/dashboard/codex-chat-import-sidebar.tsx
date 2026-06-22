@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Archive, ArrowLeft, Bot, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, Settings, X } from "lucide-react"
+import { Archive, ArrowLeft, Bot, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, RefreshCw, Settings, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiHistory } from "@/hooks/useAiHistory"
@@ -1645,9 +1645,6 @@ export function CodexChatImportSidebar({
       {!selectedChatItem && (
         <div className="border-b border-[#303030] bg-[#171717] px-3 py-2.5">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="min-w-0 flex-1 truncate text-[20px] font-semibold tracking-normal text-zinc-50">
-              AI履歴
-            </div>
             <span className={cn(
               "inline-flex h-8 shrink-0 items-center rounded-md border px-2 text-xs font-semibold",
               aiHistory.sync.aiOnline
@@ -1773,6 +1770,20 @@ export function CodexChatImportSidebar({
                 </div>
               )}
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-8 w-8 shrink-0 text-zinc-400 hover:bg-white/10 hover:text-white focus-visible:ring-zinc-500/70"
+              onClick={() => {
+                void aiHistory.refresh()
+              }}
+              disabled={aiHistory.isLoading}
+              aria-label="AI履歴を更新"
+              title="更新"
+            >
+              <RefreshCw className={cn("h-4 w-4", aiHistory.isLoading && "animate-spin")} />
+            </Button>
             <Button
               type="button"
               variant="ghost"

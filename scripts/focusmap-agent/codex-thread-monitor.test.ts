@@ -1136,6 +1136,13 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(matchingThreadImportScope({ cwd: '/Users/me/project' }, scopes, updatedMs)?.project_id).toBe('project-1');
     expect(matchingThreadImportScope({ cwd: '/Users/me/project' }, scopes, Date.parse('2026-06-10T09:00:00.000Z'))).toBeNull();
+    expect(matchingThreadImportScope(
+      { cwd: '/Users/me/project' },
+      scopes,
+      Date.parse('2026-06-10T09:00:00.000Z'),
+      undefined,
+      { ignoreEnabledSince: true },
+    )?.project_id).toBe('project-1');
     expect(matchingThreadImportScope({ cwd: '/Users/me/other' }, scopes, updatedMs)).toBeNull();
     expect(matchingThreadImportScope(
       { cwd: '/Users/me/project-worktree' },

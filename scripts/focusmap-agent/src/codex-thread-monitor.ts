@@ -1050,16 +1050,17 @@ export function matchingThreadImportScope(
   importScopes: CodexThreadImportScope[],
   updatedMs = Date.now(),
   cwdScopeMap?: Map<string, CodexThreadImportScope>,
+  options: { ignoreEnabledSince?: boolean } = {},
 ): CodexThreadImportScope | null {
   const cwd = normalizeLocalPath(row.cwd);
   if (!cwd) return null;
   const aliasedScope = cwdScopeMap?.get(cwd);
-  if (aliasedScope && importScopeEnabledAt(aliasedScope, updatedMs)) return aliasedScope;
+  if (aliasedScope && (options.ignoreEnabledSince || importScopeEnabledAt(aliasedScope, updatedMs))) return aliasedScope;
 
   for (const scope of importScopes) {
     const repoPath = normalizeLocalPath(scope.repo_path);
     if (!repoPath || repoPath !== cwd) continue;
-    if (!importScopeEnabledAt(scope, updatedMs)) continue;
+    if (!options.ignoreEnabledSince && !importScopeEnabledAt(scope, updatedMs)) continue;
     return scope;
   }
   return null;
@@ -2541,7 +2542,9 @@ async function syncAiHistoryMetadata(
   for (const row of rows) {
     if (preparedItems.length >= preparedItemLimit) break;
     const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
-    const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap);
+    const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap, {
+      ignoreEnabledSince: true,
+    });
     if (!matchingScope) continue;
     const itemKey = `${row.id}\u001f${normalizeLocalPath(matchingScope.repo_path)}`;
     if (seenItemKeys.has(itemKey)) continue;
