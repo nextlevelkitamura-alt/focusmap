@@ -267,7 +267,7 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).queryByText(/54m/)).not.toBeInTheDocument()
   })
 
-  test("defaults to the project repo and shows all Codex chats when 全体 is selected", () => {
+  test("defaults to all Codex chats across repos", () => {
     historyItems = [
       baseHistoryItem,
       {
@@ -283,9 +283,9 @@ describe("CodexChatImportSidebar", () => {
     renderSidebar()
 
     expect(screen.getByText("AI履歴サイドバーを接続")).toBeInTheDocument()
-    expect(screen.queryByText("別リポの履歴")).not.toBeInTheDocument()
-    expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/focusmap")
-    expect(lastHookOptions.at(-1)?.scope).toBe("project")
+    expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
+    expect(lastHookOptions.at(-1)?.repo).toBe("all")
+    expect(lastHookOptions.at(-1)?.scope).toBe("global")
 
     const scopeButton = screen.getAllByRole("button").find(button => (
       button.getAttribute("aria-controls") === "ai-history-scope-filter"
@@ -294,11 +294,11 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(scopeButton!)
     const scopeFilter = document.getElementById("ai-history-scope-filter")
     expect(scopeFilter).not.toBeNull()
-    fireEvent.click(within(scopeFilter!).getByText("全体"))
+    fireEvent.click(within(scopeFilter!).getAllByText("focusmap")[0]!)
 
     expect(screen.getByText("AI履歴サイドバーを接続")).toBeInTheDocument()
-    expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
-    expect(lastHookOptions.at(-1)?.repo).toBe("all")
+    expect(screen.queryByText("別リポの履歴")).not.toBeInTheDocument()
+    expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/focusmap")
     expect(lastHookOptions.at(-1)?.scope).toBe("global")
   })
 
@@ -332,7 +332,7 @@ describe("CodexChatImportSidebar", () => {
     expect(lastHookOptions.at(-1)?.scope).toBe("global")
   })
 
-  test("persists a Codex.app repo candidate to the current project before showing its history", async () => {
+  test("filters a Codex.app repo candidate without changing the current project repo", async () => {
     const onSelectRepoPath = vi.fn(() => Promise.resolve())
     useAvailableReposMock.mockReturnValue({
       repos: [{
@@ -374,12 +374,59 @@ describe("CodexChatImportSidebar", () => {
     fireEvent.click(within(scopeFilter!).getByText("side-business"))
 
     await waitFor(() => {
-      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/side-business")
       expect(screen.getByText("side-businessの履歴")).toBeInTheDocument()
     })
+    expect(onSelectRepoPath).not.toHaveBeenCalled()
     expect(screen.queryByText("AI履歴サイドバーを接続")).not.toBeInTheDocument()
     expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/side-business")
-    expect(lastHookOptions.at(-1)?.scope).toBe("project")
+    expect(lastHookOptions.at(-1)?.scope).toBe("global")
+  })
+
+  test("sorts running first, then latest review items, and hides completed histories", () => {
+    historyItems = [
+      {
+        ...baseHistoryItem,
+        id: "history-review-old",
+        externalThreadId: "thread-review-old",
+        title: "古い確認待ち",
+        status: "awaiting_approval",
+        lastActivityAt: "2026-06-20T00:00:00.000Z",
+      },
+      {
+        ...baseHistoryItem,
+        id: "history-running",
+        externalThreadId: "thread-running",
+        title: "実行中の履歴",
+        status: "running",
+        lastActivityAt: "2026-06-19T00:00:00.000Z",
+      },
+      {
+        ...baseHistoryItem,
+        id: "history-review-new",
+        externalThreadId: "thread-review-new",
+        title: "新しい確認待ち",
+        status: "awaiting_approval",
+        lastActivityAt: "2026-06-21T00:00:00.000Z",
+      },
+      {
+        ...baseHistoryItem,
+        id: "history-completed",
+        externalThreadId: "thread-completed",
+        title: "完了済み履歴",
+        status: "completed",
+        lastActivityAt: "2026-06-22T00:00:00.000Z",
+      },
+    ]
+
+    renderSidebar()
+
+    const rows = screen.getAllByTestId(/^codex-chat-import-row-/)
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining("実行中の履歴"),
+      expect.stringContaining("新しい確認待ち"),
+      expect.stringContaining("古い確認待ち"),
+    ])
+    expect(screen.queryByText("完了済み履歴")).not.toBeInTheDocument()
   })
 
   test("merges current project, saved scope, and Codex repo count into one repo option", () => {

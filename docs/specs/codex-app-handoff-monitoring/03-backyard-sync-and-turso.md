@@ -238,10 +238,10 @@ type AiHistoryListResponse = {
 
 ### AI履歴agent sync contract
 
-- agent起動時 / app start時: 現在projectの有効repoを即reconcileする。
-- dashboard reload / scope diff: 現在project repoを優先reconcileする。repo selector変更だけでは同期scopeを変更しない。
-- hourly: 全enabled repoを順番にmetadata reconcileする。
-- hot history: 各enabled repoの直近top 20件をfast-watch対象にし、running taskがある時もtop 20のstat watchは維持する。
+- agent起動時 / app start時: 現在projectの有効repoを即reconcileし、Codex state SQLiteの全cwdもhot metadata同期対象にする。
+- dashboard reload / scope diff: 現在project repoを優先reconcileする。repo selector変更は表示フィルタだけで、同期scopeやproject repo設定を変更しない。
+- hourly: 全enabled repoを順番にmetadata reconcileし、最後に全cwdの最近履歴も補完する。
+- hot history: Codex state SQLiteの全cwdから最近履歴を読み、enabled repoに一致するcwd/worktreeはproject scopeへ、scope外cwdは `project_id=null` のAI履歴へ保存する。running taskがある時もAI履歴上位threadのstat watchは維持する。
 - detail hydrate/watch target: hydrate requestで返った `historyItemId` / `externalThreadId` はrequest TTL内のfast-watch対象にする。detailを開いた時はcacheが最新でも `watch=1` 付きactivity GETで短TTL requestを作り、古いthreadがtop 20外でも再開を検知できるようにする。
 - running/awaiting/needs_input thread: rollout JSONLを約1秒watchする。
 - fast-watch read rule: fast-watch対象はrollout fileの `mtime/size` を1秒ごとにstatし、mtime/sizeまたはCodex thread row fingerprintが変わった時だけrollout本文を読む。fingerprintが同じ時は次のstat予定だけ更新し、cached本文の再parseやcloud writeへ進まない。

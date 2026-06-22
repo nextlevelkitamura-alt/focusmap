@@ -2304,6 +2304,30 @@ async function readRecentThreadsByImportScope(
   return Array.from(rowsById.values()).sort(compareThreadsByRecentActivity);
 }
 
+function aiHistoryScopesForRows(
+  importScopes: CodexThreadImportScope[],
+  rows: CodexThreadRow[],
+  cwdScopeMap: Map<string, CodexThreadImportScope>,
+): CodexThreadImportScope[] {
+  const scopes: CodexThreadImportScope[] = [...importScopes];
+  const seenRepoPaths = new Set(importScopes
+    .map(scope => normalizeLocalPath(scope.repo_path))
+    .filter(Boolean));
+
+  for (const row of rows) {
+    const cwd = normalizeLocalPath(row.cwd);
+    if (!cwd || seenRepoPaths.has(cwd) || cwdScopeMap.has(cwd)) continue;
+    seenRepoPaths.add(cwd);
+    scopes.push({
+      project_id: '',
+      repo_path: cwd,
+      enabled_since: null,
+    });
+  }
+
+  return scopes;
+}
+
 function importScopeSignature(importScopes: CodexThreadImportScope[]): string {
   return importScopes
     .map(scope => [
@@ -2495,28 +2519,36 @@ async function syncAiHistoryMetadata(
   mode: AiHistorySyncMode = 'hot',
   maxItems = AI_HISTORY_HOT_SYNC_LIMIT,
   includeScopeUpserts = false,
+  includeAllCodexCwds = false,
 ): Promise<number> {
   const now = Date.now();
   if (now < orphanImportApiUnavailableUntil) return 0;
-  if (importScopes.length === 0) return 0;
   const cwdScopeMap = await importScopeCwdMap(importScopes);
   const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
-  if (repoPaths.length === 0) return 0;
+  if (!includeAllCodexCwds && repoPaths.length === 0) return 0;
   const sinceMs = 0;
-  const recentRows = mode === 'hot'
-    ? await readRecentThreadsByImportScope(dbPath, sinceMs, importScopes, AI_HISTORY_FAST_WATCH_LIMIT)
-    : await readRecentThreads(
-      dbPath,
-      sinceMs,
-      repoPaths,
-      ORPHAN_IMPORT_SCAN_LIMIT,
-    );
   const preparedItemLimit = mode === 'hot'
     ? Math.min(
       AI_HISTORY_HOT_SYNC_TOTAL_LIMIT,
-      Math.max(maxItems, AI_HISTORY_FAST_WATCH_LIMIT * Math.max(1, importScopes.length)),
+      includeAllCodexCwds
+        ? Math.max(maxItems, AI_HISTORY_FAST_WATCH_LIMIT)
+        : Math.max(maxItems, AI_HISTORY_FAST_WATCH_LIMIT * Math.max(1, importScopes.length)),
     )
     : maxItems;
+  const recentRows = includeAllCodexCwds
+    ? await readRecentThreads(dbPath, sinceMs, [], Math.max(preparedItemLimit, AI_HISTORY_FAST_WATCH_LIMIT))
+    : mode === 'hot'
+      ? await readRecentThreadsByImportScope(dbPath, sinceMs, importScopes, AI_HISTORY_FAST_WATCH_LIMIT)
+      : await readRecentThreads(
+        dbPath,
+        sinceMs,
+        repoPaths,
+        ORPHAN_IMPORT_SCAN_LIMIT,
+      );
+  const syncScopes = includeAllCodexCwds
+    ? aiHistoryScopesForRows(importScopes, recentRows, cwdScopeMap)
+    : importScopes;
+  if (syncScopes.length === 0) return 0;
   const sessionThreadNames = await readCodexSessionThreadNames();
   const rowsById = new Map(recentRows.map(row => [row.id, row]));
   const watchedRows: CodexThreadRow[] = [];
@@ -2540,7 +2572,7 @@ async function syncAiHistoryMetadata(
       }
     }
     for (const watch of activeAiHistoryPlaceholderTitleWatches(now)) {
-      const scopeStillEnabled = importScopes.some(scope => (
+      const scopeStillEnabled = syncScopes.some(scope => (
         typeof scope.project_id === 'string' &&
         scope.project_id.trim() === watch.projectId &&
         normalizeLocalPath(scope.repo_path) === watch.repoPath
@@ -2578,7 +2610,7 @@ async function syncAiHistoryMetadata(
   for (const row of rows) {
     if (preparedItems.length >= preparedItemLimit) break;
     const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
-    const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap, {
+    const matchingScope = matchingThreadImportScope(row, syncScopes, updatedMs, cwdScopeMap, {
       ignoreEnabledSince: true,
     });
     if (!matchingScope) continue;
@@ -3003,28 +3035,27 @@ export function startCodexThreadMonitorLoop(
       if (hydratedDetails > 0) debug(`ai history detail hydrated=${hydratedDetails}`);
 
       const deferOrphanImport = shouldDeferOrphanImportForTasks(preImportTasks);
-      const hotUpserted = importScopes.length === 0
-        ? 0
-        : await syncAiHistoryMetadata(
-          api,
-          runnerId,
-          dbPath,
-          tasks,
-          importScopes,
-          'hot',
-          AI_HISTORY_HOT_SYNC_LIMIT,
-          false,
-        );
+      const hotUpserted = await syncAiHistoryMetadata(
+        api,
+        runnerId,
+        dbPath,
+        tasks,
+        importScopes,
+        'hot',
+        AI_HISTORY_HOT_SYNC_LIMIT,
+        false,
+        true,
+      );
 
-      const shouldReconcile = importScopes.length > 0 &&
-        (reconcileQueue.length > 0 || nextReconcileAt === 0 || Date.now() >= nextReconcileAt);
+      const shouldReconcile = reconcileQueue.length > 0 || nextReconcileAt === 0 || Date.now() >= nextReconcileAt;
       if (shouldReconcile) {
         if (reconcileQueue.length === 0) {
           reconcileQueue = prioritizeImportScopesForReconcile(importScopes);
         }
         const scope = reconcileQueue.shift();
+        let reconcileUpserted = 0;
         if (scope) {
-          const reconcileUpserted = await syncAiHistoryMetadata(
+          reconcileUpserted += await syncAiHistoryMetadata(
             api,
             runnerId,
             dbPath,
@@ -3035,19 +3066,32 @@ export function startCodexThreadMonitorLoop(
             true,
           );
           await sleep(AI_HISTORY_RECONCILE_QUEUE_YIELD_MS);
-          if (reconcileQueue.length === 0) {
-            nextReconcileAt = Date.now() + reconcileIntervalMs;
-          } else {
-            nextReconcileAt = 0;
-          }
-          updateCodexThreadMonitorHeartbeatState({
-            last_reconcile_at: new Date().toISOString(),
-            next_reconcile_at: new Date(nextReconcileAt || Date.now()).toISOString(),
-            last_reconcile_imported: hotUpserted + reconcileUpserted,
-            last_reconcile_upserted: hotUpserted + reconcileUpserted,
-          });
-          debug(`ai history metadata reconcile scope=${scope.repo_path} upserted=${reconcileUpserted} queue=${reconcileQueue.length} next_in=${nextReconcileAt ? Math.round((nextReconcileAt - Date.now()) / 1000) : 0}s`);
         }
+        if (!scope || reconcileQueue.length === 0) {
+          reconcileUpserted += await syncAiHistoryMetadata(
+            api,
+            runnerId,
+            dbPath,
+            tasks,
+            importScopes,
+            'reconcile',
+            AI_HISTORY_HOT_SYNC_TOTAL_LIMIT,
+            false,
+            true,
+          );
+        }
+        if (reconcileQueue.length === 0) {
+          nextReconcileAt = Date.now() + reconcileIntervalMs;
+        } else {
+          nextReconcileAt = 0;
+        }
+        updateCodexThreadMonitorHeartbeatState({
+          last_reconcile_at: new Date().toISOString(),
+          next_reconcile_at: new Date(nextReconcileAt || Date.now()).toISOString(),
+          last_reconcile_imported: hotUpserted + reconcileUpserted,
+          last_reconcile_upserted: hotUpserted + reconcileUpserted,
+        });
+        debug(`ai history metadata reconcile scope=${scope?.repo_path ?? 'all-codex-cwds'} upserted=${reconcileUpserted} queue=${reconcileQueue.length} next_in=${nextReconcileAt ? Math.round((nextReconcileAt - Date.now()) / 1000) : 0}s`);
       }
       const postImportTasks = deferOrphanImport
         ? []

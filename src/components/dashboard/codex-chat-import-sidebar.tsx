@@ -573,7 +573,10 @@ function codexChatImportSortTime(item: CodexChatImportItem) {
 function codexChatImportSortPriority(item: CodexChatImportItem) {
   const uiStatus = getCodexMonitorUiStatus(item.status ?? null)
   if (uiStatus === "running") return 0
-  return 1
+  if (uiStatus === "review") return 1
+  if (uiStatus === "unsent") return 2
+  if (uiStatus === "connection_failed") return 3
+  return 4
 }
 
 function compareCodexChatImportItems(left: CodexChatImportItem, right: CodexChatImportItem) {
@@ -582,6 +585,10 @@ function compareCodexChatImportItems(left: CodexChatImportItem, right: CodexChat
   const timeDelta = codexChatImportSortTime(right) - codexChatImportSortTime(left)
   if (timeDelta !== 0) return timeDelta
   return left.id.localeCompare(right.id)
+}
+
+function isNormallyHiddenCodexChatImportItem(item: CodexChatImportItem) {
+  return getCodexMonitorUiStatus(item.status ?? null) === "done"
 }
 
 function isUserActivityMessage(message: AiTaskActivityMessage) {
@@ -871,7 +878,6 @@ export function CodexChatImportSidebar({
   initialSelectedChatId = null,
   onInitialSelectedChatClear,
   onClose,
-  onSelectRepoPath,
   onOpenSettings,
   onChatDragStateChange,
   hiddenItemIds,
@@ -880,8 +886,8 @@ export function CodexChatImportSidebar({
   const [providerPickerOpen, setProviderPickerOpen] = React.useState(false)
   const [scopePickerOpen, setScopePickerOpen] = React.useState(false)
   const [providerFilter, setProviderFilter] = React.useState<AiHistoryProvider>("codex_app")
-  const [historyScope, setHistoryScope] = React.useState<AiHistoryScopeFilter>(initialRepoOption ? "project" : "global")
-  const [repoFilter, setRepoFilter] = React.useState<AiHistoryRepoFilter>(initialRepoOption ?? "all")
+  const [historyScope, setHistoryScope] = React.useState<AiHistoryScopeFilter>("global")
+  const [repoFilter, setRepoFilter] = React.useState<AiHistoryRepoFilter>("all")
   const [activePlacement, setActivePlacement] = React.useState<AiHistoryPlacement>("unplaced")
   const [selectedChatId, setSelectedChatId] = React.useState<string | null>(null)
   const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
@@ -889,7 +895,6 @@ export function CodexChatImportSidebar({
   const [archivingChatIds, setArchivingChatIds] = React.useState<Set<string>>(() => new Set())
   const [locallyArchivedChatIds, setLocallyArchivedChatIds] = React.useState<Set<string>>(() => new Set())
   const [archiveErrorByChatId, setArchiveErrorByChatId] = React.useState<Record<string, string>>({})
-  const [repoSelectionSavingPath, setRepoSelectionSavingPath] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
@@ -924,6 +929,7 @@ export function CodexChatImportSidebar({
     historyChatItems
       .filter(item => (
         !chatArchiveIdentityKeys(item).some(key => locallyArchivedChatIds.has(key)) &&
+        !isNormallyHiddenCodexChatImportItem(item) &&
         !hiddenItemIds?.has(item.id) &&
         !(item.sourceTaskId && hiddenItemIds?.has(item.sourceTaskId))
       ))
@@ -958,7 +964,6 @@ export function CodexChatImportSidebar({
       if (!repoPath) return
       const existing = options.find(option => option.repoPath === repoPath)
       if (existing) {
-        if (existing.scope !== "project" && input.scope === "project") existing.scope = "project"
         existing.label = existing.label || input.label?.trim() || aiHistoryRepoName(repoPath)
         existing.title = existing.title || input.title?.trim() || repoPath
         existing.sourceLabel = mergeSourceLabels(existing.sourceLabel, input.sourceLabel)
@@ -982,7 +987,7 @@ export function CodexChatImportSidebar({
         }))
         .find(option => option.repoPath === initialRepoOption)
       addRepoOption({
-        scope: "project",
+        scope: "global",
         repoPath: initialRepoOption,
         label: projectRepo?.label || aiHistoryRepoName(initialRepoOption),
         title: initialRepoOption,
@@ -1023,28 +1028,13 @@ export function CodexChatImportSidebar({
     scopeOptions.find(option => option.scope === historyScope) ??
     scopeOptions.at(-1)
   ), [historyScope, repoFilter, scopeOptions])
-  const selectScopeOption = React.useCallback(async (option: AiHistoryScopeOption) => {
-    const repoPath = option.repoPath === "all" ? null : option.repoPath
-    const shouldPersistRepo = Boolean(repoPath && onSelectRepoPath && repoPath !== initialRepoOption)
-
-    if (shouldPersistRepo && repoPath) {
-      setRepoSelectionSavingPath(repoPath)
-      try {
-        await onSelectRepoPath?.(repoPath)
-      } catch (error) {
-        console.error("[CodexChatImportSidebar] Failed to save selected Codex repo:", error)
-        setRepoSelectionSavingPath(null)
-        return
-      }
-      setRepoSelectionSavingPath(null)
-    }
-
-    setHistoryScope(repoPath && shouldPersistRepo ? "project" : option.scope)
+  const selectScopeOption = React.useCallback((option: AiHistoryScopeOption) => {
+    setHistoryScope(option.scope)
     setRepoFilter(option.repoPath)
     setScopePickerOpen(false)
     setSelectedChatId(null)
     setChatDetailsById({})
-  }, [initialRepoOption, onSelectRepoPath])
+  }, [])
   const aiOnlineLabel = aiHistory.sync.aiOnline ? "AI online" : "AI offline"
   const selectableChatItems = React.useMemo(() => {
     const byId = new Map<string, CodexChatImportItem>()
@@ -1074,9 +1064,8 @@ export function CodexChatImportSidebar({
   React.useEffect(() => {
     if (previousInitialRepoPathRef.current === initialRepoPath) return
     previousInitialRepoPathRef.current = initialRepoPath
-    const nextRepo = normalizeAiHistoryRepoPath(initialRepoPath)
-    setHistoryScope(nextRepo ? "project" : "global")
-    setRepoFilter(nextRepo ?? "all")
+    setHistoryScope("global")
+    setRepoFilter("all")
     setProviderFilter("codex_app")
     setProviderPickerOpen(false)
     setScopePickerOpen(false)
@@ -1759,19 +1748,16 @@ export function CodexChatImportSidebar({
                   <div className="max-h-64 overflow-auto">
                     {scopeOptions.map(option => {
                       const selected = option.scope === historyScope && option.repoPath === repoFilter
-                      const saving = repoSelectionSavingPath === option.repoPath
                       return (
                         <button
                           key={`${option.scope}:${option.repoPath}`}
                           type="button"
-                          disabled={!!repoSelectionSavingPath}
                           className={cn(
                             "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
                             selected && "bg-white/10 text-white",
-                            repoSelectionSavingPath && "cursor-wait opacity-60",
                           )}
                           onClick={() => {
-                            void selectScopeOption(option)
+                            selectScopeOption(option)
                           }}
                           title={option.title}
                         >
@@ -1783,9 +1769,7 @@ export function CodexChatImportSidebar({
                               {option.sourceLabel}
                             </span>
                           )}
-                          {saving ? (
-                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-300" />
-                          ) : selected ? (
+                          {selected ? (
                             <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
                           ) : null}
                         </button>
