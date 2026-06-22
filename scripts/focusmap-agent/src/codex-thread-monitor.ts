@@ -53,6 +53,7 @@ const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
 const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
+const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived';
 export const AI_HISTORY_PLACEHOLDER_TITLE = '新しいチャット';
 const AI_HISTORY_PLACEHOLDER_TITLE_WATCH_TTL_MS = 5 * 60 * 1000;
 const MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST = 50;
@@ -1576,14 +1577,17 @@ function shouldBackfillImportedThreadMessages(task: AiTask): boolean {
 
 export function hasPendingArchiveRequest(task: AiTask): boolean {
   const result = taskResult(task);
+  const hasSourceTaskArchive = result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true;
+  const hasAiHistoryArchive = result.codex_archive_request_reason === AI_HISTORY_ARCHIVE_REQUEST_REASON &&
+    (typeof result.codex_history_item_id === 'string' || typeof result.ai_history_item_id === 'string');
   return task.status === 'completed' &&
     result.codex_archive_request_state === 'pending' &&
     typeof result.codex_archive_requested_at === 'string' &&
     result.codex_archive_requested_at.trim().length > 0 &&
     result.codex_archive_request_cancelled_at == null &&
     result.codex_archive_completed_at == null &&
-    result.codex_source_task_completed === true &&
-    result.codex_source_task_completion_suppressed !== true;
+    (hasSourceTaskArchive || hasAiHistoryArchive);
 }
 
 export function shouldCompleteSourceFromArchivedThread(task: AiTask): boolean {
@@ -2538,8 +2542,8 @@ export async function markThreadGone(api: AgentApiClient, runnerId: string, task
   const closureActivityAt = previousLastActivityAt ?? nowIso;
   const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true;
   const sourceTaskCompleted = reason === 'archived' && shouldCompleteSourceFromArchivedThread(task);
-  const pendingArchiveRequest = sourceTaskCompleted;
-  const nextStatus: AiTask['status'] = sourceTaskCompleted ? 'completed' : 'awaiting_approval';
+  const archiveRequestCompleted = reason === 'archived' && hasPendingArchiveRequest(task);
+  const nextStatus: AiTask['status'] = archiveRequestCompleted ? 'completed' : 'awaiting_approval';
   const result: TaskResultJson = {
     executor: task.executor === 'codex' ? 'codex' : 'codex_app',
     steps: [],
@@ -2557,14 +2561,14 @@ export async function markThreadGone(api: AgentApiClient, runnerId: string, task
     codex_source_task_id: task.source_task_id ?? null,
     codex_source_task_completion_reason: sourceTaskCompleted ? 'archived' : null,
     codex_source_task_completion_suppressed: sourceCompletionSuppressed,
-    codex_archive_request_state: pendingArchiveRequest
+    codex_archive_request_state: archiveRequestCompleted
       ? 'completed'
       : typeof current.codex_archive_request_state === 'string'
         ? current.codex_archive_request_state as TaskResultJson['codex_archive_request_state']
         : undefined,
     codex_archive_requested_at: typeof current.codex_archive_requested_at === 'string' ? current.codex_archive_requested_at : undefined,
     codex_archive_request_reason: typeof current.codex_archive_request_reason === 'string' ? current.codex_archive_request_reason : undefined,
-    codex_archive_completed_at: pendingArchiveRequest
+    codex_archive_completed_at: archiveRequestCompleted
       ? nowIso
       : typeof current.codex_archive_completed_at === 'string'
         ? current.codex_archive_completed_at

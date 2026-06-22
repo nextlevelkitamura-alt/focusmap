@@ -11,6 +11,7 @@ import {
 import {
   authenticateAiHistoryRequest,
   buildAiHistorySyncState,
+  listPendingAiHistoryArchiveThreadIds,
   loadAiHistoryProjectContext,
   parseLimit,
   parsePlacement,
@@ -93,6 +94,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const excludedExternalThreadIds = await listPendingAiHistoryArchiveThreadIds({
+      supabase: auth.supabase,
+      userId: auth.user.id,
+    })
     const [items, counts, lastIndexedAt] = await Promise.all([
       listAiHistoryItems({
         userId: auth.user.id,
@@ -101,6 +106,7 @@ export async function GET(request: NextRequest) {
         provider: selectedProvider,
         repo: selectedRepo,
         repoPaths: selectedScope === 'global' ? [] : context.repoPaths,
+        excludeExternalThreadIds: excludedExternalThreadIds,
         placement,
         status,
         cursor,
@@ -113,6 +119,7 @@ export async function GET(request: NextRequest) {
         provider: selectedProvider,
         repo: selectedRepo,
         repoPaths: selectedScope === 'global' ? [] : context.repoPaths,
+        excludeExternalThreadIds: excludedExternalThreadIds,
       }),
       latestAiHistoryIndex({
         userId: auth.user.id,

@@ -5,6 +5,7 @@ const ACTIVE_MONITOR_STATUSES = ['pending', 'running', 'awaiting_approval', 'nee
 const MONITOR_STATUSES = [...ACTIVE_MONITOR_STATUSES, 'completed'] as const
 const VALID_EXECUTORS = ['codex', 'codex_app'] as const
 const MANUAL_HANDOFF_DISCOVERY_WINDOW_MS = 10 * 60 * 1000
+const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -52,14 +53,17 @@ export function shouldReturnCodexMonitorTask(row: Record<string, unknown>) {
 export function hasPendingCodexArchiveRequest(row: Record<string, unknown>) {
   const result = isRecord(row.result) ? row.result : {}
   const sourceTaskId = stringValue(row.source_task_id) || stringValue(result.codex_source_task_id)
-  return Boolean(sourceTaskId) &&
-    Boolean(stringValue(row.codex_thread_id) || jsonThreadId(result)) &&
+  const hasSourceTaskArchive = Boolean(sourceTaskId) &&
+    result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true
+  const hasAiHistoryArchive = result.codex_archive_request_reason === AI_HISTORY_ARCHIVE_REQUEST_REASON &&
+    Boolean(stringValue(result.codex_history_item_id) || stringValue(result.ai_history_item_id))
+  return Boolean(stringValue(row.codex_thread_id) || jsonThreadId(result)) &&
     result.codex_archive_request_state === 'pending' &&
     Boolean(stringValue(result.codex_archive_requested_at)) &&
     result.codex_archive_request_cancelled_at == null &&
     result.codex_archive_completed_at == null &&
-    result.codex_source_task_completed === true &&
-    result.codex_source_task_completion_suppressed !== true
+    (hasSourceTaskArchive || hasAiHistoryArchive)
 }
 
 export function shouldKeepCodexMonitorTaskForSourceTask(

@@ -10,6 +10,8 @@ import {
 import { createClient } from '@/utils/supabase/server'
 import type { AiHistoryPlacement, AiHistoryProvider, AiHistoryScopeFilter, AiHistoryStatus } from '@/types/ai-history'
 
+export const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived'
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -38,6 +40,46 @@ export function maxIso(values: Array<string | null | undefined>) {
   return values
     .filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value))))
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
+}
+
+export function isPendingAiHistoryArchiveRequest(row: Record<string, unknown>) {
+  const result = isRecord(row.result) ? row.result : {}
+  const threadId = compactString(row.codex_thread_id, 200) ?? compactString(result.codex_thread_id, 200)
+  return Boolean(threadId) &&
+    result.codex_archive_request_reason === AI_HISTORY_ARCHIVE_REQUEST_REASON &&
+    result.codex_archive_request_state === 'pending' &&
+    Boolean(compactString(result.codex_archive_requested_at, 80)) &&
+    result.codex_archive_request_cancelled_at == null &&
+    result.codex_archive_completed_at == null
+}
+
+export async function listPendingAiHistoryArchiveThreadIds(input: {
+  supabase: Awaited<ReturnType<typeof createClient>>
+  userId: string
+}) {
+  const { data, error } = await input.supabase
+    .from('ai_tasks')
+    .select('codex_thread_id, result')
+    .eq('user_id', input.userId)
+    .in('executor', ['codex', 'codex_app'])
+    .in('status', ['completed', 'awaiting_approval', 'running', 'needs_input'])
+    .order('created_at', { ascending: false })
+    .limit(500)
+
+  if (error) {
+    console.error('[ai-history pending archives]', error)
+    return []
+  }
+
+  return [...new Set((data ?? [])
+    .filter(row => isPendingAiHistoryArchiveRequest(row as Record<string, unknown>))
+    .map(row => (
+      compactString((row as Record<string, unknown>).codex_thread_id, 200) ??
+      compactString(isRecord((row as Record<string, unknown>).result)
+        ? ((row as Record<string, unknown>).result as Record<string, unknown>).codex_thread_id
+        : null, 200)
+    ))
+    .filter((value): value is string => Boolean(value)))]
 }
 
 function normalizeRepoPath(value: string | null | undefined) {

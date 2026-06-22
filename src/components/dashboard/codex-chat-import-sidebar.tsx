@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowLeft, Bot, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, Settings, Trash2, X } from "lucide-react"
+import { Archive, ArrowLeft, Bot, Check, ChevronDown, ChevronUp, Clock, ExternalLink, FolderGit2, GitBranch, Loader2, Settings, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiHistory } from "@/hooks/useAiHistory"
@@ -161,6 +161,33 @@ function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem
     workDurationSyncedAt: item.indexedAt,
     placed: item.placement === "mindmap",
   }
+}
+
+function chatArchiveIdentityKeys(item: CodexChatImportItem) {
+  return Array.from(new Set([
+    item.id,
+    item.historyItemId ?? undefined,
+    item.sourceTaskId ?? undefined,
+  ].filter((value): value is string => Boolean(value))))
+}
+
+function addKeysToSet(previous: Set<string>, keys: string[]) {
+  const next = new Set(previous)
+  for (const key of keys) next.add(key)
+  return next
+}
+
+function removeKeysFromSet(previous: Set<string>, keys: string[]) {
+  const next = new Set(previous)
+  for (const key of keys) next.delete(key)
+  return next
+}
+
+function removeRecordKey<T>(previous: Record<string, T>, key: string) {
+  if (!(key in previous)) return previous
+  const next = { ...previous }
+  delete next[key]
+  return next
 }
 
 function readString(value: unknown) {
@@ -830,6 +857,10 @@ export function CodexChatImportSidebar({
   const [activePlacement, setActivePlacement] = React.useState<AiHistoryPlacement>("unplaced")
   const [selectedChatId, setSelectedChatId] = React.useState<string | null>(null)
   const [draggingChatId, setDraggingChatId] = React.useState<string | null>(null)
+  const [expandedArchiveChatId, setExpandedArchiveChatId] = React.useState<string | null>(null)
+  const [archivingChatIds, setArchivingChatIds] = React.useState<Set<string>>(() => new Set())
+  const [locallyArchivedChatIds, setLocallyArchivedChatIds] = React.useState<Set<string>>(() => new Set())
+  const [archiveErrorByChatId, setArchiveErrorByChatId] = React.useState<Record<string, string>>({})
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
@@ -857,9 +888,13 @@ export function CodexChatImportSidebar({
   ), [aiHistory.items])
   const visibleHistoryChatItems = React.useMemo(() => (
     historyChatItems
-      .filter(item => !hiddenItemIds?.has(item.id) && !(item.sourceTaskId && hiddenItemIds?.has(item.sourceTaskId)))
+      .filter(item => (
+        !chatArchiveIdentityKeys(item).some(key => locallyArchivedChatIds.has(key)) &&
+        !hiddenItemIds?.has(item.id) &&
+        !(item.sourceTaskId && hiddenItemIds?.has(item.sourceTaskId))
+      ))
       .sort(compareCodexChatImportItems)
-  ), [hiddenItemIds, historyChatItems])
+  ), [hiddenItemIds, historyChatItems, locallyArchivedChatIds])
   const providerOptions = React.useMemo(() => {
     const byProvider = new Map<string, { provider: AiHistoryProvider; label: string; enabled: boolean }>()
     for (const option of AI_HISTORY_PROVIDER_OPTIONS) byProvider.set(option.provider, option)
@@ -1240,6 +1275,51 @@ export function CodexChatImportSidebar({
     setScopePickerOpen(false)
     void loadChatDetail(item)
   }, [loadChatDetail])
+
+  const handleArchiveChatItem = React.useCallback(async (item: CodexChatImportItem) => {
+    if (!item.historyItemId) return
+    if (expandedArchiveChatId !== item.id) {
+      setExpandedArchiveChatId(item.id)
+      setArchiveErrorByChatId(previous => removeRecordKey(previous, item.id))
+      return
+    }
+
+    const archiveKeys = chatArchiveIdentityKeys(item)
+    setArchivingChatIds(previous => addKeysToSet(previous, archiveKeys))
+    setArchiveErrorByChatId(previous => removeRecordKey(previous, item.id))
+    setLocallyArchivedChatIds(previous => addKeysToSet(previous, archiveKeys))
+    if (selectedChatId && archiveKeys.includes(selectedChatId)) {
+      setSelectedChatId(null)
+    }
+
+    try {
+      const response = await fetchWithSupabaseAuth(
+        `/api/ai-history/${encodeURIComponent(item.historyItemId)}/archive`,
+        { method: "POST", cache: "no-store" },
+      )
+      const data = await response.json().catch(() => ({})) as {
+        success?: boolean
+        error?: string | { message?: string }
+      }
+      if (!response.ok || data.success === false) {
+        const message = typeof data.error === "string"
+          ? data.error
+          : data.error?.message
+        throw new Error(message || "チャットをアーカイブできませんでした")
+      }
+      setExpandedArchiveChatId(current => current === item.id ? null : current)
+      void aiHistory.refresh({ silent: true })
+    } catch (error) {
+      setLocallyArchivedChatIds(previous => removeKeysFromSet(previous, archiveKeys))
+      setArchiveErrorByChatId(previous => ({
+        ...previous,
+        [item.id]: error instanceof Error ? error.message : "チャットをアーカイブできませんでした",
+      }))
+      setExpandedArchiveChatId(item.id)
+    } finally {
+      setArchivingChatIds(previous => removeKeysFromSet(previous, archiveKeys))
+    }
+  }, [aiHistory, expandedArchiveChatId, selectedChatId])
 
   React.useEffect(() => {
     if (!initialSelectedChatId) {
@@ -1878,6 +1958,9 @@ export function CodexChatImportSidebar({
                   const workElapsedMs = itemRallyWorkElapsedMs ?? itemLocalWorkElapsedMs
                   const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
                   const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
+                  const archiveExpanded = expandedArchiveChatId === item.id
+                  const archiveBusy = chatArchiveIdentityKeys(item).some(key => archivingChatIds.has(key))
+                  const archiveError = archiveErrorByChatId[item.id] ?? null
                   return (
                     <div
                       key={item.id}
@@ -1986,15 +2069,41 @@ export function CodexChatImportSidebar({
                           <Button
                             type="button"
                             variant="ghost"
-                            size="icon"
-                            className="ml-auto h-9 w-9 shrink-0 text-zinc-600 hover:bg-white/[0.03] hover:text-zinc-500 focus-visible:ring-zinc-500/40 disabled:cursor-not-allowed disabled:opacity-60"
-                            aria-label={`履歴をアーカイブ ${item.title}`}
-                            title="履歴アーカイブは設定画面で管理します"
-                            disabled
+                            size="sm"
+                            className={cn(
+                              "ml-auto h-8 shrink-0 overflow-hidden border border-white/10 bg-white/[0.04] text-zinc-400 transition-[width,background-color,border-color,color] duration-150 hover:border-amber-300/30 hover:bg-amber-400/10 hover:text-amber-100 focus-visible:ring-amber-300/40 disabled:cursor-wait disabled:opacity-70",
+                              archiveExpanded
+                                ? "w-[132px] justify-start gap-1.5 px-2.5 text-[11px] font-semibold text-amber-100"
+                                : "w-8 px-0",
+                            )}
+                            aria-label={archiveExpanded ? `チャットをアーカイブ ${item.title}` : `アーカイブ操作を開く ${item.title}`}
+                            aria-pressed={archiveExpanded}
+                            title={archiveExpanded ? "チャットをアーカイブ" : "アーカイブ"}
+                            disabled={archiveBusy}
+                            onClick={event => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              void handleArchiveChatItem(item)
+                            }}
+                            onMouseDown={event => event.stopPropagation()}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            {archiveBusy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Archive className="h-3.5 w-3.5" />
+                            )}
+                            {archiveExpanded && (
+                              <span className="whitespace-nowrap">
+                                {archiveBusy ? "アーカイブ中" : "チャットをアーカイブ"}
+                              </span>
+                            )}
                           </Button>
                         )}
+                      </div>
+                    )}
+                    {archiveError && (
+                      <div className="text-[10px] leading-4 text-rose-300">
+                        {archiveError}
                       </div>
                     )}
                   </div>

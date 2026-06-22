@@ -142,6 +142,7 @@ const CODEX_AWAITING_RECHECK_MS = 5_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
 const CODEX_LIVE_LOG_MAX_CHARS = 16_000
 const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
+const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived'
 const LEGACY_CODEX_MONITOR_ENABLED = envFlagEnabled(process.env.FOCUSMAP_LEGACY_CODEX_MONITOR) ||
   envFlagEnabled(process.env.FOCUSMAP_ENABLE_LEGACY_CODEX_MONITOR)
 
@@ -1689,7 +1690,8 @@ async function completeCodexTaskClosedFromApp(
       : 'Codex thread はアーカイブ済みですが、Focusmap側の完了要求がないため確認待ちにしました。'
     : 'Codex thread が見つからないため、確認待ちにしました。'
   const sourceTaskCompleted = opts.reason === 'archived' && archiveRequestWasPending && Boolean(task.source_task_id)
-  const nextTaskStatus = sourceTaskCompleted ? 'completed' : 'awaiting_approval'
+  const archiveRequestCompleted = opts.reason === 'archived' && archiveRequestWasPending
+  const nextTaskStatus = archiveRequestCompleted ? 'completed' : 'awaiting_approval'
 
   if (sourceTaskCompleted && task.source_task_id) {
     const { error } = await supabase
@@ -1707,7 +1709,7 @@ async function completeCodexTaskClosedFromApp(
     .update({
       status: nextTaskStatus,
       error: null,
-      completed_at: sourceTaskCompleted ? now : null,
+      completed_at: archiveRequestCompleted ? now : null,
       result: {
         ...current,
         executor,
@@ -1894,11 +1896,18 @@ async function syncCompletedFocusmapNodesToCodexArchive(
 
   const archiveCandidates: MonitoredCodexTask[] = []
   for (const task of monitored) {
-    if (!task.source_task_id || !task.codex_thread_id) continue
+    if (!task.codex_thread_id) continue
 
     const result = (task.result ?? {}) as Record<string, unknown>
     const reason = typeof result.codex_review_reason === 'string' ? result.codex_review_reason : ''
     if (task.status === 'completed' && (reason === 'archived' || reason === 'thread_deleted')) continue
+    const hasSourceTaskArchive =
+      Boolean(task.source_task_id) &&
+      result.codex_source_task_completed === true &&
+      result.codex_source_task_completion_suppressed !== true
+    const hasAiHistoryArchive =
+      result.codex_archive_request_reason === AI_HISTORY_ARCHIVE_REQUEST_REASON &&
+      (typeof result.codex_history_item_id === 'string' || typeof result.ai_history_item_id === 'string')
     const archiveRequestPending =
       task.status === 'completed' &&
       result.codex_archive_request_state === 'pending' &&
@@ -1906,12 +1915,13 @@ async function syncCompletedFocusmapNodesToCodexArchive(
       result.codex_archive_requested_at.trim().length > 0 &&
       result.codex_archive_request_cancelled_at == null &&
       result.codex_archive_completed_at == null &&
-      result.codex_source_task_completed === true &&
-      result.codex_source_task_completion_suppressed !== true
+      (hasSourceTaskArchive || hasAiHistoryArchive)
     if (!archiveRequestPending) continue
 
-    const sourceTask = sourceTasksById.get(task.source_task_id)
-    if (sourceTask && sourceTask.status !== 'done' && sourceTask.stage !== 'done') continue
+    if (task.source_task_id) {
+      const sourceTask = sourceTasksById.get(task.source_task_id)
+      if (sourceTask && sourceTask.status !== 'done' && sourceTask.stage !== 'done') continue
+    }
 
     try {
       const stateOut = execSync(

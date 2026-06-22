@@ -114,6 +114,11 @@ export interface TaskResultJson {
   codex_archive_request_reason?: string | null;
   codex_archive_completed_at?: string | null;
   codex_archive_request_cancelled_at?: string | null;
+  codex_archive_target?: string | null;
+  codex_history_item_id?: string | null;
+  ai_history_item_id?: string | null;
+  ai_history_repo_path?: string | null;
+  ai_history_title?: string | null;
   last_activity_at?: string;
   awaiting_approval_at?: string;
   codex_visible_messages?: AgentActivityMessage[];

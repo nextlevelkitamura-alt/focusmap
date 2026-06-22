@@ -522,6 +522,7 @@ function scopedHistoryWhere(options: {
   provider?: string | null
   repo?: string | null
   repoPaths?: string[]
+  excludeExternalThreadIds?: string[]
   includeArchived?: boolean
   includeDeleted?: boolean
   placement?: AiHistoryPlacement | 'all'
@@ -530,6 +531,7 @@ function scopedHistoryWhere(options: {
   const clauses = ['user_id = ?']
   const args: Array<string | number> = [options.userId]
   const scopeRepoPaths = uniqueStrings(options.repoPaths ?? [])
+  const excludedThreadIds = uniqueStrings(options.excludeExternalThreadIds ?? []).slice(0, 500)
 
   if (options.provider) {
     clauses.push('provider = ?')
@@ -539,6 +541,11 @@ function scopedHistoryWhere(options: {
   if (options.repo && options.repo !== 'all') {
     clauses.push('repo_path = ?')
     args.push(options.repo)
+  }
+
+  if (excludedThreadIds.length > 0) {
+    clauses.push(`(external_thread_id IS NULL OR external_thread_id NOT IN (${placeholders(excludedThreadIds)}))`)
+    args.push(...excludedThreadIds)
   }
 
   if (options.scope !== 'global') {
@@ -1027,6 +1034,7 @@ export async function listAiHistoryItems(options: {
   provider?: string | null
   repo?: string | null
   repoPaths?: string[]
+  excludeExternalThreadIds?: string[]
   placement?: AiHistoryPlacement | 'all'
   status?: AiHistoryStatus | 'all' | null
   cursor?: AiHistoryCursor | null
@@ -1039,6 +1047,7 @@ export async function listAiHistoryItems(options: {
     provider: options.provider,
     repo: options.repo,
     repoPaths: options.repoPaths,
+    excludeExternalThreadIds: options.excludeExternalThreadIds,
     placement: options.placement ?? 'unplaced',
     status: options.status ?? 'all',
   })
@@ -1067,6 +1076,7 @@ export async function countAiHistoryBuckets(options: {
   provider?: string | null
   repo?: string | null
   repoPaths?: string[]
+  excludeExternalThreadIds?: string[]
 }) {
   const where = scopedHistoryWhere({
     userId: options.userId,
@@ -1075,6 +1085,7 @@ export async function countAiHistoryBuckets(options: {
     provider: options.provider,
     repo: options.repo,
     repoPaths: options.repoPaths,
+    excludeExternalThreadIds: options.excludeExternalThreadIds,
     placement: 'all',
     status: 'all',
   })
