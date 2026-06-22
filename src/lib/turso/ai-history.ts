@@ -552,11 +552,10 @@ function scopedHistoryWhere(options: {
 
   if (options.scope !== 'global') {
     if (scopeRepoPaths.length > 0) {
-      clauses.push(`(project_id = ? OR repo_path IN (${placeholders(scopeRepoPaths)}))`)
-      args.push(options.projectId, ...scopeRepoPaths)
+      clauses.push(`repo_path IN (${placeholders(scopeRepoPaths)})`)
+      args.push(...scopeRepoPaths)
     } else {
-      clauses.push('project_id = ?')
-      args.push(options.projectId)
+      clauses.push('0 = 1')
     }
   }
 

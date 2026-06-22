@@ -4,10 +4,15 @@ import { CodexChatImportSidebar } from "./codex-chat-import-sidebar"
 import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryProvider, AiHistoryRepoFilter, AiHistoryScopeFilter } from "@/types/ai-history"
 
 const useAiHistoryMock = vi.hoisted(() => vi.fn())
+const useAvailableReposMock = vi.hoisted(() => vi.fn())
 const fetchWithSupabaseAuthMock = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useAiHistory", () => ({
   useAiHistory: useAiHistoryMock,
+}))
+
+vi.mock("@/hooks/useAvailableRepos", () => ({
+  useAvailableRepos: useAvailableReposMock,
 }))
 
 vi.mock("@/lib/auth/supabase-auth-fetch", () => ({
@@ -109,7 +114,9 @@ function jsonResponse(data: unknown, status = 200) {
   }
 }
 
-function renderSidebar() {
+function renderSidebar(options: {
+  onSelectRepoPath?: (repoPath: string | null) => Promise<void> | void
+} = {}) {
   const onClose = vi.fn()
   const view = render(
     <CodexChatImportSidebar
@@ -117,6 +124,7 @@ function renderSidebar() {
       projectTitle="仕事"
       initialRepoPath="/Users/me/focusmap"
       onClose={onClose}
+      onSelectRepoPath={options.onSelectRepoPath}
     />,
   )
   return { ...view, onClose }
@@ -132,6 +140,13 @@ beforeEach(() => {
     agentConnected: true,
   }
   mockUseAiHistory()
+  useAvailableReposMock.mockReturnValue({
+    repos: [],
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+    requestRescan: vi.fn(),
+  })
   fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input)
     if (url === "/api/ai-history/history-1") {
@@ -305,6 +320,56 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
     expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/other")
     expect(lastHookOptions.at(-1)?.scope).toBe("global")
+  })
+
+  test("persists a Codex.app repo candidate to the current project before showing its history", async () => {
+    const onSelectRepoPath = vi.fn(() => Promise.resolve())
+    useAvailableReposMock.mockReturnValue({
+      repos: [{
+        id: "codex:/Users/me/side-business",
+        hostname: "Codex",
+        absolute_path: "/Users/me/side-business",
+        display_name: "side-business",
+        last_git_commit_at: null,
+        last_seen_at: "2026-06-20T00:00:00.000Z",
+        source: "codex",
+        thread_count: 4,
+      }],
+      isLoading: false,
+      error: null,
+      refresh: vi.fn(),
+      requestRescan: vi.fn(),
+    })
+    historyItems = [
+      baseHistoryItem,
+      {
+        ...baseHistoryItem,
+        id: "history-side-business",
+        externalThreadId: "thread-side-business",
+        title: "side-businessの履歴",
+        repoPath: "/Users/me/side-business",
+        repoLabel: "side-business",
+        codexOpenUrl: "codex://threads/thread-side-business",
+      },
+    ]
+    renderSidebar({ onSelectRepoPath })
+
+    const scopeButton = screen.getAllByRole("button").find(button => (
+      button.getAttribute("aria-controls") === "ai-history-scope-filter"
+    ))
+    expect(scopeButton).toBeDefined()
+    fireEvent.click(scopeButton!)
+    const scopeFilter = document.getElementById("ai-history-scope-filter")
+    expect(scopeFilter).not.toBeNull()
+    fireEvent.click(within(scopeFilter!).getByText("side-business"))
+
+    await waitFor(() => {
+      expect(onSelectRepoPath).toHaveBeenCalledWith("/Users/me/side-business")
+      expect(screen.getByText("side-businessの履歴")).toBeInTheDocument()
+    })
+    expect(screen.queryByText("AI履歴サイドバーを接続")).not.toBeInTheDocument()
+    expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/side-business")
+    expect(lastHookOptions.at(-1)?.scope).toBe("project")
   })
 
   test("defaults to unplaced and switches to the mindmap bucket", () => {
@@ -648,5 +713,5 @@ describe("CodexChatImportSidebar", () => {
       expect(screen.getAllByText("hydrate後の回答本文").length).toBeGreaterThan(0)
     })
     expect(activityCalls).toBe(2)
-  })
+  }, 10_000)
 })

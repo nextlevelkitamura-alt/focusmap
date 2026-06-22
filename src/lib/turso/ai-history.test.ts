@@ -173,6 +173,40 @@ describe('AI history detail cache helpers', () => {
     ])
   })
 
+  test('filters project-scope history by repo_path instead of thread project_id', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [] })
+    const { listAiHistoryItems } = await import('./ai-history')
+
+    await listAiHistoryItems({
+      userId: 'user-1',
+      projectId: 'project-1',
+      scope: 'project',
+      repoPaths: ['/repo'],
+    })
+
+    const call = mockExecute.mock.calls[0]?.[0] as { sql: string; args: unknown[] }
+    expect(call.sql).toContain('repo_path IN (?)')
+    expect(call.sql).not.toContain('project_id = ?')
+    expect(call.args).toEqual(expect.arrayContaining(['user-1', '/repo']))
+  })
+
+  test('returns an empty project-scope query when the project has no repo_path', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [] })
+    const { listAiHistoryItems } = await import('./ai-history')
+
+    await listAiHistoryItems({
+      userId: 'user-1',
+      projectId: 'project-1',
+      scope: 'project',
+      repoPaths: [],
+    })
+
+    const call = mockExecute.mock.calls[0]?.[0] as { sql: string; args: unknown[] }
+    expect(call.sql).toContain('0 = 1')
+    expect(call.sql).not.toContain('project_id = ?')
+    expect(call.args).not.toContain('project-1')
+  })
+
   test('records hydrate requests without refreshing an active unexpired request', async () => {
     const { upsertAiHistoryDetailHydrateRequest } = await import('./ai-history')
 

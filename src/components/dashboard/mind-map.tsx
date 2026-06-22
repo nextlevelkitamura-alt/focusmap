@@ -3055,6 +3055,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                                 initialSelectedChatId={selectedCodexChatDetailId}
                                 onInitialSelectedChatClear={() => setSelectedCodexChatDetailId(null)}
                                 onClose={closeCodexChatImportSidebar}
+                                onSelectRepoPath={selectCodexImportRepoPath}
                                 onChatDragStateChange={setActiveCodexChatDrag}
                                 hiddenItemIds={hiddenCodexChatImportIds}
                             />

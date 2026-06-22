@@ -206,33 +206,30 @@ export async function loadAiHistoryProjectContext(input: {
     }
   }
 
-  const scopeByRepo = new Map<string, TursoProjectRepoScope>()
-  for (const scope of scopes) {
-    const repoPath = normalizeRepoPath(scope.repo_path)
-    if (repoPath && !scopeByRepo.has(repoPath)) scopeByRepo.set(repoPath, { ...scope, repo_path: repoPath })
-  }
-
   const projectRepoPath = normalizeRepoPath(project.repo_path)
-  if (projectRepoPath && !scopeByRepo.has(projectRepoPath)) {
-    scopeByRepo.set(projectRepoPath, {
-      id: `project:${project.id}:${projectRepoPath}`,
+  const projectRepoScope = projectRepoPath
+    ? scopes.find(scope => normalizeRepoPath(scope.repo_path) === projectRepoPath)
+    : null
+  const repoScopes: TursoProjectRepoScope[] = projectRepoPath
+    ? [{
+      ...(projectRepoScope ?? {}),
+      id: projectRepoScope?.id ?? `project:${project.id}:${projectRepoPath}`,
       user_id: input.userId,
       project_id: project.id,
-      provider: 'codex_app',
+      provider: projectRepoScope?.provider ?? 'codex_app',
       repo_path: projectRepoPath,
-      display_name: repoLabel(projectRepoPath),
+      display_name: projectRepoScope?.display_name ?? repoLabel(projectRepoPath),
       sync_enabled: project.codex_thread_import_enabled !== false,
-      last_scanned_at: null,
-      last_reconciled_at: null,
+      last_scanned_at: projectRepoScope?.last_scanned_at ?? null,
+      last_reconciled_at: projectRepoScope?.last_reconciled_at ?? null,
       settings_json: project.codex_thread_import_enabled_since
         ? { codex_thread_import_enabled_since: project.codex_thread_import_enabled_since }
-        : null,
-      created_at: project.codex_thread_import_enabled_since ?? new Date().toISOString(),
-      updated_at: project.codex_thread_import_enabled_since ?? new Date().toISOString(),
-    })
-  }
+        : projectRepoScope?.settings_json ?? null,
+      created_at: projectRepoScope?.created_at ?? project.codex_thread_import_enabled_since ?? new Date().toISOString(),
+      updated_at: projectRepoScope?.updated_at ?? project.codex_thread_import_enabled_since ?? new Date().toISOString(),
+    }]
+    : []
 
-  const repoScopes = Array.from(scopeByRepo.values())
   const optionScopeByRepo = new Map<string, TursoProjectRepoScope>()
   for (const scope of repoScopes) {
     const repoPath = normalizeRepoPath(scope.repo_path)

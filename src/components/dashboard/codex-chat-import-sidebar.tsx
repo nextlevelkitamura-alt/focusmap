@@ -5,6 +5,7 @@ import { Archive, ArrowLeft, Bot, Check, ChevronDown, ChevronUp, Clock, External
 import { Button } from "@/components/ui/button"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiHistory } from "@/hooks/useAiHistory"
+import { useAvailableRepos } from "@/hooks/useAvailableRepos"
 import {
   buildFallbackCodexDisplaySummary,
   codexDisplaySummarySignature,
@@ -73,9 +74,18 @@ type CodexChatImportSidebarProps = {
   initialSelectedChatId?: string | null
   onInitialSelectedChatClear?: () => void
   onClose: () => void
+  onSelectRepoPath?: (repoPath: string | null) => Promise<void> | void
   onOpenSettings?: () => void
   onChatDragStateChange?: (state: { itemId: string; title: string } | null) => void
   hiddenItemIds?: ReadonlySet<string>
+}
+
+type AiHistoryScopeOption = {
+  scope: AiHistoryScopeFilter
+  repoPath: AiHistoryRepoFilter
+  label: string
+  title: string
+  sourceLabel?: string | null
 }
 
 type FocusmapDesktopFolderBridge = {
@@ -849,6 +859,7 @@ export function CodexChatImportSidebar({
   initialSelectedChatId = null,
   onInitialSelectedChatClear,
   onClose,
+  onSelectRepoPath,
   onOpenSettings,
   onChatDragStateChange,
   hiddenItemIds,
@@ -866,6 +877,7 @@ export function CodexChatImportSidebar({
   const [archivingChatIds, setArchivingChatIds] = React.useState<Set<string>>(() => new Set())
   const [locallyArchivedChatIds, setLocallyArchivedChatIds] = React.useState<Set<string>>(() => new Set())
   const [archiveErrorByChatId, setArchiveErrorByChatId] = React.useState<Record<string, string>>({})
+  const [repoSelectionSavingPath, setRepoSelectionSavingPath] = React.useState<string | null>(null)
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
   const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
@@ -880,6 +892,7 @@ export function CodexChatImportSidebar({
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const hydratePollInFlightRef = React.useRef(false)
   const queryRepoFilter = repoFilter
+  const { repos: availableRepos } = useAvailableRepos()
 
   const aiHistory = useAiHistory({
     projectId,
@@ -916,8 +929,26 @@ export function CodexChatImportSidebar({
     providerOptions.find(option => option.provider === providerFilter)?.label ?? "Codex"
   ), [providerFilter, providerOptions])
   const scopeOptions = React.useMemo(() => {
-    const options: Array<{ scope: AiHistoryScopeFilter; repoPath: AiHistoryRepoFilter; label: string; title: string }> = []
+    const options: AiHistoryScopeOption[] = []
     const seenRepoPaths = new Set<string>()
+    const addRepoOption = (input: {
+      scope: AiHistoryScopeFilter
+      repoPath: string | null | undefined
+      label?: string | null
+      title?: string | null
+      sourceLabel?: string | null
+    }) => {
+      const repoPath = normalizeAiHistoryRepoPath(input.repoPath)
+      if (!repoPath || seenRepoPaths.has(repoPath)) return
+      seenRepoPaths.add(repoPath)
+      options.push({
+        scope: input.scope,
+        repoPath,
+        label: input.label?.trim() || aiHistoryRepoName(repoPath),
+        title: input.title?.trim() || repoPath,
+        sourceLabel: input.sourceLabel ?? null,
+      })
+    }
     if (initialRepoOption) {
       const projectRepo = aiHistory.sync.repoOptions
         .map(option => ({
@@ -925,23 +956,33 @@ export function CodexChatImportSidebar({
           label: option.label,
         }))
         .find(option => option.repoPath === initialRepoOption)
-      options.push({
+      addRepoOption({
         scope: "project",
         repoPath: initialRepoOption,
         label: projectRepo?.label || aiHistoryRepoName(initialRepoOption),
         title: initialRepoOption,
+        sourceLabel: "Project",
       })
-      seenRepoPaths.add(initialRepoOption)
     }
     for (const option of aiHistory.sync.repoOptions ?? []) {
-      const repoPath = normalizeAiHistoryRepoPath(option.repoPath)
-      if (!repoPath || seenRepoPaths.has(repoPath)) continue
-      seenRepoPaths.add(repoPath)
-      options.push({
+      addRepoOption({
         scope: "global",
-        repoPath,
-        label: option.label || aiHistoryRepoName(repoPath),
-        title: repoPath,
+        repoPath: option.repoPath,
+        label: option.label,
+        title: option.repoPath,
+        sourceLabel: "保存済み",
+      })
+    }
+    for (const repo of availableRepos.filter(repo => repo.source === "codex")) {
+      const threadCount = typeof repo.thread_count === "number" && repo.thread_count > 0
+        ? `${repo.thread_count}件`
+        : null
+      addRepoOption({
+        scope: "global",
+        repoPath: repo.absolute_path,
+        label: repo.display_name,
+        title: repo.absolute_path,
+        sourceLabel: threadCount ? `Codex ${threadCount}` : "Codex",
       })
     }
     options.push({
@@ -951,12 +992,34 @@ export function CodexChatImportSidebar({
       title: `${currentProviderLabel}の非アーカイブチャット全体`,
     })
     return options
-  }, [aiHistory.sync.repoOptions, currentProviderLabel, initialRepoOption])
+  }, [aiHistory.sync.repoOptions, availableRepos, currentProviderLabel, initialRepoOption])
   const currentScopeOption = React.useMemo(() => (
     scopeOptions.find(option => option.scope === historyScope && option.repoPath === repoFilter) ??
     scopeOptions.find(option => option.scope === historyScope) ??
     scopeOptions.at(-1)
   ), [historyScope, repoFilter, scopeOptions])
+  const selectScopeOption = React.useCallback(async (option: AiHistoryScopeOption) => {
+    const repoPath = option.repoPath === "all" ? null : option.repoPath
+    const shouldPersistRepo = Boolean(repoPath && onSelectRepoPath && repoPath !== initialRepoOption)
+
+    if (shouldPersistRepo && repoPath) {
+      setRepoSelectionSavingPath(repoPath)
+      try {
+        await onSelectRepoPath?.(repoPath)
+      } catch (error) {
+        console.error("[CodexChatImportSidebar] Failed to save selected Codex repo:", error)
+        setRepoSelectionSavingPath(null)
+        return
+      }
+      setRepoSelectionSavingPath(null)
+    }
+
+    setHistoryScope(repoPath && shouldPersistRepo ? "project" : option.scope)
+    setRepoFilter(option.repoPath)
+    setScopePickerOpen(false)
+    setSelectedChatId(null)
+    setChatDetailsById({})
+  }, [initialRepoOption, onSelectRepoPath])
   const aiOnlineLabel = aiHistory.sync.aiOnline ? "AI online" : "AI offline"
   const selectableChatItems = React.useMemo(() => {
     const byId = new Map<string, CodexChatImportItem>()
@@ -1674,27 +1737,35 @@ export function CodexChatImportSidebar({
                   <div className="max-h-64 overflow-auto">
                     {scopeOptions.map(option => {
                       const selected = option.scope === historyScope && option.repoPath === repoFilter
+                      const saving = repoSelectionSavingPath === option.repoPath
                       return (
                         <button
                           key={`${option.scope}:${option.repoPath}`}
                           type="button"
+                          disabled={!!repoSelectionSavingPath}
                           className={cn(
                             "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-zinc-300 transition-colors hover:bg-white/10 hover:text-white",
                             selected && "bg-white/10 text-white",
+                            repoSelectionSavingPath && "cursor-wait opacity-60",
                           )}
                           onClick={() => {
-                            setHistoryScope(option.scope)
-                            setRepoFilter(option.repoPath)
-                            setScopePickerOpen(false)
-                            setSelectedChatId(null)
-                            setChatDetailsById({})
+                            void selectScopeOption(option)
                           }}
                           title={option.title}
                         >
                           <span className="min-w-0 flex-1 truncate text-xs font-medium">
                             {option.label}
                           </span>
-                          {selected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />}
+                          {option.sourceLabel && (
+                            <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                              {option.sourceLabel}
+                            </span>
+                          )}
+                          {saving ? (
+                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-300" />
+                          ) : selected ? (
+                            <Check className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                          ) : null}
                         </button>
                       )
                     })}
