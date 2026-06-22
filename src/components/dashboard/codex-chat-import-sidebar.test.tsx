@@ -429,7 +429,7 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.queryByText("完了済み履歴")).not.toBeInTheDocument()
   })
 
-  test("merges current project, saved scope, and Codex repo count into one repo option", () => {
+  test("merges current project, saved scope, and Codex repo count into one clean repo option", () => {
     useAvailableReposMock.mockReturnValue({
       repos: [{
         id: "codex:/Users/me/focusmap",
@@ -457,7 +457,9 @@ describe("CodexChatImportSidebar", () => {
     expect(scopeFilter).not.toBeNull()
 
     expect(within(scopeFilter!).getAllByText("focusmap")).toHaveLength(1)
-    expect(within(scopeFilter!).getByText("Project / 保存済み / Codex 1件")).toBeInTheDocument()
+    expect(within(scopeFilter!).getByText("Codex 1件")).toBeInTheDocument()
+    expect(within(scopeFilter!).queryByText("Project")).not.toBeInTheDocument()
+    expect(within(scopeFilter!).queryByText("保存済み")).not.toBeInTheDocument()
   })
 
   test("defaults to unplaced and switches to the mindmap bucket", () => {

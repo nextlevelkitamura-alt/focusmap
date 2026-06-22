@@ -991,7 +991,7 @@ export function CodexChatImportSidebar({
         repoPath: initialRepoOption,
         label: projectRepo?.label || aiHistoryRepoName(initialRepoOption),
         title: initialRepoOption,
-        sourceLabel: "Project",
+        sourceLabel: null,
       })
     }
     for (const option of aiHistory.sync.repoOptions ?? []) {
@@ -1000,7 +1000,7 @@ export function CodexChatImportSidebar({
         repoPath: option.repoPath,
         label: option.label,
         title: option.repoPath,
-        sourceLabel: "保存済み",
+        sourceLabel: null,
       })
     }
     for (const repo of availableRepos.filter(repo => repo.source === "codex")) {
@@ -1012,7 +1012,7 @@ export function CodexChatImportSidebar({
         repoPath: repo.absolute_path,
         label: repo.display_name,
         title: repo.absolute_path,
-        sourceLabel: threadCount ? `Codex ${threadCount}` : "Codex",
+        sourceLabel: threadCount ? `Codex ${threadCount}` : null,
       })
     }
     options.push({
