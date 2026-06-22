@@ -110,6 +110,47 @@ async function loadProject(
   }
 }
 
+async function loadUserProjectRepoOptionScopes(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+) {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('id, repo_path, codex_thread_import_enabled, codex_thread_import_enabled_since, created_at')
+    .eq('user_id', userId)
+    .neq('status', 'archived')
+    .not('repo_path', 'is', null)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+
+  return (data ?? [])
+    .map(row => {
+      const repoPath = normalizeRepoPath(row.repo_path)
+      const projectId = compactString(row.id, 120)
+      if (!repoPath || !projectId) return null
+      const createdAt = compactString(row.codex_thread_import_enabled_since, 80) ??
+        compactString(row.created_at, 80) ??
+        new Date().toISOString()
+      return {
+        id: `project:${projectId}:${repoPath}`,
+        user_id: userId,
+        project_id: projectId,
+        provider: 'codex_app',
+        repo_path: repoPath,
+        display_name: repoLabel(repoPath),
+        sync_enabled: row.codex_thread_import_enabled !== false,
+        last_scanned_at: null,
+        last_reconciled_at: null,
+        settings_json: row.codex_thread_import_enabled_since
+          ? { codex_thread_import_enabled_since: row.codex_thread_import_enabled_since }
+          : null,
+        created_at: createdAt,
+        updated_at: createdAt,
+      } satisfies TursoProjectRepoScope
+    })
+    .filter((scope): scope is TursoProjectRepoScope => !!scope)
+}
+
 function metadataRepoPaths(metadata: Record<string, unknown>) {
   const paths = new Set<string>()
   const importMeta = isRecord(metadata.codex_thread_import) ? metadata.codex_thread_import : {}
@@ -192,11 +233,22 @@ export async function loadAiHistoryProjectContext(input: {
   }
 
   const repoScopes = Array.from(scopeByRepo.values())
+  const optionScopeByRepo = new Map<string, TursoProjectRepoScope>()
+  for (const scope of repoScopes) {
+    const repoPath = normalizeRepoPath(scope.repo_path)
+    if (repoPath && !optionScopeByRepo.has(repoPath)) optionScopeByRepo.set(repoPath, { ...scope, repo_path: repoPath })
+  }
+  for (const scope of await loadUserProjectRepoOptionScopes(input.supabase, input.userId)) {
+    const repoPath = normalizeRepoPath(scope.repo_path)
+    if (repoPath && !optionScopeByRepo.has(repoPath)) optionScopeByRepo.set(repoPath, { ...scope, repo_path: repoPath })
+  }
+  const optionScopes = Array.from(optionScopeByRepo.values())
   return {
     project,
     scopes: repoScopes,
+    optionScopes,
     repoPaths: repoScopes.map(scope => scope.repo_path),
-    scopeLabels: new Map(repoScopes.map(scope => [scope.repo_path, scope.display_name])),
+    scopeLabels: new Map(optionScopes.map(scope => [scope.repo_path, scope.display_name])),
   }
 }
 

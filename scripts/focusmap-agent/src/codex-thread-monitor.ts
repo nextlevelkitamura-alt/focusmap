@@ -44,6 +44,7 @@ const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
 const AI_HISTORY_FAST_WATCH_LIMIT = 20;
 const AI_HISTORY_HOT_SYNC_LIMIT = AI_HISTORY_FAST_WATCH_LIMIT;
+const AI_HISTORY_HOT_SYNC_TOTAL_LIMIT = ORPHAN_IMPORT_SCAN_LIMIT;
 const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
@@ -205,8 +206,6 @@ export type RolloutSummary = {
   workDurationSeconds: number | null;
   visibleMessages: VisibleMessage[];
 };
-
-type OrphanImportMode = 'hot' | 'reconcile';
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -2231,18 +2230,41 @@ async function readRecentThreads(
   );
 }
 
-function orphanImportSinceMs(
+function compareThreadsByRecentActivity(left: CodexThreadRow, right: CodexThreadRow): number {
+  const leftMs = timeMs(left.updated_at_ms) ?? timeMs(left.created_at_ms) ?? 0;
+  const rightMs = timeMs(right.updated_at_ms) ?? timeMs(right.created_at_ms) ?? 0;
+  if (leftMs !== rightMs) return rightMs - leftMs;
+  return right.id.localeCompare(left.id);
+}
+
+async function readRecentThreadsByImportScope(
+  dbPath: string,
+  sinceMs: number,
   importScopes: CodexThreadImportScope[],
-  now = Date.now(),
-  mode: OrphanImportMode = 'reconcile',
-): number {
-  const windowSinceMs = Math.max(0, now - ORPHAN_IMPORT_WINDOW_MS);
-  if (mode === 'hot') return windowSinceMs;
-  const scopeSinceMs = importScopes
-    .map(scope => timeMs(scope.enabled_since))
-    .filter((value): value is number => value !== null && value > 0);
-  if (scopeSinceMs.length === 0) return windowSinceMs;
-  return Math.max(0, Math.min(windowSinceMs, ...scopeSinceMs));
+  perScopeLimit: number,
+): Promise<CodexThreadRow[]> {
+  const rowsById = new Map<string, CodexThreadRow>();
+  const seenPathGroups = new Set<string>();
+
+  for (const scope of importScopes) {
+    const repoPath = normalizeLocalPath(scope.repo_path);
+    if (!repoPath) continue;
+    const scopePaths = await gitWorktreePaths(repoPath);
+    const repoPaths = (scopePaths.length > 0 ? scopePaths : [repoPath])
+      .map(normalizeLocalPath)
+      .filter(Boolean)
+      .sort();
+    const pathGroupKey = repoPaths.join('\u001f');
+    if (!pathGroupKey || seenPathGroups.has(pathGroupKey)) continue;
+    seenPathGroups.add(pathGroupKey);
+
+    const rows = await readRecentThreads(dbPath, sinceMs, repoPaths, perScopeLimit);
+    for (const row of rows) {
+      if (row.id && !rowsById.has(row.id)) rowsById.set(row.id, row);
+    }
+  }
+
+  return Array.from(rowsById.values()).sort(compareThreadsByRecentActivity);
 }
 
 function importScopeSignature(importScopes: CodexThreadImportScope[]): string {
@@ -2443,13 +2465,21 @@ async function syncAiHistoryMetadata(
   const cwdScopeMap = await importScopeCwdMap(importScopes);
   const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
   if (repoPaths.length === 0) return 0;
-  const sinceMs = mode === 'reconcile' ? 0 : orphanImportSinceMs(importScopes, now, 'hot');
-  const recentRows = await readRecentThreads(
-    dbPath,
-    sinceMs,
-    repoPaths,
-    mode === 'reconcile' ? ORPHAN_IMPORT_SCAN_LIMIT : AI_HISTORY_FAST_WATCH_LIMIT,
-  );
+  const sinceMs = 0;
+  const recentRows = mode === 'hot'
+    ? await readRecentThreadsByImportScope(dbPath, sinceMs, importScopes, AI_HISTORY_FAST_WATCH_LIMIT)
+    : await readRecentThreads(
+      dbPath,
+      sinceMs,
+      repoPaths,
+      ORPHAN_IMPORT_SCAN_LIMIT,
+    );
+  const preparedItemLimit = mode === 'hot'
+    ? Math.min(
+      AI_HISTORY_HOT_SYNC_TOTAL_LIMIT,
+      Math.max(maxItems, AI_HISTORY_FAST_WATCH_LIMIT * Math.max(1, importScopes.length)),
+    )
+    : maxItems;
   const sessionThreadNames = await readCodexSessionThreadNames();
   const rowsById = new Map(recentRows.map(row => [row.id, row]));
   const watchedRows: CodexThreadRow[] = [];
@@ -2509,7 +2539,7 @@ async function syncAiHistoryMetadata(
     : [];
 
   for (const row of rows) {
-    if (preparedItems.length >= maxItems) break;
+    if (preparedItems.length >= preparedItemLimit) break;
     const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
     const matchingScope = matchingThreadImportScope(row, importScopes, updatedMs, cwdScopeMap);
     if (!matchingScope) continue;

@@ -879,7 +879,7 @@ export function CodexChatImportSidebar({
   const previousInitialRepoPathRef = React.useRef<string | null | undefined>(initialRepoPath)
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const hydratePollInFlightRef = React.useRef(false)
-  const queryRepoFilter = historyScope === "global" ? "all" : repoFilter
+  const queryRepoFilter = repoFilter
 
   const aiHistory = useAiHistory({
     projectId,
@@ -917,6 +917,7 @@ export function CodexChatImportSidebar({
   ), [providerFilter, providerOptions])
   const scopeOptions = React.useMemo(() => {
     const options: Array<{ scope: AiHistoryScopeFilter; repoPath: AiHistoryRepoFilter; label: string; title: string }> = []
+    const seenRepoPaths = new Set<string>()
     if (initialRepoOption) {
       const projectRepo = aiHistory.sync.repoOptions
         .map(option => ({
@@ -930,6 +931,18 @@ export function CodexChatImportSidebar({
         label: projectRepo?.label || aiHistoryRepoName(initialRepoOption),
         title: initialRepoOption,
       })
+      seenRepoPaths.add(initialRepoOption)
+    }
+    for (const option of aiHistory.sync.repoOptions ?? []) {
+      const repoPath = normalizeAiHistoryRepoPath(option.repoPath)
+      if (!repoPath || seenRepoPaths.has(repoPath)) continue
+      seenRepoPaths.add(repoPath)
+      options.push({
+        scope: "global",
+        repoPath,
+        label: option.label || aiHistoryRepoName(repoPath),
+        title: repoPath,
+      })
     }
     options.push({
       scope: "global",
@@ -940,8 +953,10 @@ export function CodexChatImportSidebar({
     return options
   }, [aiHistory.sync.repoOptions, currentProviderLabel, initialRepoOption])
   const currentScopeOption = React.useMemo(() => (
-    scopeOptions.find(option => option.scope === historyScope) ?? scopeOptions.at(-1)
-  ), [historyScope, scopeOptions])
+    scopeOptions.find(option => option.scope === historyScope && option.repoPath === repoFilter) ??
+    scopeOptions.find(option => option.scope === historyScope) ??
+    scopeOptions.at(-1)
+  ), [historyScope, repoFilter, scopeOptions])
   const aiOnlineLabel = aiHistory.sync.aiOnline ? "AI online" : "AI offline"
   const selectableChatItems = React.useMemo(() => {
     const byId = new Map<string, CodexChatImportItem>()
@@ -1658,7 +1673,7 @@ export function CodexChatImportSidebar({
                 >
                   <div className="max-h-64 overflow-auto">
                     {scopeOptions.map(option => {
-                      const selected = option.scope === historyScope
+                      const selected = option.scope === historyScope && option.repoPath === repoFilter
                       return (
                         <button
                           key={`${option.scope}:${option.repoPath}`}

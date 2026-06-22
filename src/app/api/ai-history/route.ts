@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
       selectedRepo,
       selectedScope,
       selectedProvider,
-      scopes: context.scopes,
+      scopes: context.optionScopes,
       lastIndexedAt: null,
     })
     return NextResponse.json(emptyResponse({ selectedRepo, selectedScope, selectedProvider, limit, cursor: cursorParam, sync }))
@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
       selectedRepo,
       selectedScope,
       selectedProvider,
-      scopes: context.scopes,
+      scopes: context.optionScopes,
       lastIndexedAt,
     })
     const nextCursor = items.length >= limit ? encodeAiHistoryCursor(items[items.length - 1]!) : null
@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
         selectedRepo,
         selectedScope,
         selectedProvider,
-        scopes: context.scopes,
+        scopes: context.optionScopes,
         lastIndexedAt: null,
       })
       return NextResponse.json(emptyResponse({ selectedRepo, selectedScope, selectedProvider, limit, cursor: cursorParam, sync }))

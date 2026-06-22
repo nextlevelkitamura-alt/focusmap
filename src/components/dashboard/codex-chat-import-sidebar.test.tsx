@@ -277,6 +277,36 @@ describe("CodexChatImportSidebar", () => {
     expect(lastHookOptions.at(-1)?.scope).toBe("global")
   })
 
+  test("shows synced repo options and filters directly to another project repo", () => {
+    historyItems = [
+      baseHistoryItem,
+      {
+        ...baseHistoryItem,
+        id: "history-other",
+        externalThreadId: "thread-other",
+        title: "別リポの履歴",
+        repoPath: "/Users/me/other",
+        repoLabel: "other",
+        codexOpenUrl: "codex://threads/thread-other",
+      },
+    ]
+    renderSidebar()
+
+    const scopeButton = screen.getAllByRole("button").find(button => (
+      button.getAttribute("aria-controls") === "ai-history-scope-filter"
+    ))
+    expect(scopeButton).toBeDefined()
+    fireEvent.click(scopeButton!)
+    const scopeFilter = document.getElementById("ai-history-scope-filter")
+    expect(scopeFilter).not.toBeNull()
+    fireEvent.click(within(scopeFilter!).getByText("other"))
+
+    expect(screen.queryByText("AI履歴サイドバーを接続")).not.toBeInTheDocument()
+    expect(screen.getByText("別リポの履歴")).toBeInTheDocument()
+    expect(lastHookOptions.at(-1)?.repo).toBe("/Users/me/other")
+    expect(lastHookOptions.at(-1)?.scope).toBe("global")
+  })
+
   test("defaults to unplaced and switches to the mindmap bucket", () => {
     historyItems = [
       baseHistoryItem,
