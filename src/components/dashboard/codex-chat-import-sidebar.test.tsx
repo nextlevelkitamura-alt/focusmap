@@ -179,6 +179,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
     value: "visible",
@@ -207,6 +208,27 @@ describe("CodexChatImportSidebar", () => {
       "href",
       "codex://threads/thread-abcdef123456",
     )
+  })
+
+  test("uses synced current-rally duration for running cards instead of old thread started_at", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-20T00:02:00.000Z"))
+    historyItems = [{
+      ...baseHistoryItem,
+      status: "running",
+      runState: "started",
+      lastActivityAt: "2026-06-20T00:01:30.000Z",
+      indexedAt: "2026-06-20T00:01:30.000Z",
+      startedAt: "2026-06-19T23:08:00.000Z",
+      endedAt: null,
+      workDurationSeconds: 53,
+    }]
+    renderSidebar()
+
+    const row = screen.getByTestId("codex-chat-import-row-history-1")
+    expect(within(row).getByText("実行中")).toBeInTheDocument()
+    expect(within(row).getByText("1m 23s")).toBeInTheDocument()
+    expect(within(row).queryByText(/54m/)).not.toBeInTheDocument()
   })
 
   test("defaults to the project repo and shows all Codex chats when 全体 is selected", () => {

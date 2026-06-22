@@ -517,6 +517,28 @@ describe('codex-thread-monitor state detection', () => {
     expect(presentation.workDurationSeconds).toBe(90);
   });
 
+  test('does not revive completed AI history from post-complete tool cleanup', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
+      line('2026-06-08T15:50:00.000Z', { type: 'function_call', name: 'exec_command' }),
+      line('2026-06-08T15:50:03.000Z', { type: 'function_call_output', call_id: 'call-1', output: 'ok' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row: threadRow,
+      summary,
+      nowMs: Date.parse('2026-06-08T15:50:05.000Z'),
+    });
+
+    expect(summary.historyStatus).toBe('awaiting_approval');
+    expect(presentation.status).toBe('awaiting_approval');
+    expect(presentation.startedAt).toBe('2026-06-08T15:40:00.000Z');
+    expect(presentation.endedAt).toBe('2026-06-08T15:40:10.000Z');
+    expect(presentation.workDurationSeconds).toBe(10);
+  });
+
   test('starts running AI history duration from the resumed user message when no new task_started exists yet', () => {
     const raw = [
       line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),

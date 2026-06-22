@@ -493,13 +493,11 @@ function shouldTreatCodexActivityAsRunning(input: {
   latestTaskCompleteAt: string | null;
   latestUserMessageAt: string | null;
   latestTaskStartedAt: string | null;
-  allowPostCompleteActivity?: boolean;
 }): boolean {
   const completeMs = timeMs(input.latestTaskCompleteAt);
   if (completeMs === null) return true;
   const eventMs = timeMs(input.eventTime);
   if (eventMs !== null && eventMs <= completeMs) return true;
-  if (input.allowPostCompleteActivity && eventMs !== null && eventMs > completeMs) return true;
   const restartMs = Math.max(
     timeMs(input.latestUserMessageAt) ?? 0,
     timeMs(input.latestTaskStartedAt) ?? 0,
@@ -723,7 +721,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
-      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt, allowPostCompleteActivity: true })) {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
         lastActivityAt = previousLastActivityAt;
         continue;
       }
@@ -736,7 +734,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     }
 
     if (payloadType === 'function_call_output' || payloadType === 'custom_tool_call_output' || payloadType === 'patch_apply_end') {
-      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt, allowPostCompleteActivity: true })) {
+      if (!shouldTreatCodexActivityAsRunning({ eventTime, latestTaskCompleteAt, latestUserMessageAt, latestTaskStartedAt })) {
         lastActivityAt = previousLastActivityAt;
         continue;
       }

@@ -61,6 +61,7 @@ export type CodexChatImportItem = {
   workCompletedAt?: string | null
   workLastActivityAt?: string | null
   workDurationSeconds?: number | null
+  workDurationSyncedAt?: string | null
   placed: boolean
 }
 
@@ -157,6 +158,7 @@ function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem
     sortAt: item.lastActivityAt || item.indexedAt,
     ...aiHistoryWorkTiming(item),
     workDurationSeconds: item.workDurationSeconds,
+    workDurationSyncedAt: item.indexedAt,
     placed: item.placement === "mindmap",
   }
 }
@@ -499,8 +501,13 @@ function CodexMonitorRunningOutline() {
 }
 
 function codexChatImportWorkElapsedMs(item: CodexChatImportItem, nowMs: number, active: boolean) {
-  if (!active && typeof item.workDurationSeconds === "number" && Number.isFinite(item.workDurationSeconds)) {
-    return Math.max(0, item.workDurationSeconds * 1000)
+  if (typeof item.workDurationSeconds === "number" && Number.isFinite(item.workDurationSeconds)) {
+    const baseElapsedMs = Math.max(0, item.workDurationSeconds * 1000)
+    if (!active) return baseElapsedMs
+
+    const syncedMs = new Date(item.workDurationSyncedAt ?? "").getTime()
+    if (!Number.isFinite(syncedMs)) return baseElapsedMs
+    return baseElapsedMs + Math.max(0, nowMs - syncedMs)
   }
   return getCodexThreadRallyWorkElapsedMs(item, { nowMs, active })
 }
