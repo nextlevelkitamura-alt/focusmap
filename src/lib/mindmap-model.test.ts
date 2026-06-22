@@ -470,7 +470,7 @@ describe("buildMindMapModel", () => {
 
         expect(parentNode).toBeDefined();
         expect(childNode).toBeDefined();
-        expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(24);
+        expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(18);
     });
 
     test("uses a compact mobile column gap", () => {
@@ -498,7 +498,7 @@ describe("buildMindMapModel", () => {
 
         expect(parentNode).toBeDefined();
         expect(childNode).toBeDefined();
-        expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(20);
+        expect(childNode!.x - (parentNode!.x + parentNode!.width)).toBe(16);
     });
 
     test("shows the total descendant count on parent nodes", () => {

@@ -110,7 +110,8 @@ type CodexNodeState = {
     updatedAt?: string | null;
 };
 
-const PADDING = 72;
+const STAGE_PADDING = 48;
+const STAGE_PADDING_MOBILE = 56;
 const DRAG_START_THRESHOLD = 6;
 const DROP_TARGET_MAX_DISTANCE = 190;
 const MOBILE_EXTERNAL_IMPORT_DROP_TARGET_MAX_DISTANCE = 260;
@@ -1696,10 +1697,11 @@ export function CustomMindMapView({
         [project, groupsForModel, tasksForModel, collapsedTaskIds, isMobile]
     );
 
-    const offsetX = PADDING - model.bounds.minX;
-    const offsetY = PADDING - model.bounds.minY;
-    const stageWidth = Math.max(isMobile ? 760 : 960, model.bounds.width + PADDING * 2);
-    const stageHeight = Math.max(isMobile ? 720 : 640, model.bounds.height + PADDING * 2);
+    const stagePadding = isMobile ? STAGE_PADDING_MOBILE : STAGE_PADDING;
+    const offsetX = stagePadding - model.bounds.minX;
+    const offsetY = stagePadding - model.bounds.minY;
+    const stageWidth = Math.max(isMobile ? 760 : 960, model.bounds.width + stagePadding * 2);
+    const stageHeight = Math.max(isMobile ? 720 : 640, model.bounds.height + stagePadding * 2);
     const zoomBounds = useMemo(() => getMindMapViewportBounds(), []);
     const positionedNodes = useMemo(
         () => model.nodes.map(node => ({ ...node, x: node.x + offsetX, y: node.y + offsetY })),

@@ -72,8 +72,8 @@ type BuildMindMapModelParams = {
     projectNodeId?: string;
 };
 
-const COLUMN_GAP = 24;
-const COLUMN_GAP_MOBILE = 20;
+const COLUMN_GAP = 18;
+const COLUMN_GAP_MOBILE = 16;
 const SIBLING_NODE_GAP = 10;
 const SIBLING_NODE_GAP_MOBILE = 14;
 
