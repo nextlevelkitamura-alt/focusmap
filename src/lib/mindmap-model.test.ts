@@ -352,7 +352,7 @@ describe("buildMindMapModel", () => {
         expect(branchABounds.maxY + 10).toBeLessThanOrEqual(branchBBounds.minY);
     });
 
-    test("prevents same-depth subtree overlap even when a leaf sibling sits between branches", () => {
+    test("keeps an interleaved leaf compact when same-depth subtrees already have enough room", () => {
         const parent = makeTask({
             id: "parent",
             title: "Parent",
@@ -403,7 +403,89 @@ describe("buildMindMapModel", () => {
         const secondGap = centerY(getTaskNode(model, "branch-c")) - centerY(getTaskNode(model, "leaf"));
 
         expect(firstGap).toBe(secondGap);
-        expect(firstGap).toBeGreaterThan(compactPitch);
+        expect(firstGap).toBe(compactPitch);
+
+        const branchABounds = getSubtreeDepthBounds(model, "branch-a", 1);
+        const branchCBounds = getSubtreeDepthBounds(model, "branch-c", 1);
+        expect(branchABounds.maxY + 10).toBeLessThanOrEqual(branchCBounds.minY);
+    });
+
+    test("only widens local sibling gaps needed to prevent same-depth subtree overlap", () => {
+        const parent = makeTask({
+            id: "parent",
+            title: "Parent",
+            order_index: 0,
+        });
+        const topLeaf = makeTask({
+            id: "top-leaf",
+            title: "Top leaf",
+            parent_task_id: "parent",
+            order_index: 0,
+        });
+        const branchA = makeTask({
+            id: "branch-a",
+            title: "Branch A",
+            parent_task_id: "parent",
+            order_index: 1,
+        });
+        const middleLeaf = makeTask({
+            id: "middle-leaf",
+            title: "Middle leaf",
+            parent_task_id: "parent",
+            order_index: 2,
+        });
+        const branchC = makeTask({
+            id: "branch-c",
+            title: "Branch C",
+            parent_task_id: "parent",
+            order_index: 3,
+        });
+        const bottomLeaf = makeTask({
+            id: "bottom-leaf",
+            title: "Bottom leaf",
+            parent_task_id: "parent",
+            order_index: 4,
+        });
+        const branchAGrandchildren = [0, 1, 2].map(index => makeTask({
+            id: `branch-a-grandchild-${index}`,
+            title: `Branch A grandchild ${index}`,
+            parent_task_id: "branch-a",
+            order_index: index,
+        }));
+        const branchCGrandchildren = [0, 1, 2].map(index => makeTask({
+            id: `branch-c-grandchild-${index}`,
+            title: `Branch C grandchild ${index}`,
+            parent_task_id: "branch-c",
+            order_index: index,
+        }));
+
+        const model = buildMindMapModel({
+            project,
+            groups: [parent],
+            tasks: [
+                topLeaf,
+                branchA,
+                middleLeaf,
+                branchC,
+                bottomLeaf,
+                ...branchAGrandchildren,
+                ...branchCGrandchildren,
+            ],
+            isMobile: false,
+        });
+
+        const compactGap = Math.ceil(
+            ((getTaskNode(model, "top-leaf").height / 2) + (getTaskNode(model, "branch-a").height / 2) + 10) / 2
+        ) * 2;
+        const topGap = centerY(getTaskNode(model, "branch-a")) - centerY(getTaskNode(model, "top-leaf"));
+        const firstLocalGap = centerY(getTaskNode(model, "middle-leaf")) - centerY(getTaskNode(model, "branch-a"));
+        const secondLocalGap = centerY(getTaskNode(model, "branch-c")) - centerY(getTaskNode(model, "middle-leaf"));
+        const bottomGap = centerY(getTaskNode(model, "bottom-leaf")) - centerY(getTaskNode(model, "branch-c"));
+
+        expect(topGap).toBe(compactGap);
+        expect(firstLocalGap).toBeGreaterThan(compactGap);
+        expect(secondLocalGap).toBeGreaterThan(compactGap);
+        expect(bottomGap).toBe(compactGap);
 
         const branchABounds = getSubtreeDepthBounds(model, "branch-a", 1);
         const branchCBounds = getSubtreeDepthBounds(model, "branch-c", 1);

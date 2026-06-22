@@ -133,7 +133,7 @@ const alignChildrenAroundParents = (
     }
 
     const extentById = new Map<string, VerticalColumnExtents>();
-    const childPitchByParentId = new Map<string, number>();
+    const childCenterOffsetsByParentId = new Map<string, number[]>();
 
     const mergeColumnExtent = (
         extents: VerticalColumnExtents,
@@ -148,21 +148,73 @@ const alignChildrenAroundParents = (
         });
     };
 
-    const getRequiredPitch = (
+    const getRequiredCenterDistance = (
         previous: VerticalColumnExtents,
         next: VerticalColumnExtents,
-        indexDistance: number,
     ) => {
-        let requiredPitch = 0;
+        let requiredDistance = 0;
         for (const [depth, previousExtent] of previous) {
             const nextExtent = next.get(depth);
             if (!nextExtent) continue;
-            requiredPitch = Math.max(
-                requiredPitch,
-                (previousExtent.bottom + nextExtent.top + siblingGap) / indexDistance
+            requiredDistance = Math.max(
+                requiredDistance,
+                previousExtent.bottom + nextExtent.top + siblingGap
             );
         }
-        return requiredPitch;
+        return requiredDistance;
+    };
+
+    const roundGap = (gap: number) => Math.ceil(gap / 2) * 2;
+
+    const calculateChildCenterOffsets = (
+        children: MindMapModelNode[],
+        childExtents: VerticalColumnExtents[],
+    ) => {
+        if (children.length === 0) return [];
+        if (children.length === 1) return [0];
+
+        const gaps = children.slice(0, -1).map((_, index) => {
+            const previousExtent = childExtents[index];
+            const nextExtent = childExtents[index + 1];
+            if (!previousExtent || !nextExtent) {
+                return roundGap(
+                    (children[index]?.height ?? 0) / 2 +
+                    (children[index + 1]?.height ?? 0) / 2 +
+                    siblingGap
+                );
+            }
+            return roundGap(getRequiredCenterDistance(previousExtent, nextExtent));
+        });
+
+        for (let previousIndex = 0; previousIndex < children.length; previousIndex += 1) {
+            for (let nextIndex = previousIndex + 2; nextIndex < children.length; nextIndex += 1) {
+                const previousExtent = childExtents[previousIndex];
+                const nextExtent = childExtents[nextIndex];
+                if (!previousExtent || !nextExtent) continue;
+
+                const requiredDistance = roundGap(getRequiredCenterDistance(previousExtent, nextExtent));
+                const currentDistance = gaps
+                    .slice(previousIndex, nextIndex)
+                    .reduce((sum, gap) => sum + gap, 0);
+                const extraDistance = requiredDistance - currentDistance;
+                if (extraDistance <= 0) continue;
+
+                // Keep unrelated outer siblings compact by adding overlap clearance only inside this interval.
+                const affectedGapCount = nextIndex - previousIndex;
+                const extraPerGap = roundGap(extraDistance / affectedGapCount);
+                for (let gapIndex = previousIndex; gapIndex < nextIndex; gapIndex += 1) {
+                    gaps[gapIndex] += extraPerGap;
+                }
+            }
+        }
+
+        const centers = [0];
+        for (const gap of gaps) {
+            centers.push((centers[centers.length - 1] ?? 0) + gap);
+        }
+
+        const spanCenter = ((centers[0] ?? 0) + (centers[centers.length - 1] ?? 0)) / 2;
+        return centers.map(center => center - spanCenter);
     };
 
     const getExtent = (node: MindMapModelNode, seen = new Set<string>()): VerticalColumnExtents => {
@@ -182,28 +234,9 @@ const alignChildrenAroundParents = (
 
         if (children.length > 0) {
             const childExtents = children.map(child => getExtent(child, nextSeen));
-            let pitch = children.length === 1 ? (children[0]?.height ?? 0) + siblingGap : 0;
-
-            for (let previousIndex = 0; previousIndex < children.length; previousIndex += 1) {
-                for (let nextIndex = previousIndex + 1; nextIndex < children.length; nextIndex += 1) {
-                    const previousExtent = childExtents[previousIndex];
-                    const nextExtent = childExtents[nextIndex];
-                    if (!previousExtent || !nextExtent) continue;
-                    pitch = Math.max(
-                        pitch,
-                        getRequiredPitch(
-                            previousExtent,
-                            nextExtent,
-                            nextIndex - previousIndex
-                        )
-                    );
-                }
-            }
-            pitch = Math.ceil(pitch / 2) * 2;
-
-            const middleIndex = (children.length - 1) / 2;
+            const childCenterOffsets = calculateChildCenterOffsets(children, childExtents);
             children.forEach((_, index) => {
-                const offset = (index - middleIndex) * pitch;
+                const offset = childCenterOffsets[index] ?? 0;
                 const childExtent = childExtents[index];
                 if (!childExtent) return;
                 for (const [depth, extent] of childExtent) {
@@ -216,7 +249,7 @@ const alignChildrenAroundParents = (
                 }
             });
 
-            childPitchByParentId.set(node.id, pitch);
+            childCenterOffsetsByParentId.set(node.id, childCenterOffsets);
         }
 
         extentById.set(node.id, extents);
@@ -233,10 +266,12 @@ const alignChildrenAroundParents = (
         const children = childrenByParent.get(node.id) ?? [];
         if (children.length === 0) return;
 
-        const pitch = childPitchByParentId.get(node.id) ?? Math.max(...children.map(child => child.height)) + siblingGap;
-        const middleIndex = (children.length - 1) / 2;
+        const childCenterOffsets = childCenterOffsetsByParentId.get(node.id) ?? calculateChildCenterOffsets(
+            children,
+            children.map(child => getExtent(child, nextSeen))
+        );
         children.forEach((child, index) => {
-            placeChildren(child, centerY + (index - middleIndex) * pitch, nextSeen);
+            placeChildren(child, centerY + (childCenterOffsets[index] ?? 0), nextSeen);
         });
     };
 
