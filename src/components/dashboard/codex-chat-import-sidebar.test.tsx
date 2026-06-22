@@ -314,6 +314,74 @@ describe("CodexChatImportSidebar", () => {
     )
   })
 
+  test("falls back to synced rally duration for completed inline work status when metadata is missing", async () => {
+    renderSidebar()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("1m作業しました")).toBeInTheDocument()
+    })
+  })
+
+  test("prefers completed activity metadata over synced rally duration for inline work status", async () => {
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/ai-history/history-1") {
+        return jsonResponse({
+          item: baseHistoryItem,
+          detail: {
+            hydrateRequired: false,
+            linkedAiTaskId: "ai-task-1",
+            activityUrl: "/api/ai-history/history-1/activity",
+            policy: "linked_ai_task_activity",
+          },
+        })
+      }
+      if (url.startsWith("/api/ai-history/history-1/activity")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "msg-user",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "user",
+              kind: "sent",
+              body: "AI履歴をAPIへ接続して",
+              importance: "normal",
+              metadata: {},
+              created_at: "2026-06-20T00:00:00.000Z",
+            },
+            {
+              id: "msg-codex",
+              task_id: "ai-task-1",
+              user_id: "user-1",
+              role: "codex",
+              kind: "completed",
+              body: "未配置とマインドマップの2分類に整理しました",
+              importance: "normal",
+              metadata: {
+                turn_started_at: "2026-06-20T00:00:03.000Z",
+                turn_completed_at: "2026-06-20T00:00:30.000Z",
+                work_elapsed_ms: 27_000,
+              },
+              created_at: "2026-06-20T00:01:00.000Z",
+            },
+          ],
+        })
+      }
+      return jsonResponse({}, 404)
+    })
+    renderSidebar()
+
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("27s作業しました")).toBeInTheDocument()
+    })
+    expect(screen.queryByLabelText("1m作業しました")).not.toBeInTheDocument()
+  })
+
   test("shows cached unlinked AI history prompt and answer immediately", async () => {
     historyItems = [{
       ...baseHistoryItem,

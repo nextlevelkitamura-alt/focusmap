@@ -621,8 +621,13 @@ function runningRallyElapsedMs(messages: AiTaskActivityMessage[], nowMs: number,
   return null
 }
 
-function completedWorkMessageIndex(messages: AiTaskActivityMessage[], running: boolean) {
+function completedWorkMessageIndex(
+  messages: AiTaskActivityMessage[],
+  running: boolean,
+  fallbackElapsedMs?: number | null,
+) {
   if (running) return -1
+  const canUseFallback = typeof fallbackElapsedMs === "number" && Number.isFinite(fallbackElapsedMs)
 
   let latestUserIndex = -1
   messages.forEach((message, index) => {
@@ -633,7 +638,7 @@ function completedWorkMessageIndex(messages: AiTaskActivityMessage[], running: b
   for (let index = latestUserIndex + 1; index < messages.length; index += 1) {
     const message = messages[index]
     if (!message || isStatusActivityMessage(message)) continue
-    if (activityMessageWorkElapsedMs(message) !== null) return index
+    if (activityMessageWorkElapsedMs(message) !== null || canUseFallback) return index
   }
   return -1
 }
@@ -1388,12 +1393,17 @@ export function CodexChatImportSidebar({
     }
   }, [loadChatDetail, selectedCanHydrateDetail, selectedChatItem, selectedDetail?.hydrateRequired])
 
+  const selectedCompletedWorkFallbackElapsedMs = selectedUiStatus !== "running"
+    ? selectedRallyWorkElapsedMs ?? selectedLocalWorkElapsedMs
+    : null
   const selectedCompletedWorkMessageIndex = completedWorkMessageIndex(
     selectedMessages,
     selectedUiStatus === "running",
+    selectedCompletedWorkFallbackElapsedMs,
   )
   const selectedCompletedWorkElapsedMs = selectedCompletedWorkMessageIndex >= 0
-    ? activityMessageWorkElapsedMs(selectedMessages[selectedCompletedWorkMessageIndex])
+    ? activityMessageWorkElapsedMs(selectedMessages[selectedCompletedWorkMessageIndex]) ??
+      selectedCompletedWorkFallbackElapsedMs
     : null
   const selectedRunningUserMessageIndex = selectedUiStatus === "running"
     ? runningRallyUserMessageIndex(selectedMessages, selectedChatItem?.workStartedAt)
