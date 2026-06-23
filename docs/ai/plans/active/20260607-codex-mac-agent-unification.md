@@ -179,6 +179,8 @@ Planner棚卸しでは、Codex送信、Codex監視、archive request、Codex act
 
 旧 `task-runner` は最初の実装フェーズでは削除せず、`FOCUSMAP_LEGACY_CODEX_MONITOR=1` や `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した互換/debug用途へ落とす。repo scan、staff-status、scheduled/package実行の移管または廃止判断が終わるまで、ファイル自体の削除は不可とする。
 
+- 2026-06-23: API workerとheartbeat follow-upをlocal mainへ統合した。`/api/ai-tasks/schedule` の通常 `task-runner.ts --fast` spawnと旧ローカルdispatch env分岐を外し、`codex_app` auto taskはagent claimへ一本化する。`/api/ai-tasks` は `codex_app` / `auto` / `scheduled_at` 未指定時に作成時刻を入れ、manual handoffは `prompt_waiting` / `scheduled_at=null` を維持する。`/api/task-progress/runner-heartbeats` はTurso有効時もSupabase `ai_runners.last_heartbeat_at` を先に更新し、claim判定用heartbeatがstaleになる穴を塞ぐ。次はUI workerでvisible sync 3秒化、Agent workerでrepo scan / staff-status / scheduled/package残務の移管可否、Desktop/Installer workerで旧launchd導線整理を進める。
+
 ## リスク
 
 - Codex app-serverやsqlite/rolloutはCodex側の内部仕様変更を受ける可能性がある。Focusmapが開始したturnはapp-server通知を優先し、sqlite/rolloutは補助観測にする。

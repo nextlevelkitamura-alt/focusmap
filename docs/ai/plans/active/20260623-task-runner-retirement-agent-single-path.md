@@ -155,6 +155,15 @@ API spawn廃止、agent残務移管、UI polling統一、Desktop/Installer整理
 5. Docs/Test worker: 実装後のCONTEXT更新案、テスト観点、3秒測定表を整える。
 6. Integration worker: local mainへ統合し、必要な検証をまとめて実行し、旧launchd停止タイミングを最終判断する。
 
+## 2026-06-23 Integration進捗
+
+- local mainへAPI worker commit `cca30fe1`、heartbeat follow-up commit `8925398e`、compile fix commit `b831bf42` を取り込み済み。
+- API worker範囲では、`/api/ai-tasks/schedule` の通常 `task-runner.ts --fast` spawnを削除し、Cloud Run/API requestがローカルscript起動を前提にしない形へ寄せた。
+- `/api/ai-tasks` は `executor='codex_app'` / `dispatch_mode='auto'` / `scheduled_at` 未指定なら作成時刻を保存し、manual handoffは `needs_input` / `prompt_waiting` / `scheduled_at=null` を維持する。
+- `/api/task-progress/runner-heartbeats` はSupabase `ai_runners.last_heartbeat_at` を先に更新してからTursoへdual-writeする。Supabase更新に失敗した場合はTursoだけfreshに見せないため、agent claim条件とUI heartbeatのズレを避ける。
+- 次の最短効果はUI worker。送信直後、詳細open直後、active task検出直後にsnapshot/statusを即時refreshし、visible syncを3秒以内へ揃える。削除判断に必要な残務はAgent workerでrepo scan / staff-status / scheduled/packageを移管またはlegacy blockerとして固定する。
+- 追加されたroute testsは未実行。AGENTS.mdの検証ポリシーに従い、テスト/lint/buildはユーザー明示時にIntegrationでまとめて行う。
+
 旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は既に旧launchd停止を行うため、新規installでは停止方向。既存Macの `com.focusmap.task-runner` unloadはIntegrationのMac実機確認フェーズで、未移管scheduled taskが無いことを確認してから行う。
 
 ## worker起動前の共通ルール
