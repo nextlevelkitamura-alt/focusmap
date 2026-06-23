@@ -303,8 +303,8 @@ export async function POST(req: NextRequest) {
               codex_manual_handoff: false,
               codex_run_state: 'running',
               codex_review_reason: 'queued',
-              live_log: 'Mac の task-runner が Codex.app app-server で実行開始します。',
-              message: 'Codex.app app-server で実行待ちです。',
+              live_log: 'MacエージェントがCodex.app app-serverで実行開始します。',
+              message: 'Macエージェントの自動実行待ちです。',
               last_activity_at: nowIso,
               steps: [
                 {

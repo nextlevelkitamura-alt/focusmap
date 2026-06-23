@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { spawn } from 'child_process'
-import fs from 'fs'
-import path from 'path'
 import { insertAiTaskActivityMessage } from '@/lib/ai-task-activity'
-import { isLocalCodexOpenRequestHost } from '@/lib/codex-app-launch'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
@@ -11,58 +7,6 @@ import { isTursoConfigured } from '@/lib/turso/client'
 import { upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 export const runtime = 'nodejs'
-
-function requestImmediateCodexAppDispatch(taskId: string): void {
-  if (process.env.FOCUSMAP_DISABLE_LOCAL_CODEX_DISPATCH === 'true') return
-
-  const root = process.cwd()
-  const localTsx = path.join(root, 'node_modules', '.bin', 'tsx')
-  const hasLocalTsx = fs.existsSync(localTsx)
-  const command = hasLocalTsx ? localTsx : 'npx'
-  const args = hasLocalTsx
-    ? ['scripts/task-runner.ts', '--task-id', taskId, '--fast']
-    : ['--yes', 'tsx', 'scripts/task-runner.ts', '--task-id', taskId, '--fast']
-  const logDir = path.join(process.env.HOME || root, '.focusmap', 'logs')
-  fs.mkdirSync(logDir, { recursive: true })
-  const outPath = path.join(logDir, 'task-runner.log')
-  const errPath = path.join(logDir, 'task-runner.err')
-
-  let outFd: number | null = null
-  let errFd: number | null = null
-  try {
-    outFd = fs.openSync(outPath, 'a')
-    errFd = fs.openSync(errPath, 'a')
-    const child = spawn(command, args, {
-      cwd: root,
-      detached: true,
-      stdio: ['ignore', outFd, errFd],
-      env: {
-        ...process.env,
-        FOCUSMAP_IMMEDIATE_TASK_ID: taskId,
-      },
-    })
-    child.unref()
-    console.log(`[ai-tasks/schedule] immediate Codex.app dispatch requested: ${taskId}`)
-  } catch (err) {
-    console.error('[ai-tasks/schedule] immediate Codex.app dispatch failed:', err instanceof Error ? err.message : err)
-  } finally {
-    if (outFd !== null) {
-      try { fs.closeSync(outFd) } catch {}
-    }
-    if (errFd !== null) {
-      try { fs.closeSync(errFd) } catch {}
-    }
-  }
-}
-
-function canUseLocalDispatch(req: NextRequest): boolean {
-  if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_DISPATCH === 'true') return true
-  return isLocalCodexOpenRequestHost({
-    nextHostname: req.nextUrl.hostname,
-    host: req.headers.get('host'),
-    forwardedHost: req.headers.get('x-forwarded-host'),
-  })
-}
 
 function taskProgressSource(input: {
   source_task_id?: string | null
@@ -210,8 +154,8 @@ export async function POST(req: NextRequest) {
               codex_manual_handoff: false,
               codex_run_state: 'running',
               codex_review_reason: 'queued',
-              live_log: 'Mac の task-runner が Codex.app app-server で実行開始します。',
-              message: 'Codex.app app-server で実行待ちです。',
+              live_log: 'MacエージェントがCodex.app app-serverで実行開始します。',
+              message: 'Macエージェントの自動実行待ちです。',
               last_activity_at: nowIso,
               steps: [
                 {
@@ -230,13 +174,6 @@ export async function POST(req: NextRequest) {
         if (promoteError) {
           console.error('[ai-tasks/schedule] promote Codex handoff', promoteError.message)
           return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
-        }
-
-        if (
-          canUseLocalDispatch(req) &&
-          new Date(scheduled_at).getTime() <= Date.now() + 5_000
-        ) {
-          requestImmediateCodexAppDispatch(promoted.id)
         }
 
         await insertAiTaskActivityMessage(supabase, {
@@ -302,8 +239,8 @@ export async function POST(req: NextRequest) {
               codex_manual_handoff: false,
               codex_run_state: 'running',
               codex_review_reason: 'queued',
-              live_log: 'Mac の task-runner が Codex.app app-server で実行開始します。',
-              message: 'Codex.app app-server で実行待ちです。',
+              live_log: 'MacエージェントがCodex.app app-serverで実行開始します。',
+              message: 'Macエージェントの自動実行待ちです。',
               last_activity_at: nowIso,
               steps: [
                 {
@@ -363,15 +300,6 @@ export async function POST(req: NextRequest) {
         : 'Codex実行をキューに追加しました。',
       dedupeKey: `task:${data.id}:${manualCodexHandoff ? 'prompt_waiting' : 'sent'}`,
     })
-  }
-
-  if (
-    resolvedExecutor === 'codex_app' &&
-    !manualCodexHandoff &&
-    canUseLocalDispatch(req) &&
-    new Date(scheduled_at).getTime() <= Date.now() + 5_000
-  ) {
-    requestImmediateCodexAppDispatch(data.id)
   }
 
   return NextResponse.json(data, { status: 201 })
