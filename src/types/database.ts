@@ -672,6 +672,32 @@ export interface Database {
                     updated_at?: string
                 }
             }
+            event_completions: {
+                Row: {
+                    id: string
+                    user_id: string
+                    google_event_id: string
+                    calendar_id: string
+                    completed_date: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    google_event_id: string
+                    calendar_id: string
+                    completed_date?: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    google_event_id?: string
+                    calendar_id?: string
+                    completed_date?: string
+                    created_at?: string
+                }
+            }
             notification_settings: {
                 Row: {
                     id: string
