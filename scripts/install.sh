@@ -43,12 +43,16 @@ log_ok()   { echo "  ✓ $1"; }
 log_warn() { echo "  ⚠ $1"; }
 log_err()  { echo "  ✗ $1" >&2; }
 
-stop_launchd_label() {
+disable_legacy_launchd_label() {
   local label="$1"
   local plist="$HOME/Library/LaunchAgents/${label}.plist"
   if launchctl list 2>/dev/null | grep -q "$label"; then
     log_info "旧launchdジョブを停止: $label"
     launchctl unload "$plist" 2>/dev/null || launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  fi
+  if [ -f "$plist" ]; then
+    rm -f "$plist"
+    log_info "旧launchd plistを削除: $plist"
   fi
 }
 
@@ -89,7 +93,7 @@ chmod 700 "$INSTALL_DIR/browser-profile"
 log_ok "ディレクトリ $INSTALL_DIR を準備"
 
 for legacy_label in "${LEGACY_PLIST_LABELS[@]}"; do
-  stop_launchd_label "$legacy_label"
+  disable_legacy_launchd_label "$legacy_label"
 done
 
 # 3. focusmap-agent パッケージ

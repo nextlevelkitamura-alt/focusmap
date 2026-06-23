@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Focusmap Task Runner — launchd plist
-  =====================================
-  インストール手順:
+  Focusmap Task Runner — legacy/debug launchd plist
+  =================================================
+  通常のMac常駐・セットアップ・インストール導線では使わないでください。
+  Codex監視とai_tasks実行は focusmap-agent が担当します。
+
+  旧 scripts/task-runner.ts の挙動を手動で確認したい場合だけ使います。
+
+  手動インストール手順:
     cp scripts/com.focusmap.task-runner.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.focusmap.task-runner.plist
 
@@ -16,6 +21,7 @@
     tail -f ~/.focusmap/logs/task-runner.err
 
   注意:
+    - 通常運用では load しないでください
     - USERNAME を実際のユーザー名に変更してください
     - PROJECT_PATH をプロジェクトのパスに変更してください
     - StartInterval: 60 = 毎分実行（60秒ごと）

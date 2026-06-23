@@ -134,33 +134,22 @@ else
   warn "NEXT_PUBLIC_SUPABASE_URL が未設定です"
 fi
 
-# ─── Step 4: AIスケジュール実行 ───────────────────────────────────
-step "Step 4/5: AIスケジュール自動実行（task-runner）"
+# ─── Step 4: 自動実行導線 ─────────────────────────────────────────
+step "Step 4/5: 自動実行導線（focusmap-agent）"
 
 PLIST_NAME="com.focusmap.task-runner.plist"
-PLIST_SRC="scripts/$PLIST_NAME"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME"
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ -f "$PLIST_DST" ]; then
-  ok "task-runner は既にインストール済みです"
+  warn "旧task-runner launchd plist が残っています（legacy/debug用）"
+  info "通常の自動実行は focusmap-agent が担当します"
+  info "停止: launchctl unload \"$PLIST_DST\" 2>/dev/null || true"
+  info "削除: rm \"$PLIST_DST\""
 else
-  if [ -f "$PLIST_SRC" ]; then
-    # plist 内のパスを現在のプロジェクトディレクトリに合わせる
-    sed "s|/Users/kitamuranaohiro/Private/focusmap|$PROJECT_DIR|g" "$PLIST_SRC" > /tmp/$PLIST_NAME
-
-    # ユーザー名も更新
-    CURRENT_USER=$(whoami)
-    sed -i '' "s|/Users/kitamuranaohiro|/Users/$CURRENT_USER|g" /tmp/$PLIST_NAME
-
-    cp /tmp/$PLIST_NAME "$PLIST_DST"
-    launchctl load "$PLIST_DST" 2>/dev/null || true
-    ok "task-runner をインストールしました（毎分実行）"
-    info "ログ: tail -f $HOME/.focusmap/logs/task-runner.log"
-  else
-    warn "plist ファイルが見つかりません: $PLIST_SRC"
-  fi
+  ok "旧task-runner は通常セットアップではインストールしません"
 fi
+
+info "通常のMac常駐は focusmap-agent インストーラー（scripts/install.sh）を使ってください"
 
 # ─── Step 5: Claude Code のセットアップ案内 ────────────────────────
 step "Step 5/5: Claude Code"

@@ -350,6 +350,8 @@ function readTaskRunnerPauseStatus() {
       ...base,
       ready: false,
       paused: false,
+      mode: 'legacy-debug',
+      connectionRequired: false,
       disabledReason: 'Codex監視はfocusmap-agentが通常担当します。旧task-runnerは互換/デバッグ時だけ起動します。',
     };
   }
@@ -359,6 +361,8 @@ function readTaskRunnerPauseStatus() {
       ...base,
       ready: available,
       paused: false,
+      mode: 'legacy-debug',
+      connectionRequired: false,
     };
   }
 
@@ -374,6 +378,8 @@ function readTaskRunnerPauseStatus() {
     ...base,
     ready: false,
     paused: true,
+    mode: 'legacy-debug',
+    connectionRequired: false,
     pausedAt,
     pauseReason: reason,
   };
@@ -2044,7 +2050,7 @@ async function ensureAutomationServices(reason, options = {}) {
     results.codex = serviceResult(false, message);
   }
 
-  if (options.recoverRunner !== false) {
+  if (options.recoverLegacyTaskRunner === true) {
     try {
       results.runner = maybeRecoverTaskRunner(reason);
     } catch (error) {
@@ -2054,7 +2060,7 @@ async function ensureAutomationServices(reason, options = {}) {
   }
 
   const status = await getAutomationStatus();
-  const ok = Boolean(results.app?.ok && results.agent?.ok && results.codex?.ok && results.runner?.ok !== false);
+  const ok = Boolean(results.app?.ok && results.agent?.ok && results.codex?.ok);
   const failed = Object.values(results).filter((result) => result && result.ok === false);
   return {
     ok,
@@ -2071,7 +2077,7 @@ function scheduleAutomationEnsure(reason, delayMs = 0) {
   if (automationEnsurePromise) return;
   const run = () => {
     if (!automationSupervisorEnabled || isQuitting || automationEnsurePromise) return;
-    automationEnsurePromise = ensureAutomationServices(reason, { recoverRunner: true })
+    automationEnsurePromise = ensureAutomationServices(reason)
       .catch((error) => {
         log('supervisor', error instanceof Error ? error.message : String(error));
       })
@@ -2129,12 +2135,11 @@ async function getAutomationStatus() {
   const runner = readTaskRunnerPauseStatus();
   runner.ready = runner.enabled ? runner.available && !runner.paused : false;
   runner.managed = isChildRunning(managedProcesses.runner);
-  const runnerBlocksConnection = Boolean(runner.enabled && runner.paused);
 
   return {
     ok: true,
     available: true,
-    connected: Boolean(appReady && agentReady && codexAppInstalled && codexReady && !runnerBlocksConnection),
+    connected: Boolean(appReady && agentReady && codexAppInstalled && codexReady),
     timestamp: new Date().toISOString(),
     supervisor: {
       enabled: automationSupervisorEnabled,
@@ -2184,7 +2189,7 @@ async function getAutomationStatus() {
 
 async function connectAutomation() {
   startAutomationSupervisor('manual-connect');
-  return ensureAutomationServices('manual-connect', { recoverRunner: true });
+  return ensureAutomationServices('manual-connect');
 }
 
 async function retryDashboardFromLoadingScreen() {
