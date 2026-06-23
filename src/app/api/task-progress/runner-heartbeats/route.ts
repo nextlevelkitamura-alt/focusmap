@@ -167,10 +167,12 @@ async function upsertSupabaseRunnerHeartbeat(
   }
 
   if (!row) {
-    const executors = stringArray(body.executors).length
-      ? stringArray(body.executors)
-      : stringArray(metadata.executors).length
-        ? stringArray(metadata.executors)
+    const bodyExecutors = stringArray(body.executors)
+    const metadataExecutors = stringArray(metadataPatch.executors)
+    const executors = bodyExecutors.length
+      ? bodyExecutors
+      : metadataExecutors.length
+        ? metadataExecutors
         : ['playwright', 'simple', 'browser', 'terminal', 'codex_app']
     const { data, error } = await auth.supabase
       .from('ai_runners')
