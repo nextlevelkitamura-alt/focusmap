@@ -237,6 +237,9 @@ export async function POST(req: NextRequest) {
     ? codex_handoff_token.trim()
     : null
   const nowIso = new Date().toISOString()
+  const resolvedScheduledAt = selectedExecutor === 'codex_app' && codexDispatchMode === 'auto'
+    ? scheduled_at ?? nowIso
+    : scheduled_at ?? null
 
   const resolved = await resolveAiTaskSpaceId(supabase, user.id, {
     space_id: typeof space_id === 'string' ? space_id : null,
@@ -272,7 +275,7 @@ export async function POST(req: NextRequest) {
       parent_task_id: parent_task_id || null,
       status: manualCodexHandoff ? 'needs_input' : 'pending',
       started_at: manualCodexHandoff ? nowIso : null,
-      scheduled_at: scheduled_at ?? null,
+      scheduled_at: resolvedScheduledAt,
       recurrence_cron: recurrence_cron ?? null,
       cwd: cwd ?? null,
       executor: selectedExecutor,

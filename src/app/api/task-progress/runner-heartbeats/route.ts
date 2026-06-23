@@ -110,29 +110,56 @@ async function upsertSupabaseRunnerHeartbeat(
 ) {
   const timestamp = nowIso()
   const hostname = compactString(body.hostname, 120) ?? compactString(body.device_id, 120) ?? 'focusmap-lite-mac'
-  const metadata: Record<string, unknown> = {
+  const metadataPatch: Record<string, unknown> = {
     ...(isRecord(body.metadata) ? body.metadata : {}),
     last_runner_heartbeat_at: timestamp,
   }
-  const status = compactString(body.status, 40) ?? statusFrom(metadata)
-  metadata.runner_status = status
-  if (hasCurrentTaskId) metadata.current_task_id = compactString(body.current_task_id, 160)
-  const version = compactString(body.version, 80) ?? versionFrom(metadata)
-  if (version) metadata.version = version
+  const status = compactString(body.status, 40) ?? statusFrom(metadataPatch)
+  metadataPatch.runner_status = status
+  if (hasCurrentTaskId) metadataPatch.current_task_id = compactString(body.current_task_id, 160)
+  const version = compactString(body.version, 80) ?? versionFrom(metadataPatch)
+  if (version) metadataPatch.version = version
 
   const fields = 'id,user_id,hostname,metadata,last_heartbeat_at,created_at,updated_at'
+  let existing: Record<string, unknown> | null = null
   let row: Record<string, unknown> | null = null
 
   if (uuidLike(runnerId)) {
     const { data, error } = await auth.supabase
       .from('ai_runners')
+      .select(fields)
+      .eq('user_id', auth.userId)
+      .eq('id', runnerId)
+      .maybeSingle()
+    if (error) throw error
+    existing = data as Record<string, unknown> | null
+  }
+
+  if (!existing) {
+    const { data, error } = await auth.supabase
+      .from('ai_runners')
+      .select(fields)
+      .eq('user_id', auth.userId)
+      .eq('hostname', hostname)
+      .maybeSingle()
+    if (error) throw error
+    existing = data as Record<string, unknown> | null
+  }
+
+  if (existing) {
+    const previousMetadata = isRecord(existing.metadata) ? existing.metadata : {}
+    const { data, error } = await auth.supabase
+      .from('ai_runners')
       .update({
-        metadata,
+        metadata: {
+          ...previousMetadata,
+          ...metadataPatch,
+        },
         last_heartbeat_at: timestamp,
         updated_at: timestamp,
       })
       .eq('user_id', auth.userId)
-      .eq('id', runnerId)
+      .eq('id', String(existing.id))
       .select(fields)
       .maybeSingle()
     if (error) throw error
@@ -155,7 +182,7 @@ async function upsertSupabaseRunnerHeartbeat(
         available_repo_keys: stringArray(body.available_repo_keys),
         available_secret_names: stringArray(body.available_secret_names),
         repo_paths: isRecord(body.repo_paths) ? body.repo_paths : {},
-        metadata,
+        metadata: metadataPatch,
         last_heartbeat_at: timestamp,
         updated_at: timestamp,
       }, { onConflict: 'user_id,hostname' })
@@ -232,9 +259,17 @@ export async function POST(request: NextRequest) {
   if (!runnerId) return NextResponse.json({ error: 'runner_id or hostname is required' }, { status: 400 })
   const hasCurrentTaskId = Object.prototype.hasOwnProperty.call(body, 'current_task_id')
 
+  let supabaseHeartbeat: ReturnType<typeof supabaseRunnerHeartbeat>
+  try {
+    supabaseHeartbeat = await upsertSupabaseRunnerHeartbeat(auth, body, runnerId, hasCurrentTaskId)
+  } catch (error) {
+    console.error('[runner-heartbeats POST supabase]', error)
+    return NextResponse.json({ error: 'Runner heartbeat update failed' }, { status: 500 })
+  }
+
   if (isTursoConfigured()) {
     try {
-      const heartbeat = await upsertRunnerHeartbeat({
+      const tursoHeartbeat = await upsertRunnerHeartbeat({
         runner_id: runnerId,
         user_id: auth.userId,
         device_id: compactString(body.device_id, 160),
@@ -243,7 +278,12 @@ export async function POST(request: NextRequest) {
         version: compactString(body.version, 80),
         metadata_json: isRecord(body.metadata) ? body.metadata : {},
       })
-      return NextResponse.json({ ok: true, source: 'turso', heartbeat })
+      return NextResponse.json({
+        ok: true,
+        source: 'turso+supabase',
+        heartbeat: tursoHeartbeat,
+        supabase_heartbeat: supabaseHeartbeat,
+      })
     } catch (error) {
       if (!(error instanceof TursoConfigurationError)) {
         console.error('[runner-heartbeats POST]', error)
@@ -252,11 +292,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  try {
-    const heartbeat = await upsertSupabaseRunnerHeartbeat(auth, body, runnerId, hasCurrentTaskId)
-    return NextResponse.json({ ok: true, source: 'supabase', heartbeat })
-  } catch (error) {
-    console.error('[runner-heartbeats POST supabase]', error)
-    return NextResponse.json({ error: 'Runner heartbeat update failed' }, { status: 500 })
-  }
+  return NextResponse.json({ ok: true, source: 'supabase', heartbeat: supabaseHeartbeat })
 }
