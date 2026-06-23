@@ -306,8 +306,8 @@ export function RepoPicker({
                 )}
               </div>
               <p className="px-5 pt-2 text-[11px] text-muted-foreground leading-4">
-                Mac の task-runner が <code className="font-mono">~/dev</code>{" "}
-                <code className="font-mono">~/Documents</code> 等を5分おきにスキャンします。
+                Mac の focusmap-agent が <code className="font-mono">~/dev</code>{" "}
+                <code className="font-mono">~/Documents</code> 等のGitリポジトリ候補をheartbeatで同期します。
               </p>
             </div>
           </div>
@@ -366,8 +366,8 @@ function RepoEmptyState({ hasQuery, hasAnyRepos }: { hasQuery: boolean; hasAnyRe
       <div className="py-12 px-6 text-center text-sm text-muted-foreground space-y-2">
         <p className="text-base font-medium">スキャンされたリポがありません</p>
         <p className="text-xs leading-5">
-          Mac の task-runner がデフォルトのフォルダを自動探索しますが、まだ完了していないかも。
-          下の「Mac を再スキャン」を押してみてください。
+          Mac の focusmap-agent がデフォルトのフォルダを自動探索します。
+          まだ反映されない場合は、Macアプリまたはagentの起動状態を確認してください。
         </p>
       </div>
     )
