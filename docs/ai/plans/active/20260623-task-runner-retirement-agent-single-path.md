@@ -1,7 +1,7 @@
 # task-runner退役 / focusmap-agent一本化フェーズ
 
 - Task ID: `TASK-20260607-004`
-- Status: `in_progress`（API / UI / Agent worker統合済み、Desktop/Installer前）
+- Status: `in_progress`（API / UI / Agent / Desktop-Installer worker統合済み、Integration前）
 - Created: `2026-06-23`
 - Parent plan: [20260607-codex-mac-agent-unification.md](20260607-codex-mac-agent-unification.md)
 - Board: `docs/ai/task-board.md`
@@ -183,7 +183,16 @@ API spawn廃止、agent残務移管、UI polling統一、Desktop/Installer整理
 - Codex.app recurring taskの承認/完了後再投入はまだ未移管。Codex監視のterminal state側で別途実装するまでは、Codex recurringを旧runner完全削除条件に含めない。
 - 追加・更新されたAgent/API testsは未実行。AGENTS.mdの検証ポリシーに従い、テスト/lint/buildはユーザー明示時にIntegrationでまとめて行う。
 
-旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は既に旧launchd停止を行うため、新規installでは停止方向。既存Macの `com.focusmap.task-runner` unloadはIntegrationのMac実機確認フェーズで、未移管scheduled taskが無いことを確認してから行う。
+## 2026-06-23 Desktop/Installer worker進捗
+
+- local mainへDesktop/Installer worker commit `07665c06` を取り込み済み。親レビューでは、Mac app通常復旧、supervisor、setup/installから旧 `task-runner` 通常起動・通常installが外れたと判断した。
+- Mac appの `manual-connect` / supervisor / `ensureAutomationServices()` は旧runnerを通常復旧しない。automation statusの `connected` 判定も Next / `focusmap-agent` / Codex app-server を正にし、旧runner pause状態で接続失敗にしない。
+- `scripts/setup.sh` は `com.focusmap.task-runner.plist` を新規copy/loadしない。既存plistがある場合はlegacy/debug用として停止・削除案内だけを出す。
+- `scripts/install.sh` は既存の `com.focusmap.task-runner` launchd labelを停止し、`~/Library/LaunchAgents/com.focusmap.task-runner.plist` も削除する。
+- `scripts/com.focusmap.task-runner.plist` は削除せず、旧 `scripts/task-runner.ts` の手動確認用 `legacy/debug` 資料として残す。通常運用ではloadしない。
+- 追加検証は未実行。候補は `node --check desktop/focusmap-mac/main.cjs`、`bash -n scripts/setup.sh scripts/install.sh`、`plutil -lint scripts/com.focusmap.task-runner.plist`、Mac実機の `launchctl list | grep com.focusmap.task-runner || true`。
+
+旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は旧launchd停止とplist削除を行うため、既存Macでは `scripts/install.sh <agent_token>` 再実行、または手動 `launchctl unload "$HOME/Library/LaunchAgents/com.focusmap.task-runner.plist"` / `launchctl bootout "gui/$(id -u)/com.focusmap.task-runner"` / plist削除で停止する。IntegrationのMac実機確認フェーズでは、未移管scheduled taskが旧runner必須でないことを確認してから旧runner停止を最終判断する。
 
 ## worker起動前の共通ルール
 
