@@ -37,6 +37,7 @@ import {
   preImportCodexMonitorTasks,
   prioritizeCodexMonitorTasks,
   RESUME_RUNNING_VISIBILITY_MS,
+  TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS,
   shouldInspectAiHistoryRollout,
   shouldInspectAiHistoryPlaceholderTitle,
   shouldInspectTaskRollout,
@@ -96,6 +97,7 @@ describe('codex-thread-monitor state detection', () => {
   test('keeps Codex completion debounce below the visible UI lag target', () => {
     expect(AWAITING_APPROVAL_STABILITY_MS).toBe(1_000);
     expect(RESUME_RUNNING_VISIBILITY_MS).toBe(2_000);
+    expect(TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS).toBe(30 * 60 * 1000);
   });
 
   test('keeps hot sync capacity for the latest 20 threads per project scope plus global head', () => {
@@ -483,7 +485,7 @@ describe('codex-thread-monitor state detection', () => {
     ].join('\n');
 
     const summary = parseRollout(raw, threadRow);
-    const state = taskStateForSummary(task(), summary);
+    const state = taskStateForSummary(task(), summary, Date.parse('2026-06-08T15:49:20.000Z'));
 
     expect(summary.state).toBe('awaiting_approval');
     expect(summary.latestTaskCompleteAt).toBe('2026-06-08T15:49:18.368Z');
@@ -669,12 +671,29 @@ describe('codex-thread-monitor state detection', () => {
     ].join('\n');
 
     const summary = parseRollout(raw, threadRow);
-    const state = taskStateForSummary(task(), summary);
+    const state = taskStateForSummary(task(), summary, Date.parse('2026-06-08T15:40:21.000Z'));
 
     expect(summary.state).toBe('running');
     expect(summary.currentStep).toBe('Codexがコンテキストを整理中');
     expect(summary.latestRunningActivityAt).toBe('2026-06-08T15:40:20.000Z');
     expect(state).toEqual({ status: 'running', resumed: false });
+  });
+
+  test('moves a stale running task without a terminal event to awaiting approval', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+      line('2026-06-08T15:40:20.000Z', { type: 'function_call_output', output: 'still working' }),
+    ].join('\n');
+
+    const summary = parseRollout(raw, threadRow);
+    const state = taskStateForSummary(
+      task({ status: 'running', result: { codex_run_state: 'running' } }),
+      summary,
+      Date.parse('2026-06-08T15:40:20.000Z') + TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS + 1,
+    );
+
+    expect(summary.state).toBe('running');
+    expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
   });
 
   test('keeps passive context maintenance after task_complete in awaiting approval', () => {
@@ -711,7 +730,7 @@ describe('codex-thread-monitor state detection', () => {
         codex_run_state: 'prompt_waiting',
         last_activity_at: '2026-06-08T15:47:57.527Z',
       },
-    }), summary);
+    }), summary, Date.parse('2026-06-08T15:49:16.000Z'));
 
     expect(state).toEqual({ status: 'running', resumed: false });
   });
@@ -730,7 +749,7 @@ describe('codex-thread-monitor state detection', () => {
         last_activity_at: '2026-06-08T15:40:00.000Z',
         awaiting_approval_at: '2026-06-08T15:40:00.000Z',
       },
-    }), summary);
+    }), summary, Date.parse('2026-06-08T15:49:16.000Z'));
 
     expect(state).toEqual({ status: 'running', resumed: true });
   });
@@ -752,7 +771,7 @@ describe('codex-thread-monitor state detection', () => {
         last_activity_at: '2026-06-08T15:40:10.000Z',
         awaiting_approval_at: '2026-06-08T15:40:10.000Z',
       },
-    }), summary);
+    }), summary, Date.parse('2026-06-08T15:49:16.000Z'));
 
     expect(summary.state).toBe('running');
     expect(summary.currentStep).toBe('Codexがコマンドを実行中');
@@ -809,7 +828,7 @@ describe('codex-thread-monitor state detection', () => {
       status: 'awaiting_approval',
       result: oldResult,
     });
-    const state = taskStateForSummary(oldAwaitingTask, summary);
+    const state = taskStateForSummary(oldAwaitingTask, summary, Date.parse('2026-06-08T15:50:20.000Z'));
     const nextAwaitingApprovalAt = awaitingApprovalAtForSummary(
       oldResult,
       summary,

@@ -40,6 +40,7 @@ export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 2_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
+export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
@@ -1901,6 +1902,25 @@ function awaitingApprovalSignalStable(summary: RolloutSummary, nowMs: number): b
   return nowMs - completeMs >= AWAITING_APPROVAL_STABILITY_MS;
 }
 
+function staleRunningTaskWithoutTerminalEvent(summary: RolloutSummary, nowMs: number): boolean {
+  if (summary.state !== 'running') return false;
+  if (summary.threadArchived) return false;
+
+  const explicitRunningMs = Math.max(
+    timeMs(summary.latestRunningActivityAt) ?? 0,
+    timeMs(summary.latestTaskStartedAt) ?? 0,
+    timeMs(summary.latestUserMessageAt) ?? 0,
+  );
+  const latestRunningMs = explicitRunningMs > 0
+    ? explicitRunningMs
+    : Math.max(
+        timeMs(summary.lastActivityAt) ?? 0,
+        timeMs(summary.threadUpdatedAt) ?? 0,
+      );
+  if (latestRunningMs <= 0) return false;
+  return nowMs - latestRunningMs >= TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
+}
+
 export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs = Date.now()) {
   const resumed = didResumeAfterCheckpoint(task, summary);
   if (resumed) {
@@ -1917,7 +1937,13 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs
       }
       return { status: 'awaiting_approval' as const, resumed: true };
     }
+    if (staleRunningTaskWithoutTerminalEvent(summary, nowMs)) {
+      return { status: 'awaiting_approval' as const, resumed: false };
+    }
     return { status: 'running' as const, resumed: true };
+  }
+  if (staleRunningTaskWithoutTerminalEvent(summary, nowMs)) {
+    return { status: 'awaiting_approval' as const, resumed: false };
   }
   if (task.status === 'running' && summary.state === 'awaiting_approval' && !awaitingApprovalSignalStable(summary, nowMs)) {
     return { status: 'running' as const, resumed: false };
