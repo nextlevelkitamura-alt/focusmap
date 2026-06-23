@@ -788,6 +788,7 @@ describe('WishlistView calendar D&D', () => {
     expect(screen.getByDisplayValue('Existing body')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Codexに送る' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Codexチャット/ })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([input]) => requestUrl(input) === '/api/codex/sync-node')).toBe(false)
 
     fireEvent.change(screen.getByDisplayValue('Existing memo'), {
       target: { value: 'Updated memo' },

@@ -1513,15 +1513,6 @@ export function WishlistView({
 
     setIsLoadingDesktopCodexActivity(true)
     try {
-      await fetch("/api/codex/sync-node", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ai_task_id: desktopMemoAiTaskId,
-          include_visible_activity: true,
-        }),
-      }).catch(() => undefined)
-
       const res = await fetch(`/api/ai-tasks/${encodeURIComponent(desktopMemoAiTaskId)}/activity`, { cache: "no-store" })
       const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
       if (!res.ok) throw new Error(data.error || `activity ${res.status}`)

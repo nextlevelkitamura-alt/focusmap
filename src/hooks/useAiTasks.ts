@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AiTask } from '@/types/ai-task'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
-const RUNNING_CODEX_REFRESH_INTERVAL_MS = 3_000
-const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
+const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 2 * 60_000
 
 interface UseAiTasksOptions {
@@ -19,15 +19,30 @@ function isCodexTask(task: AiTask) {
   return task.executor === 'codex' || task.executor === 'codex_app'
 }
 
-function hasRunningCodexTask(tasks: AiTask[]) {
-  return tasks.some(task =>
-    isCodexTask(task) &&
-    (task.status === 'running' || task.result?.codex_run_state === 'running')
-  )
+function codexRunState(task: AiTask) {
+  const state = task.result?.codex_run_state
+  return typeof state === 'string' ? state : null
 }
 
-function hasPendingCodexTask(tasks: AiTask[]) {
-  return tasks.some(task => isCodexTask(task) && task.status === 'pending')
+function isActiveCodexTask(task: AiTask) {
+  if (!isCodexTask(task)) return false
+  if (task.status === 'completed' || task.status === 'failed') return false
+  return ACTIVE_STATUSES.includes(task.status) ||
+    codexRunState(task) === 'running' ||
+    codexRunState(task) === 'prompt_waiting' ||
+    codexRunState(task) === 'awaiting_approval'
+}
+
+function hasActiveCodexTask(tasks: AiTask[]) {
+  return tasks.some(isActiveCodexTask)
+}
+
+function activeCodexTaskRefreshKey(tasks: AiTask[]) {
+  const keys = tasks
+    .filter(isActiveCodexTask)
+    .map(task => `${task.id}:${task.status}:${codexRunState(task) ?? 'active'}`)
+    .sort()
+  return keys.length > 0 ? keys.join('|') : null
 }
 
 function isPageVisible() {
@@ -38,6 +53,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
   const [tasks, setTasks] = useState<AiTask[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const activeRefreshKeyRef = useRef<string | null>(null)
 
   // 初回読み込み
   const fetchTasks = useCallback(async () => {
@@ -60,10 +76,9 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
     fetchTasks()
   }, [fetchTasks])
 
-  const refreshIntervalMs = hasRunningCodexTask(tasks)
-    ? RUNNING_CODEX_REFRESH_INTERVAL_MS
-    : hasPendingCodexTask(tasks)
-      ? PENDING_CODEX_REFRESH_INTERVAL_MS
+  const activeRefreshKey = useMemo(() => activeCodexTaskRefreshKey(tasks), [tasks])
+  const refreshIntervalMs = hasActiveCodexTask(tasks)
+    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
@@ -72,6 +87,16 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
     }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchTasks, refreshIntervalMs])
+
+  useEffect(() => {
+    if (!activeRefreshKey) {
+      activeRefreshKeyRef.current = null
+      return
+    }
+    if (activeRefreshKeyRef.current === activeRefreshKey) return
+    activeRefreshKeyRef.current = activeRefreshKey
+    if (isPageVisible()) void fetchTasks()
+  }, [activeRefreshKey, fetchTasks])
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -99,8 +124,14 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
       const err = await res.json()
       throw new Error(err.error || 'Failed to create ai_task')
     }
-    return (await res.json()) as AiTask
-  }, [])
+    const createdTask = (await res.json()) as AiTask
+    setTasks(prev => {
+      if (prev.some(task => task.id === createdTask.id)) return prev
+      return [createdTask, ...prev].slice(0, limit)
+    })
+    if (isPageVisible()) void fetchTasks()
+    return createdTask
+  }, [fetchTasks, limit])
 
   // 承認（completed にする）
   const approve = useCallback(async (taskId: string) => {
@@ -135,7 +166,8 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
       if (prev.some(t => t.id === task.id)) return prev
       return [task, ...prev].slice(0, limit)
     })
-  }, [limit])
+    if (isPageVisible()) void fetchTasks()
+  }, [fetchTasks, limit])
 
   // 完了トグル
   // 単発タスク（recurrence_cron なし）: status を completed ↔ pending

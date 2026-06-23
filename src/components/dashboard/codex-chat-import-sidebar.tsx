@@ -896,7 +896,6 @@ export function CodexChatImportSidebar({
   const [locallyArchivedChatIds, setLocallyArchivedChatIds] = React.useState<Set<string>>(() => new Set())
   const [archiveErrorByChatId, setArchiveErrorByChatId] = React.useState<Record<string, string>>({})
   const [chatDetailsById, setChatDetailsById] = React.useState<Record<string, ChatDetailState>>({})
-  const [linkedAiTaskIdsBySourceId, setLinkedAiTaskIdsBySourceId] = React.useState<Record<string, string>>({})
   const [collapsedSummaryChatIds, setCollapsedSummaryChatIds] = React.useState<Set<string>>(() => new Set())
   const [aiSummaryByChatId, setAiSummaryByChatId] = React.useState<Record<string, {
     signature: string
@@ -1139,8 +1138,8 @@ export function CodexChatImportSidebar({
   const resolveAiTaskId = React.useCallback((item: CodexChatImportItem) => {
     const directAiTaskId = item.aiTaskId?.trim()
     if (directAiTaskId) return directAiTaskId
-    return linkedAiTaskIdsBySourceId[item.id]?.trim() || null
-  }, [linkedAiTaskIdsBySourceId])
+    return null
+  }, [])
   const displayUpdatedLabel = React.useCallback((item: CodexChatImportItem) => item.updatedLabel, [])
   const fetchChatActivityPage = React.useCallback(async (
     activityUrl: string,
@@ -1199,36 +1198,6 @@ export function CodexChatImportSidebar({
     }
     return { messages: latestVisibleActivityMessages(messages), hasMore, hydrate }
   }, [fetchChatActivityPage])
-
-  const syncLegacyChatActivity = React.useCallback(async (item: CodexChatImportItem) => {
-    const aiTaskId = resolveAiTaskId(item)
-    const payload = aiTaskId
-      ? { ai_task_id: aiTaskId, include_visible_activity: true }
-      : { source_task_id: item.id, include_visible_activity: true }
-
-    const res = await fetch("/api/codex/sync-node", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok || (data as { success?: boolean })?.success === false) {
-      const message = (data as { error?: string; message?: string })?.error ||
-        (data as { message?: string })?.message ||
-        "CodexチャットをDBへ保存できませんでした"
-      throw new Error(message)
-    }
-
-    const syncedAiTaskId = typeof (data as { task_id?: unknown }).task_id === "string"
-      ? (data as { task_id: string }).task_id
-      : aiTaskId
-    if (syncedAiTaskId) {
-      setLinkedAiTaskIdsBySourceId(prev => (
-        prev[item.id] === syncedAiTaskId ? prev : { ...prev, [item.id]: syncedAiTaskId }
-      ))
-    }
-    return syncedAiTaskId
-  }, [resolveAiTaskId])
 
   const loadChatDetail = React.useCallback(async (
     item: CodexChatImportItem,
@@ -1297,12 +1266,7 @@ export function CodexChatImportSidebar({
         return
       }
 
-      let aiTaskId = resolveAiTaskId(item)
-      try {
-        aiTaskId = await syncLegacyChatActivity(item) || aiTaskId
-      } catch {
-        // 既存マップノード詳細の互換fallback。AI履歴一覧の正本化には使わない。
-      }
+      const aiTaskId = resolveAiTaskId(item)
 
       if (aiTaskId) {
         const { messages, hasMore, hydrate } = await fetchChatActivityMessages(`/api/ai-tasks/${encodeURIComponent(aiTaskId)}/activity`)
@@ -1364,7 +1328,7 @@ export function CodexChatImportSidebar({
         }
       })
     }
-  }, [fetchChatActivityMessages, resolveAiTaskId, syncLegacyChatActivity])
+  }, [fetchChatActivityMessages, resolveAiTaskId])
 
   const handleChatItemClick = React.useCallback((item: CodexChatImportItem) => {
     setSelectedChatId(item.id)

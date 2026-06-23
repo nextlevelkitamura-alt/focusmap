@@ -33,6 +33,7 @@ import type { Project, Task } from "@/types/database"
 
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 const CODEX_ACTIVITY_SYNC_INTERVAL_MS = 3_000
+const CODEX_IDLE_ACTIVITY_SYNC_INTERVAL_MS = 60_000
 const CODEX_WATCH_PING_INTERVAL_MS = 10_000
 
 type LinkedMemoDialogTarget = {
@@ -602,22 +603,12 @@ export function MindmapLinkedMemosDialog({
     }
   }, [codexAiTaskId, isCodexTask, target])
 
-  const syncLinkedCodexState = useCallback(async () => {
-    const sourceTaskId = target?.taskId
-    if (!sourceTaskId || !hasCodexRun || !canUseLocalCodexOpenApi()) return
+  const refreshLinkedCodexState = useCallback(async () => {
+    if (!target || !hasCodexRun) return
 
-    await fetchWithSupabaseAuth("/api/codex/sync-node", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source_task_id: sourceTaskId,
-        ai_task_id: codexAiTaskId,
-        include_visible_activity: true,
-      }),
-    }).catch(() => undefined)
     await refreshAiTasks()
     await loadCodexActivity()
-  }, [codexAiTaskId, hasCodexRun, loadCodexActivity, refreshAiTasks, target?.taskId])
+  }, [hasCodexRun, loadCodexActivity, refreshAiTasks, target])
 
   const { trackManualHandoff, confirmManualHandoffNow, markScreenSwitched } = useCodexManualHandoffConfirmation({
     onConfirmed: async () => {
@@ -694,24 +685,23 @@ export function MindmapLinkedMemosDialog({
     }
 
     void loadCodexActivity()
-    if (canUseLocalCodexOpenApi()) return
 
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === "visible") void loadCodexActivity()
-    }, CODEX_ACTIVITY_SYNC_INTERVAL_MS)
+    }, CODEX_IDLE_ACTIVITY_SYNC_INTERVAL_MS)
     return () => {
       window.clearInterval(intervalId)
     }
   }, [codexAiTaskId, isCodexTask, loadCodexActivity, target])
 
   useEffect(() => {
-    if (!target || !hasCodexRun || !canUseLocalCodexOpenApi()) return
-    void syncLinkedCodexState()
+    if (!target || !hasCodexRun) return
+    void refreshLinkedCodexState()
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") void syncLinkedCodexState()
+      if (document.visibilityState === "visible") void refreshLinkedCodexState()
     }, CODEX_ACTIVITY_SYNC_INTERVAL_MS)
     return () => window.clearInterval(intervalId)
-  }, [hasCodexRun, syncLinkedCodexState, target])
+  }, [hasCodexRun, refreshLinkedCodexState, target])
 
   useEffect(() => {
     const taskId = codexAiTaskId

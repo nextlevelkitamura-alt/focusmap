@@ -601,6 +601,7 @@ describe('TaskProgressKanban', () => {
     await waitFor(() => {
       expect(screen.getByText('Codexの返答をチャット形式で表示します')).toBeInTheDocument()
     })
+    expect(fetchWithSupabaseAuthMock.mock.calls.some(([input]) => String(input) === '/api/codex/sync-node')).toBe(false)
 
     fireEvent.click(screen.getByRole('button', { name: '戻る' }))
 

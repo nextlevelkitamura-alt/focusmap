@@ -13,7 +13,6 @@ import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import {
   beginCopyPromptForCodexHandoff,
   buildCodexOpenTarget,
-  canUseLocalCodexOpenApi,
   copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
@@ -35,7 +34,6 @@ import type { AiTaskActivityMessage } from "@/types/ai-task"
 
 const DETAIL_POLL_INTERVAL_MS = 3_000
 const WATCH_PING_INTERVAL_MS = 10_000
-const LOCAL_SYNC_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input", "completed"])
 
 function statusClass(status: string | null | undefined) {
   return codexMonitorToneClass(status)
@@ -168,12 +166,6 @@ export function TaskProgressDetailPanel({
   const activityFingerprintRef = useRef<string | null>(null)
   const taskId = task?.id ?? null
   const isFixtureTask = !!taskId?.startsWith("fixture:")
-  const shouldSyncLocalCodex =
-    !!taskId &&
-    !isFixtureTask &&
-    canUseLocalCodexOpenApi() &&
-    (task?.executor === "codex" || task?.executor === "codex_app") &&
-    LOCAL_SYNC_STATUSES.has(task?.status ?? "")
 
   if (!watchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
     watchIdRef.current = `detail:${crypto.randomUUID()}`
@@ -280,22 +272,12 @@ export function TaskProgressDetailPanel({
     }
   }, [isFixtureTask, task, taskId])
 
-  const syncLocalCodex = useCallback(async () => {
-    if (!taskId || !shouldSyncLocalCodex) return
-    await fetchWithSupabaseAuth("/api/codex/sync-node", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ai_task_id: taskId, include_visible_activity: true }),
-    }).catch(() => undefined)
-  }, [shouldSyncLocalCodex, taskId])
-
   const refreshPanel = useCallback(async () => {
-    await syncLocalCodex()
     await Promise.all([
       fetchDetail(),
       fetchActivity(),
     ])
-  }, [fetchActivity, fetchDetail, syncLocalCodex])
+  }, [fetchActivity, fetchDetail])
 
   useEffect(() => {
     if (!open || !taskId) {

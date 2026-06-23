@@ -1,35 +1,45 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AiTask } from '@/types/ai-task'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const RUNNING_CODEX_REFRESH_INTERVAL_MS = 5_000
-const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 
 function isCodexTask(task: AiTask) {
   return task.executor === 'codex' || task.executor === 'codex_app'
 }
 
-function hasRunningCodexTask(tasks: Map<string, AiTask>) {
+function codexRunState(task: AiTask) {
+  const state = task.result?.codex_run_state
+  return typeof state === 'string' ? state : null
+}
+
+function isActiveCodexTask(task: AiTask) {
+  if (!isCodexTask(task)) return false
+  if (task.status === 'completed' || task.status === 'failed') return false
+  return ACTIVE_STATUSES.includes(task.status) ||
+    codexRunState(task) === 'running' ||
+    codexRunState(task) === 'prompt_waiting' ||
+    codexRunState(task) === 'awaiting_approval'
+}
+
+function hasActiveCodexTask(tasks: Map<string, AiTask>) {
   for (const task of tasks.values()) {
-    if (
-      isCodexTask(task) &&
-      (task.status === 'running' || task.result?.codex_run_state === 'running')
-    ) {
-      return true
-    }
+    if (isActiveCodexTask(task)) return true
   }
   return false
 }
 
-function hasPendingCodexTask(tasks: Map<string, AiTask>) {
+function activeCodexTaskRefreshKey(tasks: Map<string, AiTask>) {
+  const keys: string[] = []
   for (const task of tasks.values()) {
-    if (isCodexTask(task) && task.status === 'pending') return true
+    if (!isActiveCodexTask(task)) continue
+    keys.push(`${task.id}:${task.status}:${codexRunState(task) ?? 'active'}`)
   }
-  return false
+  return keys.length > 0 ? keys.sort().join('|') : null
 }
 
 function isPageVisible() {
@@ -44,6 +54,7 @@ export function useNoteAiTasks() {
   // Map<noteId, AiTask>
   const [byNoteId, setByNoteId] = useState<Map<string, AiTask>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
+  const activeRefreshKeyRef = useRef<string | null>(null)
 
   const fetchInitial = useCallback(async () => {
     try {
@@ -68,10 +79,9 @@ export function useNoteAiTasks() {
     fetchInitial()
   }, [fetchInitial])
 
-  const refreshIntervalMs = hasRunningCodexTask(byNoteId)
-    ? RUNNING_CODEX_REFRESH_INTERVAL_MS
-    : hasPendingCodexTask(byNoteId)
-      ? PENDING_CODEX_REFRESH_INTERVAL_MS
+  const activeRefreshKey = useMemo(() => activeCodexTaskRefreshKey(byNoteId), [byNoteId])
+  const refreshIntervalMs = hasActiveCodexTask(byNoteId)
+    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
@@ -80,6 +90,16 @@ export function useNoteAiTasks() {
     }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
+
+  useEffect(() => {
+    if (!activeRefreshKey) {
+      activeRefreshKeyRef.current = null
+      return
+    }
+    if (activeRefreshKeyRef.current === activeRefreshKey) return
+    activeRefreshKeyRef.current = activeRefreshKey
+    if (isPageVisible()) void fetchInitial()
+  }, [activeRefreshKey, fetchInitial])
 
   useEffect(() => {
     const onVisibilityChange = () => {

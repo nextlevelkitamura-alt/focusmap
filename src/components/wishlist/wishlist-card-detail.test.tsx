@@ -819,6 +819,7 @@ describe('WishlistCardDetail', () => {
     expect(await screen.findByText('チャット')).toBeInTheDocument()
     expect(await screen.findByText('少々お待ちください！')).toBeInTheDocument()
     expect(await screen.findByText('承知しました。待機します。')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/codex/sync-node')).toBe(false)
   })
 
   test('画像をドロップすると添付APIへアップロードする', async () => {

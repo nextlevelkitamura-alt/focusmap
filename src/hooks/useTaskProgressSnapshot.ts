@@ -24,6 +24,14 @@ function isActiveTask(task: TaskProgressSnapshotTask) {
     task.status === 'needs_input'
 }
 
+function activeTaskRefreshKey(tasks: TaskProgressSnapshotTask[]) {
+  const keys = tasks
+    .filter(isActiveTask)
+    .map(task => `${task.id}:${task.status}`)
+    .sort()
+  return keys.length > 0 ? keys.join('|') : null
+}
+
 function taskFingerprint(task: TaskProgressSnapshotTask) {
   return [
     task.id,
@@ -79,6 +87,8 @@ export function useTaskProgressSnapshot({
   const cursorRef = useRef<string | null>(null)
   const tasksByIdRef = useRef<Map<string, TaskProgressSnapshotTask>>(new Map())
   const inFlightRef = useRef(false)
+  const detailOpenRef = useRef(detailOpen)
+  const activeTaskRefreshKeyRef = useRef<string | null>(null)
   const metadataRef = useRef<{ source: string | null; serverTime: string | null }>({
     source: null,
     serverTime: null,
@@ -162,12 +172,33 @@ export function useTaskProgressSnapshot({
   const tasks = useMemo(() => Array.from(tasksById.values()), [tasksById])
   const hasRunning = useMemo(() => tasks.some(isRunningTask), [tasks])
   const hasActive = useMemo(() => tasks.some(isActiveTask), [tasks])
+  const activeRefreshKey = useMemo(() => activeTaskRefreshKey(tasks), [tasks])
   const hasActiveHint = !!activityHintKey
   const pollIntervalMs = detailOpen
     ? DETAIL_POLL_INTERVAL_MS
     : hasRunning || hasActive || hasActiveHint
       ? ACTIVE_POLL_INTERVAL_MS
       : IDLE_POLL_INTERVAL_MS
+
+  useEffect(() => {
+    const wasDetailOpen = detailOpenRef.current
+    detailOpenRef.current = detailOpen
+    if (!enabled || fixtureTasks) return
+    if (detailOpen && !wasDetailOpen && isPageVisible()) {
+      void refresh()
+    }
+  }, [detailOpen, enabled, fixtureTasks, refresh])
+
+  useEffect(() => {
+    if (!enabled || fixtureTasks) return
+    if (!activeRefreshKey) {
+      activeTaskRefreshKeyRef.current = null
+      return
+    }
+    if (activeTaskRefreshKeyRef.current === activeRefreshKey) return
+    activeTaskRefreshKeyRef.current = activeRefreshKey
+    if (isPageVisible()) void refresh()
+  }, [activeRefreshKey, enabled, fixtureTasks, refresh])
 
   useEffect(() => {
     if (!enabled || fixtureTasks) return

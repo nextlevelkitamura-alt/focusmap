@@ -1418,14 +1418,6 @@ export function TaskProgressKanban({
 
     void (async () => {
       try {
-        if (aiTaskId) {
-          await fetchWithSupabaseAuth("/api/codex/sync-node", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ai_task_id: aiTaskId, include_visible_activity: true }),
-          }).catch(() => undefined)
-        }
-
         if (!aiTaskId) {
           if (cancelled) return
           setMobileImportDetailsById(previous => ({

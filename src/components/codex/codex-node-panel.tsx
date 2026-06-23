@@ -1618,26 +1618,17 @@ export function CodexNodePanel({
     }
   }, [codexAiTaskId, isCodexTask, open])
 
-  const syncCodexState = useCallback(async () => {
+  const refreshCodexState = useCallback(async () => {
     if (!open || !hasCodexRun) return
     if (codexSyncInFlightRef.current) return
     codexSyncInFlightRef.current = true
     try {
-      await fetchWithSupabaseAuth("/api/codex/sync-node", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_task_id: node.taskId,
-          ai_task_id: codexAiTaskId,
-          include_visible_activity: true,
-        }),
-      }).catch(() => undefined)
       await refreshAiTaskStatus()
       await loadCodexActivity()
     } finally {
       codexSyncInFlightRef.current = false
     }
-  }, [codexAiTaskId, hasCodexRun, loadCodexActivity, node.taskId, open, refreshAiTaskStatus])
+  }, [hasCodexRun, loadCodexActivity, open, refreshAiTaskStatus])
 
   const { trackManualHandoff, confirmManualHandoffNow, markScreenSwitched } = useCodexManualHandoffConfirmation({
     onConfirmed: async () => {
@@ -1792,7 +1783,7 @@ export function CodexNodePanel({
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
-    void syncCodexState()
+    void refreshCodexState()
     const intervalMs = (
       codexUiState?.state === "running" ||
       codexUiState?.state === "prompt_waiting" ||
@@ -1801,10 +1792,10 @@ export function CodexNodePanel({
       ? CODEX_PANEL_SYNC_INTERVAL_MS
       : CODEX_PANEL_IDLE_SYNC_INTERVAL_MS
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") void syncCodexState()
+      if (document.visibilityState === "visible") void refreshCodexState()
     }, intervalMs)
     return () => window.clearInterval(intervalId)
-  }, [codexUiState?.state, hasCodexRun, open, syncCodexState])
+  }, [codexUiState?.state, hasCodexRun, open, refreshCodexState])
 
   useEffect(() => {
     const taskId = codexAiTaskId
@@ -1815,22 +1806,14 @@ export function CodexNodePanel({
     }
 
     void loadCodexActivity()
-    if (canUseLocalCodexOpenApi()) return
 
-    const intervalMs = (
-      codexUiState?.state === "running" ||
-      codexUiState?.state === "prompt_waiting" ||
-      codexUiState?.state === "awaiting_approval"
-    )
-      ? CODEX_PANEL_SYNC_INTERVAL_MS
-      : CODEX_PANEL_IDLE_SYNC_INTERVAL_MS
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === "visible") void loadCodexActivity()
-    }, intervalMs)
+    }, CODEX_PANEL_IDLE_SYNC_INTERVAL_MS)
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [codexAiTaskId, codexUiState?.state, isCodexTask, loadCodexActivity, open])
+  }, [codexAiTaskId, isCodexTask, loadCodexActivity, open])
 
   useEffect(() => {
     const taskId = codexAiTaskId
@@ -1963,8 +1946,8 @@ export function CodexNodePanel({
             ? "プロンプトをコピーしました。画像は画像欄のコピーアイコンから同じCodex入力欄へ貼り付けてください。"
             : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
           setCodexSendStatus("sent")
-          window.setTimeout(() => void syncCodexState(), 1200)
-          window.setTimeout(() => void syncCodexState(), 3500)
+          window.setTimeout(() => void refreshCodexState(), 1200)
+          window.setTimeout(() => void refreshCodexState(), 3500)
           return
         }
         launchMode = openTarget.mode
@@ -1989,8 +1972,8 @@ export function CodexNodePanel({
                 }
               })
             }
-            window.setTimeout(() => void syncCodexState(), 1200)
-            window.setTimeout(() => void syncCodexState(), 3500)
+            window.setTimeout(() => void refreshCodexState(), 1200)
+            window.setTimeout(() => void refreshCodexState(), 3500)
           })
         return
       }
@@ -2039,8 +2022,8 @@ export function CodexNodePanel({
         setCodexImageCopyNotice("プロンプトを貼った後、画像欄のコピーアイコンから同じCodex入力欄へ貼り付けてください。")
       }
       await refreshAiTasks()
-      window.setTimeout(() => void syncCodexState(), 1200)
-      window.setTimeout(() => void syncCodexState(), 3500)
+      window.setTimeout(() => void refreshCodexState(), 1200)
+      window.setTimeout(() => void refreshCodexState(), 3500)
       const copyFeedback = copiedToClipboard ? "プロンプトはコピー済みです。" : "プロンプトのコピーに失敗しました。"
       const dispatchFeedback = isMobileOpenTarget
           ? "Codexで貼り付けて開始してください。"
@@ -2054,7 +2037,7 @@ export function CodexNodePanel({
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, codexCopyableImages.length, codexRunnerUnavailableMessage, isCodexRunnerUnavailable, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [candidates, codexCopyableImages.length, codexRunnerUnavailableMessage, isCodexRunnerUnavailable, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, refreshCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt = codexRunnerStatus.checked && !codexRunnerStatus.ready
   const initialCodexSendDisabled = codexSendStatus === "sending" || isWaitingForImageSave || isCodexRunnerUnavailable
