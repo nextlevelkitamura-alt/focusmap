@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import { aiHistoryRepoMatchesFilter, normalizeAiHistoryRepoPath } from "@/lib/ai-history-display"
 import type {
   AiHistoryListResponse,
   AiHistoryPlacement,
@@ -40,6 +41,11 @@ const EMPTY_RESPONSE: AiHistoryListResponse = {
 
 function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible"
+}
+
+function sameRepoFilter(left: AiHistoryRepoFilter, right: AiHistoryRepoFilter) {
+  if (left === "all" || right === "all") return left === right
+  return normalizeAiHistoryRepoPath(left) === normalizeAiHistoryRepoPath(right)
 }
 
 type UseAiHistoryOptions = {
@@ -127,17 +133,41 @@ export function useAiHistory({
     return () => window.clearInterval(intervalId)
   }, [enabled, pollIntervalMs, projectId, refresh])
 
+  const responseMatchesCurrentQuery = sameRepoFilter(data.sync.selectedRepo, repo) &&
+    data.sync.selectedScope === scope &&
+    data.sync.selectedProvider === provider
+
+  const repoScopedItems = useMemo(() => {
+    if (!responseMatchesCurrentQuery) return []
+    return data.items.filter(item => !item.archived && aiHistoryRepoMatchesFilter(item, repo))
+  }, [data.items, repo, responseMatchesCurrentQuery])
+
+  const responseHasRepoLeak = useMemo(() => (
+    responseMatchesCurrentQuery &&
+    repo !== "all" &&
+    data.items.some(item => !item.archived && !aiHistoryRepoMatchesFilter(item, repo))
+  ), [data.items, repo, responseMatchesCurrentQuery])
+
   const visibleItems = useMemo(() => (
-    data.items.filter(item => !item.archived && item.placement === placement)
-  ), [data.items, placement])
+    repoScopedItems.filter(item => item.placement === placement)
+  ), [placement, repoScopedItems])
+
+  const visibleCounts = useMemo(() => {
+    if (!responseMatchesCurrentQuery) return { unplaced: 0, mindmap: 0 }
+    if (!responseHasRepoLeak) return data.counts
+    return {
+      unplaced: repoScopedItems.filter(item => item.placement === "unplaced").length,
+      mindmap: repoScopedItems.filter(item => item.placement === "mindmap").length,
+    }
+  }, [data.counts, repoScopedItems, responseHasRepoLeak, responseMatchesCurrentQuery])
 
   return {
     items: visibleItems,
-    counts: data.counts,
+    counts: visibleCounts,
     sync: data.sync,
     page: data.page,
     nextCursor: data.nextCursor,
-    isLoading,
+    isLoading: isLoading || (!error && enabled && Boolean(projectId) && !responseMatchesCurrentQuery),
     error,
     refresh,
   }

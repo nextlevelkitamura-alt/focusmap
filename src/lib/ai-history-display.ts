@@ -1,4 +1,4 @@
-import type { AiHistoryListItem, AiHistoryStatus } from "@/types/ai-history"
+import type { AiHistoryListItem, AiHistoryRepoFilter, AiHistoryStatus } from "@/types/ai-history"
 
 export function normalizeAiHistoryRepoPath(value: string | null | undefined) {
   return (value ?? "").trim().replace(/\/+$/u, "")
@@ -8,6 +8,17 @@ export function aiHistoryRepoName(value: string | null | undefined) {
   const normalized = normalizeAiHistoryRepoPath(value)
   if (!normalized) return "未選択"
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized
+}
+
+export function aiHistoryRepoMatchesFilter(
+  item: Pick<AiHistoryListItem, "repoPath" | "worktreePath">,
+  repoFilter: AiHistoryRepoFilter,
+) {
+  if (repoFilter === "all") return true
+  const selectedRepoPath = normalizeAiHistoryRepoPath(repoFilter)
+  if (!selectedRepoPath) return true
+  return normalizeAiHistoryRepoPath(item.repoPath) === selectedRepoPath ||
+    normalizeAiHistoryRepoPath(item.worktreePath) === selectedRepoPath
 }
 
 export function formatAiHistoryRelativeTime(value: string | null | undefined) {
