@@ -1,7 +1,7 @@
 # task-runner退役 / focusmap-agent一本化フェーズ
 
 - Task ID: `TASK-20260607-004`
-- Status: `in_progress`（Planner完了、実装前）
+- Status: `in_progress`（API / UI / Agent worker統合済み、Desktop/Installer前）
 - Created: `2026-06-23`
 - Parent plan: [20260607-codex-mac-agent-unification.md](20260607-codex-mac-agent-unification.md)
 - Board: `docs/ai/task-board.md`
@@ -172,6 +172,16 @@ API spawn廃止、agent残務移管、UI polling統一、Desktop/Installer整理
 - `useAiHistory` は3秒pollへ揃えた。AI履歴詳細やactivity表示は既存activity/detail cacheを読むだけで、表示中という理由では `/api/codex/sync-node` を呼ばない。
 - CodexNodePanel、リンクメモ詳細、task-progress詳細、wishlist詳細から表示目的の `/api/codex/sync-node` POSTを削除した。`sync-node` route自体はdebug/manual fallbackとして残す。
 - 追加・更新されたUI testsは未実行。AGENTS.mdの検証ポリシーに従い、テスト/lint/buildはユーザー明示時にIntegrationでまとめて行う。
+
+## 2026-06-23 Agent worker進捗
+
+- local mainへAgent worker commit `3dd46d1f` を取り込み済み。親レビューでは、repo scan移管、recurrence再投入、Agent state API拡張はいずれも旧 `task-runner` 通常退役の条件に沿っていると判断した。
+- `focusmap-agent` はローカルGit repo発見結果を5分cache / 8秒timeoutで集め、`available_repo_keys` / `repo_paths` としてheartbeatへ送る。API側の `/api/agents/heartbeat` は既に同payloadを受け取るため、旧runnerの `available_repos` 同期に依存しないrepo候補の入口になる。
+- browser / terminal / playwright / simple executorのrecurring taskは、完了時に次回 `scheduled_at` を計算し、`pending` へ戻す。cron計算は旧runner同等の限定対応（minute/hour/day-of-week中心）で、失敗時は翌日同時刻fallbackを `result.meta.recurrence_fallback_reason` に残す。
+- Agent task state APIは `next_scheduled_at` / `completed_at` を受け、`pending` 再投入時に `started_at` / claim / errorを解除する。API contract変更はAgent workerの当初allowed files外だが、recurrence移管に必要な最小変更として妥当。
+- staff-status、Claude `claude -p`、Remote Control、Terminal.app interactive、package cache / package execution、available_repos table sync、legacy Codex monitorは通常agentへは移管しない。現役必須なら旧runner維持または別worker判断が必要。
+- Codex.app recurring taskの承認/完了後再投入はまだ未移管。Codex監視のterminal state側で別途実装するまでは、Codex recurringを旧runner完全削除条件に含めない。
+- 追加・更新されたAgent/API testsは未実行。AGENTS.mdの検証ポリシーに従い、テスト/lint/buildはユーザー明示時にIntegrationでまとめて行う。
 
 旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は既に旧launchd停止を行うため、新規installでは停止方向。既存Macの `com.focusmap.task-runner` unloadはIntegrationのMac実機確認フェーズで、未移管scheduled taskが無いことを確認してから行う。
 
