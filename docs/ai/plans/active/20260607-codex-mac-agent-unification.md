@@ -167,6 +167,18 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 - 2026-06-09: packaged `Focusmap.app` の `focusmap-agent` が `ws` などのruntime依存不足で起動できず、Mac本体やlocalhost 3001が動いていてもTurso heartbeatが止まってAI設定画面でofflineになる問題を確認した。`mac:prepare-agent` を追加し、`mac:dev` / `mac:build` / `mac:dist` 前に `scripts/focusmap-agent` の依存とbuild成果物を必ず準備する。runner heartbeatは作業中/待機中の状態変化で即時Turso upsertし、正常終了時だけ明示offlineを送る。異常終了やスリープは従来通り90秒staleでoffline判定する。
 - 2026-06-09: Macアプリ内でも、メモ詳細・マップノード詳細・リンクメモ詳細の通常Codex導線は今後も `dispatch_mode='manual'` の手動handoffに固定する。Macアプリがオンライン、agent/Codex app-serverがready、repo pathが設定済みであっても、通常ボタンや既存manual handoffを裏側の `dispatch_mode='auto'` へ昇格しない。
 
+## 2026-06-23 task-runner退役 / focusmap-agent一本化フェーズ
+
+詳細計画: [20260623-task-runner-retirement-agent-single-path.md](20260623-task-runner-retirement-agent-single-path.md)
+
+このフェーズでは、旧 `scripts/task-runner.ts` を通常運用から退役させ、Mac側の通常実行・Codex監視・状態同期の正本を `scripts/focusmap-agent` に一本化する。Cloud RunはWeb/APIのNext.js serverであり、常駐runnerではない。
+
+Planner棚卸しでは、Codex送信、Codex監視、archive request、Codex activity同期は `focusmap-agent` へ概ね移管済みと判断した。一方で、`src/app/api/ai-tasks/schedule/route.ts` の即時 `task-runner.ts --fast` spawn、repo scan、staff-status、Claude/package/recurrenceを含むscheduled task、`scripts/setup.sh` / `com.focusmap.task-runner.plist` の旧launchd導線が残務として残っている。
+
+推奨順は、まずAPI workerで通常 `codex_app` auto taskの旧runner spawnを廃止し、次にAgent workerで残務移管またはlegacy条件を固定し、UI workerでactive表示を3秒以内へ揃え、Desktop/Installer workerで新規setupから旧launchd導線を外す。その後Integration workerがlocal mainへ統合し、3秒同期測定、Mac実機確認、Cloud Runでローカルrunner前提がないことの確認、`docs/CONTEXT.md` 更新をまとめて行う。
+
+旧 `task-runner` は最初の実装フェーズでは削除せず、`FOCUSMAP_LEGACY_CODEX_MONITOR=1` や `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した互換/debug用途へ落とす。repo scan、staff-status、scheduled/package実行の移管または廃止判断が終わるまで、ファイル自体の削除は不可とする。
+
 ## リスク
 
 - Codex app-serverやsqlite/rolloutはCodex側の内部仕様変更を受ける可能性がある。Focusmapが開始したturnはapp-server通知を優先し、sqlite/rolloutは補助観測にする。
