@@ -60,13 +60,35 @@ function expandHome(input: string): string {
   return input
 }
 
-async function isScannedRepo(
+function normalizeRepoPath(value: unknown) {
+  return typeof value === "string" ? value.trim().replace(/\/+$/, "") : ""
+}
+
+function repoPathValues(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return []
+  return Object.values(value)
+    .map(normalizeRepoPath)
+    .filter(Boolean)
+}
+
+async function isRegisteredRepo(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   candidates: string[],
 ): Promise<boolean> {
-  const uniqueCandidates = Array.from(new Set(candidates.filter(Boolean)))
+  const uniqueCandidates = Array.from(new Set(candidates.map(normalizeRepoPath).filter(Boolean)))
   if (uniqueCandidates.length === 0) return false
+
+  const { data: runners } = await supabase
+    .from("ai_runners")
+    .select("repo_paths")
+    .eq("user_id", userId)
+
+  for (const runner of runners ?? []) {
+    if (repoPathValues(runner.repo_paths).some(repoPath => uniqueCandidates.includes(repoPath))) {
+      return true
+    }
+  }
 
   const { data: availableRepo } = await supabase
     .from("available_repos")
@@ -397,7 +419,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const registered = await isScannedRepo(supabase, user.id, [
+    const registered = await isRegisteredRepo(supabase, user.id, [
       rawRepoPath,
       expandedRepoPath,
       path.resolve(expandedRepoPath),

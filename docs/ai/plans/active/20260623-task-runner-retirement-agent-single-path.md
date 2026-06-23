@@ -1,7 +1,7 @@
 # task-runner退役 / focusmap-agent一本化フェーズ
 
 - Task ID: `TASK-20260607-004`
-- Status: `in_progress`（API / UI / Agent / Desktop-Installer worker統合済み、Integration前）
+- Status: `in_progress`（API / UI / Agent / Desktop-Installer / Integration worker確認済み、残タスク判断前）
 - Created: `2026-06-23`
 - Parent plan: [20260607-codex-mac-agent-unification.md](20260607-codex-mac-agent-unification.md)
 - Board: `docs/ai/task-board.md`
@@ -193,6 +193,19 @@ API spawn廃止、agent残務移管、UI polling統一、Desktop/Installer整理
 - 追加検証は未実行。候補は `node --check desktop/focusmap-mac/main.cjs`、`bash -n scripts/setup.sh scripts/install.sh`、`plutil -lint scripts/com.focusmap.task-runner.plist`、Mac実機の `launchctl list | grep com.focusmap.task-runner || true`。
 
 旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は旧launchd停止とplist削除を行うため、既存Macでは `scripts/install.sh <agent_token>` 再実行、または手動 `launchctl unload "$HOME/Library/LaunchAgents/com.focusmap.task-runner.plist"` / `launchctl bootout "gui/$(id -u)/com.focusmap.task-runner"` / plist削除で停止する。IntegrationのMac実機確認フェーズでは、未移管scheduled taskが旧runner必須でないことを確認してから旧runner停止を最終判断する。
+
+## 2026-06-23 Integration結果
+
+- local mainには、API worker `cca30fe1`、heartbeat follow-up `8925398e` / `b831bf42`、UI worker `8fb75588` / `51140f02`、Agent worker `3dd46d1f`、Desktop/Installer worker `07665c06`、docs反映 `5612cc2c` が入っている。
+- API routeから通常 `task-runner.ts --fast` spawnは残っていない。`/api/ai-tasks` は `codex_app` / `auto` / `scheduled_at` 未指定時に作成時刻を入れ、`/api/ai-tasks/schedule` はリクエストの `scheduled_at` を正としてagent claim対象にする。
+- Mac app supervisor / manual-connect / connected判定は、Next / `focusmap-agent` / Codex app-serverを正にし、旧runner pause状態を接続失敗条件にしない。旧runner復旧は `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` 明示時だけ。
+- `scripts/setup.sh` は旧 `com.focusmap.task-runner.plist` をcopy/loadしない。`scripts/install.sh` は既存旧launchd labelを停止し、`~/Library/LaunchAgents/com.focusmap.task-runner.plist` を削除する。旧plist本体はlegacy/debug資料として残す。
+- `focusmap-agent` はrepo scan結果を heartbeat の `available_repo_keys` / `repo_paths` に載せる。Integrationで `/api/available-repos` は `ai_runners.repo_paths` を通常候補として返し、`/api/codex/open-repo` の登録済みrepo判定も `ai_runners.repo_paths` を優先するよう補正した。旧 `available_repos` tableは互換fallbackにした。`scan-settings` / `user_scan_settings` は旧scan互換設定として残る。
+- `browser` / `terminal` / `playwright` / `simple` のrecurring taskはagentが `next_scheduled_at` / `completed_at` をstate APIへ送り、API側が `pending` 再投入、`scheduled_at` 更新、`started_at` / claim / error解除を行う。Codex.app recurring taskの承認/完了後再投入は未移管。
+- UIのactive Codex表示は3秒poll/即時refreshへ揃い、表示中という理由で `/api/codex/sync-node` POSTを起こさない。`sync-node` はroute本体、テスト、debug/manual fallbackとして残る。
+- 3秒同期はMac実機・Cloudflare・Browser/Playwrightでは未測定。今回実行したのは静的確認と対象テストで、実画面の5回測定は次の人間許可/実機フェーズに残す。
+- 実行した検証: `node --check desktop/focusmap-mac/main.cjs`、`bash -n scripts/setup.sh scripts/install.sh`、`plutil -lint scripts/com.focusmap.task-runner.plist`、直近worker更新テスト8ファイル。8ファイル一括では `wishlist-card-detail.test.tsx` の3件が5秒timeoutになったが、同ファイル単体再実行では30件すべて通過。その他7ファイルは通過。
+- 残タスク: staff-status、Claude `claude -p`、package cache/package execution、Codex.app recurring taskの承認/完了後再投入を、focusmap-agentへ移管するか、個別運用/legacy/debugへ固定するか判断する。
 
 ## worker起動前の共通ルール
 

@@ -74,7 +74,7 @@ export function ScanSettingsSection() {
       <div id="scan-settings">
         <SettingsSection
           title="Repository auto scan"
-          description="Mac の task-runner が指定パス配下を探索し、.git を持つフォルダをリポジトリ候補にします。"
+          description="通常のrepo候補は focusmap-agent heartbeat が送るローカルGit探索結果を使います。この設定は旧スキャン互換用です。"
           trailing={
             <SettingsStatusChip tone={isLoading || settings.length > 0 ? "neutral" : "attention"}>
               {isLoading ? "同期中" : `${settings.length} hosts`}
@@ -89,7 +89,7 @@ export function ScanSettingsSection() {
             <div className="px-4 py-4 text-sm text-zinc-500">
               <p className="font-medium text-zinc-300">この Mac はまだスキャン未実行</p>
               <p className="mt-1 text-[12px] leading-5">
-                Mac でメモからAI実行を1回起動するか、task-runner が走ると自動でデフォルト設定が作成されます。
+                Mac で focusmap-agent がheartbeatを送ると、ローカルGit候補が自動で反映されます。
               </p>
             </div>
           ) : (

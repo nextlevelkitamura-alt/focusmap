@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 
-// POST /api/scan-settings/trigger — 次回 task-runner サイクルで即時スキャンを要求
+// POST /api/scan-settings/trigger — legacy scan設定に再スキャン要求を記録する
 //   body: { hostname?: string }（省略時は全ホスト）
 export async function POST(req: Request) {
   const supabase = await createClient()
@@ -21,5 +21,8 @@ export async function POST(req: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  return NextResponse.json({ ok: true, message: "次回 task-runner サイクル（最大1分後）にスキャンされます" })
+  return NextResponse.json({
+    ok: true,
+    message: "再スキャン要求を記録しました。通常のrepo候補はfocusmap-agent heartbeatで反映されます。",
+  })
 }
