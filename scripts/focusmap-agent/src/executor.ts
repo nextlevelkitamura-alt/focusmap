@@ -10,6 +10,7 @@ import { runWebResearch } from './skills/web-research.js';
 import { runCodexAppTask } from './executors/codex-app.js';
 import { executeCommand } from './command-executor.js';
 import { error as logError, info } from './logger.js';
+import { nextScheduledAtOrDailyFallback } from './recurrence.js';
 
 function extractUrls(text: string): string[] {
   const matches = text.match(/https?:\/\/[^\s"'<>）)]+/g);
@@ -88,6 +89,41 @@ function executorNameForTask(task: AiTask): TaskResultJson['executor'] {
   return 'playwright';
 }
 
+function recurrenceCron(task: AiTask): string | null {
+  return typeof task.recurrence_cron === 'string' && task.recurrence_cron.trim()
+    ? task.recurrence_cron.trim()
+    : null;
+}
+
+function resultWithRecurrenceSchedule(
+  task: AiTask,
+  result: TaskResultJson,
+  completedAt: string,
+  nextScheduledAt: string,
+  fallbackReason?: string,
+): TaskResultJson {
+  return {
+    ...result,
+    steps: [
+      ...(result.steps ?? []),
+      {
+        label: '次回実行を予約',
+        status: 'done',
+        at: completedAt,
+        detail: nextScheduledAt,
+      },
+    ],
+    meta: {
+      ...(result.meta ?? {}),
+      recurrence_cron: recurrenceCron(task),
+      last_run: completedAt,
+      last_run_status: 'completed',
+      next_scheduled_at: nextScheduledAt,
+      ...(fallbackReason ? { recurrence_fallback_reason: fallbackReason } : {}),
+    },
+  };
+}
+
 async function runTask(
   task: AiTask,
   config: AgentConfig,
@@ -132,8 +168,34 @@ export async function executeTask(
 
   try {
     const result = await runTask(task, config, api, runnerId);
-    const terminalStatus = result.executor === 'codex_app' ? 'awaiting_approval' : 'completed';
-    await api.updateTaskState(runnerId, task.id, terminalStatus, { result });
+    if (result.executor === 'codex_app') {
+      await api.updateTaskState(runnerId, task.id, 'awaiting_approval', { result });
+      info(`task ${task.id} completed (${task.skill_id ?? task.executor})`);
+      return;
+    }
+
+    const cron = recurrenceCron(task);
+    if (cron) {
+      const completedAt = new Date();
+      const { nextScheduledAt, fallbackReason } = nextScheduledAtOrDailyFallback(cron, completedAt);
+      const completedAtIso = completedAt.toISOString();
+      const nextScheduledAtIso = nextScheduledAt.toISOString();
+      await api.updateTaskState(runnerId, task.id, 'pending', {
+        result: resultWithRecurrenceSchedule(
+          task,
+          result,
+          completedAtIso,
+          nextScheduledAtIso,
+          fallbackReason,
+        ),
+        completed_at: completedAtIso,
+        next_scheduled_at: nextScheduledAtIso,
+      });
+      info(`task ${task.id} rescheduled (${task.skill_id ?? task.executor}) -> ${nextScheduledAtIso}`);
+      return;
+    }
+
+    await api.updateTaskState(runnerId, task.id, 'completed', { result });
     info(`task ${task.id} completed (${task.skill_id ?? task.executor})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

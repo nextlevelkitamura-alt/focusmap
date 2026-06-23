@@ -52,7 +52,15 @@ Mac側に Supabase service role key は置かない。
 - `open` でブラウザ/認証URLを起動
 - `agent_commands` 経由で `open_url` / `open_google_auth` / `open_gws_auth` / `run_shell` / `file_list` / `scan_capabilities`
 - Google Workspace CLI (`npm install -g @googleworkspace/cli`) と `gws auth login` の導線
-- ハートビートで GWS / Playwright / terminal / OpenCode / Codex / Claude / フォルダ権限の検出状態を Web に返す
+- ハートビートで GWS / Playwright / terminal / OpenCode / Codex / Claude / フォルダ権限 / repo候補の検出状態を Web に返す
+- 同期完了できる通常タスクは `recurrence_cron` に従って次回 `scheduled_at` へ再投入する
+
+## task-runner 退役境界
+
+通常の claim / auto実行 / Codex.app監視 / archive / AI履歴hot-sync は `focusmap-agent` が担当する。
+`scripts/task-runner.ts` に残る staff-status 固定処理、Claude系実行、package cache実行、
+legacy Codex monitor は通常経路では使わない。詳細は
+[`TASK_RUNNER_RETIREMENT.md`](./TASK_RUNNER_RETIREMENT.md) を参照。
 
 ## フォルダ権限
 

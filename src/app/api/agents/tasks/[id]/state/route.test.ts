@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  agentPendingRescheduleUpdates,
   isClaimedByOtherActiveRunner,
   memoWithUpdatedImportedThreadTitle,
   normalizeAgentStateForLegacyThreadMissing,
@@ -7,6 +8,32 @@ import {
   shouldCompleteSourceTaskFromAgentState,
   shouldMarkSourceTaskArchivedFromAgentState,
 } from './route'
+
+describe('agentPendingRescheduleUpdates', () => {
+  test('turns a completed recurring run back into a pending scheduled task', () => {
+    expect(agentPendingRescheduleUpdates({
+      status: 'pending',
+      nextScheduledAt: '2026-06-24T00:30:00.000Z',
+      completedAt: '2026-06-23T00:30:01.000Z',
+      nowIso: '2026-06-23T00:30:02.000Z',
+    })).toEqual({
+      scheduled_at: '2026-06-24T00:30:00.000Z',
+      completed_at: '2026-06-23T00:30:01.000Z',
+      started_at: null,
+      claimed_runner_id: null,
+      claim_expires_at: null,
+      error: null,
+    })
+  })
+
+  test('ignores next_scheduled_at outside pending state updates', () => {
+    expect(agentPendingRescheduleUpdates({
+      status: 'completed',
+      nextScheduledAt: '2026-06-24T00:30:00.000Z',
+      nowIso: '2026-06-23T00:30:02.000Z',
+    })).toEqual({})
+  })
+})
 
 describe('isClaimedByOtherActiveRunner', () => {
   test('allows unclaimed tasks and tasks claimed by the same runner', () => {

@@ -16,7 +16,9 @@ export async function upsertRunner(api: AgentApiClient, config: AgentConfig): Pr
     hostname: config.hostname,
     display_name: config.display_name ?? `${config.hostname} (Focusmap Lite)`,
     executors: capabilities.executors,
+    available_repo_keys: capabilities.available_repo_keys,
     available_secret_names: capabilities.available_secret_names,
+    repo_paths: capabilities.repo_paths,
     metadata: capabilities.metadata,
   });
   return runner.id;

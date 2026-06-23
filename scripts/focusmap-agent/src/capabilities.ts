@@ -1,13 +1,44 @@
 import { access, readdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { homedir, platform, release } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import WebSocket from 'ws';
 import type { AgentConfig } from './types.js';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_REPO_SCAN_PATHS = ['~/dev', '~/Documents', '~/Projects', '~/Workspace', '~/Private', '~/Code'];
+const REPO_SCAN_SKIP_DIRS = new Set([
+  'node_modules',
+  '.next',
+  'dist',
+  'build',
+  '.cache',
+  '.turbo',
+  'venv',
+  '.venv',
+  '__pycache__',
+  '.git',
+  'target',
+  '.vscode',
+  '.idea',
+  'Pods',
+  '.gradle',
+]);
+const REPO_SCAN_MAX_DEPTH = 4;
+const REPO_SCAN_MAX_REPOS = 200;
+const REPO_SCAN_CACHE_TTL_MS = 5 * 60_000;
+
+interface RepoDiscovery {
+  availableRepoKeys: string[];
+  repoPaths: Record<string, string>;
+  scannedRoots: string[];
+  foundCount: number;
+  truncated: boolean;
+}
+
+let repoDiscoveryCache: { expiresAt: number; discovery: RepoDiscovery } | null = null;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
@@ -48,6 +79,91 @@ async function hasExecutablePath(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+async function isGitRepoDir(path: string): Promise<boolean> {
+  try {
+    await access(join(path, '.git'), constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function addRepoAvailability(repoPath: string, keys: Set<string>, paths: Record<string, string>) {
+  const absolutePath = repoPath.trim();
+  const displayName = basename(absolutePath).trim();
+  if (absolutePath) {
+    keys.add(absolutePath);
+    paths[absolutePath] = absolutePath;
+  }
+  if (displayName) {
+    keys.add(displayName);
+    paths[displayName] = absolutePath;
+  }
+}
+
+async function discoverGitRepos(inputPaths = DEFAULT_REPO_SCAN_PATHS): Promise<RepoDiscovery> {
+  const availableRepoKeys = new Set<string>();
+  const repoPaths: Record<string, string> = {};
+  const foundRepoPaths = new Set<string>();
+  const scannedRoots = inputPaths.map(expandHome);
+  let truncated = false;
+
+  async function walk(dirPath: string, depth: number): Promise<void> {
+    if (foundRepoPaths.size >= REPO_SCAN_MAX_REPOS) {
+      truncated = true;
+      return;
+    }
+    if (await isGitRepoDir(dirPath)) {
+      addRepoAvailability(dirPath, availableRepoKeys, repoPaths);
+      foundRepoPaths.add(dirPath);
+      return;
+    }
+    if (depth >= REPO_SCAN_MAX_DEPTH) return;
+
+    let entries: Array<{ isDirectory(): boolean; name: string }>;
+    try {
+      entries = await readdir(dirPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.')) continue;
+      if (REPO_SCAN_SKIP_DIRS.has(entry.name)) continue;
+      await walk(join(dirPath, entry.name), depth + 1);
+      if (truncated) return;
+    }
+  }
+
+  for (const root of scannedRoots) {
+    await walk(root, 0);
+    if (truncated) break;
+  }
+
+  return {
+    availableRepoKeys: [...availableRepoKeys],
+    repoPaths,
+    scannedRoots,
+    foundCount: foundRepoPaths.size,
+    truncated,
+  };
+}
+
+async function discoverGitReposCached(): Promise<RepoDiscovery> {
+  const now = Date.now();
+  if (repoDiscoveryCache && repoDiscoveryCache.expiresAt > now) return repoDiscoveryCache.discovery;
+  const discovery = await discoverGitRepos();
+  repoDiscoveryCache = { expiresAt: now + REPO_SCAN_CACHE_TTL_MS, discovery };
+  return discovery;
 }
 
 async function isCodexAppServerReady(): Promise<boolean> {
@@ -176,6 +292,18 @@ export async function collectCapabilities(config: AgentConfig) {
     8_000,
     { roots: [], inaccessibleRoots: ['google_drive_discovery_timeout'] },
   );
+  const repoDiscoveryFallback = repoDiscoveryCache?.discovery ?? {
+    availableRepoKeys: [],
+    repoPaths: {},
+    scannedRoots: DEFAULT_REPO_SCAN_PATHS.map(expandHome),
+    foundCount: 0,
+    truncated: true,
+  };
+  const repoDiscovery = await withTimeout(
+    discoverGitReposCached(),
+    8_000,
+    repoDiscoveryFallback,
+  );
   const googleDriveRoots = googleDriveDiscovery.roots;
   const cloudStorageRoot = join(homedir(), 'Library', 'CloudStorage');
   const cloudStorageStatus = await withTimeout(pathAccessStatus(cloudStorageRoot), 2_000, 'denied' as const);
@@ -205,7 +333,9 @@ export async function collectCapabilities(config: AgentConfig) {
 
   return {
     executors,
+    available_repo_keys: repoDiscovery.availableRepoKeys,
     available_secret_names: availableSecretNames,
+    repo_paths: repoDiscovery.repoPaths,
     metadata: {
       app: 'focusmap-lite',
       agent: 'focusmap-agent',
@@ -223,6 +353,12 @@ export async function collectCapabilities(config: AgentConfig) {
       codex_orphan_thread_import: true,
       codex_thread_import_api_path: '/api/agents/codex-monitor/import-thread',
       codex_thread_import_scopes_api_path: '/api/agents/codex-monitor/import-scopes',
+      repo_availability_source: 'focusmap-agent-heartbeat',
+      repo_scan_paths: repoDiscovery.scannedRoots,
+      repo_scan_found_count: repoDiscovery.foundCount,
+      repo_scan_limit: REPO_SCAN_MAX_REPOS,
+      repo_scan_truncated: repoDiscovery.truncated,
+      repo_scan_cache_ttl_ms: REPO_SCAN_CACHE_TTL_MS,
       opencode_installed: opencode,
       aider_installed: aider,
       gws_installed: gws,

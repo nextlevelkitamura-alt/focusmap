@@ -53,6 +53,29 @@ function parseTimeMs(value: unknown) {
   return Number.isFinite(ms) ? ms : null
 }
 
+function normalizeIsoTime(value: unknown) {
+  const ms = parseTimeMs(value)
+  return ms == null ? null : new Date(ms).toISOString()
+}
+
+export function agentPendingRescheduleUpdates(input: {
+  status: string
+  nextScheduledAt?: unknown
+  completedAt?: unknown
+  nowIso?: string
+}) {
+  const nextScheduledAt = normalizeIsoTime(input.nextScheduledAt)
+  if (input.status !== 'pending' || !nextScheduledAt) return {}
+  return {
+    scheduled_at: nextScheduledAt,
+    completed_at: normalizeIsoTime(input.completedAt) ?? normalizeIsoTime(input.nowIso) ?? new Date().toISOString(),
+    started_at: null,
+    claimed_runner_id: null,
+    claim_expires_at: null,
+    error: null,
+  }
+}
+
 export function isClaimedByOtherActiveRunner(
   task: { claimed_runner_id?: unknown; claim_expires_at?: unknown },
   runnerId: string,
@@ -264,6 +287,7 @@ export async function POST(
     let status = typeof body.status === 'string' ? body.status : ''
     if (!runnerId) return NextResponse.json({ error: 'runner_id is required' }, { status: 400 })
     if (!VALID_STATUSES.has(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 })
+    const nowIso = new Date().toISOString()
 
     const { data: task } = await supabase
       .from('ai_tasks')
@@ -294,9 +318,16 @@ export async function POST(
     const runningStartedAt = status === 'running' ? resolveRunningStartedAt(existingStartedAt) : null
     if (status === 'running' && shouldInitializeRunningStartedAt(existingStartedAt)) updates.started_at = runningStartedAt
     if (status === 'completed' || status === 'failed') {
-      updates.completed_at = new Date().toISOString()
+      updates.completed_at = nowIso
       updates.claim_expires_at = null
+      updates.claimed_runner_id = null
     }
+    Object.assign(updates, agentPendingRescheduleUpdates({
+      status,
+      nextScheduledAt: isRecord(body) ? body.next_scheduled_at : null,
+      completedAt: isRecord(body) ? body.completed_at : null,
+      nowIso,
+    }))
 
     const sourceTaskTitle = normalizeSourceTaskTitle(isRecord(body) ? body.source_task_title : null)
     let sourceTaskTitleForSnapshot: string | null = null
@@ -416,7 +447,7 @@ export async function POST(
           summary,
           error_message: typeof body.error === 'string' ? body.error : null,
           started_at: status === 'running' ? runningStartedAt : null,
-          completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
+          completed_at: typeof updates.completed_at === 'string' ? updates.completed_at : null,
         })
         if (statusChanged) {
           await insertTaskEvent({

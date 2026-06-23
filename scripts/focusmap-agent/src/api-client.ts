@@ -314,6 +314,8 @@ export class AgentApiClient {
       activity_messages?: AgentActivityMessage[];
       source_task_title?: string | null;
       send_progress_snapshot?: boolean;
+      next_scheduled_at?: string | null;
+      completed_at?: string | null;
     } = {},
   ): Promise<void> {
     const result = this.stateResult(payload.result);
@@ -332,6 +334,8 @@ export class AgentApiClient {
       ...(payload.error ? { error: payload.error } : {}),
       ...(activityMessages?.length ? { activity_messages: activityMessages } : {}),
       ...(payload.source_task_title ? { source_task_title: payload.source_task_title } : {}),
+      ...(payload.next_scheduled_at ? { next_scheduled_at: payload.next_scheduled_at } : {}),
+      ...(payload.completed_at ? { completed_at: payload.completed_at } : {}),
     });
     await progress;
   }

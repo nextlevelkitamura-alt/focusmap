@@ -48,6 +48,7 @@ export interface AiTask {
   package_snapshot?: Record<string, unknown> | null;
   parent_task_id?: string | null;
   scheduled_at?: string | null;
+  recurrence_cron?: string | null;
   cwd?: string | null;
   source_task_id?: string | null;
   source_note_id?: string | null;
