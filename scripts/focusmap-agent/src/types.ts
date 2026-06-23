@@ -115,6 +115,9 @@ export interface TaskResultJson {
   codex_archive_request_reason?: string | null;
   codex_archive_completed_at?: string | null;
   codex_archive_request_cancelled_at?: string | null;
+  codex_archive_last_attempted_at?: string | null;
+  codex_archive_last_failed_at?: string | null;
+  codex_archive_last_error?: string | null;
   codex_archive_target?: string | null;
   codex_history_item_id?: string | null;
   ai_history_item_id?: string | null;

@@ -233,21 +233,40 @@ async function callOk(rpc: RpcClient, method: string, params: unknown): Promise<
   return response.error ? null : response;
 }
 
-export async function archiveCodexThreadViaAppServer(threadId: string): Promise<boolean> {
+export type ArchiveCodexThreadResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+function rpcFailureMessage(method: string, response: RpcEnvelope): string {
+  const detail = response.error?.message?.trim();
+  const code = response.error?.code;
+  if (detail && typeof code === 'number') return `${method} failed (${code}): ${detail}`;
+  if (detail) return `${method} failed: ${detail}`;
+  return `${method} failed`;
+}
+
+async function callArchiveRpc(rpc: RpcClient, method: string, params: unknown): Promise<ArchiveCodexThreadResult> {
+  const response = await rpc.call(method, params).catch((error): RpcEnvelope => ({
+    error: { message: error instanceof Error ? error.message : String(error) },
+  }));
+  if (response.error) return { ok: false, error: rpcFailureMessage(method, response) };
+  return { ok: true };
+}
+
+export async function archiveCodexThreadViaAppServer(threadId: string): Promise<ArchiveCodexThreadResult> {
   const normalizedThreadId = threadId.trim();
-  if (!normalizedThreadId) return false;
+  if (!normalizedThreadId) return { ok: false, error: 'Codex thread id is empty' };
 
   const { ws, rpc } = await connectRpc();
   try {
-    const initResp = await callOk(rpc, 'initialize', {
+    const initResp = await callArchiveRpc(rpc, 'initialize', {
       clientInfo: { name: 'focusmap', title: 'Focusmap', version: '0.2.0' },
       capabilities: { experimentalApi: true },
     });
-    if (!initResp) return false;
+    if (!initResp.ok) return initResp;
     rpc.notify('initialized');
 
-    const archiveResp = await callOk(rpc, 'thread/archive', { threadId: normalizedThreadId });
-    return Boolean(archiveResp);
+    return callArchiveRpc(rpc, 'thread/archive', { threadId: normalizedThreadId });
   } finally {
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
   }

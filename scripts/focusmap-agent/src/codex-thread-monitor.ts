@@ -15,6 +15,7 @@ import type {
   AiHistoryStatus,
   AiTask,
   CodexThreadImportScope,
+  StepLog,
   TaskResultJson,
 } from './types.js';
 import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
@@ -2901,6 +2902,58 @@ export async function markThreadGone(api: AgentApiClient, runnerId: string, task
   task.result = result as unknown as Record<string, unknown>;
 }
 
+async function markArchiveRequestFailed(
+  api: AgentApiClient,
+  runnerId: string,
+  task: AiTask,
+  threadId: string,
+  errorMessage: string,
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const current = taskResult(task);
+  const compactError = compactText(errorMessage || 'Codex thread archive failed', 1_000);
+  const currentStep = 'Codex threadのアーカイブに失敗しました。Mac agentが再試行します';
+  const message = compactText(`Codex threadのアーカイブに失敗しました。次回巡回で再試行します: ${compactError}`, 1_500);
+  const result: TaskResultJson = {
+    ...(current as Partial<TaskResultJson>),
+    executor: task.executor === 'codex' ? 'codex' : 'codex_app',
+    steps: Array.isArray(current.steps) ? current.steps as StepLog[] : [],
+    output: typeof current.output === 'string' ? current.output : '',
+    message,
+    current_step: currentStep,
+    codex_thread_id: threadId,
+    codex_thread_url: `codex://threads/${threadId}`,
+    codex_run_state: 'awaiting_approval',
+    codex_review_reason: typeof current.codex_review_reason === 'string' ? current.codex_review_reason : 'completed',
+    codex_archive_request_state: 'pending',
+    codex_archive_last_attempted_at: nowIso,
+    codex_archive_last_failed_at: nowIso,
+    codex_archive_last_error: compactError,
+    last_activity_at: nowIso,
+    awaiting_approval_at: typeof current.awaiting_approval_at === 'string' && current.awaiting_approval_at.trim()
+      ? current.awaiting_approval_at.trim()
+      : nowIso,
+  };
+
+  await api.updateTaskState(runnerId, task.id, 'completed', {
+    result,
+    activity_messages: [{
+      role: 'status',
+      kind: 'failed',
+      body: message,
+      importance: 'important',
+      dedupe_key: `thread:${threadId}:archive_failed:${textFingerprint(compactError)}`,
+      metadata: {
+        source: 'codex_archive_request',
+        retry: true,
+      },
+    }],
+  });
+  task.status = 'completed';
+  task.completed_at = task.completed_at ?? nowIso;
+  task.result = result as unknown as Record<string, unknown>;
+}
+
 async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string, task: AiTask): Promise<SyncOneTaskResult> {
   const threadId = taskThreadId(task) ?? await findMatchingThread(dbPath, task);
   if (!threadId) return 'unchanged';
@@ -2920,11 +2973,16 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   }
 
   if (hasPendingArchiveRequest(task)) {
-    const archived = await archiveCodexThreadViaAppServer(threadId).catch((archiveError) => {
-      logError(`codex archive request failed for ${task.id}`, archiveError instanceof Error ? archiveError.message : archiveError);
-      return false;
+    const archiveResult = await archiveCodexThreadViaAppServer(threadId).catch((archiveError) => {
+      const message = archiveError instanceof Error ? archiveError.message : String(archiveError);
+      return { ok: false as const, error: message };
     });
-    if (!archived) return 'unchanged';
+    if (!archiveResult.ok) {
+      logError(`codex archive request failed for ${task.id}`, archiveResult.error);
+      await markArchiveRequestFailed(api, runnerId, task, threadId, archiveResult.error);
+      syncCache.delete(task.id);
+      return 'unchanged';
+    }
     await markThreadGone(api, runnerId, task, threadId, 'archived');
     syncCache.delete(task.id);
     info(`codex thread archived from Focusmap node check task=${task.id} thread=${threadId.slice(0, 8)}`);

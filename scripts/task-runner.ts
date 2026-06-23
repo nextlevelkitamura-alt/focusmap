@@ -195,6 +195,7 @@ type MonitoredCodexTask = {
   prompt: string
   codex_thread_id: string | null
   started_at: string | null
+  completed_at?: string | null
   created_at?: string | null
   cwd: string | null
   executor: string | null
@@ -223,6 +224,11 @@ type CodexRpcEnvelope = {
   params?: unknown
   result?: unknown
   error?: { code?: number; message?: string }
+}
+
+type ArchiveCodexThreadsResult = {
+  archived: Set<string>
+  failures: Map<string, string>
 }
 
 type AiRunner = {
@@ -1767,10 +1773,19 @@ async function completeCodexTaskClosedFromApp(
   ])
 }
 
-async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set<string>> {
+function archiveRpcFailureMessage(method: string, response: CodexRpcEnvelope): string {
+  const detail = response.error?.message?.trim()
+  const code = response.error?.code
+  if (detail && typeof code === 'number') return `${method} failed (${code}): ${detail}`
+  if (detail) return `${method} failed: ${detail}`
+  return `${method} failed`
+}
+
+async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<ArchiveCodexThreadsResult> {
   const uniqueThreadIds = [...new Set(threadIds.filter(Boolean))]
   const archived = new Set<string>()
-  if (uniqueThreadIds.length === 0) return archived
+  const failures = new Map<string, string>()
+  if (uniqueThreadIds.length === 0) return { archived, failures }
 
   return new Promise(resolve => {
     const ws = new WebSocket(CODEX_APP_WS_URL)
@@ -1782,11 +1797,16 @@ async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set
       if (settled) return
       settled = true
       try { ws.close() } catch { /* ignore */ }
-      resolve(archived)
+      resolve({ archived, failures })
     }
 
     const timer = setTimeout(() => {
       console.warn('[codex-app] archive RPC timed out; will retry on next runner cycle')
+      for (const threadId of uniqueThreadIds) {
+        if (!archived.has(threadId) && !failures.has(threadId)) {
+          failures.set(threadId, 'thread/archive timed out; will retry on next runner cycle')
+        }
+      }
       finish()
     }, CODEX_APP_RPC_TIMEOUT_MS * Math.max(2, uniqueThreadIds.length + 1))
 
@@ -1822,6 +1842,11 @@ async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set
 
     ws.on('error', err => {
       console.warn('[codex-app] archive RPC connection failed:', err.message)
+      for (const threadId of uniqueThreadIds) {
+        if (!archived.has(threadId) && !failures.has(threadId)) {
+          failures.set(threadId, `archive RPC connection failed: ${err.message}`)
+        }
+      }
       clearTimeout(timer)
       finish()
     })
@@ -1838,19 +1863,101 @@ async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set
             error: { message: error instanceof Error ? error.message : String(error) },
           }) as CodexRpcEnvelope)
           if (resp.error) {
-            console.warn(`[codex-app] thread/archive failed for ${threadId}:`, resp.error.message)
+            const failure = archiveRpcFailureMessage('thread/archive', resp)
+            console.warn(`[codex-app] thread/archive failed for ${threadId}:`, failure)
+            failures.set(threadId, failure)
           } else {
             archived.add(threadId)
           }
         }
       } catch (error) {
-        console.warn('[codex-app] archive RPC failed:', error instanceof Error ? error.message : error)
+        const failure = error instanceof Error ? error.message : String(error)
+        console.warn('[codex-app] archive RPC failed:', failure)
+        for (const threadId of uniqueThreadIds) {
+          if (!archived.has(threadId) && !failures.has(threadId)) {
+            failures.set(threadId, failure)
+          }
+        }
       } finally {
         clearTimeout(timer)
         finish()
       }
     })
   })
+}
+
+async function markLegacyCodexArchiveRequestFailed(
+  supabase: SupabaseClient,
+  task: MonitoredCodexTask,
+  threadId: string,
+  errorMessage: string,
+): Promise<void> {
+  const now = new Date().toISOString()
+  const current = (task.result ?? {}) as Record<string, unknown>
+  const compactError = compactCodexText(errorMessage, 1_000) ?? 'Codex thread archive failed'
+  const currentStep = 'Codex threadのアーカイブに失敗しました。Mac runnerが再試行します'
+  const message = compactCodexText(`Codex threadのアーカイブに失敗しました。次回巡回で再試行します: ${compactError}`, 1_500) ??
+    'Codex threadのアーカイブに失敗しました。次回巡回で再試行します。'
+  const result = {
+    ...current,
+    executor: task.executor === 'codex' ? 'codex' : 'codex_app',
+    current_step: currentStep,
+    message,
+    codex_thread_id: threadId,
+    codex_thread_url: `codex://threads/${threadId}`,
+    codex_run_state: 'awaiting_approval',
+    codex_review_reason: typeof current.codex_review_reason === 'string' ? current.codex_review_reason : 'completed',
+    codex_archive_request_state: 'pending',
+    codex_archive_last_attempted_at: now,
+    codex_archive_last_failed_at: now,
+    codex_archive_last_error: compactError,
+    last_activity_at: now,
+    awaiting_approval_at: typeof current.awaiting_approval_at === 'string' && current.awaiting_approval_at.trim()
+      ? current.awaiting_approval_at.trim()
+      : now,
+  }
+
+  const { error } = await supabase
+    .from('ai_tasks')
+    .update({
+      status: 'completed',
+      completed_at: task.completed_at ?? now,
+      result,
+    })
+    .eq('id', task.id)
+
+  if (error) {
+    console.warn(`[codex-app] failed to persist archive request failure for ${task.id}:`, error.message)
+    return
+  }
+
+  task.status = 'completed'
+  task.completed_at = task.completed_at ?? now
+  task.result = result
+
+  await Promise.all([
+    mirrorCodexTaskSnapshotToTurso({
+      task,
+      status: 'completed',
+      threadId,
+      currentStep,
+      summary: message,
+      eventType: 'codex_archive_failed',
+      updatedAt: now,
+      force: true,
+    }).catch(error => {
+      console.warn('[codex-app] turso archive failure mirror failed:', error instanceof Error ? error.message : error)
+    }),
+    insertAiTaskActivityMessage(supabase, {
+      taskId: task.id,
+      userId: task.user_id,
+      role: 'status',
+      kind: 'failed',
+      body: message,
+      importance: 'important',
+      dedupeKey: `thread:${threadId}:archive_failed:${textFingerprint(compactError)}`,
+    }),
+  ])
 }
 
 async function syncCompletedFocusmapNodesToCodexArchive(
@@ -1862,7 +1969,7 @@ async function syncCompletedFocusmapNodesToCodexArchive(
 
   let query = supabase
     .from('ai_tasks')
-    .select('id, user_id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
+    .select('id, user_id, prompt, codex_thread_id, started_at, completed_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .not('source_task_id', 'is', null)
     .not('codex_thread_id', 'is', null)
@@ -1944,11 +2051,16 @@ async function syncCompletedFocusmapNodesToCodexArchive(
 
   if (archiveCandidates.length === 0) return
 
-  const archivedThreadIds = await archiveCodexThreadsViaAppServer(
+  const archiveResult = await archiveCodexThreadsViaAppServer(
     archiveCandidates.map(task => task.codex_thread_id).filter((id): id is string => !!id),
   )
   for (const task of archiveCandidates) {
-    if (!task.codex_thread_id || !archivedThreadIds.has(task.codex_thread_id)) continue
+    if (!task.codex_thread_id) continue
+    if (!archiveResult.archived.has(task.codex_thread_id)) {
+      const failure = archiveResult.failures.get(task.codex_thread_id)
+      if (failure) await markLegacyCodexArchiveRequestFailed(supabase, task, task.codex_thread_id, failure)
+      continue
+    }
     await completeCodexTaskClosedFromApp(supabase, task, {
       threadId: task.codex_thread_id,
       reason: 'archived',
