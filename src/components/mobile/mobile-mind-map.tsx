@@ -748,12 +748,19 @@ export function MobileMindMap({
                     : "未配置"
                 const updatedAt = codexThreadImportActivityAt({ task, aiTask, progressTask, codexRun })
                 const visualStatus = progressTask?.status ?? codexRun?.state ?? null
+                const worktreePath = normalizeRepoPath(task.codex_work_dir || aiTask?.cwd || null) || null
+                const repoPath = codexScopeRepoPathFromAiTask(aiTask) ||
+                    normalizeRepoPath(taskProject?.repo_path) ||
+                    (task.project_id === project.id ? projectRepoPath : "") ||
+                    worktreePath ||
+                    null
                 return [{
                     id: task.id,
                     aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
                     title: task.title,
                     snippet: codexThreadPromptPreviewFromMemo(task.memo),
-                    repoPath: task.codex_work_dir?.trim() || null,
+                    repoPath,
+                    worktreePath: worktreePath && worktreePath !== normalizeRepoPath(repoPath) ? worktreePath : null,
                     threadId: task.codex_thread_id?.trim() || null,
                     status: visualStatus,
                     statusLabel: codexChatImportStatusLabel(
@@ -778,6 +785,8 @@ export function MobileMindMap({
         applyOptimisticCodexPlacement,
         getBySourceId,
         hiddenCodexChatImportIds,
+        project.id,
+        projectRepoPath,
         projectById,
         repoScopedCodexTaskNodes,
         repoScopedTasksById,

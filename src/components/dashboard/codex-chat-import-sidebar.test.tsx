@@ -267,6 +267,27 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).queryByText(/54m/)).not.toBeInTheDocument()
   })
 
+  test("shows the parent repo and distinct worktree folder", async () => {
+    historyItems = [{
+      ...baseHistoryItem,
+      worktreePath: "/Users/me/focusmap-codex-reconcile-main",
+    }]
+    renderSidebar()
+
+    const row = screen.getByTestId("codex-chat-import-row-history-1")
+    expect(within(row).getByText("repo")).toBeInTheDocument()
+    expect(within(row).getByText("focusmap")).toBeInTheDocument()
+    expect(within(row).getByText("実行")).toBeInTheDocument()
+    expect(within(row).getByText("focusmap-codex-reconcile-main")).toBeInTheDocument()
+
+    fireEvent.click(row)
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "一覧へ戻る" })).toBeInTheDocument()
+    })
+    expect(screen.getAllByText("focusmap-codex-reconcile-main").length).toBeGreaterThan(0)
+  })
+
   test("defaults to all Codex chats across repos", () => {
     historyItems = [
       baseHistoryItem,

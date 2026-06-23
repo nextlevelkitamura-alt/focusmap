@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import type { TursoAiHistoryItem } from './ai-history'
 
 const { mockExecute } = vi.hoisted(() => ({
   mockExecute: vi.fn(),
@@ -143,11 +144,50 @@ describe('AI history detail cache helpers', () => {
     expect(sql).toContain('started_at = excluded.started_at')
     expect(sql).toContain('ended_at = excluded.ended_at')
     expect(sql).toContain('work_duration_seconds = excluded.work_duration_seconds')
-    expect(sql).toContain('WHEN excluded.title = ?')
+    expect(sql).toContain('WHEN (excluded.title = ? OR ?)')
     expect(sql).toContain('OR ?')
     expect(sql).toContain('THEN ai_history_items.title')
     const args = (mockExecute.mock.calls[0]?.[0] as { args: unknown[] }).args
     expect(args.slice(-4)).toEqual([0, '新しいチャット', 0, '新しいチャット'])
+  })
+
+  test('keeps parent repo labels separate from the scanned worktree path', async () => {
+    const { toAiHistoryListItem } = await import('./ai-history')
+
+    const item: TursoAiHistoryItem = {
+      id: 'history-1',
+      user_id: 'user-1',
+      provider: 'codex_app',
+      external_thread_id: 'thread-1',
+      repo_path: '/Users/me/focusmap',
+      worktree_path: '/Users/me/focusmap-codex-reconcile-main',
+      project_id: 'project-1',
+      source_task_id: null,
+      linked_ai_task_id: null,
+      title: '履歴',
+      snippet: null,
+      status: 'awaiting_approval',
+      run_state: null,
+      last_activity_at: '2026-06-20T00:00:00.000Z',
+      indexed_at: '2026-06-20T00:00:01.000Z',
+      started_at: null,
+      ended_at: null,
+      work_duration_seconds: null,
+      archived: false,
+      archived_at: null,
+      deleted_at: null,
+      detail_synced_at: null,
+      detail_message_count: null,
+      metadata_json: null,
+      created_at: '2026-06-20T00:00:01.000Z',
+      updated_at: '2026-06-20T00:00:01.000Z',
+    }
+
+    expect(toAiHistoryListItem(item, new Map([['/Users/me/focusmap', 'focusmap']]))).toMatchObject({
+      repoPath: '/Users/me/focusmap',
+      repoLabel: 'focusmap',
+      worktreePath: '/Users/me/focusmap-codex-reconcile-main',
+    })
   })
 
   test('uses a generic new-chat title when a stored history title is missing', async () => {

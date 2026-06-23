@@ -95,6 +95,7 @@ export type TaskProgressImportItem = {
   title: string
   snippet: string | null
   repoPath: string | null
+  worktreePath?: string | null
   threadId?: string | null
   status?: TaskProgressStatus | string | null
   statusLabel: string | null
@@ -241,6 +242,13 @@ function repoNameFromPath(value: string | null | undefined) {
 
 function normalizeRepoPath(value: string | null | undefined) {
   return (value ?? "").trim().replace(/\/+$/, "")
+}
+
+function distinctWorktreePath(repoPath: string | null | undefined, worktreePath: string | null | undefined) {
+  const normalizedWorktreePath = normalizeRepoPath(worktreePath)
+  if (!normalizedWorktreePath) return null
+  const normalizedRepoPath = normalizeRepoPath(repoPath)
+  return normalizedWorktreePath === normalizedRepoPath ? null : normalizedWorktreePath
 }
 
 function CodexMonitorRunningOutline() {
@@ -1072,6 +1080,7 @@ function ImportDetailMetaColumn({
   status,
   statusLabel,
   repoPath,
+  worktreePath,
   projectTitle,
   workItem,
   nowMs,
@@ -1080,6 +1089,7 @@ function ImportDetailMetaColumn({
   status?: TaskProgressStatus | string | null
   statusLabel?: string | null
   repoPath?: string | null
+  worktreePath?: string | null
   projectTitle?: string | null
   workItem?: TaskProgressImportItem | null
   nowMs: number
@@ -1088,6 +1098,8 @@ function ImportDetailMetaColumn({
   const visualStatus = status ?? "awaiting_approval"
   const uiStatus = getCodexMonitorUiStatus(visualStatus)
   const repoLabel = repoNameFromPath(repoPath) || projectTitle || null
+  const visibleWorktreePath = distinctWorktreePath(repoPath, worktreePath)
+  const worktreeLabel = repoNameFromPath(visibleWorktreePath)
   const workElapsedMs = workItem ? importItemWorkElapsedMs(workItem, nowMs, uiStatus === "running") : null
   const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
   const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
@@ -1115,6 +1127,12 @@ function ImportDetailMetaColumn({
       {repoLabel && (
         <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
           <span className="truncate">{repoLabel}</span>
+        </span>
+      )}
+      {visibleWorktreePath && worktreeLabel && (
+        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2 py-1 text-[11px] font-medium leading-none text-amber-200" title={visibleWorktreePath}>
+          <span className="text-amber-300/75">実行</span>
+          <span className="truncate">{worktreeLabel}</span>
         </span>
       )}
     </div>
@@ -1772,6 +1790,7 @@ export function TaskProgressKanban({
                       status={activeMobileImportDetailItem.status}
                       statusLabel={activeMobileImportDetailItem.statusLabel}
                       repoPath={activeMobileImportDetailItem.repoPath}
+                      worktreePath={activeMobileImportDetailItem.worktreePath}
                       workItem={activeMobileImportDetailItem}
                       nowMs={nowMs}
                       className="pt-0.5"
@@ -1945,6 +1964,8 @@ export function TaskProgressKanban({
                     const workElapsedMs = importItemWorkElapsedMs(item, nowMs, uiStatus === "running")
                     const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
                     const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
+                    const visibleWorktreePath = distinctWorktreePath(item.repoPath, item.worktreePath)
+                    const worktreeLabel = repoNameFromPath(visibleWorktreePath)
                     const canOpenDetail = Boolean(item.aiTaskId)
                     const isArmingImportDrag = mobileImportArmingItemId === item.id
                     const openImportDetail = () => {
@@ -2030,6 +2051,12 @@ export function TaskProgressKanban({
                           {item.repoPath && (
                             <span className="rounded-full bg-muted px-1.5 py-0.5" title={item.repoPath}>
                               {repoNameFromPath(item.repoPath)}
+                            </span>
+                          )}
+                          {visibleWorktreePath && worktreeLabel && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-200" title={visibleWorktreePath}>
+                              <span>実行</span>
+                              {worktreeLabel}
                             </span>
                           )}
                           <span className="rounded-full bg-muted px-1.5 py-0.5">{item.updatedLabel}</span>

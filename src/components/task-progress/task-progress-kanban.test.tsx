@@ -408,6 +408,43 @@ describe('TaskProgressKanban', () => {
     expect(onOpenTask).not.toHaveBeenCalled()
   })
 
+  test('スマホAIチャット履歴カードは親リポとworktree実行フォルダを表示する', async () => {
+    const importItem = {
+      id: 'chat-node-worktree',
+      aiTaskId: 'ai-task-worktree',
+      title: 'worktree表示の確認',
+      snippet: '実行フォルダを分けて表示する',
+      repoPath: '/Users/me/focusmap',
+      worktreePath: '/Users/me/focusmap-codex-reconcile-main',
+      threadId: 'thread-worktree',
+      status: 'awaiting_approval',
+      statusLabel: '確認待ち',
+      updatedLabel: '最終 6/12 08:10',
+      updatedAtIso: '2026-06-12T08:10:00.000Z',
+    }
+
+    const renderKanban = (mobileOpenSignal: number) => (
+      <TaskProgressKanban
+        tasks={[]}
+        sourceTasksById={new Map()}
+        isMobile
+        mobileTriggerVisible={false}
+        mobileOpenSignal={mobileOpenSignal}
+        mobileImportItems={[importItem]}
+        pollIntervalMs={3000}
+        onRefresh={vi.fn()}
+        onOpenTask={vi.fn()}
+      />
+    )
+    const { rerender } = render(renderKanban(0))
+    rerender(renderKanban(1))
+
+    expect(await screen.findByText('worktree表示の確認')).toBeInTheDocument()
+    expect(screen.getByText('focusmap')).toBeInTheDocument()
+    expect(screen.getByText('実行')).toBeInTheDocument()
+    expect(screen.getByText('focusmap-codex-reconcile-main')).toBeInTheDocument()
+  })
+
   test('スマホAIチャット履歴カードから履歴を削除できる', async () => {
     const onDeleteSourceTask = vi.fn().mockResolvedValue(undefined)
     const importItem = {

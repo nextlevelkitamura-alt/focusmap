@@ -1059,20 +1059,29 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
             const aiResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
                 ? aiTask.result as Record<string, unknown>
                 : {};
-            const resultString = (key: string) => {
-                const value = aiResult[key];
+            const resultRecordString = (record: Record<string, unknown>, key: string) => {
+                const value = record[key];
                 return typeof value === 'string' && value.trim() ? value.trim() : null;
             };
+            const resultString = (key: string) => resultRecordString(aiResult, key);
+            const aiMeta = aiResult.meta && typeof aiResult.meta === 'object' && !Array.isArray(aiResult.meta)
+                ? aiResult.meta as Record<string, unknown>
+                : {};
+            const metaString = (key: string) => resultRecordString(aiMeta, key);
             const threadId = task.codex_thread_id?.trim() ||
                 progressTask?.codex_thread_id?.trim() ||
                 aiTask?.codex_thread_id?.trim() ||
                 resultString('codex_thread_id') ||
                 null;
             const taskProject = task.project_id ? projectById.get(task.project_id) ?? null : null;
-            const repoPath = task.codex_work_dir?.trim() ||
+            const worktreePath = task.codex_work_dir?.trim() ||
                 aiTask?.cwd?.trim() ||
+                null;
+            const repoPath = metaString('scope_repo_path') ||
+                resultString('scope_repo_path') ||
                 taskProject?.repo_path?.trim() ||
                 (task.project_id === project.id ? projectRepoPath : '') ||
+                worktreePath ||
                 null;
             const hasCodexDetail =
                 Boolean(progressTask) ||
@@ -1108,6 +1117,9 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 title: codexChatImportTitle({ task, progressTask, aiResult }),
                 snippet,
                 repoPath: repoPath || null,
+                worktreePath: worktreePath && worktreePath.replace(/\/+$/, '') !== (repoPath ?? '').replace(/\/+$/, '')
+                    ? worktreePath
+                    : null,
                 threadId,
                 status: visualStatus,
                 projectTitle: task.project_id ? projectTitleById.get(task.project_id) ?? null : null,

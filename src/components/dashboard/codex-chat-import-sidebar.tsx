@@ -49,6 +49,7 @@ export type CodexChatImportItem = {
   snippet: string | null
   repoPath: string | null
   repoLabel?: string | null
+  worktreePath?: string | null
   threadId?: string | null
   codexOpenUrl?: string | null
   status?: string | null
@@ -147,6 +148,13 @@ function repoNameFromPath(value: string | null | undefined) {
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized
 }
 
+function distinctWorktreePath(repoPath: string | null | undefined, worktreePath: string | null | undefined) {
+  const normalizedWorktreePath = normalizeRepoPath(worktreePath ?? "")
+  if (!normalizedWorktreePath) return null
+  const normalizedRepoPath = normalizeRepoPath(repoPath ?? "")
+  return normalizedWorktreePath === normalizedRepoPath ? null : normalizedWorktreePath
+}
+
 function mergeSourceLabels(current: string | null | undefined, next: string | null | undefined) {
   const labels: string[] = []
   for (const value of [current, next]) {
@@ -170,6 +178,7 @@ function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem
     snippet: item.snippet,
     repoPath: item.repoPath || null,
     repoLabel: item.repoLabel,
+    worktreePath: item.worktreePath,
     threadId: item.externalThreadId || null,
     codexOpenUrl: item.codexOpenUrl,
     status: visualStatus,
@@ -1401,6 +1410,9 @@ export function CodexChatImportSidebar({
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
   const selectedThreadHref = selectedChatItem?.codexOpenUrl ?? codexThreadUrl(selectedChatItem?.threadId)
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
+  const selectedWorktreePath = selectedChatItem
+    ? distinctWorktreePath(selectedChatItem.repoPath, selectedChatItem.worktreePath)
+    : null
   const selectedUiStatus = getCodexMonitorUiStatus(selectedVisualStatus)
   const selectedCanHydrateDetail = Boolean(
     aiHistory.sync.featureEnabled &&
@@ -1849,8 +1861,15 @@ export function CodexChatImportSidebar({
                         </span>
                       )}
                       {selectedChatItem.repoPath && (
-                        <span className="inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400">
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[11px] font-medium leading-none text-zinc-400" title={selectedChatItem.repoPath}>
+                          <span className="text-zinc-500">repo</span>
                           <span className="truncate">{selectedChatItem.repoLabel || repoNameFromPath(selectedChatItem.repoPath)}</span>
+                        </span>
+                      )}
+                      {selectedWorktreePath && (
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-2 py-1 text-[11px] font-medium leading-none text-amber-200" title={selectedWorktreePath}>
+                          <span className="text-amber-300/75">実行</span>
+                          <span className="truncate">{repoNameFromPath(selectedWorktreePath)}</span>
                         </span>
                       )}
                       {selectedThreadHref && (
@@ -2041,6 +2060,7 @@ export function CodexChatImportSidebar({
                   const workElapsedMs = itemRallyWorkElapsedMs ?? itemLocalWorkElapsedMs
                   const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
                   const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
+                  const itemWorktreePath = distinctWorktreePath(item.repoPath, item.worktreePath)
                   const archiveExpanded = expandedArchiveChatId === item.id
                   const archiveBusy = chatArchiveIdentityKeys(item).some(key => archivingChatIds.has(key))
                   const archiveError = archiveErrorByChatId[item.id] ?? null
@@ -2129,8 +2149,15 @@ export function CodexChatImportSidebar({
                         </span>
                       )}
                       {item.repoPath && (
-                        <span className="rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] leading-none text-zinc-500" title={item.repoPath}>
-                          {item.repoLabel || repoNameFromPath(item.repoPath)}
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[10px] leading-none text-zinc-500" title={item.repoPath}>
+                          <span className="text-zinc-600">repo</span>
+                          <span className="truncate">{item.repoLabel || repoNameFromPath(item.repoPath)}</span>
+                        </span>
+                      )}
+                      {itemWorktreePath && (
+                        <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-amber-300/20 bg-amber-400/10 px-1.5 py-0.5 text-[10px] leading-none text-amber-200" title={itemWorktreePath}>
+                          <span className="text-amber-300/75">実行</span>
+                          <span className="truncate">{repoNameFromPath(itemWorktreePath)}</span>
                         </span>
                       )}
                     </div>
