@@ -100,7 +100,7 @@ export interface TaskResultJson {
   codex_external_origin?: string;
   codex_thread_id?: string;
   codex_thread_url?: string;
-  codex_run_state?: 'running' | 'awaiting_approval';
+  codex_run_state?: 'running' | 'awaiting_approval' | 'stale_no_terminal_event';
   codex_review_reason?: string;
   codex_thread_archived?: boolean;
   codex_archived_at?: string | null;
@@ -148,7 +148,7 @@ export interface CodexThreadImportPayload {
   cwd?: string | null;
   archived?: boolean | null;
   updated_at_ms?: number | null;
-  codex_run_state?: 'running' | 'awaiting_approval';
+  codex_run_state?: 'running' | 'awaiting_approval' | 'stale_no_terminal_event';
   codex_review_reason?: string | null;
   current_step?: string | null;
   last_activity_at?: string | null;

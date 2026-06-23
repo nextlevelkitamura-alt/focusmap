@@ -592,6 +592,9 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   if (task.status === "failed") {
     return { state: "connection_failed", label: "接続失敗" }
   }
+  if (rawState === "stale_no_terminal_event") {
+    return { state: "awaiting_approval", label: "確認待ち" }
+  }
   const reviewReason = typeof result.codex_review_reason === "string" ? result.codex_review_reason : ""
   const sourceCompletionReason = typeof result.codex_source_task_completion_reason === "string"
     ? result.codex_source_task_completion_reason

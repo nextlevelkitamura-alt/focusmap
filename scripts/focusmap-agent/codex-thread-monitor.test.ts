@@ -697,6 +697,35 @@ describe('codex-thread-monitor state detection', () => {
     expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
   });
 
+  test('does not let thread metadata updates extend a stale running task', () => {
+    const raw = [
+      line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
+    ].join('\n');
+    const row = {
+      ...threadRow,
+      updated_at_ms: Date.parse('2026-06-08T16:05:00.000Z'),
+    };
+
+    const summary = parseRollout(raw, row);
+    const state = taskStateForSummary(
+      task({ status: 'running', result: { codex_run_state: 'running' } }),
+      summary,
+      Date.parse('2026-06-08T16:10:01.000Z'),
+    );
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row,
+      summary,
+      nowMs: Date.parse('2026-06-08T16:10:01.000Z'),
+    });
+
+    expect(summary.threadUpdatedAt).toBe('2026-06-08T16:05:00.000Z');
+    expect(state).toEqual({ status: 'awaiting_approval', resumed: false });
+    expect(presentation.status).toBe('awaiting_approval');
+    expect(presentation.runState).toBe('stale_no_terminal_event');
+    expect(presentation.staleRunningLastActivityAt).toBe('2026-06-08T15:40:00.000Z');
+  });
+
   test('keeps passive context maintenance after task_complete in awaiting approval', () => {
     const raw = [
       line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),

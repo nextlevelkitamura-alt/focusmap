@@ -42,7 +42,7 @@ export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 2_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
-export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-23-stale-running-v2';
+export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-23-stale-running-v3';
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
@@ -1422,6 +1422,7 @@ function staleRunningAiHistoryEndedAt(input: {
     input.summary,
     input.nowMs,
     aiHistoryStaleRunningThresholdMs(input.row),
+    timestampToIso(input.row.created_at_ms ?? null),
   );
 }
 
@@ -1896,6 +1897,7 @@ function staleRunningWithoutTerminalEventEndedAt(
   summary: RolloutSummary,
   nowMs: number,
   thresholdMs = TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS,
+  fallbackStartedAt: string | null = null,
 ): string | null {
   if (summary.state !== 'running') return null;
   if (summary.threadArchived) return null;
@@ -1904,20 +1906,30 @@ function staleRunningWithoutTerminalEventEndedAt(
     timeMs(summary.latestRunningActivityAt) ?? 0,
     timeMs(summary.latestTaskStartedAt) ?? 0,
     timeMs(summary.latestUserMessageAt) ?? 0,
+    timeMs(summary.activeStartedAt) ?? 0,
+    timeMs(summary.startedAt) ?? 0,
   );
-  const latestRunningMs = explicitRunningMs > 0
-    ? explicitRunningMs
-    : Math.max(
-        timeMs(summary.lastActivityAt) ?? 0,
-        timeMs(summary.threadUpdatedAt) ?? 0,
-      );
+  const latestRunningMs = explicitRunningMs > 0 ? explicitRunningMs : timeMs(fallbackStartedAt) ?? 0;
   if (latestRunningMs <= 0) return null;
   if (nowMs - latestRunningMs < thresholdMs) return null;
   return new Date(latestRunningMs).toISOString();
 }
 
-function staleRunningTaskWithoutTerminalEvent(summary: RolloutSummary, nowMs: number): boolean {
-  return Boolean(staleRunningWithoutTerminalEventEndedAt(summary, nowMs));
+function taskStaleRunningFallbackAt(task: AiTask): string | null {
+  return latestIso(task.started_at, task.created_at);
+}
+
+function staleRunningTaskEndedAt(task: AiTask, summary: RolloutSummary, nowMs: number): string | null {
+  return staleRunningWithoutTerminalEventEndedAt(
+    summary,
+    nowMs,
+    TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS,
+    taskStaleRunningFallbackAt(task),
+  );
+}
+
+function staleRunningTaskWithoutTerminalEvent(task: AiTask, summary: RolloutSummary, nowMs: number): boolean {
+  return Boolean(staleRunningTaskEndedAt(task, summary, nowMs));
 }
 
 export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs = Date.now()) {
@@ -1936,12 +1948,12 @@ export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs
       }
       return { status: 'awaiting_approval' as const, resumed: true };
     }
-    if (staleRunningTaskWithoutTerminalEvent(summary, nowMs)) {
+    if (staleRunningTaskWithoutTerminalEvent(task, summary, nowMs)) {
       return { status: 'awaiting_approval' as const, resumed: false };
     }
     return { status: 'running' as const, resumed: true };
   }
-  if (staleRunningTaskWithoutTerminalEvent(summary, nowMs)) {
+  if (staleRunningTaskWithoutTerminalEvent(task, summary, nowMs)) {
     return { status: 'awaiting_approval' as const, resumed: false };
   }
   if (task.status === 'running' && summary.state === 'awaiting_approval' && !awaitingApprovalSignalStable(summary, nowMs)) {
@@ -2131,6 +2143,9 @@ function resultSnapshot(
 ): TaskResultJson {
   const result = taskResult(task);
   const nowIso = new Date().toISOString();
+  const staleRunningEndedAt = status === 'awaiting_approval'
+    ? staleRunningTaskEndedAt(task, summary, Date.now())
+    : null;
   const lastActivityAt = latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms) ?? nowIso;
   const currentStep = status === 'running' && summary.state === 'awaiting_approval'
     ? 'Codexの実行状態を確認中'
@@ -2153,8 +2168,16 @@ function resultSnapshot(
     codex_thread_id: threadId,
     codex_thread_url: `codex://threads/${threadId}`,
     codex_external_origin: codexExternalOrigin,
-    codex_run_state: status === 'running' ? 'running' : 'awaiting_approval',
-    codex_review_reason: status === 'running' ? 'started' : summary.reviewReason,
+    codex_run_state: status === 'running'
+      ? 'running'
+      : staleRunningEndedAt
+        ? 'stale_no_terminal_event'
+        : 'awaiting_approval',
+    codex_review_reason: status === 'running'
+      ? 'started'
+      : staleRunningEndedAt
+        ? 'monitoring_lost'
+        : summary.reviewReason,
     codex_thread_archived: Boolean(row.archived),
     codex_source_task_id: typeof result.codex_source_task_id === 'string'
       ? result.codex_source_task_id
@@ -2164,7 +2187,7 @@ function resultSnapshot(
     codex_turn_started_at: summary.latestTaskStartedAt ?? undefined,
     codex_turn_completed_at: summary.latestTaskCompleteAt ?? undefined,
     awaiting_approval_at: status === 'awaiting_approval'
-      ? awaitingApprovalAtForSummary(result, summary, nowIso)
+      ? staleRunningEndedAt ?? awaitingApprovalAtForSummary(result, summary, nowIso)
       : undefined,
     codex_visible_messages: activityBatch.messages.slice(-MAX_ACTIVITY_MESSAGES_PER_UPDATE),
     codex_activity_synced_sequence: activityBatch.syncedSequence ?? previousSyncedSequence,
@@ -2177,6 +2200,9 @@ function resultSnapshot(
       source_task_title: sourceTaskTitleSuggestion ?? undefined,
       thread_updated_at_ms: row.updated_at_ms ?? null,
       thread_archived: Boolean(row.archived),
+      stale_running: Boolean(staleRunningEndedAt),
+      stale_running_last_activity_at: staleRunningEndedAt,
+      stale_running_threshold_ms: staleRunningEndedAt ? TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS : null,
       preview_chars: typeof row.preview === 'string' ? row.preview.length : 0,
     },
   };

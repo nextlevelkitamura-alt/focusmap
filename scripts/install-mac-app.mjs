@@ -17,9 +17,36 @@ async function exists(filePath) {
   }
 }
 
+async function expectedResolverVersion() {
+  const source = await fs.readFile(path.join(root, 'scripts', 'focusmap-agent', 'src', 'codex-thread-monitor.ts'), 'utf8')
+  const match = source.match(/CODEX_THREAD_STATUS_RESOLVER_VERSION\s*=\s*['"]([^'"]+)['"]/)
+  if (!match?.[1]) {
+    throw new Error('focusmap-agent resolver version が source から読み取れません。')
+  }
+  return match[1]
+}
+
+async function assertBundledAgentResolver(appPath, expectedVersion) {
+  const bundledMonitor = path.join(appPath, 'Contents', 'Resources', 'focusmap-agent', 'dist', 'codex-thread-monitor.js')
+  if (!(await exists(bundledMonitor))) {
+    throw new Error(`同梱focusmap-agentが見つかりません: ${bundledMonitor}`)
+  }
+  const bundledSource = await fs.readFile(bundledMonitor, 'utf8')
+  if (!bundledSource.includes(expectedVersion)) {
+    throw new Error([
+      `同梱focusmap-agentのresolver versionが古い可能性があります: ${bundledMonitor}`,
+      `expected: ${expectedVersion}`,
+      '先に npm run mac:build を実行し、dist-desktop の Focusmap.app を作り直してください。',
+    ].join('\n'))
+  }
+}
+
 if (!(await exists(sourceApp))) {
   throw new Error(`ビルド済みアプリが見つかりません: ${sourceApp}\n先に npm run mac:build を実行してください。`)
 }
+
+const resolverVersion = await expectedResolverVersion()
+await assertBundledAgentResolver(sourceApp, resolverVersion)
 
 await execFileAsync('/usr/bin/osascript', [
   '-e',
@@ -37,6 +64,8 @@ await execFileAsync('/System/Library/Frameworks/CoreServices.framework/Framework
   '-f',
   targetApp,
 ]).catch(() => {})
+await assertBundledAgentResolver(targetApp, resolverVersion)
 
 console.log(`Installed ${targetApp}`)
+console.log(`focusmap-agent resolver version: ${resolverVersion}`)
 console.log('Dock の ? アイコンは削除し、/Applications/Focusmap.app をDockへ追加してください。')

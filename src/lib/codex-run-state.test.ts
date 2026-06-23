@@ -244,6 +244,7 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: { codex_run_state: "stale_no_terminal_event" } })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "pending", result: { codex_run_state: "running" } })).toEqual({ state: "prompt_waiting", label: "未送信" })
     expect(getCodexTaskUiState({
       executor: "codex_app",
