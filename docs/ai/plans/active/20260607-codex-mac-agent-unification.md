@@ -175,7 +175,7 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 
 Planner棚卸しでは、Codex送信、Codex監視、archive request、Codex activity同期は `focusmap-agent` へ概ね移管済みと判断した。一方で、`src/app/api/ai-tasks/schedule/route.ts` の即時 `task-runner.ts --fast` spawn、repo scan、staff-status、Claude/package/recurrenceを含むscheduled task、`scripts/setup.sh` / `com.focusmap.task-runner.plist` の旧launchd導線が残務として残っている。
 
-推奨順は、まずAPI workerで通常 `codex_app` auto taskの旧runner spawnを廃止し、次にAgent workerで残務移管またはlegacy条件を固定し、UI workerでactive表示を3秒以内へ揃え、Desktop/Installer workerで新規setupから旧launchd導線を外す。その後Integration workerがlocal mainへ統合し、3秒同期測定、Mac実機確認、Cloud Runでローカルrunner前提がないことの確認、`docs/CONTEXT.md` 更新をまとめて行う。
+推奨順は、まずPreflightで `schedule/route.ts` が作る `ai_tasks` がagentのclaim条件（`pending` / `scheduled_at <= now()` / `executor='codex_app'` / `dispatch_mode='auto'` / runner heartbeat・space権限一致）を満たすことを確認し、その後API workerで通常 `codex_app` auto taskの旧runner spawnを廃止する。次にAgent workerで残務移管またはlegacy条件を固定し、UI workerでactive表示を3秒以内へ揃える。3秒SLOはSystem sync（agent/DB/Turso更新）とVisible sync（画面表示）を分け、画面起点の送信では即時refresh込みで3秒以内を目指す。Desktop/Installer workerで新規setupから旧launchd導線を外した後、Integration workerがlocal mainへ統合し、3秒同期測定、Mac実機確認、Cloud Runでローカルrunner前提がないことの確認、`docs/CONTEXT.md` 更新をまとめて行う。
 
 旧 `task-runner` は最初の実装フェーズでは削除せず、`FOCUSMAP_LEGACY_CODEX_MONITOR=1` や `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した互換/debug用途へ落とす。repo scan、staff-status、scheduled/package実行の移管または廃止判断が終わるまで、ファイル自体の削除は不可とする。
 

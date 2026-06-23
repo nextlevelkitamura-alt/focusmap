@@ -73,10 +73,17 @@
 
 対象はwarm path（Focusmap Mac app、`focusmap-agent`、Codex app-serverが起動済み、ページがvisible）とする。cold startや初回ログイン、Codex Desktop未導入、Full Disk Access不足は別枠で理由表示を合格条件にする。
 
+このフェーズのSLOは2層に分ける。
+
+- System sync: agent/DB/Turso snapshotの状態が、観測可能な入力またはCodex eventから3秒以内に更新されること。
+- Visible sync: 画面表示中のactive taskは、ユーザー操作直後の楽観表示または即時refreshを含めて3秒以内に状態が変わって見えること。
+
+単純に「agent claim 3秒 + UI poll 3秒」へすると、最悪6秒になり、今回の目的に合わない。UI workerは、送信直後・詳細open直後・active task検出直後に即時snapshot refreshを行い、その後のactive pollを3秒以内にする。外部Codex.appで直接開始したthreadのようにユーザー操作起点がFocusmap外にあるものは、System sync 3秒を優先し、Visible syncは次回active pollまたはAI履歴hot-sync表示までを測る。
+
 | ケース | 受け入れ条件 | 測定方法 |
 |---|---|---|
 | タスク作成直後 | API response時点でUIは楽観表示または `pending` / `needs_input` を表示する。auto `codex_app` はagent claimまで最大3秒、manual handoffは即 `prompt_waiting`。 | browser `performance.now()`、API response `created_at`、`ai_tasks.status`、Turso snapshot `updated_at` を記録。 |
-| `pending -> running` | `focusmap-agent` がclaimしてから3秒以内、またはtask作成から3秒以内に `started_at` とTurso snapshotが `running` になる。UI visible時は次回3秒poll以内に反映する。 | `~/.focusmap/logs/agent.log` の `claimed task`、`ai_tasks.started_at`、`/api/task-progress/snapshot` のserver_time、画面表示時刻を比較。 |
+| `pending -> running` | `focusmap-agent` がclaimしてから3秒以内、またはtask作成から3秒以内に `started_at` とTurso snapshotが `running` になる。Focusmap画面から作ったtaskは、送信直後refreshを含めてvisible UIも3秒以内に `running` または理由付き待機状態へ進む。 | `~/.focusmap/logs/agent.log` の `claimed task`、`ai_tasks.started_at`、`/api/task-progress/snapshot` のserver_time、画面表示時刻を比較。 |
 | `running -> awaiting_approval / completed / failed` | Codex rollout/app-serverのterminal signal検出から3秒以内にagentが状態変化をforce送信し、UIが3秒poll以内に表示する。archive requestによる `completed` も同じ。 | rollout `task_complete` / failure event時刻、agent `last_activity_at` / `awaiting_approval_at`、snapshot更新、画面表示を5試行で測る。 |
 | `prompt_waiting` | manual handoff作成後、API responseまたは同一画面の状態更新で即表示。Codex.appで人間が送信した後、scope既知ならthread検出から3秒以内に `running` または `awaiting_approval` へ進む。 | API response status、handoff token、Codex SQLite `updated_at_ms`、agent初回thread保存時刻、UI状態を比較。 |
 | Codex.app直接開始thread取り込み | 監視scope取得済みのrepo/worktreeでは、Codex thread更新から3秒以内にAI履歴metadataまたは既存task状態へ反映し、AI履歴UIの2秒poll/active UIの3秒pollで表示する。scope変更直後は、target refresh 3秒を含めて「監視反映待ち」を表示し、scope heartbeat後のthread更新から3秒以内を合格にする。 | Codex SQLite `threads.updated_at_ms`、agent heartbeat `codex_last_scope_refresh_at`、`ai_history_items.indexed_at`、UI表示時刻を比較。 |
@@ -140,14 +147,22 @@ API spawn廃止、agent残務移管、UI polling統一、Desktop/Installer整理
 
 ## 推奨実装順
 
-1. API worker: `schedule/route.ts` の `task-runner.ts --fast` spawnを通常経路から外す。`focusmap-agent` claim 3秒があるため、通常auto Codexはここから一本化できる。
-2. Agent worker: Codex送信/監視/archiveのparityを固め、repo scan / scheduled / staff-status / packageの移管可否を実装または明確に残務化する。
-3. UI worker: active表示を3秒以内へ揃え、`sync-node` write fallbackを通常UIから縮小する。
+0. Preflight / Contract gate: API worker着手前に、`schedule/route.ts` が作る `ai_tasks` が `claim_ai_task_for_runner` の条件を満たすことを確認する。最低条件は `status='pending'`、`scheduled_at <= now()`、`executor='codex_app'`、`dispatch_mode='auto'`、runner heartbeat/executors/space権限一致。ここが曖昧なままspawnを外すと、旧runnerだけが拾っていたtaskが無反応になる。
+1. API worker: `schedule/route.ts` の `task-runner.ts --fast` spawnを通常経路から外す。Cloud Runでは絶対にローカルscriptをspawnしないこと、ローカルでも通常はagent claimへ寄せることをテストで固定する。
+2. Agent worker: Codex送信/監視/archiveのparityを固め、repo scan / scheduled / staff-status / packageの移管可否を実装または明確に残務化する。staff-statusのような個人運用は、プロダクト要件が確認できるまでfocusmap-agentへ安易に移植しない。
+3. UI worker: active表示を3秒以内へ揃え、送信直後・詳細open直後・active task検出直後の即時refreshを入れる。`sync-node` write fallbackは通常UIから縮小する。
 4. Desktop/Installer worker: `setup.sh` の旧launchd導線を外し、Mac app status/installerで旧runnerを通常接続条件にしない。
 5. Docs/Test worker: 実装後のCONTEXT更新案、テスト観点、3秒測定表を整える。
 6. Integration worker: local mainへ統合し、必要な検証をまとめて実行し、旧launchd停止タイミングを最終判断する。
 
 旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は既に旧launchd停止を行うため、新規installでは停止方向。既存Macの `com.focusmap.task-runner` unloadはIntegrationのMac実機確認フェーズで、未移管scheduled taskが無いことを確認してから行う。
+
+## worker起動前の共通ルール
+
+- 各workerは `main` の最新commitをbaseにする。現時点ではPlanner commit `b7023df3` 以降を前提にする。
+- 既存worktreeに近い作業がある場合は、新しいworktreeを増やす前に `git worktree list` で状態を確認し、`active` / `integrated候補` / `abandoned候補` を親チャットへ報告する。特に `focusmap-ai-history-fast-watch-agent` はagent領域と重なる可能性があるため、Agent worker開始前に差分を確認する。
+- Frontend/API/Agent/Desktop workerは、`docs/ai/task-board.md`、`docs/ai/task-runs.jsonl`、`docs/ai/mistakes.md`、`docs/ai/task-router-analysis.md`、archive系を編集しない。進捗記録はIntegrationへ報告する。
+- 旧runner fallbackを残す場合も、本番Cloud Runや通常installから自動起動されないことを不変条件にする。rollbackは原則として対象worker commitのrevertまたは明示legacy envで行い、暗黙fallbackで失敗を隠さない。
 
 ## テスト計画
 
