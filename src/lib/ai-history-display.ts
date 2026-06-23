@@ -43,6 +43,11 @@ export function aiHistoryStatusLabel(status: AiHistoryStatus | string | null | u
   }
 }
 
+export function aiHistoryMonitorStatusLabel(item: Pick<AiHistoryListItem, "status" | "runState">) {
+  if (item.runState === "stale_no_terminal_event") return "要確認"
+  return aiHistoryStatusLabel(item.status)
+}
+
 export function aiHistoryPlacementLabel(item: Pick<AiHistoryListItem, "placement">) {
   return item.placement === "mindmap" ? "マインドマップ" : "未配置"
 }

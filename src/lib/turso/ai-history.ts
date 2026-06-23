@@ -7,6 +7,7 @@ import type {
   AiHistoryDetailMessageKind,
   AiHistoryDetailMessageRole,
   AiHistoryListItem,
+  AiHistoryMonitorTarget,
   AiHistoryPlacement,
   AiHistoryScopeFilter,
   AiHistoryStatus,
@@ -514,6 +515,21 @@ export function toAiHistoryListItem(
     codexOpenUrl: item.provider === 'codex_app' && item.external_thread_id
       ? `codex://threads/${item.external_thread_id}`
       : null,
+  }
+}
+
+export function toAiHistoryMonitorTarget(item: TursoAiHistoryItem): AiHistoryMonitorTarget {
+  return {
+    historyItemId: item.id,
+    id: item.id,
+    provider: item.provider,
+    externalThreadId: item.external_thread_id,
+    repoPath: item.repo_path,
+    projectId: item.project_id,
+    status: item.status,
+    runState: item.run_state,
+    lastActivityAt: item.last_activity_at,
+    indexedAt: item.indexed_at,
   }
 }
 
@@ -1157,6 +1173,38 @@ export async function listAiHistorySnapshot(options: {
   })
   const items = result.rows.map(row => asItem(row as Row))
   return options.cursor ? items : items.reverse()
+}
+
+export async function listActiveAiHistoryMonitorTargets(options: {
+  userId: string
+  provider?: string | null
+  limit?: number
+}) {
+  const provider = asString(options.provider) ?? 'codex_app'
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 200)
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT *
+      FROM ai_history_items
+      WHERE user_id = ?
+        AND provider = ?
+        AND archived = 0
+        AND deleted_at IS NULL
+        AND status IN ('running', 'awaiting_approval', 'needs_input')
+      ORDER BY
+        CASE status
+          WHEN 'running' THEN 0
+          WHEN 'awaiting_approval' THEN 1
+          WHEN 'needs_input' THEN 1
+          ELSE 2
+        END ASC,
+        indexed_at DESC,
+        id DESC
+      LIMIT ?
+    `,
+    args: [options.userId, provider, limit],
+  })
+  return result.rows.map(row => asItem(row as Row))
 }
 
 export async function latestAiHistoryIndex(options: {

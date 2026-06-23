@@ -9,8 +9,6 @@ import {
   aiHistoryPresentationForThread,
   aiHistoryTitle,
   AI_HISTORY_FAST_WATCH_LIMIT,
-  AI_HISTORY_STALE_RUNNING_AUTOMATION_MS,
-  AI_HISTORY_STALE_RUNNING_GENERAL_MS,
   AI_HISTORY_PLACEHOLDER_TITLE,
   AWAITING_APPROVAL_STABILITY_MS,
   awaitingApprovalAtForSummary,
@@ -523,7 +521,7 @@ describe('codex-thread-monitor state detection', () => {
       rawRollout: raw,
       row,
       summary,
-      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + AI_HISTORY_STALE_RUNNING_AUTOMATION_MS + 1,
+      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS + 1,
     });
 
     expect(summary.historyStatus).toBe('running');
@@ -532,9 +530,10 @@ describe('codex-thread-monitor state detection', () => {
     expect(presentation.endedAt).toBe('2026-06-14T12:36:07.000Z');
     expect(presentation.workDurationSeconds).toBe(10);
     expect(presentation.staleRunningLastActivityAt).toBe('2026-06-14T12:36:07.000Z');
+    expect(presentation.staleRunningThresholdMs).toBe(TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS);
   });
 
-  test('keeps non-Automation running AI history inside the general stale window', () => {
+  test('moves non-Automation AI history to stale awaiting approval after the shared stale window', () => {
     const raw = [
       line('2026-06-14T12:35:57.000Z', { type: 'task_started' }),
       line('2026-06-14T12:36:07.000Z', { type: 'function_call_output', output: 'ok' }),
@@ -551,14 +550,16 @@ describe('codex-thread-monitor state detection', () => {
       rawRollout: raw,
       row,
       summary,
-      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + AI_HISTORY_STALE_RUNNING_AUTOMATION_MS + 1,
+      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS - 1,
     }).status).toBe('running');
-    expect(aiHistoryPresentationForThread({
+    const presentation = aiHistoryPresentationForThread({
       rawRollout: raw,
       row,
       summary,
-      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + AI_HISTORY_STALE_RUNNING_GENERAL_MS + 1,
-    }).status).toBe('awaiting_approval');
+      nowMs: Date.parse('2026-06-14T12:36:07.000Z') + TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS + 1,
+    });
+    expect(presentation.status).toBe('awaiting_approval');
+    expect(presentation.runState).toBe('stale_no_terminal_event');
   });
 
   test('marks a user message after completion as resumed running metadata', () => {

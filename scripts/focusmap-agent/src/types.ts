@@ -226,6 +226,18 @@ export interface AiHistoryBatchUpsertResponseItem {
   linkedAiTaskId?: string | null;
 }
 
+export interface AiHistoryMonitorTarget {
+  historyItemId: string;
+  provider: 'codex_app' | string;
+  externalThreadId: string;
+  repoPath: string;
+  projectId?: string | null;
+  status?: AiHistoryStatus | null;
+  runState?: string | null;
+  lastActivityAt?: string | null;
+  indexedAt?: string | null;
+}
+
 export interface AiHistoryDetailHydrateRequest {
   historyItemId: string;
   provider: 'codex_app' | string;

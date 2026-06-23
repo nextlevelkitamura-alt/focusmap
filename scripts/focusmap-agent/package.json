@@ -1,6 +1,6 @@
 {
   "name": "@focusmap/agent",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Focusmap ローカル実行エージェント (Macで常駐し、Webアプリからの自動化タスクとCodex.app送信を実行)",
   "type": "module",
   "main": "dist/index.js",

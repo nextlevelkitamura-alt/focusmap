@@ -13,9 +13,9 @@ import {
   type CodexDisplaySummaryInput,
 } from "@/lib/codex-display-summary"
 import {
+  aiHistoryMonitorStatusLabel,
   aiHistoryPlacementLabel,
   aiHistoryRepoName,
-  aiHistoryStatusLabel,
   aiHistoryWorkTiming,
   formatAiHistoryRelativeTime,
   normalizeAiHistoryRepoPath,
@@ -184,7 +184,7 @@ function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem
     status: visualStatus,
     projectTitle: null,
     placementLabel: aiHistoryPlacementLabel(item),
-    statusLabel: aiHistoryStatusLabel(item.status),
+    statusLabel: aiHistoryMonitorStatusLabel(item),
     updatedLabel: formatAiHistoryRelativeTime(item.lastActivityAt),
     sortAt: item.lastActivityAt || item.indexedAt,
     ...aiHistoryWorkTiming(item),

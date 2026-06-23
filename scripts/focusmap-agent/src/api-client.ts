@@ -7,6 +7,7 @@ import type {
   AiHistoryDetailActivityUpsertResponse,
   AiHistoryDetailHydrateRequest,
   AiHistoryDetailMessage,
+  AiHistoryMonitorTarget,
   AiTask,
   CodexThreadImportPayload,
   CodexThreadImportScope,
@@ -289,6 +290,20 @@ export class AgentApiClient {
       },
     );
     return Array.isArray(data.requests) ? data.requests : [];
+  }
+
+  async listActiveAiHistoryMonitorTargets(
+    runnerId: string,
+    limit = 100,
+  ): Promise<AiHistoryMonitorTarget[]> {
+    const data = await this.request<{ targets?: AiHistoryMonitorTarget[] }>(
+      '/agents/ai-history/active-monitor-targets',
+      {
+        runner_id: runnerId,
+        limit,
+      },
+    );
+    return Array.isArray(data.targets) ? data.targets : [];
   }
 
   async upsertAiHistoryDetailActivity(

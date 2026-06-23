@@ -12,6 +12,7 @@ import type {
   AiHistoryBatchUpsertScope,
   AiHistoryDetailHydrateRequest,
   AiHistoryDetailMessage,
+  AiHistoryMonitorTarget,
   AiHistoryStatus,
   AiTask,
   CodexThreadImportScope,
@@ -41,6 +42,7 @@ export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 2_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
+export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-23-stale-running-v2';
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
@@ -54,14 +56,15 @@ const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
 const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
 const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
+const AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT = 100;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
 const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
 const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived';
 export const AI_HISTORY_PLACEHOLDER_TITLE = '新しいチャット';
 const AI_HISTORY_PLACEHOLDER_TITLE_WATCH_TTL_MS = 5 * 60 * 1000;
 const MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST = 50;
-export const AI_HISTORY_STALE_RUNNING_GENERAL_MS = 2 * 60 * 60 * 1000;
-export const AI_HISTORY_STALE_RUNNING_AUTOMATION_MS = 30 * 60 * 1000;
+export const AI_HISTORY_STALE_RUNNING_GENERAL_MS = TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
+export const AI_HISTORY_STALE_RUNNING_AUTOMATION_MS = TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
 const RUNNING_THREAD_ROLLOUT_RECHECK_MS = 1_000;
 const ACTIVE_RUNNING_ACTIVITY_WINDOW_MS = 30_000;
 const STALE_RUNNING_THREAD_ROLLOUT_RECHECK_MS = 30_000;
@@ -77,6 +80,7 @@ const PROMPT_MATCH_PREFIX_CHARS = 500;
 const MIN_PROMPT_MATCH_CHARS = 120;
 let orphanImportApiUnavailableUntil = 0;
 let importScopesApiUnavailableUntil = 0;
+let activeAiHistoryMonitorTargetsApiUnavailableUntil = 0;
 const WORKTREE_PATH_CACHE_TTL_MS = 30_000;
 const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }>();
 const aiHistorySyncCache = new Map<string, { hash: string; sentAt: number; running: boolean }>();
@@ -141,6 +145,7 @@ function updateCodexThreadMonitorHeartbeatState(patch: Partial<CodexThreadMonito
 function codexThreadImportScopeMetadataFlat() {
   const scopes = codexThreadMonitorHeartbeatState.scopes;
   return {
+    codex_status_resolver_version: CODEX_THREAD_STATUS_RESOLVER_VERSION,
     codex_monitor_db_available: codexThreadMonitorHeartbeatState.state_db_found,
     codex_monitor_db_path: codexThreadMonitorHeartbeatState.state_db_path,
     codex_import_scopes_count: scopes.length,
@@ -1400,19 +1405,9 @@ function aiHistoryStatusForSummary(rawRollout: string, row: CodexThreadRow, summ
   return summary.historyStatus;
 }
 
-function isAutomationAiHistoryThread(row: CodexThreadRow): boolean {
-  const text = compactText([
-    row.title ?? '',
-    row.preview ?? '',
-    row.first_user_message ?? '',
-  ].filter(Boolean).join('\n'), 2_000);
-  return /^Automation:/iu.test(text.trim()) || /\bAutomation ID:/iu.test(text);
-}
-
 function aiHistoryStaleRunningThresholdMs(row: CodexThreadRow): number {
-  return isAutomationAiHistoryThread(row)
-    ? AI_HISTORY_STALE_RUNNING_AUTOMATION_MS
-    : AI_HISTORY_STALE_RUNNING_GENERAL_MS;
+  void row;
+  return TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
 }
 
 function staleRunningAiHistoryEndedAt(input: {
@@ -1423,16 +1418,11 @@ function staleRunningAiHistoryEndedAt(input: {
 }): string | null {
   if (input.status !== 'running') return null;
   if (input.summary.threadArchived) return null;
-  const lastActivityAt = latestIso(
-    input.summary.lastActivityAt,
-    input.summary.threadUpdatedAt,
-    input.row.updated_at_ms,
-    input.row.created_at_ms,
+  return staleRunningWithoutTerminalEventEndedAt(
+    input.summary,
+    input.nowMs,
+    aiHistoryStaleRunningThresholdMs(input.row),
   );
-  const lastActivityMs = timeMs(lastActivityAt);
-  if (lastActivityMs === null) return null;
-  if (input.nowMs - lastActivityMs < aiHistoryStaleRunningThresholdMs(input.row)) return null;
-  return new Date(lastActivityMs).toISOString();
 }
 
 function durationSecondsBetween(startedAt: string | null, endedAt: string | null): number | null {
@@ -1902,9 +1892,13 @@ function awaitingApprovalSignalStable(summary: RolloutSummary, nowMs: number): b
   return nowMs - completeMs >= AWAITING_APPROVAL_STABILITY_MS;
 }
 
-function staleRunningTaskWithoutTerminalEvent(summary: RolloutSummary, nowMs: number): boolean {
-  if (summary.state !== 'running') return false;
-  if (summary.threadArchived) return false;
+function staleRunningWithoutTerminalEventEndedAt(
+  summary: RolloutSummary,
+  nowMs: number,
+  thresholdMs = TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS,
+): string | null {
+  if (summary.state !== 'running') return null;
+  if (summary.threadArchived) return null;
 
   const explicitRunningMs = Math.max(
     timeMs(summary.latestRunningActivityAt) ?? 0,
@@ -1917,8 +1911,13 @@ function staleRunningTaskWithoutTerminalEvent(summary: RolloutSummary, nowMs: nu
         timeMs(summary.lastActivityAt) ?? 0,
         timeMs(summary.threadUpdatedAt) ?? 0,
       );
-  if (latestRunningMs <= 0) return false;
-  return nowMs - latestRunningMs >= TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
+  if (latestRunningMs <= 0) return null;
+  if (nowMs - latestRunningMs < thresholdMs) return null;
+  return new Date(latestRunningMs).toISOString();
+}
+
+function staleRunningTaskWithoutTerminalEvent(summary: RolloutSummary, nowMs: number): boolean {
+  return Boolean(staleRunningWithoutTerminalEventEndedAt(summary, nowMs));
 }
 
 export function taskStateForSummary(task: AiTask, summary: RolloutSummary, nowMs = Date.now()) {
@@ -2455,6 +2454,24 @@ function normalizedHydrateRequest(value: AiHistoryDetailHydrateRequest): AiHisto
   };
 }
 
+function normalizedAiHistoryMonitorTarget(value: AiHistoryMonitorTarget): AiHistoryMonitorTarget | null {
+  const historyItemId = typeof value.historyItemId === 'string' ? value.historyItemId.trim() : '';
+  const externalThreadId = typeof value.externalThreadId === 'string' ? value.externalThreadId.trim() : '';
+  const repoPath = normalizeLocalPath(value.repoPath);
+  if (!historyItemId || !externalThreadId || !repoPath) return null;
+  return {
+    ...value,
+    historyItemId,
+    externalThreadId,
+    repoPath,
+    provider: typeof value.provider === 'string' && value.provider.trim() ? value.provider.trim() : AI_HISTORY_PROVIDER,
+    projectId: typeof value.projectId === 'string' && value.projectId.trim() ? value.projectId.trim() : null,
+    runState: typeof value.runState === 'string' && value.runState.trim() ? value.runState.trim() : null,
+    lastActivityAt: typeof value.lastActivityAt === 'string' && value.lastActivityAt.trim() ? value.lastActivityAt.trim() : null,
+    indexedAt: typeof value.indexedAt === 'string' && value.indexedAt.trim() ? value.indexedAt.trim() : null,
+  };
+}
+
 function hydrateRequestExpiresAtMs(request: AiHistoryDetailHydrateRequest, nowMs = Date.now()): number {
   return timeMs(request.expiresAt) ?? nowMs + AI_HISTORY_DETAIL_WATCH_TTL_MS;
 }
@@ -2585,6 +2602,7 @@ async function syncAiHistoryMetadata(
   dbPath: string,
   tasks: AiTask[],
   importScopes: CodexThreadImportScope[],
+  activeMonitorTargets: AiHistoryMonitorTarget[] = [],
   mode: AiHistorySyncMode = 'hot',
   maxItems = AI_HISTORY_HOT_SYNC_LIMIT,
   includeScopeUpserts = false,
@@ -2624,14 +2642,50 @@ async function syncAiHistoryMetadata(
       ORPHAN_IMPORT_SCAN_LIMIT,
     );
   }
-  const syncScopes = includeAllCodexCwds
-    ? aiHistoryScopesForRows(importScopes, recentRows, cwdScopeMap)
+  const activeTargets = activeMonitorTargets
+    .map(normalizedAiHistoryMonitorTarget)
+    .filter((target): target is AiHistoryMonitorTarget => Boolean(target));
+  const activeTargetsByThreadId = new Map(activeTargets.map(target => [target.externalThreadId, target]));
+  const activeTargetRows: CodexThreadRow[] = [];
+  if (mode === 'hot' && activeTargets.length > 0) {
+    const recentRowIds = new Set(recentRows.map(row => row.id).filter(Boolean));
+    for (const target of activeTargets) {
+      if (recentRowIds.has(target.externalThreadId)) continue;
+      try {
+        const row = await readThread(dbPath, target.externalThreadId);
+        if (row) {
+          activeTargetRows.push(row);
+          recentRowIds.add(row.id);
+        }
+      } catch (error) {
+        logError(`ai history active watch failed thread=${target.externalThreadId.slice(0, 8)}`, error instanceof Error ? error.message : error);
+      }
+    }
+  }
+  const rowsForScopeResolution = mergeRecentThreadsForHotSync(recentRows, activeTargetRows);
+  const baseSyncScopes = includeAllCodexCwds
+    ? aiHistoryScopesForRows(importScopes, rowsForScopeResolution, cwdScopeMap)
     : importScopes;
+  const syncScopes = [...baseSyncScopes];
+  const seenSyncScopeKeys = new Set(syncScopes.map(scope => scopeKey(scope)));
+  for (const target of activeTargets) {
+    const repoPath = normalizeLocalPath(target.repoPath);
+    if (!repoPath) continue;
+    const scope = {
+      project_id: target.projectId ?? '',
+      repo_path: repoPath,
+      enabled_since: null,
+    };
+    const key = scopeKey(scope);
+    if (seenSyncScopeKeys.has(key)) continue;
+    syncScopes.push(scope);
+    seenSyncScopeKeys.add(key);
+  }
   if (syncScopes.length === 0) return 0;
   const sessionThreadNames = await readCodexSessionThreadNames();
-  const rowsById = new Map(recentRows.map(row => [row.id, row]));
-  const watchedRows: CodexThreadRow[] = [];
-  const watchedRowIds = new Set<string>();
+  const rowsById = new Map([...recentRows, ...activeTargetRows].map(row => [row.id, row]));
+  const watchedRows: CodexThreadRow[] = [...activeTargetRows];
+  const watchedRowIds = new Set<string>(activeTargetRows.map(row => row.id).filter(Boolean));
   if (mode === 'hot') {
     for (const [historyItemId, request] of aiHistoryDetailWatchRequests.entries()) {
       if (hydrateRequestExpiresAtMs(request, now) <= now) {
@@ -2689,9 +2743,17 @@ async function syncAiHistoryMetadata(
   for (const row of rows) {
     if (preparedItems.length >= preparedItemLimit) break;
     const updatedMs = timeMs(row.updated_at_ms) ?? timeMs(row.created_at_ms) ?? now;
+    const activeTarget = activeTargetsByThreadId.get(row.id);
+    const fallbackScope = activeTarget
+      ? {
+        project_id: activeTarget.projectId ?? '',
+        repo_path: activeTarget.repoPath,
+        enabled_since: null,
+      }
+      : null;
     const matchingScope = matchingThreadImportScope(row, syncScopes, updatedMs, cwdScopeMap, {
       ignoreEnabledSince: true,
-    });
+    }) ?? fallbackScope;
     if (!matchingScope) continue;
     const itemKey = `${row.id}\u001f${normalizeLocalPath(matchingScope.repo_path)}`;
     if (seenItemKeys.has(itemKey)) continue;
@@ -2755,6 +2817,28 @@ async function pollAiHistoryDetailHydrateRequests(
     }
     logError('ai history detail hydrate request poll failed', error instanceof Error ? error.message : error);
     return 0;
+  }
+}
+
+async function listActiveAiHistoryMonitorTargets(
+  api: AgentApiClient,
+  runnerId: string,
+): Promise<AiHistoryMonitorTarget[]> {
+  const now = Date.now();
+  if (now < activeAiHistoryMonitorTargetsApiUnavailableUntil) return [];
+  try {
+    const targets = await api.listActiveAiHistoryMonitorTargets(runnerId, AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT);
+    return targets
+      .map(normalizedAiHistoryMonitorTarget)
+      .filter((target): target is AiHistoryMonitorTarget => Boolean(target));
+  } catch (error) {
+    if (isAiHistorySyncApiUnavailable(error)) {
+      activeAiHistoryMonitorTargetsApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+      info(`ai history active monitor API unavailable status=${error.status}; pausing active history watch for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      return [];
+    }
+    logError('ai history active monitor target refresh failed', error instanceof Error ? error.message : error);
+    return [];
   }
 }
 
@@ -3097,6 +3181,7 @@ export function startCodexThreadMonitorLoop(
   let nextDetailHydratePollAt = 0;
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
+  let activeAiHistoryMonitorTargets: AiHistoryMonitorTarget[] = [];
   let dbPath: string | null = null;
 
   const tick = async () => {
@@ -3122,9 +3207,10 @@ export function startCodexThreadMonitorLoop(
       });
       if (!targetsLoaded || now >= nextTargetRefreshAt) {
         const wasTargetsLoaded = targetsLoaded;
-        const [nextTasks, nextImportScopes] = await Promise.all([
+        const [nextTasks, nextImportScopes, nextActiveAiHistoryMonitorTargets] = await Promise.all([
           api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT),
           listThreadImportScopes(api, runnerId),
+          listActiveAiHistoryMonitorTargets(api, runnerId),
         ]);
         const scopeHeartbeat = await importScopeHeartbeatScopes(nextImportScopes);
         const nextImportScopeSignature = importScopeSignature(nextImportScopes);
@@ -3135,6 +3221,7 @@ export function startCodexThreadMonitorLoop(
         }
         tasks = nextTasks;
         importScopes = nextImportScopes;
+        activeAiHistoryMonitorTargets = nextActiveAiHistoryMonitorTargets;
         targetsLoaded = true;
         nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
         updateCodexThreadMonitorHeartbeatState({
@@ -3177,6 +3264,7 @@ export function startCodexThreadMonitorLoop(
         dbPath,
         tasks,
         importScopes,
+        activeAiHistoryMonitorTargets,
         'hot',
         AI_HISTORY_HOT_SYNC_LIMIT,
         false,
@@ -3197,6 +3285,7 @@ export function startCodexThreadMonitorLoop(
             dbPath,
             tasks,
             [scope],
+            activeAiHistoryMonitorTargets,
             'reconcile',
             AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT,
             true,
@@ -3210,6 +3299,7 @@ export function startCodexThreadMonitorLoop(
             dbPath,
             tasks,
             importScopes,
+            activeAiHistoryMonitorTargets,
             'reconcile',
             AI_HISTORY_HOT_SYNC_TOTAL_LIMIT,
             false,

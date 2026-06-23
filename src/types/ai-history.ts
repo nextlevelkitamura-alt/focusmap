@@ -174,6 +174,19 @@ export type AiHistoryBatchUpsertResponseItem = {
   linkedAiTaskId: string | null
 }
 
+export type AiHistoryMonitorTarget = {
+  historyItemId: string
+  id: string
+  provider: AiHistoryProvider
+  externalThreadId: string
+  repoPath: string
+  projectId: string | null
+  status: AiHistoryStatus
+  runState: string | null
+  lastActivityAt: string
+  indexedAt: string
+}
+
 export type AiHistoryDetailUpsertMessage = {
   sequence?: number | string | null
   role?: AiHistoryDetailMessageRole | null
