@@ -3,9 +3,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AiTask } from '@/types/ai-task'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
+import { getCodexTaskUiState } from '@/lib/codex-run-state'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
 const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
+const PROMPT_WAITING_FAST_SYNC_WINDOW_MS = 3 * 60_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 
 function isCodexTask(task: AiTask) {
@@ -17,13 +19,33 @@ function codexRunState(task: AiTask) {
   return typeof state === 'string' ? state : null
 }
 
-function isActiveCodexTask(task: AiTask) {
+function parseTaskTime(value: string | null | undefined) {
+  if (!value) return 0
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : 0
+}
+
+function taskStartMs(task: AiTask) {
+  return parseTaskTime(task.started_at) || parseTaskTime(task.created_at)
+}
+
+function isRecentPromptWaitingCodexTask(task: AiTask, now = Date.now()) {
+  if (getCodexTaskUiState(task)?.state !== 'prompt_waiting') return false
+  const startedMs = taskStartMs(task)
+  return startedMs > 0 && now - startedMs < PROMPT_WAITING_FAST_SYNC_WINDOW_MS
+}
+
+function isActiveCodexTask(task: AiTask, now = Date.now()) {
   if (!isCodexTask(task)) return false
   if (task.status === 'completed' || task.status === 'failed') return false
+  const rawState = codexRunState(task)
+  if (rawState === 'running' || rawState === 'awaiting_approval') return true
+  const uiState = getCodexTaskUiState(task)?.state
+  if (uiState === 'prompt_waiting') return isRecentPromptWaitingCodexTask(task, now)
+  if (uiState === 'running' || uiState === 'awaiting_approval') return true
   return ACTIVE_STATUSES.includes(task.status) ||
-    codexRunState(task) === 'running' ||
-    codexRunState(task) === 'prompt_waiting' ||
-    codexRunState(task) === 'awaiting_approval'
+    rawState === 'running' ||
+    rawState === 'awaiting_approval'
 }
 
 function hasActiveCodexTask(tasks: Map<string, AiTask>) {
@@ -40,6 +62,19 @@ function activeCodexTaskRefreshKey(tasks: Map<string, AiTask>) {
     keys.push(`${task.id}:${task.status}:${codexRunState(task) ?? 'active'}`)
   }
   return keys.length > 0 ? keys.sort().join('|') : null
+}
+
+function nextPromptWaitingExpiryMs(tasks: Map<string, AiTask>, now = Date.now()) {
+  let next: number | null = null
+  for (const task of tasks.values()) {
+    if (getCodexTaskUiState(task)?.state !== 'prompt_waiting') continue
+    const startedMs = taskStartMs(task)
+    if (startedMs <= 0) continue
+    const expiryMs = startedMs + PROMPT_WAITING_FAST_SYNC_WINDOW_MS
+    if (expiryMs <= now) continue
+    next = next === null ? expiryMs : Math.min(next, expiryMs)
+  }
+  return next
 }
 
 function isPageVisible() {
@@ -80,6 +115,7 @@ export function useNoteAiTasks() {
   }, [fetchInitial])
 
   const activeRefreshKey = useMemo(() => activeCodexTaskRefreshKey(byNoteId), [byNoteId])
+  const promptWaitingExpiryMs = useMemo(() => nextPromptWaitingExpiryMs(byNoteId), [byNoteId])
   const refreshIntervalMs = hasActiveCodexTask(byNoteId)
     ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
@@ -100,6 +136,15 @@ export function useNoteAiTasks() {
     activeRefreshKeyRef.current = activeRefreshKey
     if (isPageVisible()) void fetchInitial()
   }, [activeRefreshKey, fetchInitial])
+
+  useEffect(() => {
+    if (!promptWaitingExpiryMs) return
+    const delay = Math.max(0, promptWaitingExpiryMs - Date.now() + 50)
+    const timeoutId = window.setTimeout(() => {
+      if (isPageVisible()) void fetchInitial()
+    }, delay)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchInitial, promptWaitingExpiryMs])
 
   useEffect(() => {
     const onVisibilityChange = () => {

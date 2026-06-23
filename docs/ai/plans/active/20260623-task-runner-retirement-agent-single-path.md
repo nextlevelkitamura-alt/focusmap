@@ -164,6 +164,15 @@ API spawn廃止、agent残務移管、UI polling統一、Desktop/Installer整理
 - 次の最短効果はUI worker。送信直後、詳細open直後、active task検出直後にsnapshot/statusを即時refreshし、visible syncを3秒以内へ揃える。削除判断に必要な残務はAgent workerでrepo scan / staff-status / scheduled/packageを移管またはlegacy blockerとして固定する。
 - 追加されたroute testsは未実行。AGENTS.mdの検証ポリシーに従い、テスト/lint/buildはユーザー明示時にIntegrationでまとめて行う。
 
+## 2026-06-23 UI worker進捗
+
+- local mainへUI worker commit `8fb75588` を取り込み済み。Integration follow-upで `useAiTasks` / `useNoteAiTasks` の長時間 `prompt_waiting` が3秒pollに残る点を補正し、`useMemoAiTasks` と同じく開始3分後はidle更新へ戻す。
+- `useTaskProgressSnapshot` は詳細open直後・active task検出直後に即時refreshし、active snapshotは3秒poll、idleは45秒pollにする。
+- `useAiTasks` / `useMemoAiTasks` / `useNoteAiTasks` はactive Codex taskを3秒pollにし、manual handoffの `prompt_waiting` は作成直後の3分だけ短周期にする。
+- `useAiHistory` は3秒pollへ揃えた。AI履歴詳細やactivity表示は既存activity/detail cacheを読むだけで、表示中という理由では `/api/codex/sync-node` を呼ばない。
+- CodexNodePanel、リンクメモ詳細、task-progress詳細、wishlist詳細から表示目的の `/api/codex/sync-node` POSTを削除した。`sync-node` route自体はdebug/manual fallbackとして残す。
+- 追加・更新されたUI testsは未実行。AGENTS.mdの検証ポリシーに従い、テスト/lint/buildはユーザー明示時にIntegrationでまとめて行う。
+
 旧launchdを止めるタイミングは、API spawn廃止、agent parity、repo scan/scheduled/staff-statusの扱い確定、setup導線修正がすべて入った後。`install.sh` は既に旧launchd停止を行うため、新規installでは停止方向。既存Macの `com.focusmap.task-runner` unloadはIntegrationのMac実機確認フェーズで、未移管scheduled taskが無いことを確認してから行う。
 
 ## worker起動前の共通ルール

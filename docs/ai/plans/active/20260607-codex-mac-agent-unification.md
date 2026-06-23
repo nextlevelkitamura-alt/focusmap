@@ -180,6 +180,7 @@ Planner棚卸しでは、Codex送信、Codex監視、archive request、Codex act
 旧 `task-runner` は最初の実装フェーズでは削除せず、`FOCUSMAP_LEGACY_CODEX_MONITOR=1` や `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した互換/debug用途へ落とす。repo scan、staff-status、scheduled/package実行の移管または廃止判断が終わるまで、ファイル自体の削除は不可とする。
 
 - 2026-06-23: API workerとheartbeat follow-upをlocal mainへ統合した。`/api/ai-tasks/schedule` の通常 `task-runner.ts --fast` spawnと旧ローカルdispatch env分岐を外し、`codex_app` auto taskはagent claimへ一本化する。`/api/ai-tasks` は `codex_app` / `auto` / `scheduled_at` 未指定時に作成時刻を入れ、manual handoffは `prompt_waiting` / `scheduled_at=null` を維持する。`/api/task-progress/runner-heartbeats` はTurso有効時もSupabase `ai_runners.last_heartbeat_at` を先に更新し、claim判定用heartbeatがstaleになる穴を塞ぐ。次はUI workerでvisible sync 3秒化、Agent workerでrepo scan / staff-status / scheduled/package残務の移管可否、Desktop/Installer workerで旧launchd導線整理を進める。
+- 2026-06-23: UI workerをlocal mainへ統合し、通常UIのactive Codex表示を読み取りrefreshへ寄せた。`useTaskProgressSnapshot` は詳細open直後・active task検出直後に即時refreshし、active snapshotは3秒pollにする。`useAiTasks` / `useMemoAiTasks` / `useNoteAiTasks` / AI履歴はactive Codex状態を3秒pollへ揃え、長時間の `prompt_waiting` は3分後にidleへ戻す。CodexNodePanel、リンクメモ詳細、task progress detail、wishlist activity表示、AI履歴詳細読み込みは表示中という理由で `/api/codex/sync-node` をPOSTしない。次はAgent workerで旧runner残務を分類し、Desktop/Installer workerの旧launchd整理へ進む。
 
 ## リスク
 
