@@ -42,7 +42,7 @@ export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 2_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
-export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-23-stale-running-v3';
+export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-24-user-prompt-running-v1';
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
@@ -703,6 +703,22 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       activeStartedMs = ms;
     }
   };
+  const markUserPromptReceived = (iso: string | null) => {
+    const eventMs = timeMs(iso);
+    const completeMs = timeMs(latestTaskCompleteAt);
+    if (completeMs !== null && (eventMs === null || eventMs <= completeMs)) return;
+
+    pendingPostCompleteReasoningAt = null;
+    passivePostCompleteMaintenanceSeen = false;
+    latestRunningActivityAt = iso;
+    state = 'running';
+    historyStatus = 'running';
+    reviewReason = 'started';
+    currentStep = completeMs === null
+      ? 'Codexがプロンプトを受け取りました'
+      : 'Codexが追加指示を受け取りました';
+    markWorkStarted(iso);
+  };
   const markWorkEnded = (iso: string | null) => {
     const ms = timeMs(iso);
     if (ms === null) return;
@@ -853,16 +869,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       const text = safeText(payload);
       if (text && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
-        if ((timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
-          pendingPostCompleteReasoningAt = null;
-          passivePostCompleteMaintenanceSeen = false;
-          latestRunningActivityAt = eventTime;
-          state = 'running';
-          historyStatus = 'running';
-          reviewReason = 'started';
-          currentStep = 'Codexが追加指示を受け取りました';
-          markWorkStarted(eventTime);
-        }
+        markUserPromptReceived(eventTime);
         appendVisibleMessage(visibleMessages, {
           sequence,
           role: 'user',
@@ -975,14 +982,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         });
       } else if (role === 'user' && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
-        if ((timeMs(eventTime) ?? 0) > (timeMs(latestTaskCompleteAt) ?? Number.POSITIVE_INFINITY)) {
-          latestRunningActivityAt = eventTime;
-          state = 'running';
-          historyStatus = 'running';
-          reviewReason = 'started';
-          currentStep = 'Codexが追加指示を受け取りました';
-          markWorkStarted(eventTime);
-        }
+        markUserPromptReceived(eventTime);
         appendVisibleMessage(visibleMessages, {
           sequence,
           role: 'user',
@@ -1440,7 +1440,7 @@ function aiHistoryCurrentRallyTiming(input: {
   nowMs: number;
 }) {
   const startedAt = input.status === 'running' || input.staleRunningEndedAt
-    ? latestIso(input.summary.activeStartedAt, input.summary.latestTaskStartedAt)
+    ? input.summary.activeStartedAt ?? input.summary.latestTaskStartedAt
     : input.summary.latestTaskStartedAt;
   const endedAt = input.status === 'running'
     ? null
@@ -2147,6 +2147,7 @@ function resultSnapshot(
     ? staleRunningTaskEndedAt(task, summary, Date.now())
     : null;
   const lastActivityAt = latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms) ?? nowIso;
+  const codexTurnStartedAt = summary.activeStartedAt ?? summary.latestTaskStartedAt ?? summary.latestUserMessageAt;
   const currentStep = status === 'running' && summary.state === 'awaiting_approval'
     ? 'Codexの実行状態を確認中'
     : summary.currentStep;
@@ -2184,7 +2185,7 @@ function resultSnapshot(
       : task.source_task_id ?? null,
     current_step: currentStep,
     last_activity_at: lastActivityAt,
-    codex_turn_started_at: summary.latestTaskStartedAt ?? undefined,
+    codex_turn_started_at: codexTurnStartedAt ?? undefined,
     codex_turn_completed_at: summary.latestTaskCompleteAt ?? undefined,
     awaiting_approval_at: status === 'awaiting_approval'
       ? staleRunningEndedAt ?? awaitingApprovalAtForSummary(result, summary, nowIso)

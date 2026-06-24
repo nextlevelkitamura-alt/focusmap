@@ -575,6 +575,45 @@ describe('codex-thread-monitor state detection', () => {
     expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
   });
 
+  test('starts initial AI history running duration from the first user prompt', () => {
+    const raw = [
+      line('2026-06-08T15:49:15.000Z', { type: 'user_message', message: '調査して修正して' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row: threadRow,
+      summary,
+      nowMs: Date.parse('2026-06-08T15:50:00.000Z'),
+    });
+
+    expect(summary.historyStatus).toBe('running');
+    expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(summary.latestTaskStartedAt).toBeNull();
+    expect(presentation.startedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(presentation.workDurationSeconds).toBe(45);
+  });
+
+  test('keeps the user prompt as running start when task_started arrives later', () => {
+    const raw = [
+      line('2026-06-08T15:49:15.000Z', { type: 'message', role: 'user', content: 'まず原因を見て' }),
+      line('2026-06-08T15:49:17.000Z', { type: 'task_started' }),
+    ].join('\n');
+    const summary = parseRollout(raw, threadRow);
+    const presentation = aiHistoryPresentationForThread({
+      rawRollout: raw,
+      row: threadRow,
+      summary,
+      nowMs: Date.parse('2026-06-08T15:49:20.000Z'),
+    });
+
+    expect(summary.historyStatus).toBe('running');
+    expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(summary.latestTaskStartedAt).toBe('2026-06-08T15:49:17.000Z');
+    expect(presentation.startedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(presentation.workDurationSeconds).toBe(5);
+  });
+
   test('shows only the latest completed Codex turn duration in AI history presentation', () => {
     const raw = [
       line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),

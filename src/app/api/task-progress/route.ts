@@ -176,11 +176,11 @@ export async function POST(request: NextRequest) {
     const progressPercent = boundedProgressPercent(body.progress_percent)
     const codexThreadId = compactString(body.codex_thread_id, 200)
     const executor = compactString(body.executor, 80)
-    const lastActivityAt = compactString(body.last_activity_at, 80)
     const eventType = allowedEventType(compactString(body.event_type, MAX_EVENT_TYPE_CHARS))
     const eventPayload = boundedTaskProgressJson(body.event_payload)
     const snapshotOnly = body.snapshot_only === true
     const forceEvent = body.force_event === true
+    const writeAt = new Date().toISOString()
 
     if (status && !VALID_STATUSES.has(status)) {
       return NextResponse.json({ error: 'invalid status' }, { status: 400 })
@@ -203,11 +203,9 @@ export async function POST(request: NextRequest) {
       progress_percent: progressPercent,
       summary,
       error_message: errorMessage,
-      updated_at: lastActivityAt && !Number.isNaN(Date.parse(lastActivityAt))
-        ? new Date(lastActivityAt).toISOString()
-        : null,
+      updated_at: writeAt,
       started_at: status === 'running' ? resolveRunningStartedAt(task.started_at) : null,
-      completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
+      completed_at: status === 'completed' || status === 'failed' ? writeAt : null,
     })
 
     const statusChanged = Boolean(status && status !== task.status)

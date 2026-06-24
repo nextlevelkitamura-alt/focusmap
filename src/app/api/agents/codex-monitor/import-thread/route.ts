@@ -568,7 +568,7 @@ async function linkManualHandoffThread(
         summary: result.message,
         created_at: compactString(task.created_at, 80) ?? nowIso,
         started_at: startedAt,
-        updated_at: result.last_activity_at,
+        updated_at: nowIso,
       })
     } catch (tursoError) {
       console.error('[codex-monitor/import-thread manual handoff turso]', tursoError)
@@ -716,7 +716,7 @@ export async function POST(request: NextRequest) {
           summary: result.message,
           created_at: typeof aiTask.created_at === 'string' ? aiTask.created_at : nowIso,
           started_at: nowIso,
-          updated_at: result.last_activity_at,
+          updated_at: nowIso,
         })
       } catch (tursoError) {
         console.error('[codex-monitor/import-thread turso]', tursoError)
