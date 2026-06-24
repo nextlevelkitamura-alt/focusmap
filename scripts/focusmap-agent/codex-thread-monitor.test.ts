@@ -46,6 +46,7 @@ import {
   shouldDeferOrphanImportForTasks,
   summarizeRollout,
   taskStateForSummary,
+  CODEX_ARCHIVE_RETRY_INTERVAL_MS,
 } from './src/codex-thread-monitor';
 import { AgentApiError } from './src/api-client';
 
@@ -463,6 +464,26 @@ describe('codex-thread-monitor state detection', () => {
         codex_archive_request_cancelled_at: '2026-06-10T00:00:03.000Z',
       },
     }))).toBe(false);
+
+    expect(hasPendingArchiveRequest(task({
+      status: 'completed',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+        codex_archive_last_attempted_at: new Date(Date.now() - CODEX_ARCHIVE_RETRY_INTERVAL_MS + 1_000).toISOString(),
+      },
+    }))).toBe(false);
+
+    expect(hasPendingArchiveRequest(task({
+      status: 'completed',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+        codex_archive_last_attempted_at: new Date(Date.now() - CODEX_ARCHIVE_RETRY_INTERVAL_MS - 1_000).toISOString(),
+      },
+    }))).toBe(true);
   });
 
   test('does not complete a source task just because the Codex thread is archived', () => {

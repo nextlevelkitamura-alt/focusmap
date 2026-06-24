@@ -43,6 +43,7 @@ export const RESUME_RUNNING_VISIBILITY_MS = 6_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
 export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-24-ai-history-stability-v2';
+export const CODEX_ARCHIVE_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const MONITOR_DB_PATH_CACHE_TTL_MS = 30_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
@@ -1882,12 +1883,15 @@ export function hasPendingArchiveRequest(task: AiTask): boolean {
     result.codex_source_task_completion_suppressed !== true;
   const hasAiHistoryArchive = result.codex_archive_request_reason === AI_HISTORY_ARCHIVE_REQUEST_REASON &&
     (typeof result.codex_history_item_id === 'string' || typeof result.ai_history_item_id === 'string');
+  const lastAttemptedMs = timeMs(result.codex_archive_last_attempted_at);
+  const retryDue = lastAttemptedMs === null || Date.now() - lastAttemptedMs >= CODEX_ARCHIVE_RETRY_INTERVAL_MS;
   return task.status === 'completed' &&
     result.codex_archive_request_state === 'pending' &&
     typeof result.codex_archive_requested_at === 'string' &&
     result.codex_archive_requested_at.trim().length > 0 &&
     result.codex_archive_request_cancelled_at == null &&
     result.codex_archive_completed_at == null &&
+    retryDue &&
     (hasSourceTaskArchive || hasAiHistoryArchive);
 }
 
@@ -3204,6 +3208,7 @@ async function markArchiveRequestFailed(
     codex_archive_request_state: 'pending',
     codex_archive_last_attempted_at: nowIso,
     codex_archive_last_failed_at: nowIso,
+    codex_archive_next_attempt_at: new Date(Date.now() + CODEX_ARCHIVE_RETRY_INTERVAL_MS).toISOString(),
     codex_archive_last_error: compactError,
     last_activity_at: nowIso,
     awaiting_approval_at: typeof current.awaiting_approval_at === 'string' && current.awaiting_approval_at.trim()

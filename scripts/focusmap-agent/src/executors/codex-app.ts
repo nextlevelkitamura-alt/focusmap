@@ -9,6 +9,7 @@ import type { AgentActivityMessage, AgentConfig, AiTask, StepLog, TaskResultJson
 
 const WS_URL = 'ws://127.0.0.1:7878';
 const CONNECT_TIMEOUT_MS = 10_000;
+const ARCHIVE_RPC_TIMEOUT_MS = 2_000;
 const TURN_TIMEOUT_MS = 15 * 60 * 1000;
 const LOG_FLUSH_MS = 2_000;
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
@@ -245,8 +246,13 @@ function rpcFailureMessage(method: string, response: RpcEnvelope): string {
   return `${method} failed`;
 }
 
-async function callArchiveRpc(rpc: RpcClient, method: string, params: unknown): Promise<ArchiveCodexThreadResult> {
-  const response = await rpc.call(method, params).catch((error): RpcEnvelope => ({
+async function callArchiveRpc(
+  rpc: RpcClient,
+  method: string,
+  params: unknown,
+  timeoutMs?: number,
+): Promise<ArchiveCodexThreadResult> {
+  const response = await rpc.call(method, params, timeoutMs).catch((error): RpcEnvelope => ({
     error: { message: error instanceof Error ? error.message : String(error) },
   }));
   if (response.error) return { ok: false, error: rpcFailureMessage(method, response) };
@@ -262,11 +268,11 @@ export async function archiveCodexThreadViaAppServer(threadId: string): Promise<
     const initResp = await callArchiveRpc(rpc, 'initialize', {
       clientInfo: { name: 'focusmap', title: 'Focusmap', version: '0.2.0' },
       capabilities: { experimentalApi: true },
-    });
+    }, ARCHIVE_RPC_TIMEOUT_MS);
     if (!initResp.ok) return initResp;
     rpc.notify('initialized');
 
-    return callArchiveRpc(rpc, 'thread/archive', { threadId: normalizedThreadId });
+    return callArchiveRpc(rpc, 'thread/archive', { threadId: normalizedThreadId }, ARCHIVE_RPC_TIMEOUT_MS);
   } finally {
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
   }
