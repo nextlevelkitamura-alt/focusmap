@@ -55,8 +55,9 @@ const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 20;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
-const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
-const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 2_000;
+export const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
+export const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 1_000;
+export const AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS = 10_000;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
 const AI_HISTORY_DETAIL_HYDRATE_PER_TICK = 5;
 const AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT = 100;
@@ -2635,6 +2636,20 @@ function hydrateRequestExpiresAtMs(request: AiHistoryDetailHydrateRequest, nowMs
   return timeMs(request.expiresAt) ?? nowMs + AI_HISTORY_DETAIL_WATCH_TTL_MS;
 }
 
+export function aiHistoryDetailHydratePollIntervalMs(input: {
+  activeTaskCount: number;
+  activeHydrateRequestCount: number;
+  nowMs?: number;
+  burstUntilMs?: number;
+}): number {
+  const nowMs = input.nowMs ?? Date.now();
+  const burstUntilMs = input.burstUntilMs ?? 0;
+  if (input.activeTaskCount > 0 || input.activeHydrateRequestCount > 0 || nowMs < burstUntilMs) {
+    return AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS;
+  }
+  return AI_HISTORY_DETAIL_HYDRATE_POLL_MS;
+}
+
 async function postAiHistoryDetailMessages(
   api: AgentApiClient,
   runnerId: string,
@@ -2969,14 +2984,16 @@ async function pollAiHistoryDetailHydrateRequests(
   try {
     const requests = await api.listAiHistoryDetailHydrateRequests(runnerId, AI_HISTORY_DETAIL_HYDRATE_LIMIT);
     const now = Date.now();
+    let activeRequestCount = 0;
     for (const request of requests) {
       const normalized = normalizedHydrateRequest(request);
       if (!normalized) continue;
       if (hydrateRequestExpiresAtMs(normalized, now) <= now) continue;
       aiHistoryDetailWatchRequests.set(normalized.historyItemId, normalized);
+      activeRequestCount += 1;
     }
     trimCacheToLimit(aiHistoryDetailWatchRequests, ROLLOUT_INSPECT_CACHE_LIMIT);
-    return requests.length;
+    return activeRequestCount;
   } catch (error) {
     if (isAiHistorySyncApiUnavailable(error)) {
       aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
@@ -3019,7 +3036,7 @@ function detailWatchFingerprint(request: AiHistoryDetailHydrateRequest, row: Cod
   ].join('\u001f');
 }
 
-function shouldInspectAiHistoryDetailRollout(
+export function shouldInspectAiHistoryDetailRollout(
   request: AiHistoryDetailHydrateRequest,
   row: CodexThreadRow,
   nowMs = Date.now(),
@@ -3028,16 +3045,11 @@ function shouldInspectAiHistoryDetailRollout(
   const cached = aiHistoryDetailRolloutInspectCache.get(request.historyItemId);
   if (!cached) return true;
   if (cached.fingerprint !== fingerprint) return true;
-  if (nowMs >= cached.nextInspectAt) {
-    aiHistoryDetailRolloutInspectCache.set(request.historyItemId, {
-      fingerprint,
-      nextInspectAt: nowMs + AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS,
-    });
-  }
+  if (nowMs >= cached.nextInspectAt) return true;
   return false;
 }
 
-function markAiHistoryDetailRolloutInspected(
+export function markAiHistoryDetailRolloutInspected(
   request: AiHistoryDetailHydrateRequest,
   row: CodexThreadRow,
   nowMs = Date.now(),
@@ -3362,6 +3374,7 @@ export function startCodexThreadMonitorLoop(
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
   let activeAiHistoryMonitorTargets: AiHistoryMonitorTarget[] = [];
+  let detailHydratePollBurstUntil = 0;
 
   const currentDbPath = (): string | null => {
     const resolved = cachedCodexStateDbPath();
@@ -3480,13 +3493,18 @@ export function startCodexThreadMonitorLoop(
       const path = currentDbPath();
       if (!path) return;
       await measurePhase('detail_hydrate', async () => {
+        const now = Date.now();
         const activeTaskCount = preImportCodexMonitorTasks(tasks).length;
-        const detailPollIntervalMs = activeTaskCount > 0 || aiHistoryDetailWatchRequests.size > 0
-          ? AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS
-          : AI_HISTORY_DETAIL_HYDRATE_POLL_MS;
-        if (Date.now() >= nextDetailHydratePollAt) {
-          await pollAiHistoryDetailHydrateRequests(api, runnerId);
-          nextDetailHydratePollAt = Date.now() + detailPollIntervalMs;
+        if (now >= nextDetailHydratePollAt) {
+          const activeRequestCount = await pollAiHistoryDetailHydrateRequests(api, runnerId);
+          if (activeRequestCount > 0) {
+            extendDetailHydratePollBurst();
+          }
+          nextDetailHydratePollAt = Date.now() + aiHistoryDetailHydratePollIntervalMs({
+            activeTaskCount,
+            activeHydrateRequestCount: aiHistoryDetailWatchRequests.size,
+            burstUntilMs: detailHydratePollBurstUntil,
+          });
         }
         const hydratedDetails = await syncAiHistoryDetailHydrateRequests(api, runnerId, path);
         if (hydratedDetails > 0) debug(`ai history detail hydrated=${hydratedDetails}`);
@@ -3499,6 +3517,17 @@ export function startCodexThreadMonitorLoop(
     } finally {
       detailHydrateRunning = false;
     }
+  };
+
+  const extendDetailHydratePollBurst = (nowMs = Date.now()) => {
+    detailHydratePollBurstUntil = Math.max(
+      detailHydratePollBurstUntil,
+      nowMs + AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS,
+    );
+    nextDetailHydratePollAt = Math.min(
+      nextDetailHydratePollAt || Number.POSITIVE_INFINITY,
+      nowMs + AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS,
+    );
   };
 
   const runRecentScan = async () => {
@@ -3525,6 +3554,7 @@ export function startCodexThreadMonitorLoop(
         updateCodexThreadMonitorHeartbeatState({
           recent_scan_count: hotResult.scanned,
         });
+        if (hotResult.upserted > 0) extendDetailHydratePollBurst();
         const postImportTasks = deferOrphanImport
           ? []
           : prioritizeCodexMonitorTasks(tasks)

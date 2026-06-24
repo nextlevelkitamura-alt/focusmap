@@ -122,6 +122,7 @@ function jsonSnapshotResponse(data: AiHistorySnapshotResponse) {
 describe("useAiHistory", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete window.__focusmapAiHistoryMetrics
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "visible",
@@ -260,6 +261,58 @@ describe("useAiHistory", () => {
       url.includes("include_deleted=true")
     ))).toBe(true)
     expect(result.current.counts).toEqual({ unplaced: 123, mindmap: 45 })
+    unmount()
+  })
+
+  test("records first-seen debug metrics when snapshot merge displays a new history item", async () => {
+    const snapshotItem: AiHistoryListItem = {
+      ...baseItem,
+      id: "history-new-prompt",
+      externalThreadId: "thread-new-prompt",
+      title: "新しいprompt",
+      status: "running",
+      runState: "initial_prompt",
+      lastActivityAt: "2026-06-20T00:00:06.000Z",
+      indexedAt: "2026-06-20T00:00:06.000Z",
+    }
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith("/api/ai-history/snapshot?")) {
+        return jsonSnapshotResponse(snapshotResponseFor({
+          repo: "all",
+          items: [snapshotItem],
+        }))
+      }
+      return jsonResponse(responseFor({
+        repo: "all",
+        items: [baseItem],
+      }))
+    })
+
+    const { result, unmount } = renderHook(() => useAiHistory({
+      projectId: "project-1",
+      scope: "global",
+      repo: "all",
+      placement: "unplaced",
+      pollIntervalMs: 100,
+    }))
+
+    await waitFor(() => {
+      expect(result.current.items.some(item => item.id === "history-new-prompt")).toBe(true)
+    })
+
+    const metrics = window.__focusmapAiHistoryMetrics
+    expect(metrics?.firstSeenById["history-new-prompt"]).toMatchObject({
+      historyItemId: "history-new-prompt",
+      status: "running",
+      source: "snapshot_merge",
+      placement: "unplaced",
+      repoPath: "/Users/me/focusmap",
+      externalThreadId: "thread-new-prompt",
+    })
+    expect(metrics?.firstSeenById["history-new-prompt"]?.firstSeenAt).toEqual(expect.any(String))
+    expect(metrics?.firstSeenById["history-new-prompt"]?.firstSeenPerformanceMs).toEqual(expect.any(Number))
+    expect(metrics?.events.at(-1)?.historyItemId).toBe("history-new-prompt")
     unmount()
   })
 

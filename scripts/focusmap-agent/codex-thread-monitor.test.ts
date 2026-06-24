@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activityMessages,
+  AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS,
+  AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS,
+  AI_HISTORY_DETAIL_HYDRATE_POLL_MS,
   aiHistoryHotSyncPreparedItemLimit,
+  aiHistoryDetailHydratePollIntervalMs,
   aiHistoryDetailMessages,
   aiHistoryPresentationForThread,
   aiHistoryTitle,
@@ -27,6 +31,7 @@ import {
   isOrphanThreadImportCandidate,
   knownCodexThreadIds,
   markAiHistoryPlaceholderTitleWatch,
+  markAiHistoryDetailRolloutInspected,
   markAiHistoryRolloutInspected,
   markTaskRolloutInspected,
   markThreadGone,
@@ -39,6 +44,7 @@ import {
   RESUME_RUNNING_VISIBILITY_MS,
   TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS,
   shouldInspectAiHistoryRollout,
+  shouldInspectAiHistoryDetailRollout,
   shouldInspectAiHistoryPlaceholderTitle,
   shouldInspectTaskRollout,
   shouldArchiveAiHistoryThread,
@@ -136,6 +142,31 @@ describe('codex-thread-monitor state detection', () => {
       importScopeCount: 3,
       includeAllCodexCwds: false,
     })).toBe(60);
+  });
+
+  test('keeps detail hydrate request polling idle by default and one-second only while active', () => {
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+
+    expect(AI_HISTORY_DETAIL_HYDRATE_POLL_MS).toBe(5_000);
+    expect(AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS).toBe(1_000);
+    expect(AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS).toBe(10_000);
+    expect(aiHistoryDetailHydratePollIntervalMs({
+      activeTaskCount: 0,
+      activeHydrateRequestCount: 0,
+      nowMs: now,
+      burstUntilMs: now - 1,
+    })).toBe(5_000);
+    expect(aiHistoryDetailHydratePollIntervalMs({
+      activeTaskCount: 0,
+      activeHydrateRequestCount: 1,
+      nowMs: now,
+    })).toBe(1_000);
+    expect(aiHistoryDetailHydratePollIntervalMs({
+      activeTaskCount: 0,
+      activeHydrateRequestCount: 0,
+      nowMs: now,
+      burstUntilMs: now + 10_000,
+    })).toBe(1_000);
   });
 
   test('merges global and per-scope recent threads without losing scope-only rows', () => {
@@ -244,6 +275,28 @@ describe('codex-thread-monitor state detection', () => {
       updated_at_ms: row.updated_at_ms + 1,
     }, scope, 'hot', now + 1_000)).toBe(true);
     expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(true);
+  });
+
+  test('re-inspects detail hydrate rollouts after one second', () => {
+    const now = Date.parse('2026-06-10T00:00:00.000Z');
+    const row = {
+      ...threadRow,
+      id: 'thread-detail-hydrate-reinspect',
+      updated_at_ms: now,
+    };
+    const request = {
+      historyItemId: 'history-detail-hydrate-reinspect',
+      provider: 'codex_app',
+      externalThreadId: row.id,
+      repoPath: '/repo-detail-hydrate',
+      requestedAt: '2026-06-10T00:00:00.000Z',
+      expiresAt: '2026-06-10T00:02:00.000Z',
+    };
+
+    expect(shouldInspectAiHistoryDetailRollout(request, row, now)).toBe(true);
+    markAiHistoryDetailRolloutInspected(request, row, now);
+    expect(shouldInspectAiHistoryDetailRollout(request, row, now + 999)).toBe(false);
+    expect(shouldInspectAiHistoryDetailRollout(request, row, now + 1_000)).toBe(true);
   });
 
   test('reuses parsed rollout summaries until the rollout fingerprint changes', async () => {

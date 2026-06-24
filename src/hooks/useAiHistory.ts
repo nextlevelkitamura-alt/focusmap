@@ -15,6 +15,35 @@ import type {
 const DEFAULT_LIMIT = 100
 const DEFAULT_POLL_INTERVAL_MS = 2_000
 const SNAPSHOT_LIMIT = 500
+const AI_HISTORY_METRIC_EVENT_LIMIT = 200
+
+type AiHistoryFirstSeenSource = "full_list" | "snapshot_merge"
+
+type AiHistoryFirstSeenMetric = {
+  historyItemId: string
+  status: AiHistoryListResponse["items"][number]["status"]
+  firstSeenAt: string
+  firstSeenPerformanceMs: number | null
+  source: AiHistoryFirstSeenSource
+  placement: AiHistoryPlacement
+  repoPath: string | null
+  worktreePath: string | null
+  externalThreadId: string | null
+  indexedAt: string | null
+  lastActivityAt: string | null
+}
+
+type FocusmapAiHistoryMetrics = {
+  firstSeenById: Record<string, AiHistoryFirstSeenMetric>
+  events: AiHistoryFirstSeenMetric[]
+  lastUpdatedAt: string | null
+}
+
+declare global {
+  interface Window {
+    __focusmapAiHistoryMetrics?: FocusmapAiHistoryMetrics
+  }
+}
 
 const EMPTY_RESPONSE: AiHistoryListResponse = {
   items: [],
@@ -52,6 +81,69 @@ function sameRepoFilter(left: AiHistoryRepoFilter, right: AiHistoryRepoFilter) {
 
 function aiHistoryExternalIdentity(item: { provider: AiHistoryProvider; externalThreadId: string; repoPath: string }) {
   return `${item.provider}:${normalizeAiHistoryRepoPath(item.repoPath)}:${item.externalThreadId}`
+}
+
+function currentPerformanceMs() {
+  if (typeof performance === "undefined" || typeof performance.now !== "function") return null
+  return Math.round(performance.now() * 1000) / 1000
+}
+
+function focusmapAiHistoryMetrics() {
+  if (typeof window === "undefined") return null
+  if (!window.__focusmapAiHistoryMetrics) {
+    window.__focusmapAiHistoryMetrics = {
+      firstSeenById: {},
+      events: [],
+      lastUpdatedAt: null,
+    }
+  }
+  return window.__focusmapAiHistoryMetrics
+}
+
+function recordAiHistoryFirstSeenMetrics(
+  items: AiHistoryListResponse["items"],
+  source: AiHistoryFirstSeenSource,
+) {
+  const metrics = focusmapAiHistoryMetrics()
+  if (!metrics) return
+
+  for (const item of items) {
+    if (!item.id || item.archived || item.deletedAt) continue
+    if (metrics.firstSeenById[item.id]) continue
+    const firstSeenAt = new Date().toISOString()
+    const metric: AiHistoryFirstSeenMetric = {
+      historyItemId: item.id,
+      status: item.status,
+      firstSeenAt,
+      firstSeenPerformanceMs: currentPerformanceMs(),
+      source,
+      placement: item.placement,
+      repoPath: item.repoPath || null,
+      worktreePath: item.worktreePath || null,
+      externalThreadId: item.externalThreadId || null,
+      indexedAt: item.indexedAt || null,
+      lastActivityAt: item.lastActivityAt || null,
+    }
+    metrics.firstSeenById[item.id] = metric
+    metrics.events.push(metric)
+    if (metrics.events.length > AI_HISTORY_METRIC_EVENT_LIMIT) {
+      metrics.events.splice(0, metrics.events.length - AI_HISTORY_METRIC_EVENT_LIMIT)
+    }
+    metrics.lastUpdatedAt = firstSeenAt
+  }
+}
+
+function visibleMetricItems(
+  items: AiHistoryListResponse["items"],
+  repo: AiHistoryRepoFilter,
+  placement: AiHistoryPlacement,
+) {
+  return items.filter(item => (
+    !item.archived &&
+    !item.deletedAt &&
+    item.placement === placement &&
+    aiHistoryRepoMatchesFilter(item, repo)
+  ))
 }
 
 function mergeAiHistorySnapshotItems(
@@ -170,6 +262,10 @@ export function useAiHistory({
       }
       const nextData = await response.json() as AiHistoryListResponse
       snapshotCursorRef.current = null
+      recordAiHistoryFirstSeenMetrics(
+        visibleMetricItems(nextData.items, repo, placement),
+        "full_list",
+      )
       setData(nextData)
       setError(null)
     } catch (fetchError) {
@@ -212,16 +308,23 @@ export function useAiHistory({
       snapshotCursorRef.current = snapshot.cursor
       if (snapshot.items.length === 0) return
 
-      setData(previous => ({
-        ...previous,
-        items: mergeAiHistorySnapshotItems(previous.items, snapshot.items),
-      }))
+      setData(previous => {
+        const items = mergeAiHistorySnapshotItems(previous.items, snapshot.items)
+        recordAiHistoryFirstSeenMetrics(
+          visibleMetricItems(items, repo, placement),
+          "snapshot_merge",
+        )
+        return {
+          ...previous,
+          items,
+        }
+      })
     } catch {
       if (controller.signal.aborted) return
     } finally {
       if (snapshotInFlightRef.current === controller) snapshotInFlightRef.current = null
     }
-  }, [enabled, projectId, provider, repo, scope])
+  }, [enabled, placement, projectId, provider, repo, scope])
 
   useEffect(() => {
     snapshotCursorRef.current = null
