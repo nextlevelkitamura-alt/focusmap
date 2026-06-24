@@ -463,7 +463,7 @@ export async function POST(request: NextRequest) {
     for (let index = 0; index < rawItems.length; index += 1) {
       const normalized = normalizedItem(rawItems[index]!, defaults, links, sourceTasks, allowedProjects)
       if ('error' in normalized) {
-        errors.push({ index, error: normalized.error })
+        errors.push({ index, error: typeof normalized.error === 'string' ? normalized.error : 'invalid item' })
         continue
       }
       const historyItemId = await upsertAiHistoryItem({
