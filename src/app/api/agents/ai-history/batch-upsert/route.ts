@@ -3,6 +3,7 @@ import { authenticateAgent, type AgentTokenRecord } from '@/lib/agent-auth'
 import { isTursoConfigured, TursoConfigurationError } from '@/lib/turso/client'
 import {
   AI_HISTORY_STATUSES,
+  getAiHistoryItemForUser,
   upsertAiHistoryItem,
   upsertProjectRepoScope,
   type AiHistoryUpsertInput,
@@ -239,8 +240,65 @@ function usableSourceTaskId(sourceTaskId: string | null, sourceTasks: Map<string
   if (!sourceTask) return null
   if (sourceTask.deleted_at != null) return null
   const source = compactString(sourceTask.source, 80)
-  if (source === 'codex_app_thread' || source === 'codex_inbox') return null
+  if (source === 'codex_inbox') return null
   return sourceTaskId
+}
+
+function taskCodexStatusForHistory(item: {
+  status: AiHistoryStatus
+  archived?: boolean | null
+  deleted_at?: string | null
+}) {
+  if (item.archived === true || item.deleted_at) return 'archived'
+  switch (item.status) {
+    case 'running':
+      return 'running'
+    case 'awaiting_approval':
+    case 'needs_input':
+      return 'awaiting_approval'
+    case 'completed':
+      return 'done'
+    case 'failed':
+      return 'failed'
+    case 'idle':
+    default:
+      return null
+  }
+}
+
+async function syncSourceTaskCodexStatus(
+  supabase: SupabaseServiceClient,
+  input: {
+    userId: string
+    sourceTaskId: string | null
+    externalThreadId: string
+    status: AiHistoryStatus
+    archived?: boolean | null
+    deletedAt?: string | null
+    nowIso: string
+  },
+) {
+  if (!input.sourceTaskId) return false
+  const codexStatus = taskCodexStatusForHistory({
+    status: input.status,
+    archived: input.archived,
+    deleted_at: input.deletedAt,
+  })
+  if (!codexStatus) return false
+
+  const { error } = await supabase
+    .from('tasks')
+    .update({
+      codex_status: codexStatus,
+      codex_thread_id: input.externalThreadId,
+      updated_at: input.nowIso,
+    })
+    .eq('id', input.sourceTaskId)
+    .eq('user_id', input.userId)
+    .is('deleted_at', null)
+
+  if (error) throw error
+  return true
 }
 
 function projectIdFor(
@@ -400,6 +458,7 @@ export async function POST(request: NextRequest) {
     const errors: Array<{ index: number; error: string }> = []
     const responseItems: AiHistoryBatchUpsertResponseItem[] = []
     let upserted = 0
+    let sourceTasksSynced = 0
     const indexedAt = new Date().toISOString()
     for (let index = 0; index < rawItems.length; index += 1) {
       const normalized = normalizedItem(rawItems[index]!, defaults, links, sourceTasks, allowedProjects)
@@ -425,6 +484,33 @@ export async function POST(request: NextRequest) {
       })
       upserted += 1
 
+      const hasCodexStatusToSync = Boolean(taskCodexStatusForHistory({
+        status: normalized.item.status,
+        archived: normalized.item.archived,
+        deleted_at: normalized.item.deleted_at,
+      }))
+      if (hasCodexStatusToSync) {
+        let effectiveSourceTaskId = normalized.item.source_task_id
+        if (!effectiveSourceTaskId) {
+          const preservedSourceTaskId = (await getAiHistoryItemForUser(historyItemId, token.user_id))?.source_task_id ?? null
+          if (preservedSourceTaskId) {
+            const preservedSourceTasks = await loadSourceTasks(supabase, token.user_id, [preservedSourceTaskId])
+            effectiveSourceTaskId = usableSourceTaskId(preservedSourceTaskId, preservedSourceTasks)
+          }
+        }
+        if (await syncSourceTaskCodexStatus(supabase, {
+          userId: token.user_id,
+          sourceTaskId: effectiveSourceTaskId,
+          externalThreadId: normalized.item.external_thread_id,
+          status: normalized.item.status,
+          archived: normalized.item.archived,
+          deletedAt: normalized.item.deleted_at,
+          nowIso: indexedAt,
+        })) {
+          sourceTasksSynced += 1
+        }
+      }
+
       if (normalized.item.project_id) {
         await upsertProjectRepoScope({
           user_id: token.user_id,
@@ -444,13 +530,14 @@ export async function POST(request: NextRequest) {
       errors,
       items: responseItems,
       scopesUpserted,
+      sourceTasksSynced,
       indexedAt,
       policy: {
         metadataOnly: true,
         rawBodiesAccepted: false,
         cursor: 'indexed_at|id',
         idField: 'historyItemId',
-        legacyCodexInboxSource: 'linked_ai_task_kept_source_task_cleared',
+        legacyCodexInboxSource: 'codex_inbox_source_task_cleared',
       },
     })
   } catch (error) {
