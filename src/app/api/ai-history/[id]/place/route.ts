@@ -55,6 +55,23 @@ async function findExistingTask(
   return data as Task | null
 }
 
+async function linkLinkedAiTaskToSourceTask(
+  supabase: AiHistoryAuth['supabase'],
+  userId: string,
+  linkedAiTaskId: string | null,
+  sourceTaskId: string,
+) {
+  const aiTaskId = compactString(linkedAiTaskId, 120)
+  if (!aiTaskId) return
+  const { error } = await supabase
+    .from('ai_tasks')
+    .update({ source_task_id: sourceTaskId })
+    .eq('id', aiTaskId)
+    .eq('user_id', userId)
+    .in('executor', ['codex', 'codex_app'])
+  if (error) throw error
+}
+
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await authenticateAiHistoryRequest(request)
   if (!auth) return unauthorized()
@@ -80,6 +97,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const existingTask = await findExistingTask(auth.supabase, auth.user.id, item.source_task_id)
     if (existingTask) {
+      await linkLinkedAiTaskToSourceTask(auth.supabase, auth.user.id, item.linked_ai_task_id, existingTask.id)
       return NextResponse.json({
         placed: false,
         reused: true,
@@ -163,6 +181,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (!createdTask) throw new Error('Task creation returned no row')
 
     try {
+      await linkLinkedAiTaskToSourceTask(auth.supabase, auth.user.id, item.linked_ai_task_id, String(createdTask.id))
+
       const reordered = [
         ...siblingRows.slice(0, insertAt),
         { id: String(createdTask.id), order_index: insertAt },

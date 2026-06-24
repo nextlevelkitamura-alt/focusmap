@@ -510,6 +510,8 @@ describe("CustomMindMapView keyboard operations", () => {
 
   test("prioritizes ai task status over stale task progress on node badge", () => {
     renderMap({
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
       codexRunByNodeId: {
         "root-1": {
           state: "running",
@@ -538,6 +540,11 @@ describe("CustomMindMapView keyboard operations", () => {
     const node = getNode("Root task", "root-1")
     expect(within(node).getByRole("button", { name: "Codex状態: 実行中 を開く" })).toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "Codex状態: 確認待ち を開く" })).not.toBeInTheDocument()
+    expect(within(node).getByLabelText("Codex 実行中")).toHaveClass("codex-node-running-orbit")
+    expect(node).toHaveClass("border-emerald-400/45")
+    expect(node).toHaveClass("ring-emerald-400")
+    expect(node).not.toHaveClass("border-amber-400/80")
+    expect(node).not.toHaveClass("ring-amber-400")
   })
 
   test("counts only visible map nodes in the Codex summary", () => {

@@ -224,6 +224,17 @@ function codexStateToTaskProgressStatus(state: CodexTaskUiStateName): TaskProgre
     return "awaiting_approval";
 }
 
+function isReviewLikeTaskProgressStatus(status: TaskProgressSnapshotTask["status"] | null | undefined) {
+    return status === "awaiting_approval" || status === "needs_input" || status === "completed";
+}
+
+function shouldPreferCodexRunning(
+    codexState: CodexNodeState | null | undefined,
+    taskProgress: TaskProgressSnapshotTask | null | undefined,
+) {
+    return codexState?.state === "running" && taskProgress?.status !== "failed";
+}
+
 function parseStatusTimestamp(value: string | null | undefined) {
     if (!value) return 0;
     const ms = Date.parse(value);
@@ -251,6 +262,7 @@ function buildCodexBadge(
 
     if (!codexBadge) return progressBadge;
     if (!progressBadge || !taskProgress) return codexBadge;
+    if (shouldPreferCodexRunning(codexState, taskProgress)) return codexBadge;
 
     const codexMs = parseStatusTimestamp(codexState?.updatedAt ?? codexState?.lastActivityAt);
     const progressMs = parseStatusTimestamp(taskProgress.updated_at);
@@ -286,16 +298,13 @@ function taskNodeSelectionRingClass({
     if (draftMeta?.kind === "adjusted") return `${base} ring-amber-400`;
 
     if (taskProgress?.status === "failed") return `${base} ring-red-400`;
+    if (codexState?.state === "connection_failed") return `${base} ring-red-400`;
+    if (shouldPreferCodexRunning(codexState, taskProgress)) return `${base} ring-emerald-400`;
     if (taskProgress?.status === "running") return `${base} ring-emerald-400`;
-    if (
-        taskProgress?.status === "awaiting_approval" ||
-        taskProgress?.status === "needs_input" ||
-        taskProgress?.status === "completed"
-    ) {
+    if (isReviewLikeTaskProgressStatus(taskProgress?.status)) {
         return `${base} ring-amber-400`;
     }
 
-    if (codexState?.state === "connection_failed") return `${base} ring-red-400`;
     if (codexState?.state === "running" || codexState?.state === "completed") return `${base} ring-emerald-400`;
     if (codexState?.state === "prompt_waiting") return `${base} ring-sky-400`;
 
@@ -600,6 +609,8 @@ function CustomTaskNode({
         taskProgress,
         draftMeta,
     });
+    const preferCodexRunning = shouldPreferCodexRunning(codexState, taskProgress);
+    const taskProgressReviewTone = isReviewLikeTaskProgressStatus(taskProgress?.status) && !preferCodexRunning;
 
     useEffect(() => {
         setExternalDropActive(false);
@@ -945,7 +956,7 @@ function CustomTaskNode({
                 codexState?.state === "completed" && "border-emerald-400/55 shadow-[0_0_12px_rgba(16,185,129,0.14)]",
                 codexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 taskProgress?.status === "running" && "border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
-                (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
+                taskProgressReviewTone && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 draftMeta?.kind === "new" && "border-sky-400 bg-sky-500/10 shadow-[0_0_18px_rgba(56,189,248,0.24)]",
                 draftMeta?.kind === "moved" && "border-violet-400 bg-violet-500/10 shadow-[0_0_18px_rgba(167,139,250,0.22)]",

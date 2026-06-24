@@ -2641,6 +2641,34 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         );
     }, [groups, handleCustomMoveTask, isDescendant, onUpdateTask, project?.id, setTaskCollapsed, tasks]);
 
+    const syncPlacedCodexNode = useCallback(async (sourceTaskId: string, aiTaskId?: string | null) => {
+        try {
+            const response = await fetch('/api/codex/sync-node', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    source_task_id: sourceTaskId,
+                    ...(aiTaskId ? { ai_task_id: aiTaskId } : {}),
+                }),
+            });
+            if (!response.ok) {
+                console.warn(`[MindMap] Codex sync-node failed after placement: ${response.status}`);
+            }
+        } catch (error) {
+            console.warn('[MindMap] Failed to sync placed Codex node:', error);
+        } finally {
+            const refreshResults = await Promise.allSettled([
+                refreshAiTaskStatus(),
+                refreshTaskProgressSnapshot({ reset: true }),
+            ]);
+            for (const result of refreshResults) {
+                if (result.status === 'rejected') {
+                    console.warn('[MindMap] Failed to refresh Codex state after placement:', result.reason);
+                }
+            }
+        }
+    }, [refreshAiTaskStatus, refreshTaskProgressSnapshot]);
+
     const handleDropImportedChatNode = useCallback(async ({
         taskId,
         historyItemId,
@@ -2680,12 +2708,18 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                         position,
                     }),
                 });
-                const payload = await response.json().catch(() => ({})) as { task?: { id?: unknown }; error?: unknown };
+                const payload = await response.json().catch(() => ({})) as {
+                    task?: { id?: unknown };
+                    item?: { linkedAiTaskId?: unknown };
+                    error?: unknown;
+                };
                 if (!response.ok) {
                     throw new Error(typeof payload.error === 'string' ? payload.error : `POST /api/ai-history/${historyItemId}/place failed: ${response.status}`);
                 }
                 const placedTaskId = typeof payload.task?.id === 'string' ? payload.task.id : null;
                 if (!placedTaskId) throw new Error('AI history placement response did not include task id');
+                const linkedAiTaskId = typeof payload.item?.linkedAiTaskId === 'string' ? payload.item.linkedAiTaskId : null;
+                await syncPlacedCodexNode(placedTaskId, linkedAiTaskId);
                 await onMindmapUpdated?.({ force: true, silent: true });
                 applySelection(new Set([placedTaskId]), placedTaskId);
                 focusNodeWithPollingV2(placedTaskId, 500, false);
@@ -2759,6 +2793,9 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                 if (orderUpdate.id === taskId) continue;
                 await updateTaskForCodexScope(orderUpdate.id, { order_index: orderUpdate.order_index });
             }
+            const detailItem = codexChatDetailItemsById.get(taskId);
+            await syncPlacedCodexNode(taskId, detailItem?.aiTaskId ?? null);
+            await onMindmapUpdated?.({ force: true, silent: true });
             applySelection(new Set([taskId]), taskId);
             focusNodeWithPollingV2(taskId, 300, false);
         } catch (error) {
@@ -2771,6 +2808,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         }
     }, [
         applySelection,
+        codexChatDetailItemsById,
         focusNodeWithPollingV2,
         getTaskById,
         groups,
@@ -2778,6 +2816,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         project?.id,
         repoScopedTasksById,
         setTaskCollapsed,
+        syncPlacedCodexNode,
         tasks,
         updateTaskForCodexScope,
     ]);

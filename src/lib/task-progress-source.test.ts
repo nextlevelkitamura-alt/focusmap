@@ -100,6 +100,29 @@ describe("hydrateTaskProgressMindMapSources", () => {
     })
   })
 
+  test("最新ai_tasksが実行中なら古い確認待ちsnapshotをrunningへ補正する", () => {
+    const hydrated = hydrateTaskProgressMindMapSources(
+      [progressTask({
+        status: "awaiting_approval",
+        source_type: "mindmap",
+        source_id: "node-1",
+      })],
+      new Map([[
+        "node-1",
+        aiTask({
+          status: "running",
+          result: { codex_run_state: "awaiting_approval" },
+        }),
+      ]]),
+    )
+
+    expect(hydrated[0]).toMatchObject({
+      status: "running",
+      source_type: "mindmap",
+      source_id: "node-1",
+    })
+  })
+
   test("最新ai_tasksがneeds_inputなら確認待ちレーン用にneeds_inputを保つ", () => {
     const hydrated = hydrateTaskProgressMindMapSources(
       [progressTask({

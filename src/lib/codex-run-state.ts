@@ -629,15 +629,15 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
     return { state: "prompt_waiting", label: "未送信" }
   }
 
+  if (task.status === "running") {
+    return { state: "running", label: "実行中" }
+  }
   if (rawState === "awaiting_approval") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
 
   if (task.status === "awaiting_approval" || task.status === "needs_input") {
     return { state: "awaiting_approval", label: "確認待ち" }
-  }
-  if (task.status === "running") {
-    return { state: "running", label: "実行中" }
   }
   if (rawState === "running") {
     return { state: "running", label: "実行中" }

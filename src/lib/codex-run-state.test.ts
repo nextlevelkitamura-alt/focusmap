@@ -241,6 +241,7 @@ describe("detectCodexResumeAfterApproval", () => {
 describe("getCodexTaskUiState", () => {
   test("normalizes Codex tasks to prompt waiting, running or review", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: null })?.state).toBe("running")
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: { codex_run_state: "awaiting_approval" } })).toEqual({ state: "running", label: "実行中" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toEqual({ state: "awaiting_approval", label: "確認待ち" })

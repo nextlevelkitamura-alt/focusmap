@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 const taskProgressSnapshotState = vi.hoisted(() => ({
   tasks: [] as Array<Record<string, unknown>>,
   options: [] as Array<{ detailOpen?: boolean }>,
+  refresh: vi.fn(async () => undefined),
+}))
+
+const memoAiTasksState = vi.hoisted(() => ({
+  refreshStatus: vi.fn(async () => undefined),
 }))
 
 vi.mock("@/components/dashboard/mindmap-display-settings", () => ({
@@ -81,6 +86,7 @@ vi.mock("@/hooks/useMemoAiTasks", () => ({
   useMemoAiTasks: () => ({
     bySourceId: new Map(),
     getBySourceId: () => null,
+    refreshStatus: memoAiTasksState.refreshStatus,
   }),
 }))
 
@@ -93,7 +99,7 @@ vi.mock("@/hooks/useTaskProgressSnapshot", () => ({
       pollIntervalMs: 3000,
       isLoading: false,
       error: null,
-      refresh: vi.fn(),
+      refresh: taskProgressSnapshotState.refresh,
     }
   },
 }))
@@ -220,11 +226,20 @@ const task = {
 beforeEach(() => {
   taskProgressSnapshotState.tasks = []
   taskProgressSnapshotState.options = []
+  taskProgressSnapshotState.refresh.mockClear()
+  memoAiTasksState.refreshStatus.mockClear()
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     if (String(input).startsWith("/api/mindmap/drafts")) {
       return {
         ok: true,
         json: async () => ({ success: true, draft: null }),
+      }
+    }
+    if (String(input).startsWith("/api/codex/sync-node")) {
+      return {
+        ok: true,
+        json: async () => ({ synced: true }),
+        text: async () => "",
       }
     }
     return {
@@ -486,6 +501,18 @@ describe("MindMap controls", () => {
         project_id: "project-1",
       })
     })
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/codex/sync-node", expect.objectContaining({
+        method: "POST",
+      }))
+    })
+    const syncCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/api/codex/sync-node")
+    expect(syncCall).toBeTruthy()
+    expect(JSON.parse(String((syncCall?.[1] as RequestInit).body))).toEqual({
+      source_task_id: "chat-node-1",
+    })
+    expect(memoAiTasksState.refreshStatus).toHaveBeenCalled()
+    expect(taskProgressSnapshotState.refresh).toHaveBeenCalledWith({ reset: true })
   })
 
   test("refreshes map tasks silently when Turso snapshot has a missing source task", async () => {
