@@ -478,6 +478,7 @@ Goals → Projects → TaskGroups → Tasks
 ### Codexログ表示方針
 
 - Focusmapに表示する主ログは、Codexの日本語/ユーザー向け返答本文を中心にする。
+- `/api/ai-history/snapshot` はAI履歴一覧の2秒級UI poll専用の軽量差分APIとし、`items`、`serverTime`、`cursor`、`changedSince`、`filter`、metadata-only `policy` だけを返す。counts、archive reconcile、detail hydrate request作成、raw rollout、full transcript、command output、screenshot/base64本文はsnapshot応答にもTurso `ai_history_items` snapshotにも載せない。初回/フィルタ変更時の件数やrepo optionは従来の `/api/ai-history`、詳細本文は `/api/ai-history/[id]/activity?watch=1` を正とする。未リンク詳細activityはcacheが空/古い時だけ `hydrate.required=true` として短TTL requestを作り、`watch=1` は同じrequest行のTTL refreshとして冪等に扱う。linked `ai_task` を持つ履歴は引き続き既存 `/api/ai-tasks/[id]/activity` へ307 redirectし、AI履歴detail cache POSTは受け付けない。
 - `function_call` / `custom_tool_call` / `web_search_call` / `tool_search_call` などの内部コマンド開始ログは主ログへ混ぜない。
 - `# Applications mentioned by the user` のappshot、`<skill>`、`AGENTS.md` / `<INSTRUCTIONS>`、`environment_context`、system/developer文脈などの実行コンテキストは通常チャット本文へ出さず、表示用サニタイズで「画面情報」「skill定義」「エージェント指示」「環境情報」として省略する。これらはCodexへの入力やdebug補助にはなり得るが、Focusmap右ペインの読ませる本文ではない。
 - Codex.app bridgeが観測した追加情報は `result.codex_sync_log` に保持し、通常のチャット表示とは分ける。

@@ -490,6 +490,7 @@ export function toAiHistoryListItem(
 ): AiHistoryListItem {
   const sourceTaskId = item.source_task_id
   const detailMessageCount = item.detail_message_count ?? 0
+  const detailHydrateRequired = isAiHistoryDetailHydrateRequired(item, detailMessageCount)
   return {
     id: item.id,
     provider: item.provider,
@@ -510,8 +511,15 @@ export function toAiHistoryListItem(
     endedAt: item.ended_at,
     workDurationSeconds: item.work_duration_seconds,
     archived: item.archived,
+    deletedAt: item.deleted_at,
     detailHydrated: Boolean(item.detail_synced_at || detailMessageCount > 0),
+    detailHydrateRequired,
+    detailHydrateReason: detailHydrateRequired
+      ? aiHistoryDetailHydrateReason(item, detailMessageCount)
+      : null,
+    detailMessageCount,
     detailSyncedAt: item.detail_synced_at,
+    updatedAt: item.updated_at,
     codexOpenUrl: item.provider === 'codex_app' && item.external_thread_id
       ? `codex://threads/${item.external_thread_id}`
       : null,
@@ -827,6 +835,7 @@ export async function upsertAiHistoryDetailHydrateRequest(options: {
   reason: AiHistoryDetailHydrateRequestReason
   requestedBy?: 'web' | 'agent' | 'system'
   ttlSeconds?: number
+  refreshActive?: boolean
 }) {
   const timestamp = nowIso()
   const ttlSeconds = Math.min(Math.max(options.ttlSeconds ?? 120, 30), 10 * 60)
@@ -849,7 +858,8 @@ export async function upsertAiHistoryDetailHydrateRequest(options: {
         expires_at = excluded.expires_at,
         fulfilled_at = NULL,
         updated_at = excluded.updated_at
-      WHERE ai_history_detail_hydrate_requests.expires_at < ?
+      WHERE ? = 1
+        OR ai_history_detail_hydrate_requests.expires_at < ?
         OR ai_history_detail_hydrate_requests.fulfilled_at IS NOT NULL
     `,
     args: [
@@ -865,6 +875,7 @@ export async function upsertAiHistoryDetailHydrateRequest(options: {
       expiresAt,
       timestamp,
       timestamp,
+      options.refreshActive === true ? 1 : 0,
       timestamp,
     ],
   })

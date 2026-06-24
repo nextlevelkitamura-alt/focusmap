@@ -269,7 +269,8 @@ describe('AI history detail cache helpers', () => {
 
     const call = mockExecute.mock.calls[0]?.[0] as { sql: string; args: unknown[] }
     expect(call.sql).toContain('INSERT INTO ai_history_detail_hydrate_requests')
-    expect(call.sql).toContain('WHERE ai_history_detail_hydrate_requests.expires_at < ?')
+    expect(call.sql).toContain('WHERE ? = 1')
+    expect(call.sql).toContain('OR ai_history_detail_hydrate_requests.expires_at < ?')
     expect(call.args).toEqual(expect.arrayContaining([
       'user-1',
       'history-1',
@@ -279,5 +280,25 @@ describe('AI history detail cache helpers', () => {
       'detail_cache_empty',
       'web',
     ]))
+  })
+
+  test('can refresh an active hydrate request TTL for an explicit watch request', async () => {
+    const { upsertAiHistoryDetailHydrateRequest } = await import('./ai-history')
+
+    await upsertAiHistoryDetailHydrateRequest({
+      userId: 'user-1',
+      item: {
+        id: 'history-1',
+        provider: 'codex_app',
+        external_thread_id: 'thread-1',
+        repo_path: '/repo',
+      },
+      reason: 'detail_cache_stale',
+      ttlSeconds: 120,
+      refreshActive: true,
+    })
+
+    const call = mockExecute.mock.calls[0]?.[0] as { args: unknown[] }
+    expect(call.args.at(-2)).toBe(1)
   })
 })

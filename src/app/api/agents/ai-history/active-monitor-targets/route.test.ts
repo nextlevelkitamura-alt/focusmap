@@ -89,6 +89,7 @@ describe('POST /api/agents/ai-history/active-monitor-targets', () => {
     expect(response.status).toBe(200)
     expect(listActiveAiHistoryMonitorTargetsMock).toHaveBeenCalledWith({
       userId: 'user-1',
+      provider: 'codex_app',
       limit: 25,
     })
     expect(payload.targets).toEqual([{
@@ -104,5 +105,10 @@ describe('POST /api/agents/ai-history/active-monitor-targets', () => {
       indexedAt: '2026-06-23T08:01:00.000Z',
     }])
     expect(payload.policy.activeStatuses).toEqual(['running', 'awaiting_approval', 'needs_input'])
+    expect(payload.policy).toMatchObject({
+      provider: 'codex_app',
+      metadataOnly: true,
+      rawBodiesIncluded: false,
+    })
   })
 })

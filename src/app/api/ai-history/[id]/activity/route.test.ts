@@ -217,6 +217,7 @@ describe('GET /api/ai-history/[id]/activity', () => {
       reason: 'detail_cache_stale',
       requestedBy: 'web',
       ttlSeconds: 120,
+      refreshActive: true,
     }))
   })
 
@@ -244,6 +245,7 @@ describe('GET /api/ai-history/[id]/activity', () => {
       reason: 'detail_cache_empty',
       requestedBy: 'web',
       ttlSeconds: 120,
+      refreshActive: false,
     }))
   })
 })

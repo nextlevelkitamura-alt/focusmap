@@ -26,6 +26,10 @@ function parseLimitValue(value: unknown) {
   return parseLimit(typeof value === 'string' ? value : null)
 }
 
+function parseProvider(value: unknown) {
+  return compactString(value, 80) ?? 'codex_app'
+}
+
 async function assertRunnerCanSync(
   supabase: SupabaseServiceClient,
   token: AgentTokenRecord,
@@ -46,7 +50,7 @@ async function assertRunnerCanSync(
   return { ok: true as const }
 }
 
-async function handleRequest(request: NextRequest, input: { runnerId: string | null; limit: number }) {
+async function handleRequest(request: NextRequest, input: { runnerId: string | null; provider: string; limit: number }) {
   try {
     const { supabase, token } = await authenticateAgent(request)
     const runnerId = compactString(input.runnerId, 120)
@@ -60,6 +64,7 @@ async function handleRequest(request: NextRequest, input: { runnerId: string | n
 
     const targets = await listActiveAiHistoryMonitorTargets({
       userId: token.user_id,
+      provider: input.provider,
       limit: input.limit,
     })
 
@@ -68,9 +73,11 @@ async function handleRequest(request: NextRequest, input: { runnerId: string | n
       source: 'turso',
       targets: targets.map(toAiHistoryMonitorTarget),
       policy: {
-        provider: 'codex_app',
+        provider: input.provider,
         activeStatuses: ['running', 'awaiting_approval', 'needs_input'],
         idField: 'historyItemId',
+        metadataOnly: true,
+        rawBodiesIncluded: false,
       },
     })
   } catch (error) {
@@ -87,6 +94,7 @@ async function handleRequest(request: NextRequest, input: { runnerId: string | n
 export async function GET(request: NextRequest) {
   return handleRequest(request, {
     runnerId: request.nextUrl.searchParams.get('runner_id'),
+    provider: parseProvider(request.nextUrl.searchParams.get('provider')),
     limit: parseLimit(request.nextUrl.searchParams.get('limit')),
   })
 }
@@ -95,6 +103,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as Record<string, unknown>
   return handleRequest(request, {
     runnerId: compactString(body.runner_id, 120),
+    provider: parseProvider(body.provider),
     limit: parseLimitValue(body.limit),
   })
 }

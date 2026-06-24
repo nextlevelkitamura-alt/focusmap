@@ -36,6 +36,7 @@ async function recordHydrateRequest(input: {
   userId: string
   item: Awaited<ReturnType<typeof getAiHistoryItemForUser>>
   reason: ReturnType<typeof aiHistoryDetailHydrateReason>
+  refreshActive?: boolean
 }) {
   if (!input.item || !input.reason) return
   try {
@@ -45,6 +46,7 @@ async function recordHydrateRequest(input: {
       reason: input.reason,
       requestedBy: 'web',
       ttlSeconds: 120,
+      refreshActive: input.refreshActive === true,
     })
   } catch (error) {
     console.error('[ai-history activity hydrate request]', error)
@@ -101,6 +103,7 @@ export async function GET(
         userId: auth.user.id,
         item,
         reason: hydrateReason ?? 'detail_cache_stale',
+        refreshActive: watchRequested,
       })
     }
 

@@ -43,8 +43,13 @@ export type AiHistoryListItem = {
   endedAt: string | null
   workDurationSeconds: number | null
   archived: boolean
+  deletedAt: string | null
   detailHydrated: boolean
+  detailHydrateRequired: boolean
+  detailHydrateReason: AiHistoryDetailHydrateRequestReason | null
+  detailMessageCount: number
   detailSyncedAt: string | null
+  updatedAt: string
   codexOpenUrl: string | null
 }
 
@@ -88,9 +93,24 @@ export type AiHistorySnapshotResponse = {
   source: string
   serverTime: string
   cursor: string | null
+  changedSince: string | null
   items: AiHistoryListItem[]
   hasMore: boolean
   includeDeleted: boolean
+  filter: {
+    projectId: string
+    repo: AiHistoryRepoFilter
+    scope: AiHistoryScopeFilter
+    provider: AiHistoryProvider
+  }
+  policy: {
+    metadataOnly: true
+    countsIncluded: false
+    reconcileIncluded: false
+    detailHydrateRequestsCreated: false
+    rawBodiesIncluded: false
+    cursor: 'indexed_at|id'
+  }
 }
 
 export type AiHistoryBatchUpsertItem = {

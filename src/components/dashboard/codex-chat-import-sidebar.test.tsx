@@ -39,8 +39,13 @@ const baseHistoryItem: AiHistoryListItem = {
   endedAt: "2026-06-20T00:00:00.000Z",
   workDurationSeconds: 60,
   archived: false,
+  deletedAt: null,
   detailHydrated: true,
+  detailHydrateRequired: false,
+  detailHydrateReason: null,
+  detailMessageCount: 2,
   detailSyncedAt: "2026-06-20T00:00:02.000Z",
+  updatedAt: "2026-06-20T00:00:02.000Z",
   codexOpenUrl: "codex://threads/thread-abcdef123456",
 }
 
