@@ -8,6 +8,10 @@ import {
   upsertProjectRepoScope,
   type AiHistoryUpsertInput,
 } from '@/lib/turso/ai-history'
+import {
+  isUsableCodexSourceTaskRecord,
+  taskCodexStatusFromAiHistory,
+} from '@/lib/codex-status-projection'
 import type {
   AiHistoryBatchUpsertResponseItem,
   AiHistoryBatchUpsertItem,
@@ -237,33 +241,7 @@ async function loadSourceTasks(
 function usableSourceTaskId(sourceTaskId: string | null, sourceTasks: Map<string, Record<string, unknown>>) {
   if (!sourceTaskId) return null
   const sourceTask = sourceTasks.get(sourceTaskId)
-  if (!sourceTask) return null
-  if (sourceTask.deleted_at != null) return null
-  const source = compactString(sourceTask.source, 80)
-  if (source === 'codex_inbox') return null
-  return sourceTaskId
-}
-
-function taskCodexStatusForHistory(item: {
-  status: AiHistoryStatus
-  archived?: boolean | null
-  deleted_at?: string | null
-}) {
-  if (item.archived === true || item.deleted_at) return 'archived'
-  switch (item.status) {
-    case 'running':
-      return 'running'
-    case 'awaiting_approval':
-    case 'needs_input':
-      return 'awaiting_approval'
-    case 'completed':
-      return 'done'
-    case 'failed':
-      return 'failed'
-    case 'idle':
-    default:
-      return null
-  }
+  return sourceTask && isUsableCodexSourceTaskRecord(sourceTask) ? sourceTaskId : null
 }
 
 async function syncSourceTaskCodexStatus(
@@ -279,7 +257,7 @@ async function syncSourceTaskCodexStatus(
   },
 ) {
   if (!input.sourceTaskId) return false
-  const codexStatus = taskCodexStatusForHistory({
+  const codexStatus = taskCodexStatusFromAiHistory({
     status: input.status,
     archived: input.archived,
     deleted_at: input.deletedAt,
@@ -484,7 +462,7 @@ export async function POST(request: NextRequest) {
       })
       upserted += 1
 
-      const hasCodexStatusToSync = Boolean(taskCodexStatusForHistory({
+      const hasCodexStatusToSync = Boolean(taskCodexStatusFromAiHistory({
         status: normalized.item.status,
         archived: normalized.item.archived,
         deleted_at: normalized.item.deleted_at,

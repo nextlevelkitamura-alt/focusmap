@@ -9,6 +9,8 @@ const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_app
 const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const PROMPT_WAITING_FAST_SYNC_WINDOW_MS = 3 * 60_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
+const FULL_RECONCILE_INTERVAL_MS = 10 * 60_000
+const VISIBLE_FULL_RECONCILE_THROTTLE_MS = 30_000
 const LINKED_TASK_LIMIT = 300
 
 type UseMemoAiTasksOptions = {
@@ -115,6 +117,7 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
   const [bySourceId, setBySourceId] = useState<Map<string, AiTask>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const activeRefreshKeyRef = useRef<string | null>(null)
+  const lastFullReconcileAtRef = useRef(0)
   const sourceTaskIdsKey = useMemo(() => (
     Array.from(new Set(sourceTaskIds.filter(Boolean))).sort().join(',')
   ), [sourceTaskIds])
@@ -152,7 +155,16 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
     }
   }, [sourceTaskIdsKey])
 
+  const refreshFullIfVisible = useCallback((options: { force?: boolean } = {}) => {
+    if (!isPageVisible()) return
+    const now = Date.now()
+    if (!options.force && now - lastFullReconcileAtRef.current < VISIBLE_FULL_RECONCILE_THROTTLE_MS) return
+    lastFullReconcileAtRef.current = now
+    void fetchInitial()
+  }, [fetchInitial])
+
   useEffect(() => {
+    lastFullReconcileAtRef.current = Date.now()
     fetchInitial()
   }, [fetchInitial])
 
@@ -168,6 +180,13 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
     }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      refreshFullIfVisible({ force: true })
+    }, FULL_RECONCILE_INTERVAL_MS)
+    return () => window.clearInterval(intervalId)
+  }, [refreshFullIfVisible])
 
   useEffect(() => {
     if (!activeRefreshKey) {
@@ -190,13 +209,20 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
 
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (isPageVisible()) void fetchInitial({ statusOnly: true })
+      refreshFullIfVisible()
     }
+    const onVisibleResume = () => refreshFullIfVisible()
     document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onVisibleResume)
+    window.addEventListener('pageshow', onVisibleResume)
+    window.addEventListener('focusmap:native-app-resume', onVisibleResume)
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onVisibleResume)
+      window.removeEventListener('pageshow', onVisibleResume)
+      window.removeEventListener('focusmap:native-app-resume', onVisibleResume)
     }
-  }, [fetchInitial])
+  }, [refreshFullIfVisible])
 
   const getBySourceId = useCallback((sourceId: string) => bySourceId.get(sourceId) ?? null, [bySourceId])
 

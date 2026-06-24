@@ -117,6 +117,7 @@ const fileToDataUrl = (file: File): Promise<string> =>
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ['running', 'awaiting_approval', 'completed', 'failed'];
 const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input']);
+const SELECTED_CODEX_NODE_REFRESH_THROTTLE_MS = 30_000;
 type MindmapRefreshOptions = { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean };
 const MISSING_CODEX_SOURCE_REFRESH_RETRY_MS = 3_000;
 
@@ -1205,6 +1206,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         tasks,
     });
     const selectedNodeIdRef = useRef<string | null>(null);
+    const selectedCodexNodeRefreshRef = useRef(new Map<string, number>());
     const clipboardFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const flashClipboardFeedback = useCallback((message: string) => {
@@ -1299,6 +1301,57 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         setSelectedNodeId(primaryId);
         selectedNodeIdRef.current = primaryId;
     }, []);
+
+    const selectedCodexNodeRefreshTarget = useMemo(() => {
+        if (!selectedNodeId || selectedNodeId === 'project-root') return null;
+        const task = allTasksByIdForCodex.get(selectedNodeId) ?? fallbackSourceTasksByIdForCodex.get(selectedNodeId);
+        if (!task || task.deleted_at != null) return null;
+        const aiTask = aiTasksBySourceId.get(selectedNodeId) ?? null;
+        const progressTask = taskProgressByNodeId[selectedNodeId] ?? null;
+        const codexRun = codexRunByNodeId[selectedNodeId] ?? null;
+        const isCodexLike = task.source === 'codex_app_thread' ||
+            Boolean(task.codex_status) ||
+            Boolean(task.codex_thread_id) ||
+            Boolean(aiTask && (aiTask.executor === 'codex' || aiTask.executor === 'codex_app')) ||
+            Boolean(progressTask) ||
+            Boolean(codexRun);
+        if (!isCodexLike) return null;
+        return {
+            taskId: selectedNodeId,
+            key: [
+                selectedNodeId,
+                task.codex_status ?? '',
+                task.codex_thread_id ?? '',
+                aiTask?.id ?? '',
+                aiTask?.status ?? '',
+                progressTask?.id ?? '',
+                progressTask?.status ?? '',
+                codexRun?.state ?? '',
+            ].join('\u001f'),
+        };
+    }, [
+        aiTasksBySourceId,
+        allTasksByIdForCodex,
+        codexRunByNodeId,
+        fallbackSourceTasksByIdForCodex,
+        selectedNodeId,
+        taskProgressByNodeId,
+    ]);
+
+    useEffect(() => {
+        if (!selectedCodexNodeRefreshTarget) return;
+        const now = Date.now();
+        const previous = selectedCodexNodeRefreshRef.current.get(selectedCodexNodeRefreshTarget.key) ?? 0;
+        if (now - previous < SELECTED_CODEX_NODE_REFRESH_THROTTLE_MS) return;
+        selectedCodexNodeRefreshRef.current.set(selectedCodexNodeRefreshTarget.key, now);
+        void Promise.all([
+            refreshAiTaskStatus(),
+            refreshTaskProgressSnapshot({ reset: true }),
+            onMindmapUpdated?.({ staleMs: 3_000, silent: true }) ?? Promise.resolve(),
+        ]).catch(error => {
+            console.warn("[MindMap] Failed to refresh selected Codex node status:", error);
+        });
+    }, [onMindmapUpdated, refreshAiTaskStatus, refreshTaskProgressSnapshot, selectedCodexNodeRefreshTarget]);
 
     const handleOpenDraftNodeDetail = useCallback((taskId: string) => {
         const node = draftDisplayNodeById.get(taskId);

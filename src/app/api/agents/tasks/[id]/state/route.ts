@@ -7,6 +7,10 @@ import {
   type AiTaskActivityRole,
 } from '@/lib/ai-task-activity'
 import { resolveRunningStartedAt, shouldInitializeRunningStartedAt } from '@/lib/ai-task-run-timing'
+import {
+  codexThreadIdFromAgentResult,
+  taskCodexStatusFromAiTaskState,
+} from '@/lib/codex-status-projection'
 import { isTursoConfigured } from '@/lib/turso/client'
 import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
@@ -275,6 +279,43 @@ function compactActivityMessages(value: unknown) {
   })
 }
 
+async function syncSourceTaskCodexStatusFromAgentState(
+  supabase: Awaited<ReturnType<typeof authenticateAgent>>['supabase'],
+  input: {
+    userId: string
+    sourceTaskId?: unknown
+    status: string
+    result?: Record<string, unknown> | null
+    fallbackThreadId?: unknown
+    nowIso: string
+  },
+) {
+  const sourceTaskId = compactString(input.sourceTaskId, 120)
+  if (!sourceTaskId) return false
+  const codexStatus = taskCodexStatusFromAiTaskState({
+    status: input.status,
+    result: input.result,
+  })
+  if (!codexStatus) return false
+
+  const taskUpdates: Record<string, unknown> = {
+    codex_status: codexStatus,
+    updated_at: input.nowIso,
+  }
+  const threadId = codexThreadIdFromAgentResult(input.result) ?? compactString(input.fallbackThreadId, 200)
+  if (threadId) taskUpdates.codex_thread_id = threadId
+
+  const { error } = await supabase
+    .from('tasks')
+    .update(taskUpdates)
+    .eq('id', sourceTaskId)
+    .eq('user_id', input.userId)
+    .is('deleted_at', null)
+
+  if (error) throw error
+  return true
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -291,7 +332,7 @@ export async function POST(
 
     const { data: task } = await supabase
       .from('ai_tasks')
-      .select('id, user_id, space_id, prompt, result, claimed_runner_id, claim_expires_at, status, started_at, source_task_id')
+      .select('id, user_id, space_id, prompt, result, claimed_runner_id, claim_expires_at, status, started_at, source_task_id, codex_thread_id')
       .eq('id', id)
       .maybeSingle()
     if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
@@ -397,25 +438,21 @@ export async function POST(
       if (sourceUpdateError) return NextResponse.json({ error: sourceUpdateError.message }, { status: 500 })
     }
 
-    if (shouldMarkSourceTaskArchivedFromAgentState({
-      result: resultForSourceCompletion,
-      sourceTaskId: task.source_task_id,
-    })) {
-      const resultJson = resultForSourceCompletion ?? {}
-      const threadId = compactString(resultJson.codex_thread_id, 200)
-      const taskUpdates: Record<string, unknown> = {
-        codex_status: 'archived',
-        updated_at: new Date().toISOString(),
-      }
-      if (threadId) taskUpdates.codex_thread_id = threadId
-      const { error: sourceArchiveError } = await supabase
-        .from('tasks')
-        .update(taskUpdates)
-        .eq('id', String(task.source_task_id))
-        .eq('user_id', String(task.user_id))
-        .is('deleted_at', null)
-
-      if (sourceArchiveError) return NextResponse.json({ error: sourceArchiveError.message }, { status: 500 })
+    try {
+      await syncSourceTaskCodexStatusFromAgentState(supabase, {
+        userId: String(task.user_id),
+        sourceTaskId: task.source_task_id,
+        status,
+        result: resultForSourceCompletion,
+        fallbackThreadId: task.codex_thread_id,
+        nowIso,
+      })
+    } catch (sourceCodexStatusError) {
+      return NextResponse.json({
+        error: sourceCodexStatusError instanceof Error
+          ? sourceCodexStatusError.message
+          : 'source task Codex status sync failed',
+      }, { status: 500 })
     }
 
     const { data, error } = await supabase

@@ -181,6 +181,39 @@ describe('POST /api/agents/ai-history/batch-upsert', () => {
     expect(mocks.tasksQuery.is).toHaveBeenCalledWith('deleted_at', null)
   })
 
+  test('syncs completed AI history as confirmation waiting, not source task done', async () => {
+    mocks.tasksQuery.limit.mockResolvedValueOnce({
+      data: [{
+        id: 'task-completed',
+        project_id: 'project-1',
+        source: 'codex_app_thread',
+        deleted_at: null,
+      }],
+      error: null,
+    })
+
+    const response = await POST(request({
+      runner_id: 'runner-1',
+      provider: 'codex_app',
+      items: [{
+        externalThreadId: 'thread-completed',
+        repoPath: '/repo',
+        sourceTaskId: 'task-completed',
+        title: 'AI履歴',
+        status: 'completed',
+        lastActivityAt: '2026-06-20T00:00:00.000Z',
+      }],
+    }))
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.sourceTasksSynced).toBe(1)
+    expect(mocks.tasksQuery.update).toHaveBeenCalledWith(expect.objectContaining({
+      codex_status: 'awaiting_approval',
+      codex_thread_id: 'thread-completed',
+    }))
+  })
+
   test('syncs status to an existing preserved source task when the runner omits sourceTaskId', async () => {
     getAiHistoryItemForUserMock.mockResolvedValue({
       source_task_id: 'task-preserved',

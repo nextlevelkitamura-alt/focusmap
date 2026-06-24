@@ -7,6 +7,8 @@ import type { TaskProgressSnapshotResponse, TaskProgressSnapshotTask } from '@/t
 const ACTIVE_POLL_INTERVAL_MS = 3_000
 const DETAIL_POLL_INTERVAL_MS = 3_000
 const IDLE_POLL_INTERVAL_MS = 45_000
+const FULL_RECONCILE_INTERVAL_MS = 10 * 60_000
+const VISIBLE_FULL_RECONCILE_THROTTLE_MS = 30_000
 const SNAPSHOT_LIMIT = 500
 
 function isPageVisible() {
@@ -89,6 +91,7 @@ export function useTaskProgressSnapshot({
   const inFlightRef = useRef(false)
   const detailOpenRef = useRef(detailOpen)
   const activeTaskRefreshKeyRef = useRef<string | null>(null)
+  const lastFullReconcileAtRef = useRef(0)
   const metadataRef = useRef<{ source: string | null; serverTime: string | null }>({
     source: null,
     serverTime: null,
@@ -159,8 +162,17 @@ export function useTaskProgressSnapshot({
     }
   }, [enabled, fixtureTasks])
 
+  const refreshFullIfVisible = useCallback((options: { force?: boolean } = {}) => {
+    if (!enabled || fixtureTasks || !isPageVisible()) return
+    const now = Date.now()
+    if (!options.force && now - lastFullReconcileAtRef.current < VISIBLE_FULL_RECONCILE_THROTTLE_MS) return
+    lastFullReconcileAtRef.current = now
+    void refresh({ reset: true })
+  }, [enabled, fixtureTasks, refresh])
+
   useEffect(() => {
     if (!enabled || fixtureTasks) return
+    lastFullReconcileAtRef.current = Date.now()
     void refresh({ reset: true })
   }, [enabled, fixtureTasks, refresh])
 
@@ -210,12 +222,29 @@ export function useTaskProgressSnapshot({
 
   useEffect(() => {
     if (!enabled || fixtureTasks) return
+    const intervalId = window.setInterval(() => {
+      refreshFullIfVisible({ force: true })
+    }, FULL_RECONCILE_INTERVAL_MS)
+    return () => window.clearInterval(intervalId)
+  }, [enabled, fixtureTasks, refreshFullIfVisible])
+
+  useEffect(() => {
+    if (!enabled || fixtureTasks) return
     const handleVisibilityChange = () => {
-      if (isPageVisible()) void refresh()
+      refreshFullIfVisible()
     }
+    const handleVisibleResume = () => refreshFullIfVisible()
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [enabled, fixtureTasks, refresh])
+    window.addEventListener('focus', handleVisibleResume)
+    window.addEventListener('pageshow', handleVisibleResume)
+    window.addEventListener('focusmap:native-app-resume', handleVisibleResume)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleVisibleResume)
+      window.removeEventListener('pageshow', handleVisibleResume)
+      window.removeEventListener('focusmap:native-app-resume', handleVisibleResume)
+    }
+  }, [enabled, fixtureTasks, refreshFullIfVisible])
 
   const getById = useCallback((taskId: string | null | undefined) => {
     if (!taskId) return null

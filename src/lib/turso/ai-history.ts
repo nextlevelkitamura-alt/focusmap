@@ -1218,6 +1218,33 @@ export async function listActiveAiHistoryMonitorTargets(options: {
   return result.rows.map(row => asItem(row as Row))
 }
 
+export async function listPlacedAiHistorySourceTaskStatuses(options: {
+  userId: string
+  provider?: string | null
+  limit?: number
+}) {
+  const provider = asString(options.provider) ?? 'codex_app'
+  const limit = Math.min(Math.max(options.limit ?? 200, 1), 500)
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT *
+      FROM ai_history_items
+      WHERE user_id = ?
+        AND provider = ?
+        AND source_task_id IS NOT NULL
+        AND (
+          archived = 1
+          OR deleted_at IS NOT NULL
+          OR status IN ('running', 'awaiting_approval', 'needs_input', 'completed', 'failed')
+        )
+      ORDER BY indexed_at DESC, last_activity_at DESC, id DESC
+      LIMIT ?
+    `,
+    args: [options.userId, provider, limit],
+  })
+  return result.rows.map(row => asItem(row as Row))
+}
+
 export async function latestAiHistoryIndex(options: {
   userId: string
   projectId: string

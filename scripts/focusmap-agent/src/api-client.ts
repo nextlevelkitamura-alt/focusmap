@@ -278,6 +278,25 @@ export class AgentApiClient {
     });
   }
 
+  async reconcileAiHistorySourceTasks(
+    runnerId: string,
+    payload: { provider?: string; limit?: number } = {},
+  ): Promise<{
+    ok: boolean;
+    checked: number;
+    reconciled?: number;
+    sourceTasks: number;
+    synced: number;
+    unchanged: number;
+    skipped: number;
+    indexedAt?: string;
+  }> {
+    return this.request('/agents/ai-history/reconcile-source-tasks', {
+      runner_id: runnerId,
+      ...payload,
+    });
+  }
+
   async listAiHistoryDetailHydrateRequests(
     runnerId: string,
     limit = 50,

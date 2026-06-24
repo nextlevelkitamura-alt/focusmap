@@ -42,7 +42,7 @@ export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 6_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
-export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-24-ai-history-stability-v2';
+export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-25-ai-history-source-task-reconcile-v1';
 export const CODEX_ARCHIVE_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const MONITOR_DB_PATH_CACHE_TTL_MS = 30_000;
 const ORPHAN_IMPORT_LIMIT = 30;
@@ -55,6 +55,7 @@ const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 20;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
+export const AI_HISTORY_SOURCE_TASK_RECONCILE_INTERVAL_MS = 10 * 60 * 1000;
 export const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
 export const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 1_000;
 export const AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS = 10_000;
@@ -143,6 +144,9 @@ type CodexThreadMonitorHeartbeatState = {
   next_reconcile_at: string | null;
   last_reconcile_imported: number | null;
   last_reconcile_upserted: number | null;
+  last_source_task_reconcile_at: string | null;
+  next_source_task_reconcile_at: string | null;
+  last_source_task_reconcile_synced: number | null;
   last_error: string | null;
 };
 
@@ -164,6 +168,9 @@ const codexThreadMonitorHeartbeatState: CodexThreadMonitorHeartbeatState = {
   next_reconcile_at: null,
   last_reconcile_imported: null,
   last_reconcile_upserted: null,
+  last_source_task_reconcile_at: null,
+  next_source_task_reconcile_at: null,
+  last_source_task_reconcile_synced: null,
   last_error: null,
 };
 
@@ -193,6 +200,9 @@ function codexThreadImportScopeMetadataFlat() {
     codex_next_reconcile_at: codexThreadMonitorHeartbeatState.next_reconcile_at,
     codex_last_reconcile_imported: codexThreadMonitorHeartbeatState.last_reconcile_imported,
     codex_last_reconcile_upserted: codexThreadMonitorHeartbeatState.last_reconcile_upserted,
+    codex_last_source_task_reconcile_at: codexThreadMonitorHeartbeatState.last_source_task_reconcile_at,
+    codex_next_source_task_reconcile_at: codexThreadMonitorHeartbeatState.next_source_task_reconcile_at,
+    codex_last_source_task_reconcile_synced: codexThreadMonitorHeartbeatState.last_source_task_reconcile_synced,
     codex_monitor_last_error: codexThreadMonitorHeartbeatState.last_error,
   };
 }
@@ -3195,6 +3205,26 @@ async function syncAiHistoryMetadata(
   };
 }
 
+async function reconcileAiHistorySourceTasks(
+  api: AgentApiClient,
+  runnerId: string,
+): Promise<number> {
+  try {
+    const result = await api.reconcileAiHistorySourceTasks(runnerId, {
+      provider: AI_HISTORY_PROVIDER,
+      limit: 300,
+    });
+    return result.synced ?? 0;
+  } catch (error) {
+    if (isAiHistorySyncApiUnavailable(error)) {
+      debug(`ai history source task reconcile API unavailable status=${error.status}`);
+      return 0;
+    }
+    logError('ai history source task reconcile failed', error instanceof Error ? error.message : error);
+    return 0;
+  }
+}
+
 async function pollAiHistoryDetailHydrateRequests(
   api: AgentApiClient,
   runnerId: string,
@@ -3591,8 +3621,10 @@ export function startCodexThreadMonitorLoop(
   let recentScanRunning = false;
   let detailHydrateRunning = false;
   let reconcileRunning = false;
+  let sourceTaskReconcileRunning = false;
   let targetsLoaded = false;
   let nextReconcileAt = Date.now() + reconcileIntervalMs;
+  let nextSourceTaskReconcileAt = Date.now();
   let currentImportScopeSignature = '';
   let reconcileQueue: CodexThreadImportScope[] = [];
   let nextDetailHydratePollAt = 0;
@@ -3886,10 +3918,39 @@ export function startCodexThreadMonitorLoop(
     }
   };
 
+  const runSourceTaskReconcile = async (force = false) => {
+    if (sourceTaskReconcileRunning) return;
+    const now = Date.now();
+    if (!force && now < nextSourceTaskReconcileAt) return;
+    sourceTaskReconcileRunning = true;
+    try {
+      const synced = await measurePhase('source_task_reconcile', async () => (
+        reconcileAiHistorySourceTasks(api, runnerId)
+      ));
+      nextSourceTaskReconcileAt = Date.now() + AI_HISTORY_SOURCE_TASK_RECONCILE_INTERVAL_MS;
+      updateCodexThreadMonitorHeartbeatState({
+        last_source_task_reconcile_at: new Date().toISOString(),
+        next_source_task_reconcile_at: new Date(nextSourceTaskReconcileAt).toISOString(),
+        last_source_task_reconcile_synced: synced,
+      });
+      if (synced > 0) debug(`ai history source task reconcile synced=${synced}`);
+    } catch (error) {
+      nextSourceTaskReconcileAt = Date.now() + Math.min(60_000, AI_HISTORY_SOURCE_TASK_RECONCILE_INTERVAL_MS);
+      updateCodexThreadMonitorHeartbeatState({
+        next_source_task_reconcile_at: new Date(nextSourceTaskReconcileAt).toISOString(),
+        last_error: error instanceof Error ? error.message : String(error),
+      });
+      logError('ai history source task reconcile loop error', error instanceof Error ? error.message : error);
+    } finally {
+      sourceTaskReconcileRunning = false;
+    }
+  };
+
   void refreshTargets();
   void runActiveWatch();
   void runRecentScan();
   void runDetailHydrate();
+  void runSourceTaskReconcile(true);
 
   return [
     setInterval(() => {
@@ -3907,5 +3968,8 @@ export function startCodexThreadMonitorLoop(
     setInterval(() => {
       void runReconcile();
     }, Math.min(60_000, Math.max(10_000, reconcileIntervalMs))),
+    setInterval(() => {
+      void runSourceTaskReconcile();
+    }, Math.min(60_000, AI_HISTORY_SOURCE_TASK_RECONCILE_INTERVAL_MS)),
   ];
 }
