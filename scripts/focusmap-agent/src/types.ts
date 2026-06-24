@@ -106,6 +106,10 @@ export interface TaskResultJson {
   codex_archived_at?: string | null;
   codex_turn_started_at?: string;
   codex_turn_completed_at?: string;
+  codex_running_detected_at?: string;
+  codex_timer_started_at?: string;
+  codex_timer_source?: 'task_started' | 'fallback_user_message' | 'unknown';
+  codex_timer_offset_ms?: number | null;
   codex_source_task_completed?: boolean;
   codex_source_task_id?: string | null;
   codex_source_task_completion_reason?: string | null;

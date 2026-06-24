@@ -20,6 +20,8 @@ import {
   codexStateDbPath,
   codexSessionThreadNamesFromJsonl,
   codexThreadGeneratedTitle,
+  CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS,
+  CODEX_TIMER_ALIGNMENT_RECHECK_MAX_WATCHES,
   DEFAULT_RECONCILE_INTERVAL_MS,
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   getCodexThreadMonitorHeartbeatMetadata,
@@ -167,6 +169,11 @@ describe('codex-thread-monitor state detection', () => {
       nowMs: now,
       burstUntilMs: now + 10_000,
     })).toBe(1_000);
+  });
+
+  test('limits delayed timer alignment rechecks to two capped probes', () => {
+    expect(CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS).toEqual([10_000, 60_000]);
+    expect(CODEX_TIMER_ALIGNMENT_RECHECK_MAX_WATCHES).toBe(100);
   });
 
   test('merges global and per-scope recent threads without losing scope-only rows', () => {
@@ -710,7 +717,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
   });
 
-  test('starts initial AI history running duration from the first user prompt', () => {
+  test('marks initial user prompt as running but does not start the AI history timer before task_started', () => {
     const raw = [
       line('2026-06-08T15:49:15.000Z', { type: 'user_message', message: '調査して修正して' }),
     ].join('\n');
@@ -724,12 +731,15 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(summary.historyStatus).toBe('running');
     expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(summary.activeTimerStartedAt).toBeNull();
     expect(summary.latestTaskStartedAt).toBeNull();
-    expect(presentation.startedAt).toBe('2026-06-08T15:49:15.000Z');
-    expect(presentation.workDurationSeconds).toBe(45);
+    expect(presentation.startedAt).toBeNull();
+    expect(presentation.workDurationSeconds).toBeNull();
+    expect(presentation.runningDetectedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(presentation.timerSource).toBe('unknown');
   });
 
-  test('keeps the user prompt as running start when task_started arrives later', () => {
+  test('keeps running immediate but moves the timer start to task_started when it arrives later', () => {
     const raw = [
       line('2026-06-08T15:49:15.000Z', { type: 'message', role: 'user', content: 'まず原因を見て' }),
       line('2026-06-08T15:49:17.000Z', { type: 'task_started' }),
@@ -744,9 +754,13 @@ describe('codex-thread-monitor state detection', () => {
 
     expect(summary.historyStatus).toBe('running');
     expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(summary.activeTimerStartedAt).toBe('2026-06-08T15:49:17.000Z');
     expect(summary.latestTaskStartedAt).toBe('2026-06-08T15:49:17.000Z');
-    expect(presentation.startedAt).toBe('2026-06-08T15:49:15.000Z');
-    expect(presentation.workDurationSeconds).toBe(5);
+    expect(presentation.startedAt).toBe('2026-06-08T15:49:17.000Z');
+    expect(presentation.workDurationSeconds).toBe(3);
+    expect(presentation.runningDetectedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(presentation.timerSource).toBe('task_started');
+    expect(presentation.timerOffsetMs).toBe(2_000);
   });
 
   test('shows only the latest completed Codex turn duration in AI history presentation', () => {
@@ -765,7 +779,7 @@ describe('codex-thread-monitor state detection', () => {
       nowMs: Date.parse('2026-06-08T16:02:05.000Z'),
     });
 
-    expect(summary.workDurationSeconds).toBe(720);
+    expect(summary.workDurationSeconds).toBe(690);
     expect(presentation.startedAt).toBe('2026-06-08T16:00:30.000Z');
     expect(presentation.endedAt).toBe('2026-06-08T16:02:00.000Z');
     expect(presentation.workDurationSeconds).toBe(90);
@@ -793,7 +807,7 @@ describe('codex-thread-monitor state detection', () => {
     expect(presentation.workDurationSeconds).toBe(10);
   });
 
-  test('starts running AI history duration from the resumed user message when no new task_started exists yet', () => {
+  test('keeps a resumed user message running without advancing the timer until task_started arrives', () => {
     const raw = [
       line('2026-06-08T15:40:00.000Z', { type: 'task_started' }),
       line('2026-06-08T15:40:10.000Z', { type: 'task_complete', last_agent_message: '完了しました' }),
@@ -809,9 +823,11 @@ describe('codex-thread-monitor state detection', () => {
     });
 
     expect(presentation.status).toBe('running');
-    expect(presentation.startedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(summary.activeStartedAt).toBe('2026-06-08T15:49:15.000Z');
+    expect(summary.activeTimerStartedAt).toBeNull();
+    expect(presentation.startedAt).toBeNull();
     expect(presentation.endedAt).toBeNull();
-    expect(presentation.workDurationSeconds).toBe(45);
+    expect(presentation.workDurationSeconds).toBeNull();
   });
 
   test('briefly debounces a running task completion without waiting for thread metadata updates', () => {

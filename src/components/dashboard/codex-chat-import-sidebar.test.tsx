@@ -143,6 +143,7 @@ function renderSidebar(options: {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.sessionStorage.clear()
   lastHookOptions = []
   historyItems = [baseHistoryItem]
   syncState = {
@@ -274,6 +275,31 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).getByText("実行中")).toBeInTheDocument()
     expect(within(row).getByText("1m 23s")).toBeInTheDocument()
     expect(within(row).queryByText(/54m/)).not.toBeInTheDocument()
+  })
+
+  test("does not advance a local running timer before the server timer is known", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-20T00:02:00.000Z"))
+    historyItems = [{
+      ...baseHistoryItem,
+      status: "running",
+      runState: "started",
+      lastActivityAt: "2026-06-20T00:01:59.000Z",
+      indexedAt: "2026-06-20T00:02:00.000Z",
+      startedAt: null,
+      endedAt: null,
+      workDurationSeconds: null,
+    }]
+    renderSidebar()
+
+    act(() => {
+      vi.advanceTimersByTime(5_000)
+    })
+
+    const row = screen.getByTestId("codex-chat-import-row-history-1")
+    expect(within(row).getByText("実行中")).toBeInTheDocument()
+    expect(within(row).queryByText("5s")).not.toBeInTheDocument()
+    expect(within(row).queryByText("0s")).not.toBeInTheDocument()
   })
 
   test("keeps AI history work duration when opening a placed mindmap detail item", async () => {

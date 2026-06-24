@@ -58,6 +58,8 @@ const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
 export const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
 export const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 1_000;
 export const AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS = 10_000;
+export const CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS = [10_000, 60_000] as const;
+export const CODEX_TIMER_ALIGNMENT_RECHECK_MAX_WATCHES = 100;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
 const AI_HISTORY_DETAIL_HYDRATE_PER_TICK = 5;
 const AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT = 100;
@@ -93,6 +95,15 @@ const taskRolloutInspectCache = new Map<string, { fingerprint: string; nextInspe
 const aiHistoryDetailSyncCache = new Map<string, { hash: string; sentAt: number }>();
 const aiHistoryDetailWatchRequests = new Map<string, AiHistoryDetailHydrateRequest>();
 const aiHistoryDetailRolloutInspectCache = new Map<string, { fingerprint: string; nextInspectAt: number }>();
+const aiHistoryTimerAlignmentWatch = new Map<string, {
+  projectId: string;
+  repoPath: string;
+  externalThreadId: string;
+  runningDetectedAtMs: number;
+  nextDelayIndex: number;
+  nextInspectAt: number;
+  expiresAt: number;
+}>();
 const aiHistoryPlaceholderTitleWatch = new Map<string, {
   projectId: string;
   repoPath: string;
@@ -220,6 +231,8 @@ type VisibleMessage = {
   turnCompletedAt?: string | null;
 };
 
+export type CodexTimerSource = 'task_started' | 'fallback_user_message' | 'unknown';
+
 export type RolloutSummary = {
   state: 'running' | 'awaiting_approval';
   historyStatus: AiHistoryStatus;
@@ -233,9 +246,14 @@ export type RolloutSummary = {
   latestTaskCompleteAt: string | null;
   latestRunningActivityAt: string | null;
   latestAgentMessage: string | null;
+  runningDetectedAt: string | null;
+  timerStartedAt: string | null;
+  timerSource: CodexTimerSource;
+  timerOffsetMs: number | null;
   startedAt: string | null;
   endedAt: string | null;
   activeStartedAt: string | null;
+  activeTimerStartedAt: string | null;
   workDurationSeconds: number | null;
   visibleMessages: VisibleMessage[];
 };
@@ -684,7 +702,13 @@ function appendVisibleMessage(messages: VisibleMessage[], input: Omit<VisibleMes
   const key = `${input.role}:${inputTurnKey}:${textFingerprint(body)}`;
   const existing = messages.find(message => {
     const messageTurnKey = message.role === 'codex' ? message.turnStartedAt ?? '' : message.createdAt ?? '';
-    return `${message.role}:${messageTurnKey}:${textFingerprint(message.body)}` === key;
+    if (`${message.role}:${messageTurnKey}:${textFingerprint(message.body)}` === key) return true;
+    return input.role === 'codex' &&
+      message.role === 'codex' &&
+      input.turnCompletedAt &&
+      !message.turnCompletedAt &&
+      textFingerprint(message.body) === textFingerprint(body) &&
+      (!message.turnStartedAt || !input.turnStartedAt);
   });
   if (existing) {
     existing.turnStartedAt = existing.turnStartedAt ?? input.turnStartedAt;
@@ -781,21 +805,55 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
   let latestTaskCompleteAt: string | null = null;
   let latestRunningActivityAt: string | null = null;
   let latestAgentMessage: string | null = null;
+  let runningDetectedAt: string | null = null;
+  let timerStartedAt: string | null = null;
+  let timerSource: CodexTimerSource = 'unknown';
+  let timerOffsetMs: number | null = null;
   let startedAt: string | null = null;
   let endedAt: string | null = null;
   let activeStartedAt: string | null = null;
   let activeStartedMs: number | null = null;
+  let activeTimerStartedAt: string | null = null;
+  let activeTimerStartedMs: number | null = null;
   let workDurationMs = 0;
   let pendingPostCompleteReasoningAt: string | null = null;
   let passivePostCompleteMaintenanceSeen = false;
 
-  const markWorkStarted = (iso: string | null) => {
+  const refreshTimerOffset = () => {
+    if (activeStartedMs === null || activeTimerStartedMs === null) {
+      timerOffsetMs = null;
+      return;
+    }
+    timerOffsetMs = Math.round(activeTimerStartedMs - activeStartedMs);
+  };
+  const markRunningDetected = (iso: string | null) => {
     const ms = timeMs(iso);
     if (ms === null) return;
-    startedAt = startedAt ?? new Date(ms).toISOString();
+    if (activeStartedMs === null) {
+      activeTimerStartedAt = null;
+      activeTimerStartedMs = null;
+      timerStartedAt = null;
+      timerSource = 'unknown';
+      timerOffsetMs = null;
+    }
     if (activeStartedMs === null || ms < activeStartedMs) {
       activeStartedAt = new Date(ms).toISOString();
       activeStartedMs = ms;
+      runningDetectedAt = activeStartedAt;
+      refreshTimerOffset();
+    }
+  };
+  const markTimerStarted = (iso: string | null, source: CodexTimerSource) => {
+    const ms = timeMs(iso);
+    if (ms === null) return;
+    const normalized = new Date(ms).toISOString();
+    startedAt = startedAt ?? normalized;
+    if (activeTimerStartedMs === null || source === 'task_started') {
+      activeTimerStartedAt = normalized;
+      activeTimerStartedMs = ms;
+      timerStartedAt = normalized;
+      timerSource = source;
+      refreshTimerOffset();
     }
   };
   const markUserPromptReceived = (iso: string | null) => {
@@ -812,17 +870,22 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     currentStep = completeMs === null
       ? 'Codexがプロンプトを受け取りました'
       : 'Codexが追加指示を受け取りました';
-    markWorkStarted(iso);
+    markRunningDetected(iso);
   };
   const markWorkEnded = (iso: string | null) => {
     const ms = timeMs(iso);
     if (ms === null) return;
-    endedAt = new Date(ms).toISOString();
-    if (activeStartedMs !== null) {
-      workDurationMs += Math.max(0, ms - activeStartedMs);
-      activeStartedMs = null;
-      activeStartedAt = null;
+    if (activeTimerStartedMs === null && activeStartedAt) {
+      markTimerStarted(activeStartedAt, 'fallback_user_message');
     }
+    endedAt = new Date(ms).toISOString();
+    if (activeTimerStartedMs !== null) {
+      workDurationMs += Math.max(0, ms - activeTimerStartedMs);
+      activeTimerStartedMs = null;
+      activeTimerStartedAt = null;
+    }
+    activeStartedMs = null;
+    activeStartedAt = null;
   };
 
   let sequence = 0;
@@ -855,7 +918,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       historyStatus = 'running';
       reviewReason = 'started';
       currentStep = 'Codexが実行を開始しました';
-      markWorkStarted(eventTime);
+      markRunningDetected(eventTime);
+      markTimerStarted(eventTime, 'task_started');
       continue;
     }
 
@@ -878,11 +942,11 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           body: text,
           createdAt: eventTime,
           sourceEvent: 'task_complete',
-          turnStartedAt: latestTaskStartedAt,
+          turnStartedAt: timerStartedAt ?? latestTaskStartedAt,
           turnCompletedAt: eventTime,
         });
       } else {
-        completeLatestCodexVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime);
+        completeLatestCodexVisibleMessage(visibleMessages, timerStartedAt ?? latestTaskStartedAt, eventTime);
       }
       continue;
     }
@@ -898,7 +962,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
         ? 'Codexのターンが失敗しました'
         : 'Codexのターンが停止し確認待ちです';
       markWorkEnded(eventTime);
-      completeLatestCodexVisibleMessage(visibleMessages, latestTaskStartedAt, eventTime, 'turn_aborted');
+      completeLatestCodexVisibleMessage(visibleMessages, timerStartedAt ?? latestTaskStartedAt, eventTime, 'turn_aborted');
       continue;
     }
 
@@ -954,7 +1018,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           body: text,
           createdAt: eventTime,
           sourceEvent: 'agent_message',
-          turnStartedAt: latestTaskStartedAt,
+          turnStartedAt: activeTimerStartedAt ?? latestTaskStartedAt,
         });
       }
       continue;
@@ -1026,7 +1090,8 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
       }
       if (isContinuation) {
         latestTaskStartedAt = eventTime;
-        markWorkStarted(eventTime);
+        markRunningDetected(eventTime);
+        markTimerStarted(eventTime, 'unknown');
       }
       pendingPostCompleteReasoningAt = null;
       passivePostCompleteMaintenanceSeen = false;
@@ -1073,7 +1138,7 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
           body: text,
           createdAt: eventTime,
           sourceEvent: 'message',
-          turnStartedAt: latestTaskStartedAt,
+          turnStartedAt: activeTimerStartedAt ?? latestTaskStartedAt,
         });
       } else if (role === 'user' && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime;
@@ -1111,9 +1176,14 @@ export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSumm
     latestTaskCompleteAt,
     latestRunningActivityAt,
     latestAgentMessage,
+    runningDetectedAt,
+    timerStartedAt,
+    timerSource,
+    timerOffsetMs,
     startedAt,
     endedAt,
     activeStartedAt,
+    activeTimerStartedAt,
     workDurationSeconds: workDurationMs > 0 ? Math.floor(workDurationMs / 1000) : null,
     visibleMessages,
   };
@@ -1326,6 +1396,101 @@ function aiHistoryPlaceholderTitleWatchKey(
     normalizeLocalPath(scope.repo_path),
     externalThreadId,
   ].join('\u001f');
+}
+
+function aiHistoryTimerAlignmentWatchKey(
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  externalThreadId: string,
+): string {
+  return [
+    AI_HISTORY_PROVIDER,
+    typeof scope.project_id === 'string' ? scope.project_id.trim() : '',
+    normalizeLocalPath(scope.repo_path),
+    externalThreadId,
+  ].join('\u001f');
+}
+
+function trimTimerAlignmentWatchToLimit(): void {
+  while (aiHistoryTimerAlignmentWatch.size > CODEX_TIMER_ALIGNMENT_RECHECK_MAX_WATCHES) {
+    const oldest = [...aiHistoryTimerAlignmentWatch.entries()]
+      .sort((left, right) => left[1].expiresAt - right[1].expiresAt)[0];
+    if (!oldest) break;
+    aiHistoryTimerAlignmentWatch.delete(oldest[0]);
+  }
+}
+
+function activeAiHistoryTimerAlignmentWatches(nowMs = Date.now()) {
+  const entries: Array<{
+    key: string;
+    projectId: string;
+    repoPath: string;
+    externalThreadId: string;
+  }> = [];
+  for (const [key, watch] of aiHistoryTimerAlignmentWatch.entries()) {
+    if (watch.expiresAt <= nowMs || watch.nextDelayIndex >= CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS.length) {
+      aiHistoryTimerAlignmentWatch.delete(key);
+      continue;
+    }
+    if (watch.nextInspectAt <= nowMs) {
+      entries.push({ key, ...watch });
+    }
+  }
+  return entries;
+}
+
+function updateAiHistoryTimerAlignmentWatch(
+  row: Pick<CodexThreadRow, 'id'>,
+  scope: Pick<CodexThreadImportScope, 'project_id' | 'repo_path'>,
+  item: Pick<AiHistoryBatchUpsertItem, 'status' | 'startedAt' | 'metadata'>,
+  nowMs = Date.now(),
+): void {
+  if (!row.id) return;
+  const projectId = typeof scope.project_id === 'string' ? scope.project_id.trim() : '';
+  const repoPath = normalizeLocalPath(scope.repo_path);
+  if (!projectId || !repoPath) return;
+  const key = aiHistoryTimerAlignmentWatchKey(scope, row.id);
+  const metadata = isRecord(item.metadata) ? item.metadata : {};
+  const runningDetectedAt = typeof metadata.codex_running_detected_at === 'string'
+    ? metadata.codex_running_detected_at
+    : null;
+  const timerStartedAt = typeof item.startedAt === 'string' && item.startedAt.trim()
+    ? item.startedAt
+    : typeof metadata.codex_timer_started_at === 'string'
+      ? metadata.codex_timer_started_at
+      : null;
+  const detectedMs = timeMs(runningDetectedAt);
+
+  if (item.status !== 'running' || detectedMs === null || timerStartedAt) {
+    aiHistoryTimerAlignmentWatch.delete(key);
+    return;
+  }
+
+  const existing = aiHistoryTimerAlignmentWatch.get(key);
+  let nextDelayIndex = existing && existing.runningDetectedAtMs === detectedMs
+    ? existing.nextDelayIndex
+    : 0;
+  while (
+    nextDelayIndex < CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS.length &&
+    nowMs >= detectedMs + CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS[nextDelayIndex]!
+  ) {
+    nextDelayIndex += 1;
+  }
+  if (nextDelayIndex >= CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS.length) {
+    aiHistoryTimerAlignmentWatch.delete(key);
+    return;
+  }
+
+  const lastDelay = CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS[CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS.length - 1]!;
+  aiHistoryTimerAlignmentWatch.set(key, {
+    projectId,
+    repoPath,
+    externalThreadId: row.id,
+    runningDetectedAtMs: detectedMs,
+    nextDelayIndex,
+    nextInspectAt: detectedMs + CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS[nextDelayIndex]!,
+    expiresAt: detectedMs + lastDelay + 10_000,
+  });
+  trimTimerAlignmentWatchToLimit();
 }
 
 function activeAiHistoryPlaceholderTitleWatches(nowMs = Date.now()) {
@@ -1550,9 +1715,11 @@ function aiHistoryCurrentRallyTiming(input: {
   staleRunningEndedAt: string | null;
   nowMs: number;
 }) {
+  const activeTimerStartedAt = input.summary.activeTimerStartedAt ?? null;
+  const completedTimerStartedAt = input.summary.timerStartedAt ?? input.summary.latestTaskStartedAt;
   const startedAt = input.status === 'running' || input.staleRunningEndedAt
-    ? input.summary.activeStartedAt ?? input.summary.latestTaskStartedAt
-    : input.summary.latestTaskStartedAt;
+    ? activeTimerStartedAt
+    : completedTimerStartedAt;
   const endedAt = input.status === 'running'
     ? null
     : input.staleRunningEndedAt ?? input.summary.latestTaskCompleteAt;
@@ -1577,6 +1744,10 @@ export function aiHistoryPresentationForThread(input: {
   startedAt: string | null;
   endedAt: string | null;
   workDurationSeconds: number | null;
+  runningDetectedAt: string | null;
+  timerStartedAt: string | null;
+  timerSource: CodexTimerSource;
+  timerOffsetMs: number | null;
   staleRunning: boolean;
   staleRunningLastActivityAt: string | null;
   staleRunningThresholdMs: number | null;
@@ -1606,6 +1777,12 @@ export function aiHistoryPresentationForThread(input: {
     startedAt: timing.startedAt,
     endedAt: timing.endedAt,
     workDurationSeconds: timing.workDurationSeconds,
+    runningDetectedAt: status === 'running'
+      ? input.summary.activeStartedAt ?? input.summary.runningDetectedAt
+      : input.summary.runningDetectedAt,
+    timerStartedAt: timing.startedAt,
+    timerSource: timing.startedAt ? input.summary.timerSource : 'unknown',
+    timerOffsetMs: timing.startedAt ? input.summary.timerOffsetMs : null,
     staleRunning: Boolean(staleRunningEndedAt),
     staleRunningLastActivityAt: staleRunningEndedAt,
     staleRunningThresholdMs: staleRunningEndedAt ? aiHistoryStaleRunningThresholdMs(input.row) : null,
@@ -1761,6 +1938,10 @@ function aiHistoryItemFromThread(input: {
       stale_running: presentation.staleRunning,
       stale_running_last_activity_at: presentation.staleRunningLastActivityAt,
       stale_running_threshold_ms: presentation.staleRunningThresholdMs,
+      codex_running_detected_at: presentation.runningDetectedAt,
+      codex_timer_started_at: presentation.timerStartedAt,
+      codex_timer_source: presentation.timerSource,
+      codex_timer_offset_ms: presentation.timerOffsetMs,
       title_source: titleInfo.source,
       thread_source: threadSource,
       duration_approximate: !hasRollout && workDurationSeconds !== null,
@@ -2261,7 +2442,14 @@ function resultSnapshot(
     ? staleRunningTaskEndedAt(task, summary, Date.now())
     : null;
   const lastActivityAt = latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms) ?? nowIso;
-  const codexTurnStartedAt = summary.activeStartedAt ?? summary.latestTaskStartedAt ?? summary.latestUserMessageAt;
+  const codexRunningDetectedAt = status === 'running'
+    ? summary.activeStartedAt ?? summary.runningDetectedAt
+    : summary.runningDetectedAt;
+  const codexTimerStartedAt = status === 'running'
+    ? summary.activeTimerStartedAt
+    : summary.timerStartedAt ?? summary.latestTaskStartedAt;
+  const codexTimerSource: CodexTimerSource = codexTimerStartedAt ? summary.timerSource : 'unknown';
+  const codexTimerOffsetMs = codexTimerStartedAt ? summary.timerOffsetMs : null;
   const currentStep = status === 'running' && summary.state === 'awaiting_approval'
     ? 'Codexの実行状態を確認中'
     : summary.currentStep;
@@ -2299,8 +2487,12 @@ function resultSnapshot(
       : task.source_task_id ?? null,
     current_step: currentStep,
     last_activity_at: lastActivityAt,
-    codex_turn_started_at: codexTurnStartedAt ?? undefined,
+    codex_turn_started_at: codexTimerStartedAt ?? undefined,
     codex_turn_completed_at: summary.latestTaskCompleteAt ?? undefined,
+    codex_running_detected_at: codexRunningDetectedAt ?? undefined,
+    codex_timer_started_at: codexTimerStartedAt ?? undefined,
+    codex_timer_source: codexTimerSource,
+    codex_timer_offset_ms: codexTimerOffsetMs,
     awaiting_approval_at: status === 'awaiting_approval'
       ? staleRunningEndedAt ?? awaitingApprovalAtForSummary(result, summary, nowIso)
       : undefined,
@@ -2315,6 +2507,10 @@ function resultSnapshot(
       source_task_title: sourceTaskTitleSuggestion ?? undefined,
       thread_updated_at_ms: row.updated_at_ms ?? null,
       thread_archived: Boolean(row.archived),
+      codex_running_detected_at: codexRunningDetectedAt,
+      codex_timer_started_at: codexTimerStartedAt,
+      codex_timer_source: codexTimerSource,
+      codex_timer_offset_ms: codexTimerOffsetMs,
       stale_running: Boolean(staleRunningEndedAt),
       stale_running_last_activity_at: staleRunningEndedAt,
       stale_running_threshold_ms: staleRunningEndedAt ? TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS : null,
@@ -2886,6 +3082,19 @@ async function syncAiHistoryMetadata(
       if (!rowsById.has(watch.externalThreadId)) detailWatchThreadIds.push(watch.externalThreadId);
       return true;
     });
+    const timerAlignmentWatches = activeAiHistoryTimerAlignmentWatches(now).filter(watch => {
+      const scopeStillEnabled = syncScopes.some(scope => (
+        typeof scope.project_id === 'string' &&
+        scope.project_id.trim() === watch.projectId &&
+        normalizeLocalPath(scope.repo_path) === watch.repoPath
+      ));
+      if (!scopeStillEnabled) {
+        aiHistoryTimerAlignmentWatch.delete(watch.key);
+        return false;
+      }
+      if (!rowsById.has(watch.externalThreadId)) detailWatchThreadIds.push(watch.externalThreadId);
+      return true;
+    });
     const watchedRowsById = await readThreads(dbPath, detailWatchThreadIds);
     for (const request of aiHistoryDetailWatchRequests.values()) {
       if (hydrateRequestExpiresAtMs(request, now) <= now) continue;
@@ -2904,6 +3113,16 @@ async function syncAiHistoryMetadata(
         watchedRowIds.add(watchedRow.id);
       } else {
         aiHistoryPlaceholderTitleWatch.delete(watch.key);
+      }
+    }
+    for (const watch of timerAlignmentWatches) {
+      const watchedRow = rowsById.get(watch.externalThreadId) ?? watchedRowsById.get(watch.externalThreadId);
+      if (watchedRow) {
+        rowsById.set(watchedRow.id, watchedRow);
+        if (!watchedRowIds.has(watchedRow.id)) watchedRows.push(watchedRow);
+        watchedRowIds.add(watchedRow.id);
+      } else {
+        aiHistoryTimerAlignmentWatch.delete(watch.key);
       }
     }
   }
@@ -2953,6 +3172,7 @@ async function syncAiHistoryMetadata(
         sessionThreadNames,
         nowMs: now,
       });
+      updateAiHistoryTimerAlignmentWatch(row, matchingScope, prepared.item, now);
       if (shouldQueueAiHistoryItem(prepared)) {
         preparedItems.push(prepared);
       } else {
@@ -3303,8 +3523,13 @@ async function syncOneTask(
     summary.threadUpdatedAt ?? '',
     summary.currentStep,
     summary.latestUserMessageAt ?? '',
+    summary.latestTaskStartedAt ?? '',
     summary.latestTaskCompleteAt ?? '',
     summary.latestRunningActivityAt ?? '',
+    summary.activeTimerStartedAt ?? '',
+    summary.timerStartedAt ?? '',
+    summary.timerSource,
+    summary.timerOffsetMs ?? '',
     activityBatch.syncedSequence ?? activitySyncedSequence(task) ?? '',
     summary.visibleMessages.length,
     sourceTaskTitleSuggestion ?? '',

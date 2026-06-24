@@ -107,6 +107,7 @@ export function codexThreadImportActivityAt(input: {
   } | null
 }) {
   const result = recordValue(input.aiTask?.result)
+  const meta = recordValue(result?.meta)
 
   // Keep list ordering tied to Codex work, not Focusmap import/sync writes.
   // task/progress updated_at can change when old threads are imported or cards are
@@ -114,6 +115,8 @@ export function codexThreadImportActivityAt(input: {
   return firstValidTime(
     result?.codex_turn_completed_at,
     result?.awaiting_approval_at,
+    result?.codex_timer_started_at,
+    meta?.codex_timer_started_at,
     result?.codex_turn_started_at,
     importedCodexThreadUpdatedAtFromMemo(input.task?.memo),
   )
@@ -166,7 +169,12 @@ export function codexThreadRallyWorkTiming(input: {
   aiResult?: Record<string, unknown> | null
 }): CodexThreadRallyWorkTiming {
   const result = input.aiResult ?? recordValue(input.aiTask?.result)
-  const startedAt = firstValidTime(result?.codex_turn_started_at)
+  const meta = recordValue(result?.meta)
+  const startedAt = firstValidTime(
+    result?.codex_timer_started_at,
+    meta?.codex_timer_started_at,
+    result?.codex_turn_started_at,
+  )
   const finishedAt = firstValidTime(
     result?.codex_turn_completed_at,
     result?.awaiting_approval_at,

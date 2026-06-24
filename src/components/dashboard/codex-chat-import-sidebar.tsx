@@ -679,6 +679,7 @@ function runningRallyUserMessageIndex(messages: AiTaskActivityMessage[], workSta
 }
 
 function runningRallyElapsedMs(messages: AiTaskActivityMessage[], nowMs: number, workStartedAt?: string | null) {
+  if (!workStartedAt) return null
   const index = runningRallyUserMessageIndex(messages, workStartedAt)
   if (index >= 0) {
     const startedMs = activityMessageCreatedMs(messages[index])
@@ -1127,8 +1128,9 @@ export function CodexChatImportSidebar({
 
         if (uiStatus === "running") {
           if (!current || current.state !== "running") {
-            if (!changed) nextTimers = { ...previousTimers }
             const elapsedMs = codexChatImportWorkElapsedMs(item, nowMs, true)
+            if (elapsedMs === null) continue
+            if (!changed) nextTimers = { ...previousTimers }
             nextTimers[key] = {
               state: "running",
               startedAtMs: nowMs - Math.max(0, elapsedMs ?? 0),
@@ -1560,7 +1562,7 @@ export function CodexChatImportSidebar({
     ? runningRallyElapsedMs(selectedMessages, workNowMs, selectedChatItem?.workStartedAt)
     : null
   const selectedWorkElapsedMs = selectedUiStatus === "running"
-    ? selectedRallyWorkElapsedMs ?? selectedLocalWorkElapsedMs ?? selectedRunningWorkElapsedMs
+    ? selectedRallyWorkElapsedMs ?? selectedRunningWorkElapsedMs
     : selectedCompletedWorkElapsedMs ?? selectedRallyWorkElapsedMs ?? selectedLocalWorkElapsedMs
   const selectedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedWorkElapsedMs)
   const selectedCompletedWorkElapsedText = formatAiTaskWorkElapsedMs(selectedCompletedWorkElapsedMs)
@@ -2134,7 +2136,7 @@ export function CodexChatImportSidebar({
                   const itemLocalWorkTimer = localWorkTimers[localWorkTimerKey(item)] ?? null
                   const itemLocalWorkElapsedMs = localWorkElapsedMs(itemLocalWorkTimer, workNowMs)
                   const itemRallyWorkElapsedMs = codexChatImportWorkElapsedMs(item, workNowMs, uiStatus === "running")
-                  const workElapsedMs = itemRallyWorkElapsedMs ?? itemLocalWorkElapsedMs
+                  const workElapsedMs = itemRallyWorkElapsedMs ?? (uiStatus === "running" ? null : itemLocalWorkElapsedMs)
                   const workElapsedText = formatAiTaskWorkElapsedMs(workElapsedMs)
                   const workLabel = formatAiTaskWorkLabel(workElapsedMs, uiStatus === "running")
                   const itemWorktreePath = distinctWorktreePath(item.repoPath, item.worktreePath)

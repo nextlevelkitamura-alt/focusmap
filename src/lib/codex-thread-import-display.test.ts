@@ -200,6 +200,26 @@ describe("codex thread import display helpers", () => {
     expect(getCodexThreadRallyWorkElapsedMs(timing)).toBe(27_000)
   })
 
+  test("prefers explicit Codex timer start over the broader turn start", () => {
+    const timing = codexThreadRallyWorkTiming({
+      aiTask: {
+        result: {
+          codex_turn_started_at: "2026-06-18T00:00:00.000Z",
+          codex_timer_started_at: "2026-06-18T00:00:04.000Z",
+          codex_turn_completed_at: "2026-06-18T00:00:30.000Z",
+          meta: {
+            codex_running_detected_at: "2026-06-18T00:00:00.000Z",
+            codex_timer_source: "task_started",
+            codex_timer_offset_ms: 4_000,
+          },
+        },
+      },
+    })
+
+    expect(timing.workStartedAt).toBe("2026-06-18T00:00:04.000Z")
+    expect(getCodexThreadRallyWorkElapsedMs(timing)).toBe(26_000)
+  })
+
   test("does not fall back from rally work timing to task-level timestamps", () => {
     const timing = codexThreadRallyWorkTiming({
       aiTask: {
