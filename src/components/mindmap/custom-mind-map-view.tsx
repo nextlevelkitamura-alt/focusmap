@@ -260,7 +260,14 @@ function shouldPreferCodexRunning(
     codexState: CodexNodeState | null | undefined,
     taskProgress: TaskProgressSnapshotTask | null | undefined,
 ) {
-    return codexState?.state === "running" && taskProgress?.status !== "failed";
+    if (codexState?.state !== "running") return false;
+    if (!taskProgress) return true;
+    if (taskProgress.status === "failed") return false;
+    if (taskProgress.status === "pending" || taskProgress.status === "running") return true;
+
+    const codexMs = parseStatusTimestamp(codexState.updatedAt ?? codexState.lastActivityAt);
+    const progressMs = parseStatusTimestamp(taskProgress.updated_at);
+    return codexMs > 0 && (progressMs === 0 || codexMs >= progressMs);
 }
 
 function parseStatusTimestamp(value: string | null | undefined) {
@@ -981,7 +988,7 @@ function CustomTaskNode({
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
                 node.isDone && "border-muted-foreground/25 bg-background text-muted-foreground grayscale",
                 effectiveCodexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
-                effectiveCodexState?.state === "running" && "border-emerald-400/45 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
+                preferCodexRunning && "border-emerald-400/45 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
                 effectiveCodexState?.state === "completed" && "border-emerald-400/55 shadow-[0_0_12px_rgba(16,185,129,0.14)]",
                 effectiveCodexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 taskProgress?.status === "running" && "border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
@@ -1057,10 +1064,10 @@ function CustomTaskNode({
                     {draftMeta.label}
                 </div>
             )}
-            {effectiveCodexState?.state === "running" && (
+            {preferCodexRunning && (
                 <CodexRunningOrbit width={node.width} height={node.height} />
             )}
-            {taskProgress?.status === "running" && effectiveCodexState?.state !== "running" && (
+            {taskProgress?.status === "running" && !preferCodexRunning && (
                 <CodexRunningOrbit width={node.width} height={node.height} />
             )}
             {nodeCodexBadge && taskProgress ? (
@@ -1911,17 +1918,20 @@ export function CustomMindMapView({
         return nodeById.get(nodeId) ?? null;
     }, [activeEditingNodeId, floatingEditNodeId, nodeById]);
     const codexSummary = useMemo(() => {
-        const states = positionedNodes
+        const badges = positionedNodes
             .filter(node => node.kind === "task")
-            .map(node => codexNodeStateForNode(node, codexRunByNodeId[node.id] ?? null))
-            .filter((state): state is CodexNodeState => Boolean(state));
+            .map(node => buildCodexBadge(
+                codexNodeStateForNode(node, codexRunByNodeId[node.id] ?? null),
+                taskProgressByNodeId[node.id] ?? null
+            ))
+            .filter((badge): badge is { label: string; status: TaskProgressSnapshotTask["status"]; title: string } => Boolean(badge));
         return {
-            running: states.filter(state => state.state === "running").length,
-            promptWaiting: states.filter(state => state.state === "prompt_waiting").length,
-            awaitingApproval: states.filter(state => state.state === "awaiting_approval").length,
-            connectionFailed: states.filter(state => state.state === "connection_failed").length,
+            running: badges.filter(badge => getCodexMonitorUiStatus(badge.status) === "running").length,
+            promptWaiting: badges.filter(badge => getCodexMonitorUiStatus(badge.status) === "unsent").length,
+            awaitingApproval: badges.filter(badge => getCodexMonitorUiStatus(badge.status) === "review").length,
+            connectionFailed: badges.filter(badge => getCodexMonitorUiStatus(badge.status) === "connection_failed").length,
         };
-    }, [codexRunByNodeId, positionedNodes]);
+    }, [codexRunByNodeId, positionedNodes, taskProgressByNodeId]);
 
     useEffect(() => {
         zoomRef.current = zoom;

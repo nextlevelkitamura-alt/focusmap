@@ -547,6 +547,48 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(node).not.toHaveClass("ring-amber-400")
   })
 
+  test("shows task progress review over stale task codex_status running", () => {
+    const staleRunningTask = makeTask({
+      id: "root-1",
+      title: "確認待ちのCodexノード",
+      source: "codex_app_thread",
+      codex_status: "running",
+      codex_thread_id: "thread-1",
+    } as Partial<Task>)
+
+    renderMap({
+      groups: [staleRunningTask],
+      tasks: [],
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+      taskProgressByNodeId: {
+        "root-1": {
+          id: "ai-task-1",
+          title: "確認待ちのCodexノード",
+          status: "awaiting_approval",
+          executor: "codex_app",
+          codex_thread_id: "thread-1",
+          current_step: "確認待ちです",
+          progress_percent: null,
+          summary: null,
+          updated_at: "2026-06-07T00:00:03.000Z",
+          source_type: "mindmap",
+          source_id: "root-1",
+        },
+      },
+    })
+
+    const node = getNode("確認待ちのCodexノード", "root-1")
+    expect(within(node).getByRole("button", { name: "Codex状態: 確認待ち を開く" })).toBeInTheDocument()
+    expect(within(node).queryByRole("button", { name: "Codex状態: 実行中 を開く" })).not.toBeInTheDocument()
+    expect(within(node).queryByLabelText("Codex 実行中")).not.toBeInTheDocument()
+    expect(node).toHaveClass("border-amber-400/80")
+    expect(node).toHaveClass("ring-amber-400")
+    expect(node).not.toHaveClass("border-emerald-400/45")
+    expect(screen.getByText("確認待ち1")).toBeInTheDocument()
+    expect(screen.queryByText("実行中1")).not.toBeInTheDocument()
+  })
+
   test("shows running orbit from placed AI history task codex_status without ai_tasks", () => {
     const placedHistoryTask = makeTask({
       id: "root-1",
