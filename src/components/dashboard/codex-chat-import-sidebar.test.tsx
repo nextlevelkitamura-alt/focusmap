@@ -277,7 +277,7 @@ describe("CodexChatImportSidebar", () => {
   })
 
   test("keeps AI history work duration when opening a placed mindmap detail item", async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(new Date("2026-06-20T00:02:00.000Z"))
     historyItems = [{
       ...baseHistoryItem,

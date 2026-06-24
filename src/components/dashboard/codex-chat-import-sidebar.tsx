@@ -1297,7 +1297,7 @@ export function CodexChatImportSidebar({
               ...chatDetailHydrateState(hydrate),
             },
           }))
-          return
+          return hydrate.hydrateRequired
         }
         const fallbackText = aiHistoryDetailFallbackText(item, hydrate.hydrateRequired)
         setChatDetailsById(prev => ({
@@ -1311,7 +1311,7 @@ export function CodexChatImportSidebar({
             ...chatDetailHydrateState(hydrate),
           },
         }))
-        return
+        return hydrate.hydrateRequired
       }
 
       const aiTaskId = resolveAiTaskId(item)
@@ -1330,7 +1330,7 @@ export function CodexChatImportSidebar({
               ...chatDetailHydrateState(hydrate),
             },
           }))
-          return
+          return hydrate.hydrateRequired
         }
       }
 
@@ -1351,10 +1351,13 @@ export function CodexChatImportSidebar({
           ...chatDetailHydrateState(EMPTY_ACTIVITY_HYDRATE_STATE),
         },
       }))
+      return false
     } catch (error) {
+      let shouldContinueHydrate = false
       setChatDetailsById(prev => {
         const previous = prev[item.id]
         if (background && previous) {
+          shouldContinueHydrate = previous.hydrateRequired
           return {
             ...prev,
             [item.id]: {
@@ -1375,6 +1378,7 @@ export function CodexChatImportSidebar({
           },
         }
       })
+      return shouldContinueHydrate
     }
   }, [fetchChatActivityMessages, resolveAiTaskId])
 
@@ -1449,6 +1453,14 @@ export function CodexChatImportSidebar({
   }, [initialSelectedChatId, loadChatDetail, selectableChatItems, startDetailHydrateBurst])
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
+  const selectedChatItemRef = React.useRef<CodexChatImportItem | null>(selectedChatItem)
+  React.useEffect(() => {
+    selectedChatItemRef.current = selectedChatItem
+  }, [selectedChatItem])
+  const selectedDetailPollKey = selectedChatItem
+    ? selectedChatItem.historyItemId ?? selectedChatItem.sourceTaskId ?? selectedChatItem.id
+    : null
+  const selectedHydrateBurstKey = selectedChatItem?.id ?? null
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
   const selectedThreadHref = selectedChatItem?.codexOpenUrl ?? codexThreadUrl(selectedChatItem?.threadId)
   const selectedVisualStatus = selectedChatItem?.status ?? "awaiting_approval"
@@ -1473,24 +1485,27 @@ export function CodexChatImportSidebar({
     : null
 
   React.useEffect(() => {
-    if (!selectedChatItem || selectedUiStatus !== "running") return
+    if (!selectedDetailPollKey || selectedUiStatus !== "running") return
     const timer = window.setInterval(() => {
       if (!isBrowserDocumentVisible()) return
-      void loadChatDetail(selectedChatItem, { background: true })
+      const currentItem = selectedChatItemRef.current
+      if (currentItem) void loadChatDetail(currentItem, { background: true })
     }, CHAT_DETAIL_REFRESH_INTERVAL_MS)
     return () => {
       window.clearInterval(timer)
     }
-  }, [loadChatDetail, selectedChatItem, selectedUiStatus])
+  }, [loadChatDetail, selectedDetailPollKey, selectedUiStatus])
 
   React.useEffect(() => {
-    if (!selectedChatItem || !selectedDetail?.hydrateRequired || !selectedCanHydrateDetail) return
+    if (!selectedDetailPollKey || !selectedDetail?.hydrateRequired || !selectedCanHydrateDetail) return
     let cancelled = false
     let timer: number | null = null
 
     function schedule() {
       if (cancelled) return
-      const burstUntilMs = detailHydrateBurstUntilByChatIdRef.current[selectedChatItem.id] ?? 0
+      const burstUntilMs = selectedHydrateBurstKey
+        ? detailHydrateBurstUntilByChatIdRef.current[selectedHydrateBurstKey] ?? 0
+        : 0
       const delay = Date.now() < burstUntilMs
         ? AI_HISTORY_DETAIL_HYDRATE_BURST_INTERVAL_MS
         : AI_HISTORY_DETAIL_HYDRATE_STEADY_INTERVAL_MS
@@ -1505,12 +1520,15 @@ export function CodexChatImportSidebar({
         schedule()
         return
       }
+      const currentItem = selectedChatItemRef.current
+      if (!currentItem) return
       hydratePollInFlightRef.current = true
+      let shouldContinueHydrate = true
       try {
-        await loadChatDetail(selectedChatItem, { background: true })
+        shouldContinueHydrate = await loadChatDetail(currentItem, { background: true })
       } finally {
         hydratePollInFlightRef.current = false
-        schedule()
+        if (shouldContinueHydrate) schedule()
       }
     }
     schedule()
@@ -1518,7 +1536,7 @@ export function CodexChatImportSidebar({
       cancelled = true
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [loadChatDetail, selectedCanHydrateDetail, selectedChatItem, selectedDetail?.hydrateRequired])
+  }, [loadChatDetail, selectedCanHydrateDetail, selectedDetail?.hydrateRequired, selectedDetailPollKey, selectedHydrateBurstKey])
 
   const selectedCompletedWorkFallbackElapsedMs = selectedUiStatus !== "running"
     ? selectedRallyWorkElapsedMs ?? selectedLocalWorkElapsedMs

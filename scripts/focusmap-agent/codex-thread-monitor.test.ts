@@ -119,7 +119,7 @@ describe('codex-thread-monitor state detection', () => {
 
   test('keeps Codex completion debounce below the visible UI lag target', () => {
     expect(AWAITING_APPROVAL_STABILITY_MS).toBe(1_000);
-    expect(RESUME_RUNNING_VISIBILITY_MS).toBe(2_000);
+    expect(RESUME_RUNNING_VISIBILITY_MS).toBe(6_000);
     expect(TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS).toBe(30 * 60 * 1000);
   });
 
@@ -934,7 +934,7 @@ describe('codex-thread-monitor state detection', () => {
       .toEqual({ status: 'running', resumed: true });
     expect(taskStateForSummary(oldAwaitingTask, summary, Date.parse('2026-06-08T15:49:18.368Z') + 500))
       .toEqual({ status: 'running', resumed: true });
-    expect(taskStateForSummary(oldAwaitingTask, summary, Date.parse('2026-06-08T15:49:18.368Z') + AWAITING_APPROVAL_STABILITY_MS + 1))
+    expect(taskStateForSummary(oldAwaitingTask, summary, resumeMs + RESUME_RUNNING_VISIBILITY_MS + 1))
       .toEqual({ status: 'awaiting_approval', resumed: true });
   });
 
