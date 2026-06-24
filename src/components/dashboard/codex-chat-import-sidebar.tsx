@@ -194,6 +194,28 @@ function aiHistoryToChatImportItem(item: AiHistoryListItem): CodexChatImportItem
   }
 }
 
+function mergeCodexChatImportItem(
+  current: CodexChatImportItem | undefined,
+  next: CodexChatImportItem,
+): CodexChatImportItem {
+  if (!current) return next
+  return {
+    ...current,
+    ...next,
+    historyItemId: next.historyItemId ?? current.historyItemId ?? null,
+    sourceTaskId: next.sourceTaskId ?? current.sourceTaskId ?? null,
+    aiTaskId: next.aiTaskId ?? current.aiTaskId ?? null,
+    threadId: next.threadId ?? current.threadId ?? null,
+    codexOpenUrl: next.codexOpenUrl ?? current.codexOpenUrl ?? null,
+    workStartedAt: next.workStartedAt ?? current.workStartedAt ?? null,
+    workAwaitingApprovalAt: next.workAwaitingApprovalAt ?? current.workAwaitingApprovalAt ?? null,
+    workCompletedAt: next.workCompletedAt ?? current.workCompletedAt ?? null,
+    workLastActivityAt: next.workLastActivityAt ?? current.workLastActivityAt ?? null,
+    workDurationSeconds: next.workDurationSeconds ?? current.workDurationSeconds ?? null,
+    workDurationSyncedAt: next.workDurationSyncedAt ?? current.workDurationSyncedAt ?? null,
+  }
+}
+
 function chatArchiveIdentityKeys(item: CodexChatImportItem) {
   return Array.from(new Set([
     item.id,
@@ -284,7 +306,12 @@ function writeLocalWorkTimers(timers: Record<string, LocalWorkTimer>) {
 }
 
 function localWorkTimerKey(item: CodexChatImportItem) {
-  return item.id
+  const threadId = item.threadId?.trim()
+  if (threadId) {
+    const repoPath = normalizeRepoPath(item.repoPath ?? "")
+    return `thread:${threadId}:${repoPath}`
+  }
+  return item.historyItemId?.trim() || item.sourceTaskId?.trim() || item.id
 }
 
 function localWorkElapsedMs(timer: LocalWorkTimer | null | undefined, nowMs: number) {
@@ -1050,7 +1077,9 @@ export function CodexChatImportSidebar({
     for (const item of historyChatItems) {
       if (item.sourceTaskId) byId.set(item.sourceTaskId, item)
     }
-    for (const item of detailItems) byId.set(item.id, item)
+    for (const item of detailItems) {
+      byId.set(item.id, mergeCodexChatImportItem(byId.get(item.id), item))
+    }
     return Array.from(byId.values())
   }, [historyChatItems, detailItems])
   const selectedChatItem = React.useMemo(() => {
@@ -1096,7 +1125,11 @@ export function CodexChatImportSidebar({
         if (uiStatus === "running") {
           if (!current || current.state !== "running") {
             if (!changed) nextTimers = { ...previousTimers }
-            nextTimers[key] = { state: "running", startedAtMs: nowMs }
+            const elapsedMs = codexChatImportWorkElapsedMs(item, nowMs, true)
+            nextTimers[key] = {
+              state: "running",
+              startedAtMs: nowMs - Math.max(0, elapsedMs ?? 0),
+            }
             changed = true
           }
           continue
@@ -1400,6 +1433,7 @@ export function CodexChatImportSidebar({
     const item = selectableChatItems.find(candidate => candidate.id === initialSelectedChatId || candidate.sourceTaskId === initialSelectedChatId)
     if (!item) return
     consumedInitialSelectedChatIdRef.current = initialSelectedChatId
+    if (item.placed) setActivePlacement("mindmap")
     setSelectedChatId(item.id)
     setProviderPickerOpen(false)
     setScopePickerOpen(false)

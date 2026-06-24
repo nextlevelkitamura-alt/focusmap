@@ -224,6 +224,34 @@ function codexStateToTaskProgressStatus(state: CodexTaskUiStateName): TaskProgre
     return "awaiting_approval";
 }
 
+function codexNodeStateFromStatus(
+    nodeId: string,
+    status: string | null | undefined,
+): CodexNodeState | null {
+    const normalizedStatus = typeof status === "string" ? status.trim() : "";
+    if (!normalizedStatus) return null;
+    switch (getCodexMonitorUiStatus(normalizedStatus)) {
+        case "running":
+            return { state: "running", taskId: nodeId, label: codexMonitorUiLabel("running") };
+        case "connection_failed":
+            return { state: "connection_failed", taskId: nodeId, label: codexMonitorUiLabel("failed") };
+        case "done":
+            return { state: "completed", taskId: nodeId, label: codexMonitorUiLabel("done") };
+        case "review":
+            return { state: "awaiting_approval", taskId: nodeId, label: codexMonitorUiLabel("awaiting_approval") };
+        case "unsent":
+        default:
+            return null;
+    }
+}
+
+function codexNodeStateForNode(
+    node: MindMapModelNode,
+    codexState: CodexNodeState | null | undefined,
+) {
+    return codexState ?? codexNodeStateFromStatus(node.id, node.codexStatus);
+}
+
 function isReviewLikeTaskProgressStatus(status: TaskProgressSnapshotTask["status"] | null | undefined) {
     return status === "awaiting_approval" || status === "needs_input" || status === "completed";
 }
@@ -588,7 +616,8 @@ function CustomTaskNode({
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const [externalDropActive, setExternalDropActive] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
-    const baseNodeCodexBadge = buildCodexBadge(codexState, taskProgress);
+    const effectiveCodexState = codexNodeStateForNode(node, codexState);
+    const baseNodeCodexBadge = buildCodexBadge(effectiveCodexState, taskProgress);
     const nodeCodexBadge = node.isDone && baseNodeCodexBadge
         ? {
             ...baseNodeCodexBadge,
@@ -599,17 +628,17 @@ function CustomTaskNode({
         : baseNodeCodexBadge;
     const opensCodexChatDetail = Boolean(
         (taskProgress && getCodexMonitorUiStatus(taskProgress.status) !== "unsent") ||
-        (codexState && codexState.state !== "prompt_waiting")
+        (effectiveCodexState && effectiveCodexState.state !== "prompt_waiting")
     );
-    const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(codexState, taskProgress);
+    const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(effectiveCodexState, taskProgress);
     const selectedRingClass = taskNodeSelectionRingClass({
         node,
         isMemoNode,
-        codexState,
+        codexState: effectiveCodexState,
         taskProgress,
         draftMeta,
     });
-    const preferCodexRunning = shouldPreferCodexRunning(codexState, taskProgress);
+    const preferCodexRunning = shouldPreferCodexRunning(effectiveCodexState, taskProgress);
     const taskProgressReviewTone = isReviewLikeTaskProgressStatus(taskProgress?.status) && !preferCodexRunning;
 
     useEffect(() => {
@@ -951,10 +980,10 @@ function CustomTaskNode({
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
                 node.isDone && "border-muted-foreground/25 bg-background text-muted-foreground grayscale",
-                codexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
-                codexState?.state === "running" && "border-emerald-400/45 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
-                codexState?.state === "completed" && "border-emerald-400/55 shadow-[0_0_12px_rgba(16,185,129,0.14)]",
-                codexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
+                effectiveCodexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
+                effectiveCodexState?.state === "running" && "border-emerald-400/45 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
+                effectiveCodexState?.state === "completed" && "border-emerald-400/55 shadow-[0_0_12px_rgba(16,185,129,0.14)]",
+                effectiveCodexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 taskProgress?.status === "running" && "border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.16)]",
                 taskProgressReviewTone && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
@@ -1028,10 +1057,10 @@ function CustomTaskNode({
                     {draftMeta.label}
                 </div>
             )}
-            {codexState?.state === "running" && (
+            {effectiveCodexState?.state === "running" && (
                 <CodexRunningOrbit width={node.width} height={node.height} />
             )}
-            {taskProgress?.status === "running" && codexState?.state !== "running" && (
+            {taskProgress?.status === "running" && effectiveCodexState?.state !== "running" && (
                 <CodexRunningOrbit width={node.width} height={node.height} />
             )}
             {nodeCodexBadge && taskProgress ? (
@@ -1865,7 +1894,7 @@ export function CustomMindMapView({
         ? taskNodeSelectionRingClass({
             node: floatingEditNode,
             isMemoNode: floatingEditNode.source === "memo" || floatingEditNode.source === "wishlist" || floatingEditNode.hasMemo || floatingEditNode.hasMemoImages,
-            codexState: codexRunByNodeId[floatingEditNode.id] ?? null,
+            codexState: codexNodeStateForNode(floatingEditNode, codexRunByNodeId[floatingEditNode.id] ?? null),
             taskProgress: taskProgressByNodeId[floatingEditNode.id] ?? null,
             draftMeta: draftMetaByNodeId[floatingEditNode.id] ?? null,
         })
@@ -1884,7 +1913,7 @@ export function CustomMindMapView({
     const codexSummary = useMemo(() => {
         const states = positionedNodes
             .filter(node => node.kind === "task")
-            .map(node => codexRunByNodeId[node.id])
+            .map(node => codexNodeStateForNode(node, codexRunByNodeId[node.id] ?? null))
             .filter((state): state is CodexNodeState => Boolean(state));
         return {
             running: states.filter(state => state.state === "running").length,

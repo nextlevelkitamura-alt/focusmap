@@ -1113,6 +1113,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
 
             items.set(task.id, {
                 id: task.id,
+                sourceTaskId: task.id,
                 aiTaskId: progressTask?.id ?? codexRun?.taskId ?? aiTask?.id ?? null,
                 title: codexChatImportTitle({ task, progressTask, aiResult }),
                 snippet,
@@ -2643,16 +2644,20 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
 
     const syncPlacedCodexNode = useCallback(async (sourceTaskId: string, aiTaskId?: string | null) => {
         try {
-            const response = await fetch('/api/codex/sync-node', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    source_task_id: sourceTaskId,
-                    ...(aiTaskId ? { ai_task_id: aiTaskId } : {}),
-                }),
-            });
-            if (!response.ok) {
-                console.warn(`[MindMap] Codex sync-node failed after placement: ${response.status}`);
+            const host = typeof window !== 'undefined' ? window.location.hostname : '';
+            const canUseLocalSync = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+            if (canUseLocalSync) {
+                const response = await fetch('/api/codex/sync-node', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        source_task_id: sourceTaskId,
+                        ...(aiTaskId ? { ai_task_id: aiTaskId } : {}),
+                    }),
+                });
+                if (!response.ok) {
+                    console.warn(`[MindMap] Codex sync-node failed after placement: ${response.status}`);
+                }
             }
         } catch (error) {
             console.warn('[MindMap] Failed to sync placed Codex node:', error);

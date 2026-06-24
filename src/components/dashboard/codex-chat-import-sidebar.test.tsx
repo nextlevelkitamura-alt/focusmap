@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
-import { CodexChatImportSidebar } from "./codex-chat-import-sidebar"
+import { CodexChatImportSidebar, type CodexChatImportItem } from "./codex-chat-import-sidebar"
 import type { AiHistoryListItem, AiHistoryPlacement, AiHistoryProvider, AiHistoryRepoFilter, AiHistoryScopeFilter } from "@/types/ai-history"
 
 const useAiHistoryMock = vi.hoisted(() => vi.fn())
@@ -118,6 +118,8 @@ function jsonResponse(data: unknown, status = 200) {
 
 function renderSidebar(options: {
   onSelectRepoPath?: (repoPath: string | null) => Promise<void> | void
+  detailItems?: CodexChatImportItem[]
+  initialSelectedChatId?: string | null
 } = {}) {
   const onClose = vi.fn()
   const view = render(
@@ -125,6 +127,8 @@ function renderSidebar(options: {
       projectId="project-1"
       projectTitle="仕事"
       initialRepoPath="/Users/me/focusmap"
+      detailItems={options.detailItems}
+      initialSelectedChatId={options.initialSelectedChatId}
       onClose={onClose}
       onSelectRepoPath={options.onSelectRepoPath}
     />,
@@ -265,6 +269,49 @@ describe("CodexChatImportSidebar", () => {
     expect(within(row).getByText("実行中")).toBeInTheDocument()
     expect(within(row).getByText("1m 23s")).toBeInTheDocument()
     expect(within(row).queryByText(/54m/)).not.toBeInTheDocument()
+  })
+
+  test("keeps AI history work duration when opening a placed mindmap detail item", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-06-20T00:02:00.000Z"))
+    historyItems = [{
+      ...baseHistoryItem,
+      placement: "mindmap",
+      sourceTaskId: "task-placed-1",
+      status: "running",
+      runState: "started",
+      lastActivityAt: "2026-06-20T00:01:30.000Z",
+      indexedAt: "2026-06-20T00:01:30.000Z",
+      startedAt: "2026-06-19T23:08:00.000Z",
+      endedAt: null,
+      workDurationSeconds: 53,
+    }]
+
+    renderSidebar({
+      initialSelectedChatId: "task-placed-1",
+      detailItems: [{
+        id: "task-placed-1",
+        sourceTaskId: "task-placed-1",
+        aiTaskId: null,
+        title: "AI履歴サイドバーを接続",
+        snippet: null,
+        repoPath: "/Users/me/focusmap",
+        threadId: "thread-abcdef123456",
+        status: "running",
+        projectTitle: "仕事",
+        placementLabel: "配置済み: Root task",
+        statusLabel: "実行中",
+        updatedLabel: "たった今",
+        sortAt: "2026-06-20T00:02:00.000Z",
+        placed: true,
+      }],
+    })
+
+    await waitFor(() => {
+      expect(lastHookOptions.some(option => option.placement === "mindmap")).toBe(true)
+      expect(screen.getAllByLabelText("1m 23s 作業中").length).toBeGreaterThan(0)
+    })
+    expect(screen.queryByLabelText("0s 作業中")).not.toBeInTheDocument()
   })
 
   test("shows the parent repo and distinct worktree folder", async () => {

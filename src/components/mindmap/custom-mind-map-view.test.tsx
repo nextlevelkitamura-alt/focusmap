@@ -547,6 +547,27 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(node).not.toHaveClass("ring-amber-400")
   })
 
+  test("shows running orbit from placed AI history task codex_status without ai_tasks", () => {
+    const placedHistoryTask = makeTask({
+      id: "root-1",
+      title: "配置済みAI履歴",
+      source: "codex_app_thread",
+      codex_status: "running",
+      codex_thread_id: "thread-1",
+    } as Partial<Task>)
+
+    renderMap({
+      groups: [placedHistoryTask],
+      tasks: [],
+    })
+
+    const node = getNode("配置済みAI履歴", "root-1")
+    expect(within(node).getByLabelText("Codex状態: 実行中")).toBeInTheDocument()
+    expect(within(node).getByLabelText("Codex 実行中")).toHaveClass("codex-node-running-orbit")
+    expect(node).toHaveClass("border-emerald-400/45")
+    expect(screen.getByText("実行中1")).toBeInTheDocument()
+  })
+
   test("counts only visible map nodes in the Codex summary", () => {
     renderMap({
       codexRunByNodeId: {
