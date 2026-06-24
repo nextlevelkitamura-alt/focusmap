@@ -187,6 +187,31 @@ Lifecycle:
 
 ## Implementation Plan
 
+## Worker Return Log
+
+### 2026-06-24 Agent Hot Path worker
+
+Returned commit:
+
+- Branch/worktree: `feat/ai-history-fast-watch-agent` / `/Users/kitamuranaohiro/Private/focusmap-ai-history-fast-watch-agent`
+- Commit: `0850990a focusmap-agent: AI履歴監視hot pathを分離`
+- Changed files in the worker commit:
+  - `scripts/focusmap-agent/src/codex-thread-monitor.ts`
+  - `scripts/focusmap-agent/src/cli.ts`
+  - `scripts/focusmap-agent/codex-thread-monitor.test.ts`
+- Worker-reported verification:
+  - `npm run test:run -- scripts/focusmap-agent/codex-thread-monitor.test.ts --test-timeout=30000`: passed, 39 tests
+  - `npm --prefix scripts/focusmap-agent run build`: passed
+  - `npx eslint ...`: passed with no warnings
+  - `git diff --check`: passed
+
+Integration warning:
+
+- Do not merge the whole `feat/ai-history-fast-watch-agent` branch into current `main`.
+- The branch diverges from an old AI history base (`aaa9ac0136c9d6aaa03fba289d709dcbe96e16be`), and `main..feat/ai-history-fast-watch-agent` includes broad unrelated deletions/rollbacks.
+- Integration must bring over only the worker commit intent from `0850990a`, preferably by cherry-picking onto latest local `main` and resolving conflicts, or by manually reapplying the three-file patch.
+- After applying, verify that no unrelated docs/UI/API/mobile/task-runner rollback is present.
+
 ### Phase 1: Agent Hot Path Unclogging
 
 Objective:
