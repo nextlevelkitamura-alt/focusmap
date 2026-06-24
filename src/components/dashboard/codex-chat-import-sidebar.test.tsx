@@ -340,6 +340,69 @@ describe("CodexChatImportSidebar", () => {
     expect(screen.getAllByText("focusmap-codex-reconcile-main").length).toBeGreaterThan(0)
   })
 
+  test("opens AI history detail with watch and then burst-polls the selected hydrate detail", async () => {
+    historyItems = [{
+      ...baseHistoryItem,
+      linkedAiTaskId: null,
+      detailHydrated: false,
+      detailHydrateRequired: true,
+      detailHydrateReason: "detail_cache_empty",
+      detailMessageCount: 0,
+      detailSyncedAt: null,
+    }]
+    const activityRequests: string[] = []
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === "/api/ai-history/history-1") {
+        return jsonResponse({
+          item: historyItems[0],
+          detail: {
+            hydrateRequired: true,
+            hydrateReason: "detail_cache_empty",
+            detailSyncedAt: null,
+            messageCount: 0,
+            linkedAiTaskId: null,
+            activityUrl: "/api/ai-history/history-1/activity",
+            policy: "ai_history_detail_cache",
+          },
+        })
+      }
+      if (url.startsWith("/api/ai-history/history-1/activity")) {
+        activityRequests.push(url)
+        return jsonResponse({
+          messages: [],
+          has_more: false,
+          next_cursor: null,
+          hydrate: {
+            required: true,
+            reason: "detail_cache_empty",
+            historyItemId: "history-1",
+            provider: "codex_app",
+            externalThreadId: "thread-abcdef123456",
+            repoPath: "/Users/me/focusmap",
+            detailSyncedAt: null,
+            messageCount: 0,
+          },
+        }, 202)
+      }
+      return jsonResponse({}, 404)
+    })
+
+    const { unmount } = renderSidebar()
+    fireEvent.click(screen.getByTestId("codex-chat-import-row-history-1"))
+
+    await waitFor(() => {
+      expect(activityRequests.some(url => url.includes("watch=1"))).toBe(true)
+    })
+    activityRequests.length = 0
+
+    await waitFor(() => {
+      expect(activityRequests.some(url => !url.includes("watch=1"))).toBe(true)
+    }, { timeout: 1_600 })
+
+    unmount()
+  })
+
   test("defaults to all Codex chats across repos", () => {
     historyItems = [
       baseHistoryItem,

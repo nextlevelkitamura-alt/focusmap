@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import { useAiHistory } from "./useAiHistory"
-import type { AiHistoryListItem, AiHistoryListResponse } from "@/types/ai-history"
+import type { AiHistoryListItem, AiHistoryListResponse, AiHistorySnapshotResponse } from "@/types/ai-history"
 
 const fetchWithSupabaseAuthMock = vi.hoisted(() => vi.fn())
 
@@ -74,6 +74,44 @@ function responseFor(input: {
 }
 
 function jsonResponse(data: AiHistoryListResponse) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => data,
+  } as Response
+}
+
+function snapshotResponseFor(input: {
+  repo: "all" | string
+  items: AiHistoryListItem[]
+  cursor?: string | null
+}): AiHistorySnapshotResponse {
+  return {
+    source: "turso",
+    serverTime: "2026-06-20T00:00:05.000Z",
+    cursor: input.cursor ?? "2026-06-20T00:00:05.000Z|history-focusmap",
+    changedSince: null,
+    items: input.items,
+    hasMore: false,
+    includeDeleted: true,
+    filter: {
+      projectId: "project-1",
+      repo: input.repo,
+      scope: "global",
+      provider: "codex_app",
+    },
+    policy: {
+      metadataOnly: true,
+      countsIncluded: false,
+      reconcileIncluded: false,
+      detailHydrateRequestsCreated: false,
+      rawBodiesIncluded: false,
+      cursor: "indexed_at|id",
+    },
+  }
+}
+
+function jsonSnapshotResponse(data: AiHistorySnapshotResponse) {
   return {
     ok: true,
     status: 200,
@@ -173,5 +211,91 @@ describe("useAiHistory", () => {
       ])
     })
     expect(result.current.counts.unplaced).toBe(2)
+  })
+
+  test("polls the metadata snapshot instead of refetching counts every interval", async () => {
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith("/api/ai-history/snapshot?")) {
+        return jsonSnapshotResponse(snapshotResponseFor({
+          repo: "all",
+          items: [{
+            ...baseItem,
+            status: "running",
+            runState: "resumed",
+            lastActivityAt: "2026-06-20T00:00:05.000Z",
+            indexedAt: "2026-06-20T00:00:05.000Z",
+            workDurationSeconds: 4,
+          }],
+        }))
+      }
+      return jsonResponse(responseFor({
+        repo: "all",
+        items: [baseItem],
+        counts: { unplaced: 123, mindmap: 45 },
+      }))
+    })
+
+    const { result, unmount } = renderHook(() => useAiHistory({
+      projectId: "project-1",
+      scope: "global",
+      repo: "all",
+      placement: "unplaced",
+      pollIntervalMs: 100,
+    }))
+
+    await waitFor(() => {
+      expect(result.current.items[0]?.status).toBe("awaiting_approval")
+    })
+
+    await waitFor(() => {
+      expect(result.current.items[0]?.status).toBe("running")
+      expect(result.current.items[0]?.runState).toBe("resumed")
+    })
+
+    const urls = fetchWithSupabaseAuthMock.mock.calls.map(([input]) => String(input))
+    expect(urls.filter(url => url.startsWith("/api/ai-history?"))).toHaveLength(1)
+    expect(urls.some(url => (
+      url.startsWith("/api/ai-history/snapshot?") &&
+      url.includes("include_deleted=true")
+    ))).toBe(true)
+    expect(result.current.counts).toEqual({ unplaced: 123, mindmap: 45 })
+    unmount()
+  })
+
+  test("removes items deleted by the snapshot merge", async () => {
+    fetchWithSupabaseAuthMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith("/api/ai-history/snapshot?")) {
+        return jsonSnapshotResponse(snapshotResponseFor({
+          repo: "all",
+          items: [{
+            ...baseItem,
+            deletedAt: "2026-06-20T00:00:05.000Z",
+            indexedAt: "2026-06-20T00:00:05.000Z",
+          }],
+        }))
+      }
+      return jsonResponse(responseFor({
+        repo: "all",
+        items: [baseItem],
+      }))
+    })
+
+    const { result, unmount } = renderHook(() => useAiHistory({
+      projectId: "project-1",
+      scope: "global",
+      repo: "all",
+      placement: "unplaced",
+      pollIntervalMs: 100,
+    }))
+
+    await waitFor(() => {
+      expect(result.current.items).toHaveLength(1)
+    })
+    await waitFor(() => {
+      expect(result.current.items).toEqual([])
+    })
+    unmount()
   })
 })

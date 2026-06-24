@@ -9,10 +9,12 @@ import type {
   AiHistoryProvider,
   AiHistoryRepoFilter,
   AiHistoryScopeFilter,
+  AiHistorySnapshotResponse,
 } from "@/types/ai-history"
 
 const DEFAULT_LIMIT = 100
-const DEFAULT_POLL_INTERVAL_MS = 3_000
+const DEFAULT_POLL_INTERVAL_MS = 2_000
+const SNAPSHOT_LIMIT = 500
 
 const EMPTY_RESPONSE: AiHistoryListResponse = {
   items: [],
@@ -48,6 +50,59 @@ function sameRepoFilter(left: AiHistoryRepoFilter, right: AiHistoryRepoFilter) {
   return normalizeAiHistoryRepoPath(left) === normalizeAiHistoryRepoPath(right)
 }
 
+function aiHistoryExternalIdentity(item: { provider: AiHistoryProvider; externalThreadId: string; repoPath: string }) {
+  return `${item.provider}:${normalizeAiHistoryRepoPath(item.repoPath)}:${item.externalThreadId}`
+}
+
+function mergeAiHistorySnapshotItems(
+  currentItems: AiHistoryListResponse["items"],
+  snapshotItems: AiHistorySnapshotResponse["items"],
+) {
+  const byId = new Map(currentItems.map(item => [item.id, item]))
+  const idByExternalIdentity = new Map<string, string>()
+
+  for (const item of currentItems) {
+    if (!item.externalThreadId) continue
+    idByExternalIdentity.set(aiHistoryExternalIdentity(item), item.id)
+  }
+
+  for (const item of snapshotItems) {
+    const externalIdentity = item.externalThreadId ? aiHistoryExternalIdentity(item) : null
+    const existingId = byId.has(item.id)
+      ? item.id
+      : externalIdentity
+        ? idByExternalIdentity.get(externalIdentity) ?? item.id
+        : item.id
+
+    if (item.deletedAt || item.archived) {
+      byId.delete(existingId)
+      if (existingId !== item.id) byId.delete(item.id)
+      continue
+    }
+
+    const current = byId.get(existingId)
+    const merged = current ? { ...current, ...item } : item
+    if (existingId !== item.id) byId.delete(existingId)
+    byId.set(item.id, merged)
+    if (externalIdentity) idByExternalIdentity.set(externalIdentity, item.id)
+  }
+
+  return Array.from(byId.values())
+}
+
+function snapshotMatchesCurrentQuery(input: {
+  snapshot: AiHistorySnapshotResponse
+  projectId: string
+  repo: AiHistoryRepoFilter
+  scope: AiHistoryScopeFilter
+  provider: AiHistoryProvider
+}) {
+  return input.snapshot.filter.projectId === input.projectId &&
+    sameRepoFilter(input.snapshot.filter.repo, input.repo) &&
+    input.snapshot.filter.scope === input.scope &&
+    input.snapshot.filter.provider === input.provider
+}
+
 type UseAiHistoryOptions = {
   projectId: string | null
   repo: AiHistoryRepoFilter
@@ -72,19 +127,28 @@ export function useAiHistory({
   const [data, setData] = useState<AiHistoryListResponse>(EMPTY_RESPONSE)
   const [isLoading, setIsLoading] = useState(Boolean(enabled && projectId))
   const [error, setError] = useState<string | null>(null)
-  const inFlightRef = useRef<AbortController | null>(null)
+  const fullListInFlightRef = useRef<AbortController | null>(null)
+  const snapshotInFlightRef = useRef<AbortController | null>(null)
+  const snapshotCursorRef = useRef<string | null>(null)
 
   const refresh = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!enabled || !projectId) {
+      fullListInFlightRef.current?.abort()
+      snapshotInFlightRef.current?.abort()
+      fullListInFlightRef.current = null
+      snapshotInFlightRef.current = null
+      snapshotCursorRef.current = null
       setData(EMPTY_RESPONSE)
       setIsLoading(false)
       setError(null)
       return
     }
 
-    inFlightRef.current?.abort()
+    fullListInFlightRef.current?.abort()
+    snapshotInFlightRef.current?.abort()
+    snapshotInFlightRef.current = null
     const controller = new AbortController()
-    inFlightRef.current = controller
+    fullListInFlightRef.current = controller
 
     if (!options.silent) setIsLoading(true)
     try {
@@ -105,33 +169,78 @@ export function useAiHistory({
         throw new Error(`AI history fetch failed (${response.status})`)
       }
       const nextData = await response.json() as AiHistoryListResponse
+      snapshotCursorRef.current = null
       setData(nextData)
       setError(null)
     } catch (fetchError) {
       if (controller.signal.aborted) return
       setError(fetchError instanceof Error ? fetchError.message : "AI履歴を取得できませんでした")
     } finally {
-      if (inFlightRef.current === controller) inFlightRef.current = null
+      if (fullListInFlightRef.current === controller) fullListInFlightRef.current = null
       if (!controller.signal.aborted) setIsLoading(false)
     }
   }, [enabled, limit, placement, projectId, provider, repo, scope])
 
+  const refreshSnapshot = useCallback(async () => {
+    if (!enabled || !projectId || fullListInFlightRef.current || snapshotInFlightRef.current) return
+    if (!isPageVisible()) return
+
+    const controller = new AbortController()
+    snapshotInFlightRef.current = controller
+    try {
+      const params = new URLSearchParams({
+        project_id: projectId,
+        repo,
+        scope,
+        provider,
+        limit: String(SNAPSHOT_LIMIT),
+        include_deleted: "true",
+      })
+      const cursor = snapshotCursorRef.current
+      if (cursor) params.set("cursor", cursor)
+
+      const response = await fetchWithSupabaseAuth(`/api/ai-history/snapshot?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+      if (!response.ok) return
+
+      const snapshot = await response.json() as AiHistorySnapshotResponse
+      if (controller.signal.aborted) return
+      if (!snapshotMatchesCurrentQuery({ snapshot, projectId, repo, scope, provider })) return
+
+      snapshotCursorRef.current = snapshot.cursor
+      if (snapshot.items.length === 0) return
+
+      setData(previous => ({
+        ...previous,
+        items: mergeAiHistorySnapshotItems(previous.items, snapshot.items),
+      }))
+    } catch {
+      if (controller.signal.aborted) return
+    } finally {
+      if (snapshotInFlightRef.current === controller) snapshotInFlightRef.current = null
+    }
+  }, [enabled, projectId, provider, repo, scope])
+
   useEffect(() => {
+    snapshotCursorRef.current = null
     void refresh()
     return () => {
-      inFlightRef.current?.abort()
-      inFlightRef.current = null
+      fullListInFlightRef.current?.abort()
+      snapshotInFlightRef.current?.abort()
+      fullListInFlightRef.current = null
+      snapshotInFlightRef.current = null
     }
   }, [refresh])
 
   useEffect(() => {
     if (!enabled || !projectId || pollIntervalMs <= 0) return
     const intervalId = window.setInterval(() => {
-      if (!isPageVisible()) return
-      void refresh({ silent: true })
+      void refreshSnapshot()
     }, pollIntervalMs)
     return () => window.clearInterval(intervalId)
-  }, [enabled, pollIntervalMs, projectId, refresh])
+  }, [enabled, pollIntervalMs, projectId, refreshSnapshot])
 
   const responseMatchesCurrentQuery = sameRepoFilter(data.sync.selectedRepo, repo) &&
     data.sync.selectedScope === scope &&

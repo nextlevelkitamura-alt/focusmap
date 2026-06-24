@@ -111,7 +111,9 @@ const ACTIVITY_DETAIL_PAGE_LIMIT = 30
 const ACTIVITY_DETAIL_MAX_PAGES = 6
 const ACTIVITY_TIME_BREAK_MIN_GAP_MS = 60 * 60 * 1000
 const CHAT_DETAIL_REFRESH_INTERVAL_MS = 5_000
-const AI_HISTORY_DETAIL_HYDRATE_POLL_INTERVAL_MS = 3_000
+const AI_HISTORY_DETAIL_HYDRATE_BURST_WINDOW_MS = 10_000
+const AI_HISTORY_DETAIL_HYDRATE_BURST_INTERVAL_MS = 1_000
+const AI_HISTORY_DETAIL_HYDRATE_STEADY_INTERVAL_MS = 5_000
 const RUNNING_PROMPT_START_TOLERANCE_MS = 5 * 60 * 1000
 const LOCAL_WORK_TIMER_STORAGE_KEY = "focusmap:codex-chat-import:local-work-timers"
 
@@ -943,6 +945,7 @@ export function CodexChatImportSidebar({
   const previousInitialRepoPathRef = React.useRef<string | null | undefined>(initialRepoPath)
   const summaryRequestInFlightRef = React.useRef(new Set<string>())
   const hydratePollInFlightRef = React.useRef(false)
+  const detailHydrateBurstUntilByChatIdRef = React.useRef<Record<string, number>>({})
   const queryRepoFilter = repoFilter
   const {
     repos: availableRepos,
@@ -1182,6 +1185,9 @@ export function CodexChatImportSidebar({
     if (directAiTaskId) return directAiTaskId
     return null
   }, [])
+  const startDetailHydrateBurst = React.useCallback((item: CodexChatImportItem) => {
+    detailHydrateBurstUntilByChatIdRef.current[item.id] = Date.now() + AI_HISTORY_DETAIL_HYDRATE_BURST_WINDOW_MS
+  }, [])
   const displayUpdatedLabel = React.useCallback((item: CodexChatImportItem) => item.updatedLabel, [])
   const fetchChatActivityPage = React.useCallback(async (
     activityUrl: string,
@@ -1376,8 +1382,9 @@ export function CodexChatImportSidebar({
     setSelectedChatId(item.id)
     setProviderPickerOpen(false)
     setScopePickerOpen(false)
+    startDetailHydrateBurst(item)
     void loadChatDetail(item)
-  }, [loadChatDetail])
+  }, [loadChatDetail, startDetailHydrateBurst])
 
   const handleArchiveChatItem = React.useCallback(async (item: CodexChatImportItem) => {
     if (!item.historyItemId) return
@@ -1437,8 +1444,9 @@ export function CodexChatImportSidebar({
     setSelectedChatId(item.id)
     setProviderPickerOpen(false)
     setScopePickerOpen(false)
+    startDetailHydrateBurst(item)
     void loadChatDetail(item)
-  }, [initialSelectedChatId, loadChatDetail, selectableChatItems])
+  }, [initialSelectedChatId, loadChatDetail, selectableChatItems, startDetailHydrateBurst])
 
   const selectedDetail = selectedChatItem ? chatDetailsById[selectedChatItem.id] : null
   const selectedMessages = codexReportViewMessages(visibleActivityMessages(selectedDetail?.messages ?? []))
@@ -1477,21 +1485,38 @@ export function CodexChatImportSidebar({
 
   React.useEffect(() => {
     if (!selectedChatItem || !selectedDetail?.hydrateRequired || !selectedCanHydrateDetail) return
-    const poll = async () => {
-      if (!isBrowserDocumentVisible()) return
-      if (hydratePollInFlightRef.current) return
+    let cancelled = false
+    let timer: number | null = null
+
+    function schedule() {
+      if (cancelled) return
+      const burstUntilMs = detailHydrateBurstUntilByChatIdRef.current[selectedChatItem.id] ?? 0
+      const delay = Date.now() < burstUntilMs
+        ? AI_HISTORY_DETAIL_HYDRATE_BURST_INTERVAL_MS
+        : AI_HISTORY_DETAIL_HYDRATE_STEADY_INTERVAL_MS
+      timer = window.setTimeout(() => {
+        void poll()
+      }, delay)
+    }
+
+    async function poll() {
+      if (cancelled) return
+      if (!isBrowserDocumentVisible() || hydratePollInFlightRef.current) {
+        schedule()
+        return
+      }
       hydratePollInFlightRef.current = true
       try {
         await loadChatDetail(selectedChatItem, { background: true })
       } finally {
         hydratePollInFlightRef.current = false
+        schedule()
       }
     }
-    const timer = window.setInterval(() => {
-      void poll()
-    }, AI_HISTORY_DETAIL_HYDRATE_POLL_INTERVAL_MS)
+    schedule()
     return () => {
-      window.clearInterval(timer)
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
     }
   }, [loadChatDetail, selectedCanHydrateDetail, selectedChatItem, selectedDetail?.hydrateRequired])
 
