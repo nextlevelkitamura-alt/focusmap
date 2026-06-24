@@ -31,31 +31,33 @@ const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
 const ROLLOUT_READ_CACHE_LIMIT = 300;
 const ROLLOUT_INSPECT_CACHE_LIMIT = 1_000;
 const PRE_IMPORT_SYNC_LIMIT = 40;
-const POST_IMPORT_SYNC_LIMIT = 80;
+const POST_IMPORT_SYNC_LIMIT = 20;
 const PRE_IMPORT_SYNC_YIELD_EVERY = 25;
 const RUNNING_HOT_ORPHAN_IMPORT_LIMIT = 3;
 const syncCache = new Map<string, string>();
-const orphanImportCache = new Map<string, number>();
 const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: string }>();
-export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 3_000;
+const rolloutSummaryCache = new Map<string, { rawRollout: string; summary: RolloutSummary }>();
+export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 2_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 2_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
 export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-24-user-prompt-running-v1';
+const MONITOR_DB_PATH_CACHE_TTL_MS = 30_000;
 const ORPHAN_IMPORT_LIMIT = 30;
 const ORPHAN_IMPORT_SCAN_LIMIT = 200;
 const AI_HISTORY_PROVIDER = 'codex_app';
 export const AI_HISTORY_FAST_WATCH_LIMIT = 20;
 const AI_HISTORY_HOT_SYNC_LIMIT = AI_HISTORY_FAST_WATCH_LIMIT;
 const AI_HISTORY_HOT_SYNC_TOTAL_LIMIT = ORPHAN_IMPORT_SCAN_LIMIT;
-const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 80;
+const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 20;
 const AI_HISTORY_BATCH_SIZE = 80;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
 const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
-const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
+const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 2_000;
 const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
+const AI_HISTORY_DETAIL_HYDRATE_PER_TICK = 5;
 const AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT = 100;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
 const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
@@ -73,7 +75,6 @@ const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_
 const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
   ? configuredOrphanImportWindowMs
   : 2 * 60 * 60 * 1000;
-const ORPHAN_IMPORT_RETRY_MS = 5 * 60 * 1000;
 const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
 const FOCUSMAP_HANDOFF_THREAD_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PROMPT_MATCH_PREFIX_CHARS = 500;
@@ -81,6 +82,7 @@ const MIN_PROMPT_MATCH_CHARS = 120;
 let orphanImportApiUnavailableUntil = 0;
 let importScopesApiUnavailableUntil = 0;
 let activeAiHistoryMonitorTargetsApiUnavailableUntil = 0;
+let cachedMonitorDbPath: { path: string | null; expiresAt: number } | null = null;
 const WORKTREE_PATH_CACHE_TTL_MS = 30_000;
 const worktreePathCache = new Map<string, { expiresAt: number; paths: string[] }>();
 const aiHistorySyncCache = new Map<string, { hash: string; sentAt: number; running: boolean }>();
@@ -114,6 +116,13 @@ type CodexThreadMonitorHeartbeatState = {
   state_db_found: boolean;
   state_db_path: string | null;
   last_tick_at: string | null;
+  last_tick_duration_ms: number | null;
+  skipped_ticks: number;
+  tick_overrun_ms: number;
+  phase_timings_ms: Record<string, number>;
+  active_watch_count: number;
+  recent_scan_count: number;
+  reconcile_queue_length: number;
   last_scope_refresh_at: string | null;
   last_scope_refresh_error: string | null;
   scopes: CodexThreadImportScopeHeartbeat[];
@@ -128,6 +137,13 @@ const codexThreadMonitorHeartbeatState: CodexThreadMonitorHeartbeatState = {
   state_db_found: false,
   state_db_path: null,
   last_tick_at: null,
+  last_tick_duration_ms: null,
+  skipped_ticks: 0,
+  tick_overrun_ms: 0,
+  phase_timings_ms: {},
+  active_watch_count: 0,
+  recent_scan_count: 0,
+  reconcile_queue_length: 0,
   last_scope_refresh_at: null,
   last_scope_refresh_error: null,
   scopes: [],
@@ -151,6 +167,13 @@ function codexThreadImportScopeMetadataFlat() {
     codex_import_scopes_count: scopes.length,
     codex_import_scope_repo_paths: scopes.map(scope => scope.repo_path),
     codex_import_scope_cwd_paths: Array.from(new Set(scopes.flatMap(scope => scope.cwd_paths))),
+    codex_last_tick_duration_ms: codexThreadMonitorHeartbeatState.last_tick_duration_ms,
+    codex_skipped_ticks: codexThreadMonitorHeartbeatState.skipped_ticks,
+    codex_tick_overrun_ms: codexThreadMonitorHeartbeatState.tick_overrun_ms,
+    codex_phase_timings_ms: codexThreadMonitorHeartbeatState.phase_timings_ms,
+    codex_active_watch_count: codexThreadMonitorHeartbeatState.active_watch_count,
+    codex_recent_scan_count: codexThreadMonitorHeartbeatState.recent_scan_count,
+    codex_reconcile_queue_length: codexThreadMonitorHeartbeatState.reconcile_queue_length,
     codex_last_scope_refresh_at: codexThreadMonitorHeartbeatState.last_scope_refresh_at,
     codex_last_scope_refresh_error: codexThreadMonitorHeartbeatState.last_scope_refresh_error,
     codex_last_reconcile_at: codexThreadMonitorHeartbeatState.last_reconcile_at,
@@ -219,6 +242,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function nowIso(ms = Date.now()): string {
+  return new Date(ms).toISOString();
+}
+
+function recordPhaseTiming(phase: string, startedAtMs: number): number {
+  const durationMs = Math.max(0, Math.round(Date.now() - startedAtMs));
+  updateCodexThreadMonitorHeartbeatState({
+    phase_timings_ms: {
+      ...codexThreadMonitorHeartbeatState.phase_timings_ms,
+      [phase]: durationMs,
+    },
+  });
+  return durationMs;
+}
+
+async function measurePhase<T>(phase: string, action: () => Promise<T>): Promise<T> {
+  const startedAtMs = Date.now();
+  try {
+    return await action();
+  } finally {
+    recordPhaseTiming(phase, startedAtMs);
+  }
+}
+
 export function codexStateDbPath(homeDir = homedir()): string | null {
   const configured = process.env.FOCUSMAP_CODEX_STATE_DB_PATH?.trim();
   if (configured && existsSync(configured)) return configured;
@@ -232,6 +279,19 @@ export function codexStateDbPath(homeDir = homedir()): string | null {
     .filter(candidate => existsSync(candidate))
     .map(candidate => ({ candidate, score: codexStateDbFreshnessScore(candidate) }))
     .sort((a, b) => b.score - a.score)[0]?.candidate ?? null;
+}
+
+function cachedCodexStateDbPath(nowMs = Date.now()): string | null {
+  if (cachedMonitorDbPath && nowMs < cachedMonitorDbPath.expiresAt) {
+    if (cachedMonitorDbPath.path && existsSync(cachedMonitorDbPath.path)) return cachedMonitorDbPath.path;
+    if (!cachedMonitorDbPath.path) return null;
+  }
+  const path = codexStateDbPath();
+  cachedMonitorDbPath = {
+    path,
+    expiresAt: nowMs + (path ? MONITOR_DB_PATH_CACHE_TTL_MS : 5_000),
+  };
+  return path;
 }
 
 function codexStateDbFreshnessScore(dbPath: string): number {
@@ -580,6 +640,39 @@ async function readThread(dbPath: string, threadId: string): Promise<CodexThread
     ].join(' '),
   );
   return rows[0] ?? null;
+}
+
+async function readThreads(dbPath: string, threadIds: string[]): Promise<Map<string, CodexThreadRow | null>> {
+  const uniqueIds = Array.from(new Set(threadIds.map(id => id.trim()).filter(Boolean)));
+  const rowsById = new Map<string, CodexThreadRow | null>();
+  for (const id of uniqueIds) rowsById.set(id, null);
+  if (uniqueIds.length === 0) return rowsById;
+  const rows = await sqliteJson<CodexThreadRow>(
+    dbPath,
+    [
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, created_at_ms, preview, rollout_path, source, thread_source, cwd, first_user_message',
+      'FROM threads',
+      `WHERE id IN (${uniqueIds.map(sqlString).join(', ')})`,
+    ].join(' '),
+  );
+  for (const row of rows) rowsById.set(row.id, row);
+  return rowsById;
+}
+
+type ThreadRowCache = {
+  get(threadId: string): Promise<CodexThreadRow | null>;
+};
+
+async function createThreadRowCache(dbPath: string, threadIds: string[]): Promise<ThreadRowCache> {
+  const rowsById = await readThreads(dbPath, threadIds);
+  return {
+    async get(threadId: string): Promise<CodexThreadRow | null> {
+      if (rowsById.has(threadId)) return rowsById.get(threadId) ?? null;
+      const row = await readThread(dbPath, threadId);
+      rowsById.set(threadId, row);
+      return row;
+    },
+  };
 }
 
 function appendVisibleMessage(messages: VisibleMessage[], input: Omit<VisibleMessage, 'body'> & { body: string }): void {
@@ -1040,6 +1133,10 @@ export function knownCodexThreadIds(tasks: AiTask[]): Set<string> {
   return ids;
 }
 
+export function codexThreadIdsForTasks(tasks: AiTask[]): string[] {
+  return Array.from(knownCodexThreadIds(tasks));
+}
+
 function isThreadNearManualHandoffTime(row: CodexThreadRow, task: AiTask): boolean {
   const threadMs = timeMs(row.created_at_ms) ?? timeMs(row.updated_at_ms);
   const taskMs = timeMs(task.started_at) ?? timeMs(task.created_at);
@@ -1142,6 +1239,18 @@ type PreparedAiHistoryItem = {
 };
 
 export type AiHistorySyncMode = 'hot' | 'reconcile';
+
+type AiHistoryMetadataSyncResult = {
+  scanned: number;
+  prepared: number;
+  upserted: number;
+};
+
+const emptyAiHistoryMetadataSyncResult: AiHistoryMetadataSyncResult = {
+  scanned: 0,
+  prepared: 0,
+  upserted: 0,
+};
 
 function trimCacheToLimit<K, V>(cache: Map<K, V>, limit: number): void {
   while (cache.size > limit) {
@@ -2246,6 +2355,25 @@ async function readRollout(row: CodexThreadRow): Promise<string> {
   }
 }
 
+function rolloutSummaryCacheKey(row: CodexThreadRow): string {
+  return [
+    row.id,
+    threadRolloutFingerprint(row),
+  ].join('\u001f');
+}
+
+export async function summarizeRollout(row: CodexThreadRow): Promise<{ rawRollout: string; summary: RolloutSummary }> {
+  const cacheKey = rolloutSummaryCacheKey(row);
+  const cached = rolloutSummaryCache.get(cacheKey);
+  if (cached) return cached;
+  const rawRollout = await readRollout(row);
+  const summary = parseRollout(rawRollout, row);
+  const result = { rawRollout, summary };
+  rolloutSummaryCache.set(cacheKey, result);
+  trimCacheToLimit(rolloutSummaryCache, ROLLOUT_INSPECT_CACHE_LIMIT);
+  return result;
+}
+
 function importScopeRepoPaths(importScopes: CodexThreadImportScope[]): string[] {
   return Array.from(new Set(importScopes.map(scope => normalizeLocalPath(scope.repo_path)).filter(Boolean)));
 }
@@ -2546,6 +2674,7 @@ async function postPreparedAiHistoryDetailMessages(
   prepared: PreparedAiHistoryItem,
 ): Promise<void> {
   if (responseItem.linkedAiTaskId || prepared.item.linkedAiTaskId) return;
+  if (!aiHistoryDetailWatchRequests.has(responseItem.historyItemId)) return;
   await postAiHistoryDetailMessages(
     api,
     runnerId,
@@ -2634,12 +2763,12 @@ async function syncAiHistoryMetadata(
   maxItems = AI_HISTORY_HOT_SYNC_LIMIT,
   includeScopeUpserts = false,
   includeAllCodexCwds = false,
-): Promise<number> {
+): Promise<AiHistoryMetadataSyncResult> {
   const now = Date.now();
-  if (now < orphanImportApiUnavailableUntil) return 0;
+  if (now < orphanImportApiUnavailableUntil) return emptyAiHistoryMetadataSyncResult;
   const cwdScopeMap = await importScopeCwdMap(importScopes);
   const repoPaths = cwdScopeMap.size > 0 ? [...cwdScopeMap.keys()] : importScopeRepoPaths(importScopes);
-  if (!includeAllCodexCwds && repoPaths.length === 0) return 0;
+  if (!includeAllCodexCwds && repoPaths.length === 0) return emptyAiHistoryMetadataSyncResult;
   const sinceMs = 0;
   const preparedItemLimit = mode === 'hot'
     ? aiHistoryHotSyncPreparedItemLimit({
@@ -2676,16 +2805,18 @@ async function syncAiHistoryMetadata(
   const activeTargetRows: CodexThreadRow[] = [];
   if (mode === 'hot' && activeTargets.length > 0) {
     const recentRowIds = new Set(recentRows.map(row => row.id).filter(Boolean));
+    const targetRowsById = await readThreads(
+      dbPath,
+      activeTargets
+        .map(target => target.externalThreadId)
+        .filter(threadId => !recentRowIds.has(threadId)),
+    );
     for (const target of activeTargets) {
       if (recentRowIds.has(target.externalThreadId)) continue;
-      try {
-        const row = await readThread(dbPath, target.externalThreadId);
-        if (row) {
-          activeTargetRows.push(row);
-          recentRowIds.add(row.id);
-        }
-      } catch (error) {
-        logError(`ai history active watch failed thread=${target.externalThreadId.slice(0, 8)}`, error instanceof Error ? error.message : error);
+      const row = targetRowsById.get(target.externalThreadId);
+      if (row) {
+        activeTargetRows.push(row);
+        recentRowIds.add(row.id);
       }
     }
   }
@@ -2708,30 +2839,22 @@ async function syncAiHistoryMetadata(
     syncScopes.push(scope);
     seenSyncScopeKeys.add(key);
   }
-  if (syncScopes.length === 0) return 0;
+  if (syncScopes.length === 0) return emptyAiHistoryMetadataSyncResult;
   const sessionThreadNames = await readCodexSessionThreadNames();
   const rowsById = new Map([...recentRows, ...activeTargetRows].map(row => [row.id, row]));
   const watchedRows: CodexThreadRow[] = [...activeTargetRows];
   const watchedRowIds = new Set<string>(activeTargetRows.map(row => row.id).filter(Boolean));
   if (mode === 'hot') {
+    const detailWatchThreadIds: string[] = [];
     for (const [historyItemId, request] of aiHistoryDetailWatchRequests.entries()) {
       if (hydrateRequestExpiresAtMs(request, now) <= now) {
         aiHistoryDetailWatchRequests.delete(historyItemId);
         aiHistoryDetailRolloutInspectCache.delete(historyItemId);
         continue;
       }
-      try {
-        const watchedRow = rowsById.get(request.externalThreadId) ?? await readThread(dbPath, request.externalThreadId);
-        if (watchedRow) {
-          rowsById.set(watchedRow.id, watchedRow);
-          watchedRows.push(watchedRow);
-          watchedRowIds.add(watchedRow.id);
-        }
-      } catch (error) {
-        logError(`ai history detail watch failed thread=${request.externalThreadId.slice(0, 8)}`, error instanceof Error ? error.message : error);
-      }
+      if (!rowsById.has(request.externalThreadId)) detailWatchThreadIds.push(request.externalThreadId);
     }
-    for (const watch of activeAiHistoryPlaceholderTitleWatches(now)) {
+    const placeholderWatches = activeAiHistoryPlaceholderTitleWatches(now).filter(watch => {
       const scopeStillEnabled = syncScopes.some(scope => (
         typeof scope.project_id === 'string' &&
         scope.project_id.trim() === watch.projectId &&
@@ -2739,18 +2862,29 @@ async function syncAiHistoryMetadata(
       ));
       if (!scopeStillEnabled) {
         aiHistoryPlaceholderTitleWatch.delete(watch.key);
-        continue;
+        return false;
       }
-      try {
-        const watchedRow = rowsById.get(watch.externalThreadId) ?? await readThread(dbPath, watch.externalThreadId);
-        if (watchedRow) {
-          rowsById.set(watchedRow.id, watchedRow);
-          watchedRows.push(watchedRow);
-          watchedRowIds.add(watchedRow.id);
-        }
-        else aiHistoryPlaceholderTitleWatch.delete(watch.key);
-      } catch (error) {
-        logError(`ai history placeholder title watch failed thread=${watch.externalThreadId.slice(0, 8)}`, error instanceof Error ? error.message : error);
+      if (!rowsById.has(watch.externalThreadId)) detailWatchThreadIds.push(watch.externalThreadId);
+      return true;
+    });
+    const watchedRowsById = await readThreads(dbPath, detailWatchThreadIds);
+    for (const request of aiHistoryDetailWatchRequests.values()) {
+      if (hydrateRequestExpiresAtMs(request, now) <= now) continue;
+      const watchedRow = rowsById.get(request.externalThreadId) ?? watchedRowsById.get(request.externalThreadId);
+      if (watchedRow) {
+        rowsById.set(watchedRow.id, watchedRow);
+        if (!watchedRowIds.has(watchedRow.id)) watchedRows.push(watchedRow);
+        watchedRowIds.add(watchedRow.id);
+      }
+    }
+    for (const watch of placeholderWatches) {
+      const watchedRow = rowsById.get(watch.externalThreadId) ?? watchedRowsById.get(watch.externalThreadId);
+      if (watchedRow) {
+        rowsById.set(watchedRow.id, watchedRow);
+        if (!watchedRowIds.has(watchedRow.id)) watchedRows.push(watchedRow);
+        watchedRowIds.add(watchedRow.id);
+      } else {
+        aiHistoryPlaceholderTitleWatch.delete(watch.key);
       }
     }
   }
@@ -2789,8 +2923,7 @@ async function syncAiHistoryMetadata(
     if (!forcePlaceholderTitleRefresh && !shouldInspectAiHistoryRollout(row, matchingScope, mode, now)) continue;
 
     try {
-      const rawRollout = await readRollout(row);
-      const summary = parseRollout(rawRollout, row);
+      const { rawRollout, summary } = await summarizeRollout(row);
       const linkedTask = linkedTaskForThread(row, tasks, cwdScopeMap);
       const prepared = aiHistoryItemFromThread({
         row,
@@ -2816,7 +2949,11 @@ async function syncAiHistoryMetadata(
   if (upserted > 0) {
     debug(`ai history metadata ${mode} upserted=${upserted}`);
   }
-  return upserted;
+  return {
+    scanned: rows.length,
+    prepared: preparedItems.length,
+    upserted,
+  };
 }
 
 async function pollAiHistoryDetailHydrateRequests(
@@ -2919,8 +3056,7 @@ async function hydrateOneAiHistoryDetailRequest(
   const row = await readThread(dbPath, request.externalThreadId);
   if (!row) return false;
   if (!shouldInspectAiHistoryDetailRollout(request, row, nowMs)) return false;
-  const rawRollout = await readRollout(row);
-  const summary = parseRollout(rawRollout, row);
+  const { summary } = await summarizeRollout(row);
   const messages = aiHistoryDetailMessages(row, summary);
   markAiHistoryDetailRolloutInspected(request, row, nowMs);
   if (messages.length === 0) return false;
@@ -2938,7 +3074,10 @@ async function syncAiHistoryDetailHydrateRequests(
   if (aiHistoryDetailHydrateContractFailed) return 0;
   const now = Date.now();
   let hydrated = 0;
+  let inspected = 0;
   for (const [historyItemId, request] of aiHistoryDetailWatchRequests.entries()) {
+    if (inspected >= AI_HISTORY_DETAIL_HYDRATE_PER_TICK) break;
+    inspected += 1;
     if (hydrateRequestExpiresAtMs(request, now) <= now) {
       aiHistoryDetailWatchRequests.delete(historyItemId);
       aiHistoryDetailRolloutInspectCache.delete(historyItemId);
@@ -3091,11 +3230,17 @@ async function markArchiveRequestFailed(
   task.result = result as unknown as Record<string, unknown>;
 }
 
-async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string, task: AiTask): Promise<SyncOneTaskResult> {
+async function syncOneTask(
+  api: AgentApiClient,
+  runnerId: string,
+  dbPath: string,
+  task: AiTask,
+  rowCache?: ThreadRowCache,
+): Promise<SyncOneTaskResult> {
   const threadId = taskThreadId(task) ?? await findMatchingThread(dbPath, task);
   if (!threadId) return 'unchanged';
 
-  const row = await readThread(dbPath, threadId);
+  const row = rowCache ? await rowCache.get(threadId) : await readThread(dbPath, threadId);
   if (!row) {
     if (!isThreadUnavailableMarked(task, threadId)) {
       await markThreadGone(api, runnerId, task, threadId, 'thread_unavailable');
@@ -3129,8 +3274,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   const nowMs = Date.now();
   if (!shouldInspectTaskRollout(task, row, threadId, nowMs)) return 'unchanged';
 
-  const rolloutRaw = await readRollout(row);
-  const summary = parseRollout(rolloutRaw, row);
+  const { summary } = await summarizeRollout(row);
   const { status, resumed } = taskStateForSummary(task, summary);
   const activityBatch = activitySyncBatch(task, threadId, summary, resumed);
   const lastActivityAt = latestIso(summary.lastActivityAt, summary.threadUpdatedAt, row.updated_at_ms) ?? '';
@@ -3198,41 +3342,44 @@ export function startCodexThreadMonitorLoop(
   intervalMs = 1_000,
   targetRefreshIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   reconcileIntervalMs = DEFAULT_RECONCILE_INTERVAL_MS,
-): NodeJS.Timeout {
-  let running = false;
+  recentScanIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
+): NodeJS.Timeout[] {
+  let targetRefreshRunning = false;
+  let activeWatchRunning = false;
+  let recentScanRunning = false;
+  let detailHydrateRunning = false;
+  let reconcileRunning = false;
   let targetsLoaded = false;
-  let nextTargetRefreshAt = 0;
-  let nextReconcileAt = 0;
+  let nextReconcileAt = Date.now() + reconcileIntervalMs;
   let currentImportScopeSignature = '';
   let reconcileQueue: CodexThreadImportScope[] = [];
   let nextDetailHydratePollAt = 0;
   let tasks: AiTask[] = [];
   let importScopes: CodexThreadImportScope[] = [];
   let activeAiHistoryMonitorTargets: AiHistoryMonitorTarget[] = [];
-  let dbPath: string | null = null;
 
-  const tick = async () => {
-    if (running) return;
-    dbPath = codexStateDbPath();
-    if (!dbPath || !existsSync(dbPath)) {
+  const currentDbPath = (): string | null => {
+    const resolved = cachedCodexStateDbPath();
+    if (!resolved || !existsSync(resolved)) {
       updateCodexThreadMonitorHeartbeatState({
         state_db_found: false,
-        state_db_path: dbPath,
-        last_tick_at: new Date().toISOString(),
+        state_db_path: resolved,
       });
-      return;
+      return null;
     }
+    updateCodexThreadMonitorHeartbeatState({
+      state_db_found: true,
+      state_db_path: resolved,
+      last_error: null,
+    });
+    return resolved;
+  };
 
-    running = true;
+  const refreshTargets = async () => {
+    if (targetRefreshRunning) return;
+    targetRefreshRunning = true;
     try {
-      const now = Date.now();
-      updateCodexThreadMonitorHeartbeatState({
-        state_db_found: true,
-        state_db_path: dbPath,
-        last_tick_at: new Date(now).toISOString(),
-        last_error: null,
-      });
-      if (!targetsLoaded || now >= nextTargetRefreshAt) {
+      await measurePhase('target_refresh', async () => {
         const wasTargetsLoaded = targetsLoaded;
         const [nextTasks, nextImportScopes, nextActiveAiHistoryMonitorTargets] = await Promise.all([
           api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT),
@@ -3244,72 +3391,190 @@ export function startCodexThreadMonitorLoop(
         if (!wasTargetsLoaded || nextImportScopeSignature !== currentImportScopeSignature) {
           currentImportScopeSignature = nextImportScopeSignature;
           reconcileQueue = prioritizeImportScopesForReconcile(nextImportScopes);
-          nextReconcileAt = 0;
+          nextReconcileAt = Date.now() + reconcileIntervalMs;
         }
         tasks = nextTasks;
         importScopes = nextImportScopes;
         activeAiHistoryMonitorTargets = nextActiveAiHistoryMonitorTargets;
         targetsLoaded = true;
-        nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
         updateCodexThreadMonitorHeartbeatState({
-          last_scope_refresh_at: new Date().toISOString(),
+          last_scope_refresh_at: nowIso(),
           last_scope_refresh_error: null,
           scopes: scopeHeartbeat,
+          next_reconcile_at: new Date(nextReconcileAt).toISOString(),
+          reconcile_queue_length: reconcileQueue.length,
         });
-      }
-      const preImportTasks = preImportCodexMonitorTasks(tasks);
-      const preImportTaskIds = new Set(preImportTasks.map(task => task.id));
-      let preImportSynced = 0;
-      for (const task of preImportTasks) {
-        if (!tasks.some(item => item.id === task.id)) continue;
-        try {
-          const result = await syncOneTask(api, runnerId, dbPath, task);
-          if (result === 'remove') {
-            tasks = tasks.filter(item => item.id !== task.id);
+      });
+    } catch (error) {
+      updateCodexThreadMonitorHeartbeatState({
+        last_scope_refresh_at: nowIso(),
+        last_scope_refresh_error: error instanceof Error ? error.message : String(error),
+        last_error: error instanceof Error ? error.message : String(error),
+      });
+      logError('codex monitor target refresh failed', error instanceof Error ? error.message : error);
+    } finally {
+      targetRefreshRunning = false;
+    }
+  };
+
+  const runActiveWatch = async () => {
+    if (activeWatchRunning) {
+      updateCodexThreadMonitorHeartbeatState({
+        skipped_ticks: codexThreadMonitorHeartbeatState.skipped_ticks + 1,
+      });
+      return;
+    }
+    const tickStartedAt = Date.now();
+    activeWatchRunning = true;
+    try {
+      const path = currentDbPath();
+      updateCodexThreadMonitorHeartbeatState({
+        last_tick_at: nowIso(tickStartedAt),
+      });
+      if (!path) return;
+      await measurePhase('active_watch', async () => {
+        const preImportTasks = preImportCodexMonitorTasks(tasks);
+        updateCodexThreadMonitorHeartbeatState({
+          active_watch_count: preImportTasks.length,
+        });
+        const rowCache = await createThreadRowCache(path, codexThreadIdsForTasks(preImportTasks));
+        let preImportSynced = 0;
+        for (const task of preImportTasks) {
+          if (!tasks.some(item => item.id === task.id)) continue;
+          try {
+            const result = await syncOneTask(api, runnerId, path, task, rowCache);
+            if (result === 'remove') {
+              tasks = tasks.filter(item => item.id !== task.id);
+            }
+            preImportSynced += 1;
+            if (preImportSynced % PRE_IMPORT_SYNC_YIELD_EVERY === 0) await sleep(0);
+          } catch (error) {
+            logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
           }
-          preImportSynced += 1;
-          if (preImportSynced % PRE_IMPORT_SYNC_YIELD_EVERY === 0) await sleep(0);
-        } catch (error) {
-          logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
         }
-      }
+      });
+    } catch (error) {
+      updateCodexThreadMonitorHeartbeatState({
+        last_error: error instanceof Error ? error.message : String(error),
+      });
+      logError('codex active watch loop error', error instanceof Error ? error.message : error);
+    } finally {
+      const tickDurationMs = Math.max(0, Math.round(Date.now() - tickStartedAt));
+      updateCodexThreadMonitorHeartbeatState({
+        last_tick_duration_ms: tickDurationMs,
+        tick_overrun_ms: Math.max(0, tickDurationMs - intervalMs),
+      });
+      activeWatchRunning = false;
+    }
+  };
 
-      const detailPollIntervalMs = preImportTasks.length > 0 || aiHistoryDetailWatchRequests.size > 0
-        ? AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS
-        : AI_HISTORY_DETAIL_HYDRATE_POLL_MS;
-      if (Date.now() >= nextDetailHydratePollAt) {
-        await pollAiHistoryDetailHydrateRequests(api, runnerId);
-        nextDetailHydratePollAt = Date.now() + detailPollIntervalMs;
-      }
-      const hydratedDetails = await syncAiHistoryDetailHydrateRequests(api, runnerId, dbPath);
-      if (hydratedDetails > 0) debug(`ai history detail hydrated=${hydratedDetails}`);
+  const runDetailHydrate = async () => {
+    if (detailHydrateRunning) return;
+    detailHydrateRunning = true;
+    try {
+      const path = currentDbPath();
+      if (!path) return;
+      await measurePhase('detail_hydrate', async () => {
+        const activeTaskCount = preImportCodexMonitorTasks(tasks).length;
+        const detailPollIntervalMs = activeTaskCount > 0 || aiHistoryDetailWatchRequests.size > 0
+          ? AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS
+          : AI_HISTORY_DETAIL_HYDRATE_POLL_MS;
+        if (Date.now() >= nextDetailHydratePollAt) {
+          await pollAiHistoryDetailHydrateRequests(api, runnerId);
+          nextDetailHydratePollAt = Date.now() + detailPollIntervalMs;
+        }
+        const hydratedDetails = await syncAiHistoryDetailHydrateRequests(api, runnerId, path);
+        if (hydratedDetails > 0) debug(`ai history detail hydrated=${hydratedDetails}`);
+      });
+    } catch (error) {
+      updateCodexThreadMonitorHeartbeatState({
+        last_error: error instanceof Error ? error.message : String(error),
+      });
+      logError('ai history detail hydrate loop error', error instanceof Error ? error.message : error);
+    } finally {
+      detailHydrateRunning = false;
+    }
+  };
 
-      const deferOrphanImport = shouldDeferOrphanImportForTasks(preImportTasks);
-      const hotUpserted = await syncAiHistoryMetadata(
-        api,
-        runnerId,
-        dbPath,
-        tasks,
-        importScopes,
-        activeAiHistoryMonitorTargets,
-        'hot',
-        AI_HISTORY_HOT_SYNC_LIMIT,
-        false,
-        true,
-      );
+  const runRecentScan = async () => {
+    if (recentScanRunning) return;
+    recentScanRunning = true;
+    try {
+      const path = currentDbPath();
+      if (!path || !targetsLoaded) return;
+      await measurePhase('recent_scan', async () => {
+        const activeTasks = preImportCodexMonitorTasks(tasks);
+        const deferOrphanImport = shouldDeferOrphanImportForTasks(activeTasks);
+        const hotResult = await syncAiHistoryMetadata(
+          api,
+          runnerId,
+          path,
+          tasks,
+          importScopes,
+          activeAiHistoryMonitorTargets,
+          'hot',
+          AI_HISTORY_HOT_SYNC_LIMIT,
+          false,
+          true,
+        );
+        updateCodexThreadMonitorHeartbeatState({
+          recent_scan_count: hotResult.scanned,
+        });
+        const postImportTasks = deferOrphanImport
+          ? []
+          : prioritizeCodexMonitorTasks(tasks)
+            .filter(task => !activeTasks.some(activeTask => activeTask.id === task.id))
+            .slice(0, POST_IMPORT_SYNC_LIMIT);
+        const rowCache = await createThreadRowCache(path, codexThreadIdsForTasks(postImportTasks));
+        for (const task of postImportTasks) {
+          try {
+            const result = await syncOneTask(api, runnerId, path, task, rowCache);
+            if (result === 'remove') {
+              tasks = tasks.filter(item => item.id !== task.id);
+            }
+            await sleep(20);
+          } catch (error) {
+            logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
+          }
+        }
+      });
+    } catch (error) {
+      updateCodexThreadMonitorHeartbeatState({
+        last_error: error instanceof Error ? error.message : String(error),
+      });
+      logError('codex recent scan loop error', error instanceof Error ? error.message : error);
+    } finally {
+      recentScanRunning = false;
+    }
+  };
 
-      const shouldReconcile = reconcileQueue.length > 0 || nextReconcileAt === 0 || Date.now() >= nextReconcileAt;
-      if (shouldReconcile) {
+  const runReconcile = async () => {
+    if (reconcileRunning) return;
+    if (!targetsLoaded) return;
+    if (codexThreadMonitorHeartbeatState.tick_overrun_ms > 0) {
+      nextReconcileAt = Date.now() + Math.min(60_000, reconcileIntervalMs);
+      updateCodexThreadMonitorHeartbeatState({
+        next_reconcile_at: new Date(nextReconcileAt).toISOString(),
+      });
+      return;
+    }
+    if (reconcileQueue.length === 0 && Date.now() < nextReconcileAt) return;
+    reconcileRunning = true;
+    try {
+      const path = currentDbPath();
+      if (!path) return;
+      await measurePhase('reconcile', async () => {
         if (reconcileQueue.length === 0) {
           reconcileQueue = prioritizeImportScopesForReconcile(importScopes);
         }
         const scope = reconcileQueue.shift();
+        let reconcileScanned = 0;
         let reconcileUpserted = 0;
         if (scope) {
-          reconcileUpserted += await syncAiHistoryMetadata(
+          const scopeResult = await syncAiHistoryMetadata(
             api,
             runnerId,
-            dbPath,
+            path,
             tasks,
             [scope],
             activeAiHistoryMonitorTargets,
@@ -3317,13 +3582,15 @@ export function startCodexThreadMonitorLoop(
             AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT,
             true,
           );
+          reconcileScanned += scopeResult.scanned;
+          reconcileUpserted += scopeResult.upserted;
           await sleep(AI_HISTORY_RECONCILE_QUEUE_YIELD_MS);
         }
         if (!scope || reconcileQueue.length === 0) {
-          reconcileUpserted += await syncAiHistoryMetadata(
+          const fullResult = await syncAiHistoryMetadata(
             api,
             runnerId,
-            dbPath,
+            path,
             tasks,
             importScopes,
             activeAiHistoryMonitorTargets,
@@ -3332,6 +3599,8 @@ export function startCodexThreadMonitorLoop(
             false,
             true,
           );
+          reconcileScanned += fullResult.scanned;
+          reconcileUpserted += fullResult.upserted;
         }
         if (reconcileQueue.length === 0) {
           nextReconcileAt = Date.now() + reconcileIntervalMs;
@@ -3341,39 +3610,42 @@ export function startCodexThreadMonitorLoop(
         updateCodexThreadMonitorHeartbeatState({
           last_reconcile_at: new Date().toISOString(),
           next_reconcile_at: new Date(nextReconcileAt || Date.now()).toISOString(),
-          last_reconcile_imported: hotUpserted + reconcileUpserted,
-          last_reconcile_upserted: hotUpserted + reconcileUpserted,
+          last_reconcile_imported: reconcileScanned,
+          last_reconcile_upserted: reconcileUpserted,
+          reconcile_queue_length: reconcileQueue.length,
         });
         debug(`ai history metadata reconcile scope=${scope?.repo_path ?? 'all-codex-cwds'} upserted=${reconcileUpserted} queue=${reconcileQueue.length} next_in=${nextReconcileAt ? Math.round((nextReconcileAt - Date.now()) / 1000) : 0}s`);
-      }
-      const postImportTasks = deferOrphanImport
-        ? []
-        : prioritizeCodexMonitorTasks(tasks)
-          .filter(task => !preImportTaskIds.has(task.id))
-          .slice(0, POST_IMPORT_SYNC_LIMIT);
-      for (const task of postImportTasks) {
-        try {
-          const result = await syncOneTask(api, runnerId, dbPath, task);
-          if (result === 'remove') {
-            tasks = tasks.filter(item => item.id !== task.id);
-          }
-          await sleep(20);
-        } catch (error) {
-          logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);
-        }
-      }
+      });
     } catch (error) {
       updateCodexThreadMonitorHeartbeatState({
         last_error: error instanceof Error ? error.message : String(error),
       });
-      logError('codex monitor loop error', error instanceof Error ? error.message : error);
+      logError('codex reconcile loop error', error instanceof Error ? error.message : error);
     } finally {
-      running = false;
+      reconcileRunning = false;
     }
   };
 
-  void tick();
-  return setInterval(() => {
-    void tick();
-  }, intervalMs);
+  void refreshTargets();
+  void runActiveWatch();
+  void runRecentScan();
+  void runDetailHydrate();
+
+  return [
+    setInterval(() => {
+      void runActiveWatch();
+    }, intervalMs),
+    setInterval(() => {
+      void refreshTargets();
+    }, targetRefreshIntervalMs),
+    setInterval(() => {
+      void runRecentScan();
+    }, recentScanIntervalMs),
+    setInterval(() => {
+      void runDetailHydrate();
+    }, Math.min(1_000, AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS)),
+    setInterval(() => {
+      void runReconcile();
+    }, Math.min(60_000, Math.max(10_000, reconcileIntervalMs))),
+  ];
 }

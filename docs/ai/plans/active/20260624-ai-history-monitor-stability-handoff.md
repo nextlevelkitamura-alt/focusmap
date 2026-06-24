@@ -1,7 +1,7 @@
 # AI History Monitor Stability Handoff
 
 - Task ID: TASK-20260624-002
-- Status: planned
+- Status: in_progress
 - Created: 2026-06-24
 - Completed:
 - Board: `docs/ai/task-board.md`
@@ -113,7 +113,7 @@ flowchart TD
 | Recent Scan | 2s | global recent top 20 + enabled scope recent top 20 metadata | detail message sync |
 | Target Refresh | 2s | tasks/import scopes/active targets/watch requests refresh | rollout full parse for all targets |
 | Detail Hydrate | idle 5s, burst 1-2s after request | selected detail messages only | list metadata sync |
-| Reconcile / Backfill | 10-15min or manual | missed old items, scope backfill | active watch tick |
+| Reconcile / Backfill | 1h default, or manual/low priority | missed old items, scope backfill | active watch tick |
 
 ### Data Flow
 
@@ -211,6 +211,46 @@ Integration warning:
 - The branch diverges from an old AI history base (`aaa9ac0136c9d6aaa03fba289d709dcbe96e16be`), and `main..feat/ai-history-fast-watch-agent` includes broad unrelated deletions/rollbacks.
 - Integration must bring over only the worker commit intent from `0850990a`, preferably by cherry-picking onto latest local `main` and resolving conflicts, or by manually reapplying the three-file patch.
 - After applying, verify that no unrelated docs/UI/API/mobile/task-runner rollback is present.
+
+### 2026-06-24 Agent Hot Path Integration evaluation
+
+Integration result:
+
+- Worktree: `/Users/kitamuranaohiro/Private/focusmap-main-ai-history-integration`
+- Source worker commit: `0850990a focusmap-agent: AI履歴監視hot pathを分離`
+- Method: manual port onto latest local `main`, not branch merge/cherry-pick, because the worker branch was based on an older AI history state and local `main` already had newer active target, placeholder title, stale running, and resume semantics.
+- Ported files:
+  - `scripts/focusmap-agent/src/codex-thread-monitor.ts`
+  - `scripts/focusmap-agent/src/cli.ts`
+  - `scripts/focusmap-agent/codex-thread-monitor.test.ts`
+- Additional Integration docs updated:
+  - `docs/CONTEXT.md`
+  - `docs/specs/codex-app-handoff-monitoring/03-backyard-sync-and-turso.md`
+  - `docs/ai/task-board.md`
+  - this plan
+
+Evaluation checks:
+
+- Reconcile/backfill is no longer in the 1s Active Watch tick. It runs in a separate low-frequency loop and defers when the active tick overruns.
+- Detail hydrate is no longer in the hot path. Detail messages are posted only for active hydrate/watch requests, with per-tick inspection capped.
+- Active target thread row reads are deduped and batched through a tick-local row cache instead of serial `readThread` calls per task.
+- Codex DB path freshness selection is cached with a short TTL, avoiding sqlite freshness checks every second.
+- Rollout summary parse is cached by thread/fingerprint, so unchanged rollouts reuse the parsed summary.
+- Existing resume/running/awaiting/stale meaning is preserved by keeping current local-main state tests and adding cache/loop tests rather than replacing status logic from the old worker branch.
+- Running duration DB writes remain throttled by existing hash/duration-bucket logic. No every-second Turso write path was added.
+- The integration diff excludes unrelated docs/UI/API/mobile/task-runner rollback from the worker branch.
+
+Integration verification:
+
+- `npm run test:run -- scripts/focusmap-agent/codex-thread-monitor.test.ts --test-timeout=30000`: passed, 55 tests.
+- `PATH=/Users/kitamuranaohiro/Private/focusmap-main-ai-history-integration/node_modules/.bin:$PATH npm --prefix scripts/focusmap-agent run build`: passed.
+- `npx eslint scripts/focusmap-agent/src/codex-thread-monitor.ts scripts/focusmap-agent/src/cli.ts scripts/focusmap-agent/src/api-client.ts scripts/focusmap-agent/src/types.ts scripts/focusmap-agent/codex-thread-monitor.test.ts`: passed.
+- `git diff --check`: passed.
+
+Remaining:
+
+- Phase 2A Backend/API snapshot contract and Phase 2B Frontend 2s snapshot/detail burst are still pending.
+- Mac app rebuild/install and runtime heartbeat observation were not run in this integration pass; source agent build was run.
 
 ### Phase 1: Agent Hot Path Unclogging
 

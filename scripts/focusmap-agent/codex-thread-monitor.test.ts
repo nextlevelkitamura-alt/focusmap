@@ -12,11 +12,13 @@ import {
   AI_HISTORY_PLACEHOLDER_TITLE,
   AWAITING_APPROVAL_STABILITY_MS,
   awaitingApprovalAtForSummary,
+  codexThreadIdsForTasks,
   codexStateDbPath,
   codexSessionThreadNamesFromJsonl,
   codexThreadGeneratedTitle,
   DEFAULT_RECONCILE_INTERVAL_MS,
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
+  getCodexThreadMonitorHeartbeatMetadata,
   hasPendingArchiveRequest,
   isFocusmapManualHandoffThread,
   isAiHistoryPlaceholderTitle,
@@ -42,6 +44,7 @@ import {
   shouldArchiveAiHistoryThread,
   shouldCompleteSourceFromArchivedThread,
   shouldDeferOrphanImportForTasks,
+  summarizeRollout,
   taskStateForSummary,
 } from './src/codex-thread-monitor';
 import { AgentApiError } from './src/api-client';
@@ -84,12 +87,34 @@ function task(overrides: Record<string, unknown> = {}) {
 }
 
 describe('codex-thread-monitor state detection', () => {
-  test('refreshes monitor targets within three seconds by default', () => {
-    expect(DEFAULT_TARGET_REFRESH_INTERVAL_MS).toBe(3_000);
+  test('refreshes monitor targets every two seconds by default', () => {
+    expect(DEFAULT_TARGET_REFRESH_INTERVAL_MS).toBe(2_000);
   });
 
   test('reconciles enabled Codex history repos hourly by default', () => {
     expect(DEFAULT_RECONCILE_INTERVAL_MS).toBe(60 * 60 * 1000);
+  });
+
+  test('exposes tick and phase metrics in heartbeat metadata', () => {
+    const metadata = getCodexThreadMonitorHeartbeatMetadata();
+    expect(metadata).toHaveProperty('codex_last_tick_duration_ms');
+    expect(metadata).toMatchObject({
+      codex_skipped_ticks: expect.any(Number),
+      codex_tick_overrun_ms: expect.any(Number),
+      codex_phase_timings_ms: expect.any(Object),
+      codex_active_watch_count: expect.any(Number),
+      codex_recent_scan_count: expect.any(Number),
+      codex_reconcile_queue_length: expect.any(Number),
+    });
+  });
+
+  test('deduplicates active task thread ids before batch row reads', () => {
+    expect(codexThreadIdsForTasks([
+      task({ id: 'task-a', codex_thread_id: 'thread-a' }),
+      task({ id: 'task-b', codex_thread_id: 'thread-a' }),
+      task({ id: 'task-c', result: { codex_thread_id: 'thread-c' } }),
+      task({ id: 'task-d', result: {} }),
+    ] as never).sort()).toEqual(['thread-a', 'thread-c']);
   });
 
   test('keeps Codex completion debounce below the visible UI lag target', () => {
@@ -218,6 +243,42 @@ describe('codex-thread-monitor state detection', () => {
       updated_at_ms: row.updated_at_ms + 1,
     }, scope, 'hot', now + 1_000)).toBe(true);
     expect(shouldInspectAiHistoryRollout(row, scope, 'hot', now + 60_000)).toBe(true);
+  });
+
+  test('reuses parsed rollout summaries until the rollout fingerprint changes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'focusmap-rollout-summary-cache-'));
+    try {
+      const rolloutPath = join(dir, 'rollout.jsonl');
+      writeFileSync(rolloutPath, line('2026-06-10T00:00:00.000Z', { type: 'task_started' }));
+      const row = {
+        ...threadRow,
+        id: 'thread-rollout-summary-cache',
+        rollout_path: rolloutPath,
+        updated_at_ms: Date.parse('2026-06-10T00:00:00.000Z'),
+      };
+
+      const first = await summarizeRollout(row);
+      const second = await summarizeRollout(row);
+
+      expect(second.summary).toBe(first.summary);
+      expect(second.summary.state).toBe('running');
+
+      writeFileSync(rolloutPath, [
+        line('2026-06-10T00:00:00.000Z', { type: 'task_started' }),
+        line('2026-06-10T00:00:05.000Z', { type: 'task_complete', last_agent_message: '確認してください' }),
+      ].join('\n'));
+      const changedDate = new Date(Date.parse('2026-06-10T00:00:06.000Z'));
+      utimesSync(rolloutPath, changedDate, changedDate);
+      const changed = await summarizeRollout({
+        ...row,
+        updated_at_ms: Date.parse('2026-06-10T00:00:06.000Z'),
+      });
+
+      expect(changed.summary).not.toBe(first.summary);
+      expect(changed.summary.state).toBe('awaiting_approval');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('inspects fast-watch rollouts again after one second', () => {

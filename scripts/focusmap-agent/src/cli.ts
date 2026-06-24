@@ -21,7 +21,12 @@ import { loadConfig, ConfigError } from './config.js';
 import { sendOfflineHeartbeat, upsertRunner, startHeartbeatLoop } from './heartbeat.js';
 import { startClaimLoop } from './claim.js';
 import { startCommandLoop } from './command-loop.js';
-import { getCodexThreadMonitorHeartbeatMetadata, startCodexThreadMonitorLoop } from './codex-thread-monitor.js';
+import {
+  DEFAULT_RECONCILE_INTERVAL_MS,
+  DEFAULT_TARGET_REFRESH_INTERVAL_MS,
+  getCodexThreadMonitorHeartbeatMetadata,
+  startCodexThreadMonitorLoop,
+} from './codex-thread-monitor.js';
 import { executeTask } from './executor.js';
 import { AgentApiClient } from './api-client.js';
 import { info, error as logError } from './logger.js';
@@ -37,8 +42,9 @@ const IDLE_HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_IDLE_HEARTBEA
 const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 3_000, 3_000, 60_000);
 const COMMAND_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_COMMAND_INTERVAL_MS', 15_000, 5_000, 60_000);
 const CODEX_THREAD_MONITOR_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_INTERVAL_MS', 1_000, 1_000, 60_000);
-const CODEX_THREAD_MONITOR_TARGET_REFRESH_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_TARGET_REFRESH_MS', 3_000, 1_000, 60_000);
-const CODEX_THREAD_MONITOR_RECONCILE_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_RECONCILE_MS', 60_000, 10_000, 60 * 60_000);
+const CODEX_THREAD_MONITOR_TARGET_REFRESH_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_TARGET_REFRESH_MS', DEFAULT_TARGET_REFRESH_INTERVAL_MS, 1_000, 60_000);
+const CODEX_THREAD_MONITOR_RECENT_SCAN_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_RECENT_SCAN_MS', DEFAULT_TARGET_REFRESH_INTERVAL_MS, 1_000, 60_000);
+const CODEX_THREAD_MONITOR_RECONCILE_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_RECONCILE_MS', DEFAULT_RECONCILE_INTERVAL_MS, 60_000, 6 * 60 * 60_000);
 
 async function main(): Promise<void> {
   // 1. Safety check
@@ -116,10 +122,11 @@ async function main(): Promise<void> {
     CODEX_THREAD_MONITOR_INTERVAL_MS,
     CODEX_THREAD_MONITOR_TARGET_REFRESH_MS,
     CODEX_THREAD_MONITOR_RECONCILE_MS,
+    CODEX_THREAD_MONITOR_RECENT_SCAN_MS,
   );
 
   info(
-    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s active / ${IDLE_HEARTBEAT_INTERVAL_MS / 1000}s idle / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s / codex thread monitor ${CODEX_THREAD_MONITOR_INTERVAL_MS / 1000}s / target refresh ${CODEX_THREAD_MONITOR_TARGET_REFRESH_MS / 1000}s / reconcile ${CODEX_THREAD_MONITOR_RECONCILE_MS / 1000}s`,
+    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s active / ${IDLE_HEARTBEAT_INTERVAL_MS / 1000}s idle / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s / codex thread monitor ${CODEX_THREAD_MONITOR_INTERVAL_MS / 1000}s / target refresh ${CODEX_THREAD_MONITOR_TARGET_REFRESH_MS / 1000}s / recent scan ${CODEX_THREAD_MONITOR_RECENT_SCAN_MS / 1000}s / reconcile ${CODEX_THREAD_MONITOR_RECONCILE_MS / 1000}s`,
   );
 
   // 7. Shutdown
@@ -131,7 +138,7 @@ async function main(): Promise<void> {
     clearInterval(heartbeatTimer);
     clearInterval(claimTimer);
     clearInterval(commandTimer);
-    clearInterval(codexThreadMonitorTimer);
+    for (const timer of codexThreadMonitorTimer) clearInterval(timer);
     const exitTimer = setTimeout(() => process.exit(0), 1_500);
     exitTimer.unref();
     sendOfflineHeartbeat(api, config, runnerId, signal)
