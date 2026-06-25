@@ -10,7 +10,7 @@ Create a reusable Skill named `agents-md-governance` for auditing and improving 
 ## Current Repo Context
 
 - Active plan location: `/Users/kitamuranaohiro/Private/focusmap-main-ai-history-integration` on `main`.
-- `main` is ahead of `origin/main` by 2 commits after the implementation work observed for this final patch. Push is not part of this task.
+- Local `main` is ahead of `origin/main` after implementation work. Push is not part of this task; confirm the exact ahead count with `git status --short --branch` before any future push decision.
 - Existing `AGENTS.md` is 189 lines, already under the 300-line target and 400-line maximum.
 - Existing Skill directory is present at `/Users/kitamuranaohiro/.agents/skills/agents-md-governance`.
 - The Skill install directory is not currently Git-managed, so Skill diffs, rollback, and review history do not have their own source-of-truth repository yet.
@@ -132,7 +132,7 @@ Required report format: Summary, Existing Project-Specific Rules, Must Fix, Shou
 - Current worktree count is 3, below the proposed limit of 5.
 - `temp-cleanup-branch`: last commit 2026-06-23, has an untracked file in that worktree. Delete forbidden until intent and untracked file are resolved.
 - `codex/focusmap-calendar`: last commit 2026-06-18, clean locally but not merged into `main`. Strong stale-review candidate by age, but delete forbidden until PR/open work/unpushed/merge status is checked.
-- `main`: clean, ahead of `origin/main` by 2 commits. No push in this task.
+- `main`: clean and ahead of `origin/main`. No push in this task; confirm the exact ahead count before any future push decision.
 
 ## Pre-Adoption Remaining Tasks
 
