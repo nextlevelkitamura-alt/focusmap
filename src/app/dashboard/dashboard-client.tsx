@@ -469,12 +469,13 @@ export function DashboardClient({
 
     useEffect(() => {
         const handleMindmapDataChanged = (event: Event) => {
-            const detail = (event as CustomEvent<{ projectId?: unknown }>).detail
+            const detail = (event as CustomEvent<{ projectId?: unknown; projectIdSource?: unknown }>).detail
             const targetProjectId = typeof detail?.projectId === 'string' ? detail.projectId : null
             if (targetProjectId && targetProjectId !== selectedProjectId && projects.some(project => project.id === targetProjectId)) {
                 setSelectedProjectId(targetProjectId)
                 return
             }
+            // projectId が不明な通常チャットでは、現在選択中projectを安全側で再取得する。
             refreshFromServer({ force: true, silent: true })
         }
 

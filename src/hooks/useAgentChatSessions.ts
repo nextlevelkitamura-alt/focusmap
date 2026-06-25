@@ -193,6 +193,44 @@ function sessionHasCompletedMindmapDraftMutation(session: AgentChatSession): boo
   })
 }
 
+function projectIdFromValue(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  for (const key of ["projectId", "project_id", "targetProjectId", "target_project_id"]) {
+    const projectId = record[key]
+    if (typeof projectId === "string" && projectId.trim()) return projectId
+  }
+  for (const key of ["task", "group", "node", "createdStructuredLink", "focusmapMindmapDraftReady"]) {
+    const projectId = projectIdFromValue(record[key])
+    if (projectId) return projectId
+  }
+  return null
+}
+
+function resolveMindmapMutationProjectId(session: AgentChatSession): {
+  projectId: string | null
+  projectIdSource: "tool-result" | "session" | "active-project"
+} {
+  for (const message of [...session.messages].reverse()) {
+    const metadata = message.metadata
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue
+    const record = metadata as Record<string, unknown>
+    if (
+      record.focusmapAgentProgress === true &&
+      record.state === "done" &&
+      typeof record.toolName === "string" &&
+      MINDMAP_MUTATION_TOOLS.has(record.toolName)
+    ) {
+      const projectId = projectIdFromValue(record)
+      if (projectId) return { projectId, projectIdSource: "tool-result" }
+    }
+    const projectId = projectIdFromValue(record.focusmapMindmapDraftReady)
+    if (projectId) return { projectId, projectIdSource: "tool-result" }
+  }
+  if (session.projectId) return { projectId: session.projectId, projectIdSource: "session" }
+  return { projectId: null, projectIdSource: "active-project" }
+}
+
 function createUserMessage(text: string, files: FileUIPart[], metadata?: Record<string, unknown>): UIMessage {
   const parts: UIMessage["parts"] = []
   if (text.trim()) parts.push({ type: "text", text: text.trim() })
@@ -261,12 +299,14 @@ export function useAgentChatSessions(scopeKey = "general") {
     const key = `${session.id}:${session.runCompletedAt ?? session.updatedAt}`
     if (mindmapDraftMutationNotifiedRef.current.has(key)) return
     mindmapDraftMutationNotifiedRef.current.add(key)
+    const { projectId, projectIdSource } = resolveMindmapMutationProjectId(session)
     window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
     window.dispatchEvent(new CustomEvent(MINDMAP_DATA_CHANGED_EVENT, {
       detail: {
         source: "agent-chat",
         sessionId: session.id,
-        projectId: session.projectId ?? null,
+        projectId,
+        projectIdSource,
       },
     }))
   }, [])

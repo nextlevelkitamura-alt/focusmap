@@ -1085,7 +1085,14 @@ export const addTask = tool({
       order_index: (maxOrder?.order_index ?? -1) + 1,
     })
     if (error) return { success: false, error: error.message }
-    return { success: true, taskId, title, message: `タスク「${title}」を追加しました` }
+    return {
+      success: true,
+      taskId,
+      title,
+      projectId: targetProjectId,
+      project_id: targetProjectId,
+      message: `タスク「${title}」を追加しました`,
+    }
   },
 })
 
@@ -2311,6 +2318,8 @@ export const updateMindmapNode = tool({
         return {
           success: true,
           task: updated,
+          projectId: updated.project_id ?? null,
+          project_id: updated.project_id ?? null,
           calendarSynced: false,
           warning: calendarError instanceof Error ? calendarError.message : 'Googleカレンダー同期に失敗しました',
           message: `ノード「${updated.title}」を更新しましたが、カレンダー同期は失敗しました`,
@@ -2321,6 +2330,8 @@ export const updateMindmapNode = tool({
     return {
       success: true,
       task: updated,
+      projectId: updated.project_id ?? null,
+      project_id: updated.project_id ?? null,
       calendarSynced: shouldSyncCalendar,
       message: `ノード「${updated.title}」を更新しました`,
     }
@@ -2431,6 +2442,9 @@ export const moveMindmapNode = tool({
     return {
       success: true,
       task: movedRoot,
+      projectId: movedRoot.project_id ?? null,
+      project_id: movedRoot.project_id ?? null,
+      previousProjectId: currentProjectId,
       movedNodeIds: movedIds,
       message: `ノード「${movedRoot.title}」を移動しました`,
     }
@@ -2460,10 +2474,15 @@ export const updateMindmapMemoLink = tool({
 
     const now = new Date().toISOString()
     const archivedLinkIds: string[] = []
+    let affectedProjectId = targetTask?.project_id ?? null
+    if (!affectedProjectId && fromTaskId) {
+      const fromTask = await loadTaskById(supabase, user.id, fromTaskId)
+      affectedProjectId = fromTask?.project_id ?? null
+    }
     if (action === 'move' || action === 'unlink') {
       let query = supabase
         .from('memo_node_links')
-        .select('id')
+        .select('id, project_id')
         .eq('user_id', user.id)
         .eq('link_type', 'mindmap_node')
         .eq('status', 'active')
@@ -2481,6 +2500,9 @@ export const updateMindmapMemoLink = tool({
       const { data: links, error: linkLoadError } = await query
       if (linkLoadError) return { success: false, error: linkLoadError.message }
       const ids = (links || []).map(link => link.id).filter((id): id is string => typeof id === 'string')
+      affectedProjectId = affectedProjectId ??
+        (links || []).map(link => link.project_id).find((id): id is string => typeof id === 'string') ??
+        null
       if (ids.length > 0) {
         const { error } = await supabase
           .from('memo_node_links')
@@ -2567,6 +2589,8 @@ export const updateMindmapMemoLink = tool({
     return {
       success: true,
       action,
+      projectId: affectedProjectId,
+      project_id: affectedProjectId,
       archivedLinkIds,
       createdStructuredLink,
       legacyUpdated,
@@ -3236,6 +3260,8 @@ export const addMindmapGroup = tool({
       success: true,
       group,
       title,
+      projectId: group.project_id ?? projectId,
+      project_id: group.project_id ?? projectId,
       parentTitle: parentNode?.title ?? null,
       message: parentNode
         ? `「${parentNode.title}」配下にグループ「${title}」を追加しました`
@@ -3278,7 +3304,7 @@ export const addMindmapTask = tool({
       .limit(1)
       .maybeSingle()
 
-    const { error } = await supabase.from('tasks').insert({
+    const { data: task, error } = await supabase.from('tasks').insert({
       title,
       user_id: user.id,
       project_id: projectId,
@@ -3288,8 +3314,19 @@ export const addMindmapTask = tool({
       stage: 'plan',
       order_index: (maxOrder?.order_index ?? -1) + 1,
     })
+      .select('id, title, project_id, parent_task_id, is_group, order_index')
+      .maybeSingle()
     if (error) return { success: false, error: error.message }
-    return { success: true, title, parentTitle: parentNode.title, message: `「${parentNode.title}」に「${title}」を追加しました` }
+    if (!task) return { success: false, error: 'タスク作成に失敗しました' }
+    return {
+      success: true,
+      task,
+      title,
+      projectId: task.project_id ?? projectId,
+      project_id: task.project_id ?? projectId,
+      parentTitle: parentNode.title,
+      message: `「${parentNode.title}」に「${title}」を追加しました`,
+    }
   },
 })
 

@@ -8,6 +8,7 @@ export interface AgentChatProgressMetadata {
   state: AgentChatProgressState
   label: string
   toolName?: string
+  projectId?: string | null
   stepNumber?: number
   startedAt: string
   completedAt?: string
@@ -20,6 +21,7 @@ export interface CreateAgentProgressMessageInput {
   label: string
   startedAt: string
   toolName?: string
+  projectId?: string | null
   stepNumber?: number
   completedAt?: string
   durationMs?: number
@@ -93,6 +95,7 @@ export function createAgentProgressMessage(input: CreateAgentProgressMessageInpu
     label: normalizeLabel(input.label),
     startedAt: input.startedAt,
     ...(input.toolName ? { toolName: input.toolName } : {}),
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
     ...(typeof input.stepNumber === 'number' ? { stepNumber: input.stepNumber } : {}),
     ...(input.completedAt ? { completedAt: input.completedAt } : {}),
     ...(typeof input.durationMs === 'number' ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {}),
@@ -120,6 +123,7 @@ export function getAgentProgressMetadata(message: UIMessage): AgentChatProgressM
     label,
     startedAt,
     ...(typeof metadata.toolName === 'string' ? { toolName: metadata.toolName } : {}),
+    ...(typeof metadata.projectId === 'string' || metadata.projectId === null ? { projectId: metadata.projectId } : {}),
     ...(typeof metadata.stepNumber === 'number' ? { stepNumber: metadata.stepNumber } : {}),
     ...(typeof metadata.completedAt === 'string' ? { completedAt: metadata.completedAt } : {}),
     ...(typeof metadata.durationMs === 'number' ? { durationMs: metadata.durationMs } : {}),

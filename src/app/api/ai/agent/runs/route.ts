@@ -85,6 +85,21 @@ function extractProjectContextProposalAction(output: unknown) {
   }
 }
 
+function extractProjectIdFromToolOutput(output: unknown): string | null {
+  if (!isRecord(output) || output.success === false) return null
+  for (const key of ['projectId', 'project_id', 'targetProjectId', 'target_project_id']) {
+    const value = output[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  for (const key of ['task', 'group', 'node', 'createdStructuredLink']) {
+    const value = output[key]
+    if (!isRecord(value)) continue
+    const projectId = value.projectId ?? value.project_id
+    if (typeof projectId === 'string' && projectId.trim()) return projectId
+  }
+  return null
+}
+
 function normalizeScopeKey(value: unknown) {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   return trimmed.length > 0 && trimmed.length <= 180 ? trimmed : 'general'
@@ -246,11 +261,13 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
         const completedAt = new Date().toISOString()
         const startedAt = toolStartedAt.get(toolCallId) ??
           new Date(Date.now() - Math.max(0, event.durationMs)).toISOString()
+        const projectId = event.success ? extractProjectIdFromToolOutput(event.output) : null
         await persistProgressMessage(createAgentProgressMessage({
           id: `agent-progress:${toolCallId}`,
           state: event.success ? 'done' : 'failed',
           label: agentToolLabel(toolName),
           toolName,
+          projectId,
           stepNumber: event.stepNumber,
           startedAt,
           completedAt,
