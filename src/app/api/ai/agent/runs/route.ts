@@ -9,6 +9,7 @@ import {
 import {
   agentToolLabel,
   createAgentProgressMessage,
+  type AgentMindmapMutationMetadata,
   upsertAgentProgressMessage,
 } from '@/lib/ai/agent-chat-progress'
 import {
@@ -97,6 +98,93 @@ function extractProjectIdFromToolOutput(output: unknown): string | null {
     const projectId = value.projectId ?? value.project_id
     if (typeof projectId === 'string' && projectId.trim()) return projectId
   }
+  return null
+}
+
+const MINDMAP_TASK_MUTATION_TOOLS = new Set([
+  'addTask',
+  'addMindmapGroup',
+  'addMindmapTask',
+  'updateMindmapNode',
+  'moveMindmapNode',
+])
+
+const MINDMAP_REFRESH_MUTATION_TOOLS = new Set([
+  'updateMindmapMemoLink',
+])
+
+function sanitizeMindmapTaskForProgress(task: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: task.id,
+    user_id: task.user_id,
+    project_id: task.project_id ?? null,
+    parent_task_id: task.parent_task_id ?? null,
+    is_group: task.is_group === true,
+    title: typeof task.title === 'string' ? task.title : '',
+    status: typeof task.status === 'string' ? task.status : 'todo',
+    stage: typeof task.stage === 'string' ? task.stage : 'plan',
+    priority: typeof task.priority === 'number' ? task.priority : null,
+    order_index: typeof task.order_index === 'number' ? task.order_index : 0,
+    scheduled_at: typeof task.scheduled_at === 'string' ? task.scheduled_at : null,
+    estimated_time: typeof task.estimated_time === 'number' ? task.estimated_time : 0,
+    actual_time_minutes: typeof task.actual_time_minutes === 'number' ? task.actual_time_minutes : 0,
+    google_event_id: typeof task.google_event_id === 'string' ? task.google_event_id : null,
+    calendar_event_id: typeof task.calendar_event_id === 'string' ? task.calendar_event_id : null,
+    calendar_id: typeof task.calendar_id === 'string' ? task.calendar_id : null,
+    total_elapsed_seconds: typeof task.total_elapsed_seconds === 'number' ? task.total_elapsed_seconds : 0,
+    last_started_at: typeof task.last_started_at === 'string' ? task.last_started_at : null,
+    is_timer_running: task.is_timer_running === true,
+    created_at: typeof task.created_at === 'string' ? task.created_at : new Date().toISOString(),
+    updated_at: typeof task.updated_at === 'string' ? task.updated_at : new Date().toISOString(),
+    source: typeof task.source === 'string' ? task.source : 'manual',
+    deleted_at: typeof task.deleted_at === 'string' ? task.deleted_at : null,
+    google_event_fingerprint: typeof task.google_event_fingerprint === 'string' ? task.google_event_fingerprint : null,
+    is_habit: task.is_habit === true,
+    habit_frequency: typeof task.habit_frequency === 'string' ? task.habit_frequency : null,
+    habit_icon: typeof task.habit_icon === 'string' ? task.habit_icon : null,
+    habit_start_date: typeof task.habit_start_date === 'string' ? task.habit_start_date : null,
+    habit_end_date: typeof task.habit_end_date === 'string' ? task.habit_end_date : null,
+    node_width: typeof task.node_width === 'number' ? task.node_width : null,
+    mindmap_collapsed: task.mindmap_collapsed === true,
+    codex_work_dir: typeof task.codex_work_dir === 'string' ? task.codex_work_dir : null,
+    codex_thread_id: typeof task.codex_thread_id === 'string' ? task.codex_thread_id : null,
+    codex_status: typeof task.codex_status === 'string' ? task.codex_status : null,
+  }
+}
+
+function extractTaskRecordFromToolOutput(output: Record<string, unknown>): Record<string, unknown> | null {
+  for (const key of ['task', 'group', 'node']) {
+    const value = output[key]
+    if (isRecord(value) && typeof value.id === 'string') return sanitizeMindmapTaskForProgress(value)
+  }
+  return null
+}
+
+function extractMindmapMutationFromToolOutput(toolName: string, output: unknown): AgentMindmapMutationMetadata | null {
+  if (!isRecord(output) || output.success === false) return null
+  const projectId = extractProjectIdFromToolOutput(output)
+
+  if (MINDMAP_TASK_MUTATION_TOOLS.has(toolName)) {
+    const task = extractTaskRecordFromToolOutput(output)
+    if (task) {
+      return {
+        version: 1,
+        type: 'upsert-task',
+        projectId,
+        previousProjectId: nullableString(output.previousProjectId),
+        tasks: [task],
+      }
+    }
+  }
+
+  if (projectId && MINDMAP_REFRESH_MUTATION_TOOLS.has(toolName)) {
+    return {
+      version: 1,
+      type: 'refresh',
+      projectId,
+    }
+  }
+
   return null
 }
 
@@ -262,12 +350,14 @@ async function runPersistentAgentSession(sessionId: string, userId: string, mode
         const startedAt = toolStartedAt.get(toolCallId) ??
           new Date(Date.now() - Math.max(0, event.durationMs)).toISOString()
         const projectId = event.success ? extractProjectIdFromToolOutput(event.output) : null
+        const mindmapMutation = event.success ? extractMindmapMutationFromToolOutput(toolName, event.output) : null
         await persistProgressMessage(createAgentProgressMessage({
           id: `agent-progress:${toolCallId}`,
           state: event.success ? 'done' : 'failed',
           label: agentToolLabel(toolName),
           toolName,
           projectId,
+          mindmapMutation,
           stepNumber: event.stepNumber,
           startedAt,
           completedAt,

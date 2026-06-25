@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { FileUIPart, UIMessage } from "ai"
 import { createClient as createBrowserSupabaseClient } from "@/utils/supabase/client"
 import type { AgentModelMode } from "@/lib/ai/agent-model-mode"
+import type { AgentMindmapMutationMetadata } from "@/lib/ai/agent-chat-progress"
 import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
@@ -207,10 +208,54 @@ function projectIdFromValue(value: unknown): string | null {
   return null
 }
 
+function mindmapMutationFromValue(value: unknown): AgentMindmapMutationMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (record.version !== 1) return null
+  if (record.type !== "upsert-task" && record.type !== "refresh") return null
+  const projectId = typeof record.projectId === "string" ? record.projectId : null
+  const previousProjectId = typeof record.previousProjectId === "string" ? record.previousProjectId : null
+  const tasks = Array.isArray(record.tasks)
+    ? record.tasks.filter((task): task is Record<string, unknown> => (
+      !!task &&
+      typeof task === "object" &&
+      !Array.isArray(task) &&
+      typeof (task as Record<string, unknown>).id === "string"
+    ))
+    : undefined
+  return {
+    version: 1,
+    type: record.type,
+    projectId,
+    ...(previousProjectId ? { previousProjectId } : {}),
+    ...(tasks && tasks.length > 0 ? { tasks } : {}),
+  }
+}
+
 function resolveMindmapMutationProjectId(session: AgentChatSession): {
   projectId: string | null
   projectIdSource: "tool-result" | "session" | "active-project"
+  mutations: AgentMindmapMutationMetadata[]
 } {
+  const mutations: AgentMindmapMutationMetadata[] = []
+  let firstToolProjectId: string | null = null
+
+  for (const message of session.messages) {
+    const metadata = message.metadata
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue
+    const record = metadata as Record<string, unknown>
+    if (
+      record.focusmapAgentProgress === true &&
+      record.state === "done" &&
+      typeof record.toolName === "string" &&
+      MINDMAP_MUTATION_TOOLS.has(record.toolName)
+    ) {
+      const mutation = mindmapMutationFromValue(record.mindmapMutation)
+      if (mutation) mutations.push(mutation)
+      firstToolProjectId = firstToolProjectId ?? projectIdFromValue(record)
+    }
+  }
+
   for (const message of [...session.messages].reverse()) {
     const metadata = message.metadata
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue
@@ -222,13 +267,14 @@ function resolveMindmapMutationProjectId(session: AgentChatSession): {
       MINDMAP_MUTATION_TOOLS.has(record.toolName)
     ) {
       const projectId = projectIdFromValue(record)
-      if (projectId) return { projectId, projectIdSource: "tool-result" }
+      if (projectId) return { projectId, projectIdSource: "tool-result", mutations }
     }
     const projectId = projectIdFromValue(record.focusmapMindmapDraftReady)
-    if (projectId) return { projectId, projectIdSource: "tool-result" }
+    if (projectId) return { projectId, projectIdSource: "tool-result", mutations }
   }
-  if (session.projectId) return { projectId: session.projectId, projectIdSource: "session" }
-  return { projectId: null, projectIdSource: "active-project" }
+  if (firstToolProjectId) return { projectId: firstToolProjectId, projectIdSource: "tool-result", mutations }
+  if (session.projectId) return { projectId: session.projectId, projectIdSource: "session", mutations }
+  return { projectId: null, projectIdSource: "active-project", mutations }
 }
 
 function createUserMessage(text: string, files: FileUIPart[], metadata?: Record<string, unknown>): UIMessage {
@@ -299,7 +345,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     const key = `${session.id}:${session.runCompletedAt ?? session.updatedAt}`
     if (mindmapDraftMutationNotifiedRef.current.has(key)) return
     mindmapDraftMutationNotifiedRef.current.add(key)
-    const { projectId, projectIdSource } = resolveMindmapMutationProjectId(session)
+    const { projectId, projectIdSource, mutations } = resolveMindmapMutationProjectId(session)
     window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
     window.dispatchEvent(new CustomEvent(MINDMAP_DATA_CHANGED_EVENT, {
       detail: {
@@ -307,6 +353,7 @@ export function useAgentChatSessions(scopeKey = "general") {
         sessionId: session.id,
         projectId,
         projectIdSource,
+        mutations,
       },
     }))
   }, [])

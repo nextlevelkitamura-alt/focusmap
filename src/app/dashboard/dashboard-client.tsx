@@ -36,6 +36,38 @@ import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-me
 import { ProjectContextDialog } from "@/components/projects/project-context-dialog"
 import { MINDMAP_DATA_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
 
+type MindmapDataChangedDetail = {
+    projectId?: unknown
+    projectIdSource?: unknown
+    mutations?: unknown
+}
+
+function taskFromMindmapMutationValue(value: unknown): Task | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const record = value as Record<string, unknown>
+    if (typeof record.id !== 'string') return null
+    if (typeof record.project_id !== 'string') return null
+    return record as unknown as Task
+}
+
+function tasksFromMindmapDataChangedDetail(detail: MindmapDataChangedDetail | undefined): Task[] {
+    if (!Array.isArray(detail?.mutations)) return []
+    const tasks: Task[] = []
+    const seen = new Set<string>()
+    for (const mutation of detail.mutations) {
+        if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) continue
+        const record = mutation as Record<string, unknown>
+        if (record.type !== 'upsert-task' || !Array.isArray(record.tasks)) continue
+        for (const taskValue of record.tasks) {
+            const task = taskFromMindmapMutationValue(taskValue)
+            if (!task || seen.has(task.id)) continue
+            seen.add(task.id)
+            tasks.push(task)
+        }
+    }
+    return tasks
+}
+
 function DashboardPaneFallback() {
     return (
         <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
@@ -469,11 +501,19 @@ export function DashboardClient({
 
     useEffect(() => {
         const handleMindmapDataChanged = (event: Event) => {
-            const detail = (event as CustomEvent<{ projectId?: unknown; projectIdSource?: unknown }>).detail
-            const targetProjectId = typeof detail?.projectId === 'string' ? detail.projectId : null
+            const detail = (event as CustomEvent<MindmapDataChangedDetail>).detail
+            const mutationTasks = tasksFromMindmapDataChangedDetail(detail)
+            const targetProjectId = typeof detail?.projectId === 'string'
+                ? detail.projectId
+                : (mutationTasks.find(task => typeof task.project_id === 'string')?.project_id ?? null)
             if (targetProjectId && targetProjectId !== selectedProjectId && projects.some(project => project.id === targetProjectId)) {
                 setSelectedProjectId(targetProjectId)
                 return
+            }
+            if (selectedProjectId) {
+                mutationTasks
+                    .filter(task => task.project_id === selectedProjectId)
+                    .forEach(upsertTaskFromServer)
             }
             // projectId が不明な通常チャットでは、現在選択中projectを安全側で再取得する。
             refreshFromServer({ force: true, silent: true })
@@ -481,7 +521,7 @@ export function DashboardClient({
 
         window.addEventListener(MINDMAP_DATA_CHANGED_EVENT, handleMindmapDataChanged)
         return () => window.removeEventListener(MINDMAP_DATA_CHANGED_EVENT, handleMindmapDataChanged)
-    }, [projects, refreshFromServer, selectedProjectId])
+    }, [projects, refreshFromServer, selectedProjectId, upsertTaskFromServer])
 
     // STABLE handlers using useCallback
     const handleCreateGroup = useCallback(async (title: string) => {

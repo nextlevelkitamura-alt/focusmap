@@ -1073,7 +1073,7 @@ export const addTask = tool({
       .maybeSingle()
 
     const taskId = crypto.randomUUID()
-    const { error } = await supabase.from('tasks').insert({
+    const { data: task, error } = await supabase.from('tasks').insert({
       id: taskId,
       title,
       user_id: user.id,
@@ -1084,10 +1084,14 @@ export const addTask = tool({
       stage: 'plan',
       order_index: (maxOrder?.order_index ?? -1) + 1,
     })
+      .select('*')
+      .maybeSingle()
     if (error) return { success: false, error: error.message }
+    if (!task) return { success: false, error: 'タスク作成に失敗しました' }
     return {
       success: true,
-      taskId,
+      taskId: task.id,
+      task,
       title,
       projectId: targetProjectId,
       project_id: targetProjectId,
@@ -3252,7 +3256,7 @@ export const addMindmapGroup = tool({
     const { data: group, error } = await supabase
       .from('tasks')
       .insert(insertPayload)
-      .select('id, title, project_id, parent_task_id, is_group, order_index')
+      .select('*')
       .maybeSingle()
     if (error) return { success: false, error: error.message }
     if (!group) return { success: false, error: 'グループ作成に失敗しました' }
@@ -3314,7 +3318,7 @@ export const addMindmapTask = tool({
       stage: 'plan',
       order_index: (maxOrder?.order_index ?? -1) + 1,
     })
-      .select('id, title, project_id, parent_task_id, is_group, order_index')
+      .select('*')
       .maybeSingle()
     if (error) return { success: false, error: error.message }
     if (!task) return { success: false, error: 'タスク作成に失敗しました' }

@@ -2,6 +2,14 @@ import type { UIMessage } from 'ai'
 
 export type AgentChatProgressState = 'thinking' | 'running' | 'done' | 'failed'
 
+export interface AgentMindmapMutationMetadata {
+  version: 1
+  type: 'upsert-task' | 'refresh'
+  projectId?: string | null
+  previousProjectId?: string | null
+  tasks?: Record<string, unknown>[]
+}
+
 export interface AgentChatProgressMetadata {
   focusmapAgentProgress: true
   version: 1
@@ -13,6 +21,7 @@ export interface AgentChatProgressMetadata {
   startedAt: string
   completedAt?: string
   durationMs?: number
+  mindmapMutation?: AgentMindmapMutationMetadata
 }
 
 export interface CreateAgentProgressMessageInput {
@@ -25,6 +34,7 @@ export interface CreateAgentProgressMessageInput {
   stepNumber?: number
   completedAt?: string
   durationMs?: number
+  mindmapMutation?: AgentMindmapMutationMetadata | null
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -99,6 +109,7 @@ export function createAgentProgressMessage(input: CreateAgentProgressMessageInpu
     ...(typeof input.stepNumber === 'number' ? { stepNumber: input.stepNumber } : {}),
     ...(input.completedAt ? { completedAt: input.completedAt } : {}),
     ...(typeof input.durationMs === 'number' ? { durationMs: Math.max(0, Math.round(input.durationMs)) } : {}),
+    ...(input.mindmapMutation ? { mindmapMutation: input.mindmapMutation } : {}),
   }
 
   return {
@@ -127,6 +138,7 @@ export function getAgentProgressMetadata(message: UIMessage): AgentChatProgressM
     ...(typeof metadata.stepNumber === 'number' ? { stepNumber: metadata.stepNumber } : {}),
     ...(typeof metadata.completedAt === 'string' ? { completedAt: metadata.completedAt } : {}),
     ...(typeof metadata.durationMs === 'number' ? { durationMs: metadata.durationMs } : {}),
+    ...(isRecord(metadata.mindmapMutation) ? { mindmapMutation: metadata.mindmapMutation as unknown as AgentMindmapMutationMetadata } : {}),
   }
 }
 
