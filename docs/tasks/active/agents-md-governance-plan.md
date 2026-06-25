@@ -1,6 +1,6 @@
 # agents-md-governance Skill Spec and Implementation Plan
 
-Status: planning only. Do not create the skill, rewrite `AGENTS.md`, merge, delete, deploy, or clean up branches/worktrees in this phase.
+Status: implemented / final review fixes applied; formal adoption review pending. Do not rewrite repository `AGENTS.md`, merge, delete, deploy, push, or clean up branches/worktrees from this plan without explicit human approval.
 Date: 2026-06-26
 
 ## Purpose
@@ -9,11 +9,45 @@ Create a reusable Skill named `agents-md-governance` for auditing and improving 
 
 ## Current Repo Context
 
-- Active implementation location for this plan: `/Users/kitamuranaohiro/Private/focusmap-main-ai-history-integration` on `main`.
-- `main` is ahead of `origin/main` by 1 commit. Push is not part of this task.
+- Active plan location: `/Users/kitamuranaohiro/Private/focusmap-main-ai-history-integration` on `main`.
+- `main` is ahead of `origin/main` by 2 commits after the implementation work observed for this final patch. Push is not part of this task.
 - Existing `AGENTS.md` is 189 lines, already under the 300-line target and 400-line maximum.
-- No existing `agents-md-governance` skill directory was found under `~/.codex/skills`, `~/.agents/skills`, or `~/.claude/skills`.
+- Existing Skill directory is present at `/Users/kitamuranaohiro/.agents/skills/agents-md-governance`.
+- The Skill install directory is not currently Git-managed, so Skill diffs, rollback, and review history do not have their own source-of-truth repository yet.
 - Existing worktrees: `main` at `focusmap-main-ai-history-integration`, `temp-cleanup-branch` at `focusmap`, and `codex/focusmap-calendar` at `focusmap-focusmap-calendar`.
+
+## Implementation Status
+
+Created/changed Skill files:
+
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/SKILL.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/workflows/audit-agents-md.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/workflows/restructure-agents-md.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/workflows/git-inventory.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/workflows/review-implementation.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/references/rule-taxonomy.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/assets/report-template.md`
+- `/Users/kitamuranaohiro/.agents/skills/agents-md-governance/scripts/agents_md_audit.py`
+
+Resolved in the current implementation:
+
+- The Skill now has a concise hub file plus progressive-disclosure workflows, references, report template, and read-only helper script.
+- The required report output includes `Moved Rules and Reasons`, `Removed Rules and Reasons`, and `Changed Rules and Reasons`.
+- Hard approval gates cover push to `main`, merge/cherry-pick/rebase into `main`, production deploy, force push, reset/clean, worktree/branch deletion, secrets, destructive DB, production data, migrations, and runtime merge/deploy while localhost/build is known broken.
+- Worktree governance includes the five-worktree maximum, duplicate-branch prevention, safe naming, stale thresholds, and proposal-only cleanup.
+- The helper script is read-only and intentionally avoids push, merge, reset, clean, delete, deploy, secret, migration, and write actions.
+
+Final review fix items addressed by this patch:
+
+- Updated this plan from planning-only to implemented/adoption-review state.
+- Strengthened the helper and workflow language for count exactly five as `Worktree Limit Reached` and `Human Approval Needed`.
+- Replaced the Orca-specific task-name wording with generic task/issue/PR terminology.
+- Relaxed localhost-broken gating so docs-only, governance-only, and other non-runtime changes are not blocked unnecessarily, while runtime merge/deploy remains blocked when localhost/build is fully broken.
+
+Remaining final correction items:
+
+- None known after this patch; reviewer confirmation is still required before formal adoption.
+- Decide where the Skill source of truth should live before treating this install copy as durable.
 
 ## Existing Project-Specific Rules To Protect
 
@@ -33,31 +67,32 @@ Create a reusable Skill named `agents-md-governance` for auditing and improving 
 - Keep Focusmap-specific localhost 3001 rule in `AGENTS.md`; move troubleshooting detail to a local preview doc if the section grows.
 - Keep only stable AI role boundaries in `AGENTS.md`; leave task-router prompts, board mechanics, and run logs under `docs/ai/`.
 - Clarify the apparent conflict between "small local main commits allowed" and the new hard rule "main merge requires human approval": direct small commits to local `main` may remain project-specific; branch-to-main merge/cherry-pick for Medium/Large should require human approval unless the project explicitly says otherwise.
-- Clarify build/localhost gating: the Skill may recommend checks and block known-broken merge/deploy, but in Focusmap it must not run build/localhost checks automatically.
+- Clarify build/localhost gating: the Skill may recommend checks and block known-broken runtime merge/deploy, but docs-only/governance-only/non-runtime changes should not be stopped solely because localhost is broken, and in Focusmap it must not run build/localhost checks automatically.
 
 ## Skill Specification
 
-Draft frontmatter:
+Implemented frontmatter:
 
 ```yaml
 ---
 name: agents-md-governance
-description: Inspect, improve, and safely restructure repository AGENTS.md files as AI-coding governance constitutions. Use when auditing existing AGENTS.md rules, preserving project-specific AI development policies, classifying Hard/Soft/Optional gates, planning docs splits, inventorying stale git worktrees/branches, or reviewing AGENTS.md implementation diffs without auto merge/delete/deploy.
+description: Inspects, improves, and safely restructures repository AGENTS.md files as AI-coding governance constitutions. Use when auditing AGENTS.md, preserving project-specific development rules, classifying hard approval gates, planning docs splits, inventorying stale git worktrees or branches, or reviewing AGENTS.md diffs without auto merge, delete, or deploy.
 ---
 ```
 
 Default side-effect level: L1 report-only. Editing `AGENTS.md` or docs is L2 and requires an explicit implementation request. Destructive Git, production, DB, migration, and secret operations are L3 and require human approval; the Skill should normally only report and propose.
 
-Core modes:
+Implemented modes:
 - `audit`: read existing `AGENTS.md`, relevant docs, and read-only Git/worktree state; produce the required report format.
-- `restructure-plan`: propose a 300-line target / 400-line max constitution and docs split, with keep/move/fix decisions.
-- `implement-governance`: only after explicit request, edit `AGENTS.md`/docs, preserving project-specific rules and avoiding unrelated rewrites.
-- `inventory-cleanup`: classify old worktrees/branches as delete candidate high, needs confirmation medium, or delete forbidden; never delete automatically.
-- `review-implementation`: review plan file, implementation diff, and changed files for safety, omissions, and over-blocking.
+- `propose`: propose a 300-line target / 400-line max constitution and docs split, with keep/move/fix decisions.
+- `rewrite`: after explicit approval, generate a draft `AGENTS.md` proposal without overwriting the real file.
+- `apply`: only after explicit request, edit approved `AGENTS.md`/docs, preserving project-specific rules and avoiding unrelated rewrites.
+- `inventory`: classify old worktrees/branches as cleanup candidates or delete forbidden; never delete automatically.
+- `review`: review plan file, implementation diff, and changed files for safety, omissions, and over-blocking.
 
-Hard Rules the Skill must stop without human approval: direct push to `main`, merge into `main`, production deploy, `git push --force`, `git reset --hard`, `git clean -fd`, worktree/branch/remote-branch deletion, `.env`/secret/auth display/change/delete, destructive DB operations, production data changes, migration apply, and merge/deploy while localhost/build is known to be fully broken.
+Hard Rules the Skill must stop without human approval: direct push to `main`, merge/cherry-pick/rebase into `main`, production deploy, `git push --force`, `git reset --hard`, `git clean -fd`, worktree/branch/remote-branch deletion, `.env`/secret/auth display/change/delete, destructive DB operations, production data changes, migration apply, and merge/deploy of runtime changes while localhost/build is known to be fully broken.
 
-Soft Rules the Skill should recommend but not over-block for Small work: Medium/Large branch+worktree+PR, worktree max 5, `git worktree list` before creating one, localhost/build checks before PR, Files changed review after PR, one AI review for Medium/Large, squash merge, and cleanup proposal after merge.
+Soft Rules the Skill should recommend but not over-block for Small work: Medium/Large branch+worktree+PR, worktree max 5, `git worktree list` before creating one, localhost/build checks before PR for runtime/code behavior changes when requested or required, Files changed review after PR, one AI review for Medium/Large, squash merge, and cleanup proposal after merge.
 
 Optional Rules: planner/implementer/reviewer split, Draft PR, `docs/tasks/active/` task plan, detailed stale branch investigation, multiple AI reviews, and ADR creation.
 
@@ -66,9 +101,9 @@ Work size taxonomy:
 - Medium: UI improvement, new screen, light API change, multiple files, or existing feature impact. Branch+worktree+PR and explicit verification are recommended or project-required.
 - Large: auth, DB, billing, migration, production data, large refactor, multi-feature changes, or old-branch-to-main integration. Issue/plan, worktree, Draft PR, separated AI roles, build/test, and human merge approval are required.
 
-Required report format: Summary, Existing Project-Specific Rules, Must Fix, Should Fix, Optional, Worktree / Branch Inventory, Stale Cleanup Candidates, Proposed AGENTS.md Structure, Proposed Docs Split, Human Approval Needed, Implementation Plan.
+Required report format: Summary, Existing Project-Specific Rules, Must Fix, Should Fix, Optional, Worktree / Branch Inventory, Stale Cleanup Candidates, Proposed AGENTS.md Structure, Proposed Docs Split, Moved Rules and Reasons, Removed Rules and Reasons, Changed Rules and Reasons, Human Approval Needed, Next Actions.
 
-## Proposed Skill Files
+## Implemented Skill Files
 
 - `SKILL.md`: concise hub under 200 lines with mode routing, side-effect policy, and report format.
 - `workflows/audit-agents-md.md`: inspection procedure and keep/move/fix extraction.
@@ -77,7 +112,7 @@ Required report format: Summary, Existing Project-Specific Rules, Must Fix, Shou
 - `workflows/review-implementation.md`: reviewer checklist for plan + diff + files.
 - `references/rule-taxonomy.md`: Hard/Soft/Optional, size taxonomy, localhost/build, docs lifecycle, and stale thresholds.
 - `assets/report-template.md`: reusable markdown output template.
-- Optional `scripts/git_inventory.py`: read-only helper only. It must not call push, merge, reset, clean, delete, deploy, DB, or secret commands.
+- `scripts/agents_md_audit.py`: read-only helper only. It must not call push, merge, reset, clean, delete, deploy, DB, migration, or secret commands.
 
 ## Proposed AGENTS.md Structure For Target Repos
 
@@ -97,20 +132,20 @@ Required report format: Summary, Existing Project-Specific Rules, Must Fix, Shou
 - Current worktree count is 3, below the proposed limit of 5.
 - `temp-cleanup-branch`: last commit 2026-06-23, has an untracked file in that worktree. Delete forbidden until intent and untracked file are resolved.
 - `codex/focusmap-calendar`: last commit 2026-06-18, clean locally but not merged into `main`. Strong stale-review candidate by age, but delete forbidden until PR/open work/unpushed/merge status is checked.
-- `main`: clean, ahead of `origin/main` by 1 commit. No push in this task.
+- `main`: clean, ahead of `origin/main` by 2 commits. No push in this task.
 
-## Implementation Plan For The Next AI
+## Pre-Adoption Remaining Tasks
 
-1. Read this file first, then read `AGENTS.md` and the skill-creator instructions.
-2. Confirm target placement. Recommended source of truth: `~/.agents/skills/agents-md-governance` because Codex can load `~/.agents/skills`; add Codex/Claude symlinks or copies only if explicitly requested.
-3. Initialize the skill using the standard skill template/init workflow; include workflows, references, assets, and only add the optional script if deterministic inventory is worth it.
-4. Write the Skill as report-first and no-delete/no-merge/no-deploy by default. Keep `SKILL.md` concise; move detail into one-level references/workflows.
-5. Validate the skill metadata and line counts. Do not run Focusmap app build/localhost checks unless the user explicitly asks.
-6. Report created files and side-effect level. Do not edit Focusmap `AGENTS.md` in the same step unless explicitly requested.
+1. Have the reviewer confirm the final patch, especially worktree limit wording, localhost runtime/docs distinction, and required output sections.
+2. Decide Git source-of-truth management for personal Skills.
+3. Recommended long-term source: a separate private repository that syncs into `~/.agents/skills`, treating the home-directory Skill folder as the install target.
+4. Short-term alternative: initialize Git under `~/.agents/skills`, with `.env`, secrets, auth files, and personal machine settings excluded by `.gitignore`.
+5. Do not mix this generic Skill source into the Focusmap repository.
+6. After formal adoption, keep this plan as implementation history or archive it under the repo's task archive if that lifecycle is still desired.
 
 ## Review Plan
 
-Reviewer must read this plan, the final `SKILL.md`, every workflow/reference/asset file, and the implementation diff. Review priorities: project-specific rule preservation, hard gate completeness, no automatic destructive operations, no secret-reading behavior, no over-blocking of Small work, concise progressive-disclosure structure, and exact required output format.
+Reviewer must read this plan, the final `SKILL.md`, every workflow/reference/asset/script file, and the implementation diff. Review priorities: project-specific rule preservation, hard gate completeness, no automatic destructive operations, no secret-reading behavior, no over-blocking of Small work, worktree limit handling at exactly five, localhost runtime/docs distinction, concise progressive-disclosure structure, and exact required output format.
 
 ## Human Approval Needed
 
