@@ -431,6 +431,7 @@ export function DashboardClient({
         redo,
         canUndo,
         canRedo,
+        upsertTaskFromServer,
     } = useMindMapSync({
         projectId: selectedProjectId,
         userId,
@@ -1537,6 +1538,7 @@ export function DashboardClient({
                                         onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
                                         onOpenLinkedMemos={openMindmapLinkedMemos}
                                         onMindmapUpdated={refreshFromServer}
+                                        onUpsertTaskFromServer={upsertTaskFromServer}
                                         onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
                                         onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                                     />
@@ -1712,6 +1714,7 @@ export function DashboardClient({
                             onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
                             onOpenLinkedMemos={openMindmapLinkedMemos}
                             onMindmapUpdated={refreshFromServer}
+                            onUpsertTaskFromServer={upsertTaskFromServer}
                             onKanbanUpdateTask={handleUpdateTaskWithQuickSync}
                             onKanbanDeleteTask={handleDeleteTaskWithQuickSync}
                         />

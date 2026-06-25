@@ -37,6 +37,7 @@ interface UseMindMapSyncReturn {
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
     refreshFromServer: (options?: { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean }) => Promise<void>
+    upsertTaskFromServer: (task: Task) => void
     undo: () => Promise<string | null>
     redo: () => Promise<string | null>
     canUndo: () => boolean
@@ -613,6 +614,14 @@ export function useMindMapSync({
         if (!serverTask?.id) return
         applyRealtimeTask(serverTask as Task)
     }, [applyRealtimeTask, removeRealtimeTask])
+
+    const upsertTaskFromServer = useCallback((task: Task) => {
+        if (typeof window !== 'undefined') {
+            flushSync(() => applyRealtimeTask(task))
+            return
+        }
+        applyRealtimeTask(task)
+    }, [applyRealtimeTask])
 
     const retryPendingCollapsedStates = useCallback(async () => {
         const currentProjectId = projectIdRef.current
@@ -2126,7 +2135,12 @@ export function useMindMapSync({
         if (!options?.force && staleMs > 0 && Date.now() - lastServerRefreshAt.current < staleMs) {
             return
         }
-        if (refreshInFlight.current) return refreshInFlight.current
+        if (refreshInFlight.current) {
+            const inFlight = refreshInFlight.current
+            if (!options?.force) return inFlight
+            await inFlight.catch(() => undefined)
+            if (projectIdRef.current !== projectId) return
+        }
 
         const refreshProjectId = projectId
         const showLoading = options?.silent !== true
@@ -2221,6 +2235,7 @@ export function useMindMapSync({
         getChildTasks,
         getParentTasks,
         refreshFromServer,
+        upsertTaskFromServer,
         undo,
         redo,
         canUndo,

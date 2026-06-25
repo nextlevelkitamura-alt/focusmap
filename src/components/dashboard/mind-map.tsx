@@ -243,6 +243,7 @@ interface MindMapProps {
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
     onMindmapUpdated?: (options?: MindmapRefreshOptions) => Promise<void>
+    onUpsertTaskFromServer?: (task: Task) => void
     onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
 }
@@ -423,7 +424,7 @@ function DraftNodeDetailPanel({
     );
 }
 
-function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onPatchProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onMindmapUpdated, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, spaces = [], projects = [], allTasks = [], onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onPatchProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos, onMindmapUpdated, onUpsertTaskFromServer, onKanbanUpdateTask, onKanbanDeleteTask }: MindMapProps) {
     const projectId = project?.id ?? '';
     const [supabase] = useState(() => createClient());
     const { pushAction } = useUndoRedo();
@@ -2767,20 +2768,27 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
                     }),
                 });
                 const payload = await response.json().catch(() => ({})) as {
-                    task?: { id?: unknown };
+                    task?: unknown;
                     item?: { linkedAiTaskId?: unknown };
                     error?: unknown;
                 };
                 if (!response.ok) {
                     throw new Error(typeof payload.error === 'string' ? payload.error : `POST /api/ai-history/${historyItemId}/place failed: ${response.status}`);
                 }
-                const placedTaskId = typeof payload.task?.id === 'string' ? payload.task.id : null;
+                const placedTask = payload.task && typeof payload.task === 'object' && !Array.isArray(payload.task)
+                    ? payload.task as Task
+                    : null;
+                const placedTaskId = typeof placedTask?.id === 'string' ? placedTask.id : null;
                 if (!placedTaskId) throw new Error('AI history placement response did not include task id');
                 const linkedAiTaskId = typeof payload.item?.linkedAiTaskId === 'string' ? payload.item.linkedAiTaskId : null;
-                await syncPlacedCodexNode(placedTaskId, linkedAiTaskId);
-                await onMindmapUpdated?.({ force: true, silent: true });
+                if (placedTask) onUpsertTaskFromServer?.(placedTask);
                 applySelection(new Set([placedTaskId]), placedTaskId);
                 focusNodeWithPollingV2(placedTaskId, 500, false);
+                void syncPlacedCodexNode(placedTaskId, linkedAiTaskId)
+                    .then(() => onMindmapUpdated?.({ force: true, silent: true }))
+                    .catch(error => {
+                        console.warn('[MindMap] Failed to refresh placed AI history item:', error);
+                    });
             } catch (error) {
                 setHiddenCodexChatImportIds(prev => {
                     const next = new Set(prev);
@@ -2871,6 +2879,7 @@ function MindMapContent({ project, groups, tasks, spaces = [], projects = [], al
         getTaskById,
         groups,
         onMindmapUpdated,
+        onUpsertTaskFromServer,
         project?.id,
         repoScopedTasksById,
         setTaskCollapsed,

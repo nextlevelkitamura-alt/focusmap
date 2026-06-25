@@ -39,6 +39,7 @@ interface CenterPaneProps {
     onRemoveOptimisticEvent?: (eventId: string) => void
     onOpenLinkedMemos?: (taskId: string) => void
     onMindmapUpdated?: (options?: { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean }) => Promise<void>
+    onUpsertTaskFromServer?: (task: Task) => void
     onKanbanUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onKanbanDeleteTask?: (taskId: string) => Promise<void>
     isTaskListVisible?: boolean
@@ -66,6 +67,7 @@ export function CenterPane({
     onRemoveOptimisticEvent,
     onOpenLinkedMemos,
     onMindmapUpdated,
+    onUpsertTaskFromServer,
     onKanbanUpdateTask,
     onKanbanDeleteTask,
     isTaskListVisible = false,
@@ -229,6 +231,7 @@ export function CenterPane({
                     onRemoveOptimisticEvent={onRemoveOptimisticEvent}
                     onOpenLinkedMemos={onOpenLinkedMemos}
                     onMindmapUpdated={onMindmapUpdated}
+                    onUpsertTaskFromServer={onUpsertTaskFromServer}
                     onKanbanUpdateTask={onKanbanUpdateTask}
                     onKanbanDeleteTask={onKanbanDeleteTask}
                 />
