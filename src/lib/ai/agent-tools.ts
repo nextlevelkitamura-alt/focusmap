@@ -18,7 +18,6 @@ import {
   checkCalendarAvailability,
   createScheduleTask,
   deleteCalendarEvent,
-  deleteMindmapNode,
   findCalendarOpenSlots,
   getMindmapNodeDetail,
   getMindmapOverview,
@@ -109,7 +108,6 @@ export async function buildAgentTools(
     deleteCalendarEvent,
     addMindmapGroup,
     addMindmapTask,
-    deleteMindmapNode,
     scheduleTask: createScheduleTask(spaceId),
     ...remote,
   }

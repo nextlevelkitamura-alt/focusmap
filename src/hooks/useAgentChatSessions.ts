@@ -7,7 +7,7 @@ import type { AgentModelMode } from "@/lib/ai/agent-model-mode"
 import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
-import { MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
+import { MINDMAP_DATA_CHANGED_EVENT, MINDMAP_DRAFT_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
 
 export type AgentChatStatus = "idle" | "running" | "completed" | "failed"
 export type AgentChatMode = "general" | "project"
@@ -61,7 +61,15 @@ const MAX_SESSIONS = 50
 const POLL_MS = 3000
 const CALENDAR_MUTATION_TOOLS = new Set(["addCalendarEvent", "updateCalendarEvent", "deleteCalendarEvent"])
 const MEMO_MUTATION_TOOLS = new Set(["bulkAddMemos"])
-const MINDMAP_DRAFT_MUTATION_TOOLS = new Set(["saveMindmapDraft"])
+const MINDMAP_MUTATION_TOOLS = new Set([
+  "saveMindmapDraft",
+  "addTask",
+  "addMindmapGroup",
+  "addMindmapTask",
+  "updateMindmapNode",
+  "moveMindmapNode",
+  "updateMindmapMemoLink",
+])
 
 function newId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID()
@@ -177,7 +185,7 @@ function sessionHasCompletedMindmapDraftMutation(session: AgentChatSession): boo
     return record.focusmapAgentProgress === true &&
       record.state === "done" &&
       typeof record.toolName === "string" &&
-      MINDMAP_DRAFT_MUTATION_TOOLS.has(record.toolName)
+      MINDMAP_MUTATION_TOOLS.has(record.toolName)
   })
 }
 
@@ -250,6 +258,7 @@ export function useAgentChatSessions(scopeKey = "general") {
     if (mindmapDraftMutationNotifiedRef.current.has(key)) return
     mindmapDraftMutationNotifiedRef.current.add(key)
     window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
+    window.dispatchEvent(new Event(MINDMAP_DATA_CHANGED_EVENT))
   }, [])
 
   const refresh = useCallback(async () => {

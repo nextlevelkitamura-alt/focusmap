@@ -2,10 +2,10 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
-export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'automation' | 'ideal' | 'long-term' | 'ai-todos' | 'settings'
+export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'ideal' | 'long-term' | 'ai-todos' | 'settings'
 
 const STORAGE_KEY = 'focusmap:activeView'
-const VALID_VIEWS: DashboardView[] = ['today', 'map', 'habits', 'ai', 'automation', 'ideal', 'long-term', 'ai-todos', 'settings']
+const VALID_VIEWS: DashboardView[] = ['today', 'map', 'habits', 'ai', 'ideal', 'long-term', 'ai-todos', 'settings']
 
 interface ViewContextType {
     activeView: DashboardView
@@ -29,23 +29,20 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
     // Read localStorage after mount (client-only)
     useEffect(() => {
         queueMicrotask(() => {
-            const requestedView = new URLSearchParams(window.location.search).get('view') as DashboardView | null
-            if (requestedView && VALID_VIEWS.includes(requestedView)) {
-                const normalizedView = requestedView === 'automation' ? 'ai' : requestedView
+            const requestedView = new URLSearchParams(window.location.search).get('view')
+            const normalizedView = requestedView === 'automation' ? 'ai' : requestedView
+            if (normalizedView && VALID_VIEWS.includes(normalizedView as DashboardView)) {
                 try { localStorage.setItem(STORAGE_KEY, normalizedView) } catch {}
-                setActiveViewState(normalizedView)
+                setActiveViewState(normalizedView as DashboardView)
                 setIsViewReady(true)
                 return
             }
 
-            const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
-            if (saved && VALID_VIEWS.includes(saved)) {
-                if (saved === 'automation') {
-                    try { localStorage.setItem(STORAGE_KEY, 'ai') } catch {}
-                    setActiveViewState('ai')
-                } else {
-                    setActiveViewState(saved)
-                }
+            const saved = localStorage.getItem(STORAGE_KEY)
+            const normalizedSaved = saved === 'automation' ? 'ai' : saved
+            if (normalizedSaved && VALID_VIEWS.includes(normalizedSaved as DashboardView)) {
+                if (saved === 'automation') try { localStorage.setItem(STORAGE_KEY, 'ai') } catch {}
+                setActiveViewState(normalizedSaved as DashboardView)
             }
             setIsViewReady(true)
         })

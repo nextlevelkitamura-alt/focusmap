@@ -140,7 +140,7 @@ function buildSystemPrompt(
     '## ツールの種類',
     '- Focusmap DB確認/記録 (常に使える): listProjects / getProjectContext / saveProjectContext / prepareProjectContextSaveProposal / updateProject / listProjectTasks / listNotesForOrganization / getNoteOrganizationDetail / bulkAddMemos',
     '- マインドマップDB操作 (常に使える): proposeMindmapOrganization / saveMindmapDraft / getMindmapOverview / getMindmapNodeDetail / updateMindmapNode / moveMindmapNode / updateMindmapMemoLink',
-    '- タスク・マップ作成/削除 (常に使える): addTask / addMindmapGroup / addMindmapTask / deleteMindmapNode',
+    '- タスク・マップ作成 (常に使える): addTask / addMindmapGroup / addMindmapTask。削除はチャットから本番DBへ直接反映せず、削除候補として説明する。',
     '- 予定操作 (常に使える): listCalendarEvents / findCalendarOpenSlots / checkCalendarAvailability / addCalendarEvent / updateCalendarEvent / deleteCalendarEvent',
     '- 予約実行 (常に使える): scheduleTask — 時間指定や繰り返し、またはMacがオフラインのときにサーバー側でタスクを予約実行する。',
     '- Mac経由 (ターミナル/ブラウザ/ファイル): runTerminal / listFiles / readFile / writeFile / runOpenCode / browserNavigate / browserClick / browserFill / browserScreenshot / webResearch',

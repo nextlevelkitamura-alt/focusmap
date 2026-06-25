@@ -173,7 +173,7 @@ export default async function BillingPage({ searchParams }: PageProps) {
       <div className="space-y-3">
         <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold text-foreground">プランを選ぶ</h2>
-          <p className="text-[11px] text-muted-foreground">月額にはAI実行コスト込み</p>
+          <p className="text-[11px] text-muted-foreground">AI実行コストはユーザー自身のサブスク側</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {PLAN_ORDER.map((planId) => {

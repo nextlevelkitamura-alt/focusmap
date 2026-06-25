@@ -1044,14 +1044,45 @@ export const addTask = tool({
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { success: false, error: '認証エラー' }
 
+    let parentNode: { id: string; title: string; project_id: string | null } | null = null
+    if (parentTaskId) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id, title, project_id')
+        .eq('id', parentTaskId)
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+        .maybeSingle()
+      if (error) return { success: false, error: error.message }
+      if (!data) return { success: false, error: '親ノードが見つかりません' }
+      if (projectId && data.project_id !== projectId) return { success: false, error: '親ノードとプロジェクトが一致していません' }
+      parentNode = data
+    }
+
+    const targetProjectId = parentNode?.project_id ?? projectId ?? null
+    let orderQuery = supabase
+      .from('tasks')
+      .select('order_index')
+      .eq('user_id', user.id)
+      .is('deleted_at', null)
+    orderQuery = targetProjectId ? orderQuery.eq('project_id', targetProjectId) : orderQuery.is('project_id', null)
+    orderQuery = parentTaskId ? orderQuery.eq('parent_task_id', parentTaskId) : orderQuery.is('parent_task_id', null)
+    const { data: maxOrder } = await orderQuery
+      .order('order_index', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
     const taskId = crypto.randomUUID()
     const { error } = await supabase.from('tasks').insert({
       id: taskId,
       title,
       user_id: user.id,
-      project_id: projectId || null,
+      project_id: targetProjectId,
       parent_task_id: parentTaskId || null,
-      status: 'pending',
+      is_group: false,
+      status: 'todo',
+      stage: 'plan',
+      order_index: (maxOrder?.order_index ?? -1) + 1,
     })
     if (error) return { success: false, error: error.message }
     return { success: true, taskId, title, message: `タスク「${title}」を追加しました` }
@@ -3226,14 +3257,16 @@ export const addMindmapTask = tool({
     if (!user) return { success: false, error: '認証エラー' }
 
     // 親ノード存在確認
-    const { data: parentNode } = await supabase
+    const { data: parentNode, error: parentError } = await supabase
       .from('tasks')
-      .select('id, title')
+      .select('id, title, project_id')
       .eq('id', parentId)
       .eq('user_id', user.id)
       .is('deleted_at', null)
       .maybeSingle()
+    if (parentError) return { success: false, error: parentError.message }
     if (!parentNode) return { success: false, error: '親ノードが見つかりません' }
+    if (parentNode.project_id !== projectId) return { success: false, error: '親ノードとプロジェクトが一致していません' }
 
     const { data: maxOrder } = await supabase
       .from('tasks')
@@ -3261,43 +3294,16 @@ export const addMindmapTask = tool({
 })
 
 export const deleteMindmapNode = tool({
-  description: 'マインドマップからノードを削除する（ソフトデリート）',
+  description: 'マインドマップからノードを削除する（現在の統合チャットでは使用しない。削除は画面側の既存削除フローで行う）',
   inputSchema: z.object({
     nodeId: z.string().describe('削除するノードのID'),
   }),
   execute: async ({ nodeId }) => {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { success: false, error: '認証エラー' }
-
-    const { data: targetNode } = await supabase
-      .from('tasks')
-      .select('id, title, is_group')
-      .eq('id', nodeId)
-      .eq('user_id', user.id)
-      .is('deleted_at', null)
-      .maybeSingle()
-    if (!targetNode) return { success: false, error: 'ノードが見つかりません' }
-
-    const now = new Date().toISOString()
-    const { error } = await supabase
-      .from('tasks')
-      .update({ deleted_at: now })
-      .eq('id', nodeId)
-      .eq('user_id', user.id)
-    if (error) return { success: false, error: error.message }
-
-    // グループなら子も削除
-    if (targetNode.is_group) {
-      await supabase
-        .from('tasks')
-        .update({ deleted_at: now })
-        .eq('parent_task_id', nodeId)
-        .eq('user_id', user.id)
-        .is('deleted_at', null)
+    void nodeId
+    return {
+      success: false,
+      error: 'チャットからの直接削除は無効です。画面上のノード削除を使うか、AI案として削除候補を確認してください。',
     }
-
-    return { success: true, title: targetNode.title, message: `「${targetNode.title}」を削除しました` }
   },
 })
 
@@ -3422,7 +3428,7 @@ export function getToolsForSkill(skillId: string) {
     case 'task':
       return { addTask, bulkAddMemos, addMindmapGroup, addMindmapTask }
     case 'project-consultation':
-      return { addTask, bulkAddMemos, addCalendarEvent, addMindmapGroup, addMindmapTask, deleteMindmapNode }
+      return { addTask, bulkAddMemos, addCalendarEvent, addMindmapGroup, addMindmapTask }
     case 'brainstorm':
       return { addTask, bulkAddMemos, addMindmapGroup, addMindmapTask }
     case 'counseling':

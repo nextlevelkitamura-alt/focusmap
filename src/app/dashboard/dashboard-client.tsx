@@ -34,6 +34,7 @@ import {
 } from "@/lib/codex-chat-import-events"
 import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-memos-dialog"
 import { ProjectContextDialog } from "@/components/projects/project-context-dialog"
+import { MINDMAP_DATA_CHANGED_EVENT } from "@/lib/mindmap-draft-events"
 
 function DashboardPaneFallback() {
     return (
@@ -464,6 +465,15 @@ export function DashboardClient({
 
         window.addEventListener('focusmap:native-app-resume', handleNativeAppResume)
         return () => window.removeEventListener('focusmap:native-app-resume', handleNativeAppResume)
+    }, [refreshFromServer])
+
+    useEffect(() => {
+        const handleMindmapDataChanged = () => {
+            refreshFromServer({ force: true, silent: true })
+        }
+
+        window.addEventListener(MINDMAP_DATA_CHANGED_EVENT, handleMindmapDataChanged)
+        return () => window.removeEventListener(MINDMAP_DATA_CHANGED_EVENT, handleMindmapDataChanged)
     }, [refreshFromServer])
 
     // STABLE handlers using useCallback
@@ -1464,23 +1474,6 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {isDashboardReady && isMobileViewport && activeView === 'automation' && (
-                    <div className="flex-1 md:hidden overflow-hidden">
-                        <MobileAiExecutionView
-                            selectedSpaceId={selectedSpaceId}
-                            selectedProjectId={selectedProjectId}
-                            selectedProjectTitle={selectedProject?.title ?? null}
-                            projects={projects}
-                            onSelectProject={setSelectedProjectId}
-                            onMindmapUpdated={refreshFromServer}
-                            onCalendarEventCreated={handleCalendarEventCreated}
-                            projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
-                            projectChatLaunchKey={projectChatLaunchRequest.key}
-                            onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
-                        />
-                    </div>
-                )}
-
                 {isDashboardReady && activeView === 'settings' && (
                     <div className="flex-1 min-h-0 overflow-hidden">
                         <SettingsOverview />
@@ -1581,21 +1574,6 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {isDashboardReady && !isMobileViewport && activeView === 'automation' && (
-                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
-                        <AiView
-                            selectedSpaceId={selectedSpaceId}
-                            selectedProjectId={selectedProjectId}
-                            selectedProjectTitle={selectedProject?.title ?? null}
-                            projects={projects}
-                            onSelectProject={setSelectedProjectId}
-                            projectChatLaunchProjectId={projectChatLaunchRequest.projectId}
-                            projectChatLaunchKey={projectChatLaunchRequest.key}
-                            onProjectChatLaunchConsumed={consumeProjectChatLaunchRequest}
-                        />
-                    </div>
-                )}
-
                 {/* === Desktop: AI Todos View === */}
                 {isDashboardReady && !isMobileViewport && activeView === 'ai-todos' && (
                     <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
@@ -1610,7 +1588,7 @@ export function DashboardClient({
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     desktopFlexClass,
                     desktopDashboardWidthClass,
-                    (activeView === 'ai' || activeView === 'automation' || activeView === 'ideal' || activeView === 'ai-todos' || activeView === 'settings' || (activeView === 'long-term' && !isRightSidePanelVisible)) ? "!hidden" : ""
+                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'ai-todos' || activeView === 'settings' || (activeView === 'long-term' && !isRightSidePanelVisible)) ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Today タブでは非表示。サイドバーが常に折りたたまれているため不要) */}
                 {activeView !== 'today' && (
@@ -1832,11 +1810,11 @@ export function DashboardClient({
             </TodayDateProvider>
                 )}
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
-            {isDashboardReady && isAiChatOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
+            {isDashboardReady && isAiChatOpen && activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
                 <AiChatPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
-            {isDashboardReady && isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
+            {isDashboardReady && isSchedulingOpen && activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
                 <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             <MindmapLinkedMemosDialog

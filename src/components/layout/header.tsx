@@ -108,7 +108,7 @@ export function Header({
 
     const desktopDragStyle = isDesktopShell ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined
     const desktopNoDragStyle = isDesktopShell ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined
-    const isChatView = activeView === 'ai' || activeView === 'automation'
+    const isChatView = activeView === 'ai'
     const selectedProject = useMemo(
         () => projects.find(project => project.id === selectedProjectId) ?? null,
         [projects, selectedProjectId],
