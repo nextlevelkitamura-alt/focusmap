@@ -22,6 +22,7 @@ import {
   codexThreadGeneratedTitle,
   CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS,
   CODEX_TIMER_ALIGNMENT_RECHECK_MAX_WATCHES,
+  DEFAULT_RECENT_SCAN_INTERVAL_MS,
   DEFAULT_RECONCILE_INTERVAL_MS,
   DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   getCodexThreadMonitorHeartbeatMetadata,
@@ -98,6 +99,10 @@ function task(overrides: Record<string, unknown> = {}) {
 describe('codex-thread-monitor state detection', () => {
   test('refreshes monitor targets every two seconds by default', () => {
     expect(DEFAULT_TARGET_REFRESH_INTERVAL_MS).toBe(2_000);
+  });
+
+  test('scans recent Codex history every second by default', () => {
+    expect(DEFAULT_RECENT_SCAN_INTERVAL_MS).toBe(1_000);
   });
 
   test('reconciles enabled Codex history repos hourly by default', () => {
@@ -192,7 +197,7 @@ describe('codex-thread-monitor state detection', () => {
     ]);
   });
 
-  test('uses a visible prompt title until Codex generates a sidebar title', () => {
+  test('uses a placeholder title until Codex generates a sidebar title', () => {
     expect(aiHistoryTitle({
       ...threadRow,
       id: 'thread-placeholder-title',
@@ -206,14 +211,21 @@ describe('codex-thread-monitor state detection', () => {
       title: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
       first_user_message: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
       preview: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
-    })).toBe('結構幅が広いから');
+    })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
+    expect(aiHistoryTitle({
+      ...threadRow,
+      id: 'thread-prompt-first-line-title',
+      title: '結構幅が広いから',
+      first_user_message: '結構幅が広いから\nこの辺どうにかしてほしい\nマインドマップの幅が広いんだよね',
+      preview: null,
+    })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
     expect(aiHistoryTitle({
       ...threadRow,
       id: 'thread-wrapped-prompt-title',
       title: '# AGENTS.md instructions\n<environment_context>\n## My request for Codex:\nAI履歴の検知を2秒以内に戻してほしい\n<skill>hidden</skill>',
       first_user_message: '# AGENTS.md instructions\n<environment_context>\n## My request for Codex:\nAI履歴の検知を2秒以内に戻してほしい\n<skill>hidden</skill>',
       preview: null,
-    })).toBe('AI履歴の検知を2秒以内に戻してほしい');
+    })).toBe(AI_HISTORY_PLACEHOLDER_TITLE);
     expect(isAiHistoryPlaceholderTitle(AI_HISTORY_PLACEHOLDER_TITLE)).toBe(true);
     expect(isAiHistoryPlaceholderTitle('Codex thread abc12345')).toBe(true);
     expect(isAiHistoryPlaceholderTitle('AI履歴のUIを見やすくする')).toBe(false);

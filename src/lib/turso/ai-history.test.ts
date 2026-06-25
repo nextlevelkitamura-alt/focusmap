@@ -145,10 +145,20 @@ describe('AI history detail cache helpers', () => {
     expect(sql).toContain('ended_at = excluded.ended_at')
     expect(sql).toContain('work_duration_seconds = excluded.work_duration_seconds')
     expect(sql).toContain('WHEN (excluded.title = ? OR ?)')
+    expect(sql).toContain("json_extract(ai_history_items.metadata_json, '$.title_source')")
     expect(sql).toContain('OR ?')
     expect(sql).toContain('THEN ai_history_items.title')
+    expect(sql).toContain('THEN ai_history_items.metadata_json')
     const args = (mockExecute.mock.calls[0]?.[0] as { args: unknown[] }).args
-    expect(args.slice(-4)).toEqual([0, '新しいチャット', 0, '新しいチャット'])
+    expect(args.slice(-7)).toEqual([
+      0,
+      '新しいチャット',
+      0,
+      '新しいチャット',
+      '新しいチャット',
+      0,
+      '新しいチャット',
+    ])
   })
 
   test('keeps parent repo labels separate from the scanned worktree path', async () => {

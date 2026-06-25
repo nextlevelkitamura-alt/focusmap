@@ -683,6 +683,7 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
         linked_ai_task_id = COALESCE(excluded.linked_ai_task_id, ai_history_items.linked_ai_task_id),
         title = CASE
           WHEN (excluded.title = ? OR ?) AND ai_history_items.title IS NOT NULL AND trim(ai_history_items.title) <> '' AND ai_history_items.title <> ?
+            AND COALESCE(json_extract(ai_history_items.metadata_json, '$.title_source'), '') NOT IN ('prompt_fallback', 'placeholder')
             THEN ai_history_items.title
           ELSE excluded.title
         END,
@@ -702,7 +703,12 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
         deleted_at = excluded.deleted_at,
         detail_synced_at = COALESCE(excluded.detail_synced_at, ai_history_items.detail_synced_at),
         detail_message_count = COALESCE(excluded.detail_message_count, ai_history_items.detail_message_count),
-        metadata_json = COALESCE(excluded.metadata_json, ai_history_items.metadata_json),
+        metadata_json = CASE
+          WHEN (excluded.title = ? OR ?) AND ai_history_items.title IS NOT NULL AND trim(ai_history_items.title) <> '' AND ai_history_items.title <> ?
+            AND COALESCE(json_extract(ai_history_items.metadata_json, '$.title_source'), '') NOT IN ('prompt_fallback', 'placeholder')
+            THEN ai_history_items.metadata_json
+          ELSE COALESCE(excluded.metadata_json, ai_history_items.metadata_json)
+        END,
         updated_at = excluded.updated_at
       RETURNING id
     `,
@@ -734,6 +740,9 @@ export async function upsertAiHistoryItem(input: AiHistoryUpsertInput) {
       timestamp,
       timestamp,
       input.clear_source_task_id ? 1 : 0,
+      AI_HISTORY_PLACEHOLDER_TITLE,
+      preserveExistingTitle ? 1 : 0,
+      AI_HISTORY_PLACEHOLDER_TITLE,
       AI_HISTORY_PLACEHOLDER_TITLE,
       preserveExistingTitle ? 1 : 0,
       AI_HISTORY_PLACEHOLDER_TITLE,

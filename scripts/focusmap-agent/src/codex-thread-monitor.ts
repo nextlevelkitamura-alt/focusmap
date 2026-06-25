@@ -38,11 +38,12 @@ const syncCache = new Map<string, string>();
 const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: string }>();
 const rolloutSummaryCache = new Map<string, { rawRollout: string; summary: RolloutSummary }>();
 export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 2_000;
+export const DEFAULT_RECENT_SCAN_INTERVAL_MS = 1_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 6_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
 export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
-export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-25-ai-history-source-task-reconcile-v1';
+export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-25-ai-history-title-watch-v1';
 export const CODEX_ARCHIVE_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const MONITOR_DB_PATH_CACHE_TTL_MS = 30_000;
 const ORPHAN_IMPORT_LIMIT = 30;
@@ -414,6 +415,8 @@ export function isCodexThreadPromptDerivedTitle(
     if (!source) continue;
     if (candidate === source) return true;
     if (candidate.length >= 24 && source.startsWith(candidate)) return true;
+    const visiblePromptTitle = comparableTitleText(extractVisiblePromptText(sourceValue));
+    if (visiblePromptTitle && candidate === visiblePromptTitle) return true;
   }
   return false;
 }
@@ -456,14 +459,6 @@ function extractVisiblePromptText(value: unknown): string | null {
     .map(line => line.replace(/^[-*]\s+/u, '').trim())
     .find(line => line && !line.startsWith('<') && !/^#+\s/.test(line));
   return oneLineTitle(firstLine, 80);
-}
-
-function codexThreadPromptFallbackTitle(row: { first_user_message?: string | null; preview?: string | null }): string | null {
-  for (const value of [row.first_user_message, row.preview]) {
-    const title = extractVisiblePromptText(value);
-    if (title) return title;
-  }
-  return null;
 }
 
 export function codexSessionIndexPath(homeDir = homedir()): string {
@@ -517,7 +512,7 @@ function codexSessionThreadTitle(
   return codexThreadTitleCandidate(threadName, row);
 }
 
-type AiHistoryTitleSource = 'session_index' | 'codex_title' | 'prompt_fallback' | 'placeholder';
+type AiHistoryTitleSource = 'session_index' | 'codex_title' | 'placeholder';
 
 function aiHistoryTitleInfo(
   row: CodexThreadRow,
@@ -527,8 +522,6 @@ function aiHistoryTitleInfo(
   if (sessionTitle) return { title: sessionTitle, source: 'session_index' };
   const generatedTitle = codexThreadGeneratedTitle(row);
   if (generatedTitle) return { title: generatedTitle, source: 'codex_title' };
-  const promptFallbackTitle = codexThreadPromptFallbackTitle(row);
-  if (promptFallbackTitle) return { title: promptFallbackTitle, source: 'prompt_fallback' };
   return { title: AI_HISTORY_PLACEHOLDER_TITLE, source: 'placeholder' };
 }
 
@@ -3614,7 +3607,7 @@ export function startCodexThreadMonitorLoop(
   intervalMs = 1_000,
   targetRefreshIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
   reconcileIntervalMs = DEFAULT_RECONCILE_INTERVAL_MS,
-  recentScanIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
+  recentScanIntervalMs = DEFAULT_RECENT_SCAN_INTERVAL_MS,
 ): NodeJS.Timeout[] {
   let targetRefreshRunning = false;
   let activeWatchRunning = false;
