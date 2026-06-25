@@ -468,13 +468,19 @@ export function DashboardClient({
     }, [refreshFromServer])
 
     useEffect(() => {
-        const handleMindmapDataChanged = () => {
+        const handleMindmapDataChanged = (event: Event) => {
+            const detail = (event as CustomEvent<{ projectId?: unknown }>).detail
+            const targetProjectId = typeof detail?.projectId === 'string' ? detail.projectId : null
+            if (targetProjectId && targetProjectId !== selectedProjectId && projects.some(project => project.id === targetProjectId)) {
+                setSelectedProjectId(targetProjectId)
+                return
+            }
             refreshFromServer({ force: true, silent: true })
         }
 
         window.addEventListener(MINDMAP_DATA_CHANGED_EVENT, handleMindmapDataChanged)
         return () => window.removeEventListener(MINDMAP_DATA_CHANGED_EVENT, handleMindmapDataChanged)
-    }, [refreshFromServer])
+    }, [projects, refreshFromServer, selectedProjectId])
 
     // STABLE handlers using useCallback
     const handleCreateGroup = useCallback(async (title: string) => {

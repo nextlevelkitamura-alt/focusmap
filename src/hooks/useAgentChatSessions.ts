@@ -18,6 +18,7 @@ export interface AgentChatSession {
   messages: UIMessage[]
   createdAt: number
   updatedAt: number
+  projectId?: string | null
   status?: AgentChatStatus
   lastError?: string | null
   runStartedAt?: string | null
@@ -48,6 +49,7 @@ interface AgentChatSessionRow {
   id: string
   title?: string | null
   messages?: UIMessage[] | null
+  project_id?: string | null
   status?: AgentChatStatus | null
   last_error?: string | null
   run_started_at?: string | null
@@ -123,6 +125,7 @@ function normalizeRemoteSession(value: unknown): AgentChatSession | null {
     messages: Array.isArray(session.messages) ? session.messages : [],
     createdAt: typeof session.createdAt === "number" ? session.createdAt : Date.now(),
     updatedAt: typeof session.updatedAt === "number" ? session.updatedAt : Date.now(),
+    projectId: typeof session.projectId === "string" ? session.projectId : null,
     status: session.status ?? "idle",
     lastError: session.lastError ?? null,
     runStartedAt: session.runStartedAt ?? null,
@@ -146,6 +149,7 @@ function normalizeRealtimeSession(value: unknown): AgentChatSession | null {
     messages: Array.isArray(row.messages) ? row.messages : [],
     createdAt: parseDateMs(row.created_at, now),
     updatedAt: parseDateMs(row.updated_at, now),
+    projectId: typeof row.project_id === "string" ? row.project_id : null,
     status: row.status ?? "idle",
     lastError: row.last_error ?? null,
     runStartedAt: row.run_started_at ?? null,
@@ -258,7 +262,13 @@ export function useAgentChatSessions(scopeKey = "general") {
     if (mindmapDraftMutationNotifiedRef.current.has(key)) return
     mindmapDraftMutationNotifiedRef.current.add(key)
     window.dispatchEvent(new Event(MINDMAP_DRAFT_CHANGED_EVENT))
-    window.dispatchEvent(new Event(MINDMAP_DATA_CHANGED_EVENT))
+    window.dispatchEvent(new CustomEvent(MINDMAP_DATA_CHANGED_EVENT, {
+      detail: {
+        source: "agent-chat",
+        sessionId: session.id,
+        projectId: session.projectId ?? null,
+      },
+    }))
   }, [])
 
   const refresh = useCallback(async () => {
@@ -442,6 +452,7 @@ export function useAgentChatSessions(scopeKey = "general") {
         messages,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
+        projectId: existing?.projectId ?? null,
         status: existing?.status ?? "completed",
         lastError: existing?.lastError ?? null,
         runStartedAt: existing?.runStartedAt ?? null,
@@ -478,6 +489,7 @@ export function useAgentChatSessions(scopeKey = "general") {
       messages: optimisticMessages,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      projectId: projectId ?? existing?.projectId ?? null,
       status: "running",
       lastError: null,
       runStartedAt: startedAt,
