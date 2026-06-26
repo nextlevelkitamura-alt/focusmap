@@ -32,6 +32,8 @@ LOG_DIR="$INSTALL_DIR/logs"
 CONFIG_PATH="$INSTALL_DIR/config.json"
 BIN_DIR="$INSTALL_DIR/bin"
 CODEX_SERVER_SCRIPT="$BIN_DIR/run-codex-app-server.sh"
+CODEX_APP_BIN="/Applications/Codex.app/Contents/Resources/codex"
+CODEX_DOWNLOAD_URL="${FOCUSMAP_CODEX_DOWNLOAD_URL:-https://openai.com/codex/}"
 APP_ORIGIN="${FOCUSMAP_APP_ORIGIN:-https://focusmap-official.com}"
 AGENT_ARCHIVE_URL="${FOCUSMAP_AGENT_ARCHIVE_URL:-${APP_ORIGIN}/focusmap-agent.tar.gz}"
 AGENT_BIN=""
@@ -42,6 +44,34 @@ log_info() { echo "  → $1"; }
 log_ok()   { echo "  ✓ $1"; }
 log_warn() { echo "  ⚠ $1"; }
 log_err()  { echo "  ✗ $1" >&2; }
+
+first_line() {
+  printf "%s" "$1" | sed -n '1p'
+}
+
+codex_version_line() {
+  local bin="$1"
+  "$bin" --version 2>/dev/null | sed -n '1p' || true
+}
+
+codex_supports_subcommand() {
+  local bin="$1"
+  local subcommand="$2"
+  [ -n "$bin" ] || return 1
+  "$bin" "$subcommand" --help >/dev/null 2>&1
+}
+
+resolve_codex_bin() {
+  if [ -n "${FOCUSMAP_CODEX_BIN:-}" ]; then
+    printf "%s" "$FOCUSMAP_CODEX_BIN"
+    return
+  fi
+  if [ -x "$CODEX_APP_BIN" ]; then
+    printf "%s" "$CODEX_APP_BIN"
+    return
+  fi
+  command -v codex 2>/dev/null || true
+}
 
 disable_legacy_launchd_label() {
   local label="$1"
@@ -163,12 +193,25 @@ done
 # 6. Codex.app app-server
 echo ""
 echo "[6/7] Codex.app app-server を確認..."
-CODEX_AVAILABLE=false
-if [ -x "/Applications/Codex.app/Contents/Resources/codex" ] || command -v codex >/dev/null 2>&1; then
-  CODEX_AVAILABLE=true
+CODEX_BIN="$(resolve_codex_bin)"
+CODEX_APP_INSTALLED=false
+CODEX_COMMAND_AVAILABLE=false
+CODEX_APP_SERVER_SUPPORTED=false
+if [ -x "$CODEX_APP_BIN" ]; then
+  CODEX_APP_INSTALLED=true
+fi
+if command -v codex >/dev/null 2>&1; then
+  CODEX_COMMAND_AVAILABLE=true
 fi
 
-if [ "$CODEX_AVAILABLE" = true ]; then
+if [ -n "$CODEX_BIN" ]; then
+  CODEX_VERSION="$(codex_version_line "$CODEX_BIN")"
+  if codex_supports_subcommand "$CODEX_BIN" "app-server"; then
+    CODEX_APP_SERVER_SUPPORTED=true
+  fi
+fi
+
+if [ -n "$CODEX_BIN" ] && [ "$CODEX_APP_SERVER_SUPPORTED" = true ]; then
   cat > "$CODEX_SERVER_SCRIPT" <<'EOF'
 #!/bin/bash
 export PATH="$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
@@ -180,6 +223,12 @@ if [ -z "$CODEX_BIN" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex
 fi
 if [ -z "$CODEX_BIN" ]; then
   CODEX_BIN="codex"
+fi
+
+if ! "$CODEX_BIN" app-server --help >/dev/null 2>&1; then
+  echo "Codex CLIが古く、app-serverに対応していません。Codex Desktop/CLIをアップデートしてください。" >&2
+  echo "Download: https://openai.com/codex/" >&2
+  exit 78
 fi
 
 unset ANTHROPIC_API_KEY
@@ -219,11 +268,26 @@ EOF
 
   if launchctl load "$CODEX_PLIST_PATH" 2>/dev/null; then
     log_ok "Codex.app app-server を登録"
+    if [ -n "$CODEX_VERSION" ]; then
+      log_info "Codex: $(first_line "$CODEX_VERSION") / $CODEX_BIN"
+    else
+      log_info "Codex: $CODEX_BIN"
+    fi
   else
     log_warn "Codex app-server launchd登録に失敗しました。Codex.app起動後、Focusmap Agentが必要時に再起動を試します。"
   fi
+elif [ -n "$CODEX_BIN" ]; then
+  log_warn "Codex CLI は見つかりましたが app-server に未対応です。Codex Desktop/CLIをアップデートしてください。"
+  if [ -n "$CODEX_VERSION" ]; then
+    log_warn "検出したCodex: $(first_line "$CODEX_VERSION") / $CODEX_BIN"
+  else
+    log_warn "検出したCodex: $CODEX_BIN"
+  fi
+  log_warn "更新後にこのセットアップを再実行すると、Codex連携を自動登録します: $CODEX_DOWNLOAD_URL"
+elif [ "$CODEX_COMMAND_AVAILABLE" = true ] || [ "$CODEX_APP_INSTALLED" = true ]; then
+  log_warn "Codexは検出しましたが起動可能なCLIを解決できませんでした。Codex Desktop/CLIを更新後にこのセットアップを再実行してください。"
 else
-  log_warn "Codex.app / codex CLI が見つかりません。Codex連携はCodex.app導入後にこのセットアップを再実行してください。"
+  log_warn "Codex.app / codex CLI が見つかりません。Codex連携はCodex.app導入後にこのセットアップを再実行してください: $CODEX_DOWNLOAD_URL"
 fi
 
 # 7. 設定ファイル + launchd

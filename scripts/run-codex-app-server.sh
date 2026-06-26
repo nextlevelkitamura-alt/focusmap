@@ -14,6 +14,12 @@ if [ -z "$CODEX_BIN" ]; then
   CODEX_BIN="codex"
 fi
 
+if ! "$CODEX_BIN" app-server --help >/dev/null 2>&1; then
+  echo "Codex CLIが古く、app-serverに対応していません。Codex Desktop/CLIをアップデートしてください。" >&2
+  echo "Download: https://openai.com/codex/" >&2
+  exit 78
+fi
+
 # ANTHROPIC 系の env が混ざらないように
 unset ANTHROPIC_API_KEY
 unset CLAUDECODE

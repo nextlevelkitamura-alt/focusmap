@@ -310,17 +310,6 @@ function agentProcessPattern() {
   return `${escapeRegex(AGENT_CLI)}.*\\bstart\\b`;
 }
 
-function commandExists(command) {
-  return new Promise((resolve) => {
-    execFile('/usr/bin/env', ['which', command], {
-      timeout: 3000,
-      env: { ...process.env, PATH: CHILD_PATH },
-    }, (error) => {
-      resolve(!error);
-    });
-  });
-}
-
 function execFileText(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     execFile(command, args, { timeout: 5000, windowsHide: true, ...options }, (error, stdout, stderr) => {
@@ -332,6 +321,67 @@ function execFileText(command, args, options = {}) {
       resolve(stdout);
     });
   });
+}
+
+async function commandPath(command) {
+  try {
+    const output = await execFileText('/usr/bin/env', ['which', command], {
+      timeout: 3000,
+      env: { ...process.env, PATH: CHILD_PATH },
+    });
+    return String(output).trim().split(/\r?\n/)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function commandSupports(command, args, options = {}) {
+  try {
+    await execFileText(command, args, {
+      timeout: 3000,
+      env: { ...process.env, PATH: CHILD_PATH },
+      ...options,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function codexCliStatus() {
+  const [pathCommand, appInstalled] = await Promise.all([
+    commandPath('codex'),
+    Promise.resolve(fs.existsSync(CODEX_APP_BIN)),
+  ]);
+  const resolvedPath = appInstalled ? CODEX_APP_BIN : pathCommand;
+  const available = Boolean(resolvedPath);
+  const [version, appServerCommandSupported, appCommandSupported] = resolvedPath
+    ? await Promise.all([
+        execFileText(resolvedPath, ['--version'], {
+          timeout: 3000,
+          env: { ...process.env, PATH: CHILD_PATH },
+        }).then((value) => String(value).trim().split(/\r?\n/)[0] || null).catch(() => null),
+        commandSupports(resolvedPath, ['app-server', '--help']),
+        commandSupports(resolvedPath, ['app', '--help']),
+      ])
+    : [null, false, false];
+  const updateRequired = available && !appServerCommandSupported;
+
+  return {
+    available,
+    appInstalled,
+    commandAvailable: Boolean(pathCommand),
+    commandPath: pathCommand,
+    resolvedPath,
+    resolvedSource: appInstalled ? 'codex_app_bundle' : pathCommand ? 'path' : null,
+    version,
+    appServerCommandSupported,
+    appCommandSupported,
+    updateRequired,
+    updateHint: updateRequired
+      ? 'Codex CLIが古く app-server に対応していません。Codex Desktop/CLIをアップデートしてください。'
+      : null,
+  };
 }
 
 function readTaskRunnerPauseStatus() {
@@ -1908,21 +1958,32 @@ async function startAgent() {
 }
 
 async function startCodexServer() {
-  const codexAppInstalled = fs.existsSync(CODEX_APP_BIN);
-  const codexCommandAvailable = await commandExists('codex');
+  const codex = await codexCliStatus();
 
-  if (!codexAppInstalled) {
-    return startCodexDesktopInstaller(codexCommandAvailable);
+  if (!codex.appInstalled) {
+    return startCodexDesktopInstaller(codex);
   }
 
   if (await tcpReady('127.0.0.1', 7878)) {
     return { ok: true, message: 'Codex app-serverは起動済みです' };
   }
+  if (!codex.available) {
+    return { ok: false, message: 'Codex.app または codex CLI が見つかりません' };
+  }
+  if (!codex.appServerCommandSupported) {
+    return serviceResult(
+      false,
+      'Codex CLIが古く app-server に対応していません。Codex Desktop/CLIをアップデートしてから再接続してください。',
+      {
+        code: 'codex_cli_update_required',
+        installUrl: CODEX_DOWNLOAD_URL,
+        commandPath: codex.resolvedPath,
+        version: codex.version,
+      },
+    );
+  }
   if (!fs.existsSync(CODEX_SERVER_SCRIPT)) {
     return { ok: false, message: `Codex app-server起動スクリプトがありません: ${CODEX_SERVER_SCRIPT}` };
-  }
-  if (!codexCommandAvailable && !codexAppInstalled) {
-    return { ok: false, message: 'Codex.app または codex CLI が見つかりません' };
   }
 
   const env = { ...process.env };
@@ -1941,14 +2002,46 @@ async function startCodexServer() {
   return { ok: true, message: 'Codex app-serverを起動しました' };
 }
 
-async function startCodexDesktopInstaller(codexCommandAvailable) {
+async function startCodexDesktopInstaller(codex) {
   const base = {
     code: 'codex_desktop_missing',
     installUrl: CODEX_DOWNLOAD_URL,
     installStarted: true,
   };
 
-  if (codexCommandAvailable) {
+  if (codex.updateRequired) {
+    try {
+      await shell.openExternal(CODEX_DOWNLOAD_URL);
+      log('codex', `Codex CLI update required; opened download page ${CODEX_DOWNLOAD_URL}`);
+      return serviceResult(
+        false,
+        'Codex CLIが古く、Codex Desktopインストーラーを起動できません。公式ページを開いたのでCodex Desktop/CLIをアップデートしてください。',
+        {
+          ...base,
+          code: 'codex_cli_update_required',
+          installerMode: 'download_page',
+          commandPath: codex.resolvedPath,
+          version: codex.version,
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return serviceResult(
+        false,
+        `Codex CLIが古く、ダウンロードページも開けませんでした: ${message}`,
+        {
+          ...base,
+          code: 'codex_cli_update_required',
+          installStarted: false,
+          installerMode: 'download_page',
+          commandPath: codex.resolvedPath,
+          version: codex.version,
+        },
+      );
+    }
+  }
+
+  if (codex.commandAvailable && codex.appCommandSupported) {
     const env = { ...process.env, PATH: CHILD_PATH };
     delete env.ANTHROPIC_API_KEY;
     delete env.CLAUDECODE;
@@ -2111,10 +2204,10 @@ function stopAutomationSupervisor() {
 
 async function getAutomationStatus() {
   const anyAgentProcessPattern = 'focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start';
-  const [appReady, codexReady, codexCommandAvailable, externalAgentRunning, anyExternalAgentRunning] = await Promise.all([
+  const [appReady, codexReady, codex, externalAgentRunning, anyExternalAgentRunning] = await Promise.all([
     desktopHealthReady(800).catch(() => false),
     tcpReady('127.0.0.1', 7878, 500),
-    commandExists('codex'),
+    codexCliStatus(),
     processRunning(agentProcessPattern()).catch(() => false),
     processRunning(anyAgentProcessPattern).catch(() => false),
   ]);
@@ -2128,7 +2221,6 @@ async function getAutomationStatus() {
     reason: 'check_failed',
     message: error instanceof Error ? error.message : String(error),
   }));
-  const codexAppInstalled = fs.existsSync(CODEX_APP_BIN);
   const agentManaged = isChildRunning(managedProcesses.agent);
   const codexManaged = isChildRunning(managedProcesses.codex);
   const agentReady = agentManaged || externalAgentRunning;
@@ -2139,7 +2231,7 @@ async function getAutomationStatus() {
   return {
     ok: true,
     available: true,
-    connected: Boolean(appReady && agentReady && codexAppInstalled && codexReady),
+    connected: Boolean(appReady && agentReady && codex.appInstalled && codexReady && !codex.updateRequired),
     timestamp: new Date().toISOString(),
     supervisor: {
       enabled: automationSupervisorEnabled,
@@ -2166,11 +2258,19 @@ async function getAutomationStatus() {
       apiUrl: preferredAgentApiUrl() || 'config',
     },
     codex: {
-      ready: Boolean(codexAppInstalled && codexReady),
+      ready: Boolean(codex.appInstalled && codexReady && !codex.updateRequired),
       managed: codexManaged,
-      available: codexAppInstalled || codexCommandAvailable,
-      appInstalled: codexAppInstalled,
-      commandAvailable: codexCommandAvailable,
+      available: codex.available,
+      appInstalled: codex.appInstalled,
+      commandAvailable: codex.commandAvailable,
+      commandPath: codex.commandPath,
+      resolvedPath: codex.resolvedPath,
+      resolvedSource: codex.resolvedSource,
+      version: codex.version,
+      appServerCommandSupported: codex.appServerCommandSupported,
+      appCommandSupported: codex.appCommandSupported,
+      updateRequired: codex.updateRequired,
+      updateHint: codex.updateHint,
       appServerReady: codexReady,
       installUrl: CODEX_DOWNLOAD_URL,
       installActionAvailable: true,

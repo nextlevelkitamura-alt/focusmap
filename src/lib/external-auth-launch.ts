@@ -81,6 +81,14 @@ export type FocusmapDesktopAutomationServiceStatus = {
   available?: boolean
   appInstalled?: boolean
   commandAvailable?: boolean
+  commandPath?: string | null
+  resolvedPath?: string | null
+  resolvedSource?: string | null
+  version?: string | null
+  appServerCommandSupported?: boolean
+  appCommandSupported?: boolean
+  updateRequired?: boolean
+  updateHint?: string | null
   appServerReady?: boolean
   installActionAvailable?: boolean
   scriptAvailable?: boolean

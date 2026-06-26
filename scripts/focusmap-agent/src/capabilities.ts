@@ -63,6 +63,34 @@ async function hasCommand(command: string): Promise<boolean> {
   }
 }
 
+async function commandPath(command: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('/usr/bin/env', ['which', command], { timeout: 3000 });
+    return String(stdout).trim().split(/\r?\n/)[0]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function commandOutput(command: string, args: string[], timeout = 3000): Promise<string | null> {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, { timeout });
+    const output = `${stdout}${stderr}`.trim();
+    return output ? output.split(/\r?\n/)[0]?.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+async function commandSupports(command: string, args: string[], timeout = 3000): Promise<boolean> {
+  try {
+    await execFileAsync(command, args, { timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function hasPath(path: string): Promise<boolean> {
   try {
     await access(path, constants.R_OK);
@@ -79,6 +107,44 @@ async function hasExecutablePath(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function codexDiagnostics() {
+  const appPath = '/Applications/Codex.app/Contents/Resources/codex';
+  const [pathCommand, appInstalled] = await Promise.all([
+    commandPath('codex'),
+    hasExecutablePath(appPath),
+  ]);
+  const command = appInstalled ? appPath : pathCommand;
+  const available = Boolean(command);
+  const [version, appServerSupported, appCommandSupported] = command
+    ? await Promise.all([
+        commandOutput(command, ['--version']),
+        commandSupports(command, ['app-server', '--help']),
+        commandSupports(command, ['app', '--help']),
+      ])
+    : [null, false, false] as const;
+  const updateRequired = available && !appServerSupported;
+
+  return {
+    available,
+    commandAvailable: Boolean(pathCommand),
+    commandPath: pathCommand,
+    appInstalled,
+    resolvedPath: command,
+    resolvedSource: appInstalled ? 'codex_app_bundle' : pathCommand ? 'path' : null,
+    version,
+    appServerSupported,
+    appCommandSupported,
+    updateRequired,
+    setupHint: updateRequired
+      ? 'codex app-server に対応していない古いCodex CLIです。Codex Desktop/CLIをアップデートしてください。'
+      : appInstalled && appServerSupported
+        ? 'Codex Desktopとapp-server対応CLIを検出しました。'
+        : pathCommand && appServerSupported
+          ? 'codex CLIはありますがCodex Desktopが未導入です。Codex Desktopを入れるとFocusmapから連携できます。'
+          : 'Codex Desktopまたはcodex CLIが見つかりません。',
+  };
 }
 
 function expandHome(path: string): string {
@@ -270,20 +336,19 @@ async function discoverGoogleDriveRoots(): Promise<GoogleDriveDiscovery> {
 }
 
 export async function collectCapabilities(config: AgentConfig) {
-  const [node, npx, gws, claude, codex, git, opencode, aider] = await Promise.all([
+  const [node, npx, gws, claude, git, opencode, aider, codex] = await Promise.all([
     hasCommand('node'),
     hasCommand('npx'),
     hasCommand('gws'),
     hasCommand('claude'),
-    hasCommand('codex'),
     hasCommand('git'),
     hasCommand('opencode'),
     hasCommand('aider'),
+    codexDiagnostics(),
   ]);
-  const codexAppInstalled = await hasExecutablePath('/Applications/Codex.app/Contents/Resources/codex');
-  const codexAppServerReady = codex || codexAppInstalled ? await isCodexAppServerReady() : false;
+  const codexAppServerReady = codex.available && codex.appServerSupported ? await isCodexAppServerReady() : false;
   const executors = ['playwright', 'simple', 'browser', 'terminal'];
-  if (codex || codexAppInstalled) executors.push('codex_app');
+  if (codex.available && codex.appServerSupported) executors.push('codex_app');
   const browserProfileReady = await hasPath(join(homedir(), '.focusmap', 'browser-profile'));
   const gwsAuthReady = await hasPath(join(homedir(), '.config', 'gws'));
   const authDirReady = await hasPath(join(homedir(), '.focusmap', 'auth'));
@@ -339,15 +404,24 @@ export async function collectCapabilities(config: AgentConfig) {
     metadata: {
       app: 'focusmap-lite',
       agent: 'focusmap-agent',
-      version: '0.2.1',
+      version: '0.2.2',
       platform: platform(),
       os_release: release(),
       node_installed: node,
       npx_installed: npx,
       git_installed: git,
       claude_installed: claude,
-      codex_installed: codex,
-      codex_app_installed: codexAppInstalled,
+      codex_installed: codex.commandAvailable,
+      codex_available: codex.available,
+      codex_command_path: codex.commandPath,
+      codex_resolved_path: codex.resolvedPath,
+      codex_resolved_source: codex.resolvedSource,
+      codex_cli_version: codex.version,
+      codex_app_installed: codex.appInstalled,
+      codex_app_server_supported: codex.appServerSupported,
+      codex_app_command_supported: codex.appCommandSupported,
+      codex_update_required: codex.updateRequired,
+      codex_setup_hint: codex.setupHint,
       codex_app_server_ready: codexAppServerReady,
       codex_thread_monitor: true,
       codex_orphan_thread_import: true,
@@ -366,7 +440,7 @@ export async function collectCapabilities(config: AgentConfig) {
       google_workspace_mcp: gws || gwsAuthReady,
       coding_harnesses: [
         opencode ? 'opencode' : '',
-        codex ? 'codex' : '',
+        codex.commandAvailable ? 'codex' : '',
         claude ? 'claude' : '',
         aider ? 'aider' : '',
       ].filter(Boolean),

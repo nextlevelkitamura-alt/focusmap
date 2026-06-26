@@ -329,7 +329,7 @@ export function SetupStepAgent({ spaceId, connected, onBack, onNext }: SetupStep
               done={guideStep > 3}
               icon={Loader2}
               title="そのまま待つだけ (5-10分)"
-              desc="Node.js / Playwright / Codex app-server連携を自動で準備します。"
+              desc="Node.js / Playwright / Codex app-server連携を自動で準備します。古いCodex CLIなら更新案内を出します。"
               onClick={() => guideStep >= 3 && setGuideStep(4)}
               actionLabel={guideStep === 3 ? '進行中→次へ' : undefined}
             />

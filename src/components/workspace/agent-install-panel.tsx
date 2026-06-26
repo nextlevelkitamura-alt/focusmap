@@ -57,7 +57,8 @@ export function AgentInstallPanel({ spaceId }: AgentInstallPanelProps) {
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
           常時起動しておくMac (推奨: Mac mini) のターミナルで以下のコマンドを実行してください。
-          Node.js / Playwright / launchd設定 が自動で行われます。
+          Node.js / Playwright / launchd設定 が自動で行われます。Codex Desktop/CLI が入っていればそのまま連携し、
+          古いCLIの場合はアップデート案内を表示します。
         </p>
 
         <div className="relative">

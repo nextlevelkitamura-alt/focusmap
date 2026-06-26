@@ -224,9 +224,15 @@ export function AgentStatusBadge() {
   const isOnline = Boolean(primary?.isOnline);
   const currentTaskId = stringFromMetadata(metadata, 'current_task_id');
   const agentState = stringFromMetadata(metadata, 'agent_state') ?? (currentTaskId ? 'running' : 'idle');
-  const codexInstalled = boolFromMetadata(metadata, 'codex_app_installed') || Boolean(primary?.executors?.includes('codex_app'));
+  const codexExecutorAvailable = Boolean(primary?.executors?.includes('codex_app'));
+  const codexAppInstalled = boolFromMetadata(metadata, 'codex_app_installed');
+  const codexCliInstalled = boolFromMetadata(metadata, 'codex_installed');
+  const codexAppServerSupported = boolFromMetadata(metadata, 'codex_app_server_supported') || codexExecutorAvailable;
+  const codexUpdateRequired = boolFromMetadata(metadata, 'codex_update_required');
+  const codexSetupHint = stringFromMetadata(metadata, 'codex_setup_hint');
+  const codexInstalled = codexAppInstalled || codexCliInstalled || codexExecutorAvailable;
   const codexServerReady = boolFromMetadata(metadata, 'codex_app_server_ready');
-  const codexReady = isOnline && codexInstalled && codexServerReady;
+  const codexReady = isOnline && codexInstalled && codexAppServerSupported && codexServerReady && !codexUpdateRequired;
   const hiddenRegistrations = Math.max(0, annotated.length - (primary ? 1 : 0));
   const primaryTone: SettingsStatusTone = isOnline ? 'ok' : primary ? 'attention' : 'muted';
   const primaryChip = isOnline ? '接続中' : primary ? '要確認' : '未接続';
@@ -310,8 +316,10 @@ export function AgentStatusBadge() {
       <StatusRow
         icon={Bot}
         label="Codex連携"
-        value={codexReady ? 'ready' : codexInstalled ? '要確認' : '未導入'}
-        detail={codexReady ? 'Codex Desktop / app-server を確認済み' : codexInstalled ? 'Codexは導入済み。app-server確認待ち' : 'Codex Desktopの導入が必要です'}
+        value={codexReady ? 'ready' : codexUpdateRequired ? '要アップデート' : codexInstalled ? '要確認' : '未導入'}
+        detail={codexReady
+          ? codexAppInstalled ? 'Codex Desktop / app-server を確認済み' : 'codex CLI / app-server を確認済み'
+          : codexSetupHint ?? (codexInstalled ? 'Codexは導入済み。app-server確認待ち' : 'Codex Desktopの導入が必要です')}
         ok={codexReady}
       />
       <StatusRow

@@ -52,14 +52,23 @@ function agentDetail(status: FocusmapDesktopAutomationStatus | null) {
 function codexDetail(status: FocusmapDesktopAutomationStatus | null) {
   const codex = status?.codex
   if (!codex) return "Macアプリから状態を取得していません。"
+  if (codex.updateRequired) {
+    const suffix = codex.version ? ` 検出: ${codex.version}` : ""
+    return `Codex CLIが古く、app-serverに未対応です。Codex Desktop/CLIをアップデートしてください。${suffix}`
+  }
   if (codex.appInstalled === false && codex.commandAvailable) {
-    return "Codex Desktopが未導入です。接続/復旧でCodexのインストーラーを開けます。"
+    return codex.appCommandSupported
+      ? "Codex CLIはあります。接続/復旧でCodex Desktopインストーラーを開けます。"
+      : "Codex Desktopが未導入です。Codexを入れるボタンで公式ページを開けます。"
   }
   if (codex.appInstalled === false) {
     return "Codex Desktopが未導入です。Codexを入れるボタンで公式ページを開けます。"
   }
   if (codex.ready && codex.managed) return "このMacアプリからCodex app-serverを起動しています。"
   if (codex.ready) return "Codex app-serverに接続できます。"
+  if (codex.appInstalled && codex.appServerCommandSupported === false) {
+    return "インストール済みCodexがapp-serverに未対応です。Codex Desktop/CLIをアップデートしてください。"
+  }
   if (!codex.available) return "Codex.app または codex CLI が見つかりません。"
   if (!codex.scriptAvailable) return "起動スクリプトが見つかりません。"
   return "停止中です。接続で起動できます。"
@@ -142,6 +151,7 @@ function MacCodexConnectionPanel() {
   const connected = Boolean(status?.connected)
   const canDisconnect = Boolean(status?.agent.managed || status?.codex.managed)
   const codexNeedsInstall = status?.codex?.appInstalled === false
+  const codexNeedsUpdate = status?.codex?.updateRequired === true
   const codexInstallUrl = status?.codex?.installUrl || CODEX_DOWNLOAD_URL
   const codexThreadImportReady = status?.codex?.threadImportApi?.ready === true
 
@@ -152,11 +162,13 @@ function MacCodexConnectionPanel() {
     setMessage(null)
     try {
       if (!bridge?.openExternal) {
-        setMessage("Focusmap Macアプリから開くとCodexの導入ページを開けます。")
+        setMessage("Focusmap Macアプリから開くとCodexの導入/更新ページを開けます。")
         return
       }
       await bridge.openExternal(codexInstallUrl)
-      setMessage("Codexの導入ページを開きました。インストールとログイン後に接続/復旧してください。")
+      setMessage(codexNeedsUpdate
+        ? "Codexの更新ページを開きました。アップデート後に接続/復旧してください。"
+        : "Codexの導入ページを開きました。インストールとログイン後に接続/復旧してください。")
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Codexの導入ページを開けませんでした")
     } finally {
@@ -200,7 +212,7 @@ function MacCodexConnectionPanel() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {codexNeedsInstall && (
+            {(codexNeedsInstall || codexNeedsUpdate) && (
               <Button
                 variant="outline"
                 className="h-10 gap-1.5"
@@ -208,7 +220,7 @@ function MacCodexConnectionPanel() {
                 disabled={!bridgeAvailable || action !== null}
               >
                 <DownloadCloud className="h-4 w-4" />
-                {action === "install" ? "起動中..." : "Codexを入れる"}
+                {action === "install" ? "起動中..." : codexNeedsUpdate ? "Codexを更新" : "Codexを入れる"}
               </Button>
             )}
             <Button
@@ -251,7 +263,7 @@ function MacCodexConnectionPanel() {
         icon={Bot}
         title="Codex"
         description={codexDetail(status)}
-        status={<SettingsStatusChip tone={connectionTone(codexReady, codexNeedsInstall ? "attention" : "muted")}>{codexNeedsInstall ? "要インストール" : codexReady ? "ready" : "要確認"}</SettingsStatusChip>}
+        status={<SettingsStatusChip tone={connectionTone(codexReady, (codexNeedsInstall || codexNeedsUpdate) ? "attention" : "muted")}>{codexNeedsUpdate ? "要アップデート" : codexNeedsInstall ? "要インストール" : codexReady ? "ready" : "要確認"}</SettingsStatusChip>}
       />
       <SettingRow
         icon={Inbox}
