@@ -529,8 +529,16 @@ function textFingerprint(value: string): string {
   return compactText(value, 500).toLowerCase().replace(/\s+/g, ' ').slice(0, 180);
 }
 
+function stripFocusmapSyncId(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, '')
+    .replace(/\n{0,2}Focusmap同期ID:\s*FM-[^\n]+\s*$/u, '')
+    .trim();
+}
+
 function promptMatchText(value: unknown): string {
-  return compactText(typeof value === 'string' ? value : '', 8_000)
+  return compactText(typeof value === 'string' ? stripFocusmapSyncId(value) : '', 8_000)
     .toLowerCase()
     .replace(/\s+/g, ' ');
 }
@@ -1226,6 +1234,10 @@ function cwdMatchesTask(rowCwd: string, taskCwd: string, cwdScopeMap?: Map<strin
   return normalizeLocalPath(scope?.repo_path) === taskCwd;
 }
 
+function hasFocusmapSource(task: AiTask): boolean {
+  return Boolean(task.source_task_id || task.source_note_id || task.source_ideal_goal_id);
+}
+
 export function isFocusmapManualHandoffThread(
   row: CodexThreadRow,
   tasks: AiTask[],
@@ -1237,7 +1249,7 @@ export function isFocusmapManualHandoffThread(
 
   return tasks.some(task => {
     if (task.executor !== 'codex_app') return false;
-    if (!task.source_task_id) return false;
+    if (!hasFocusmapSource(task)) return false;
     if (taskThreadId(task)) return false;
     const result = taskResult(task);
     if (result.codex_manual_handoff !== true) return false;
@@ -1668,7 +1680,7 @@ function linkedTaskForThread(
 
   return tasks.find(task => {
     if (task.executor !== 'codex_app') return false;
-    if (!task.source_task_id) return false;
+    if (!hasFocusmapSource(task)) return false;
     if (taskThreadId(task)) return false;
     const result = taskResult(task);
     if (result.codex_manual_handoff !== true) return false;
@@ -2013,7 +2025,7 @@ async function findMatchingThread(dbPath: string, task: AiTask): Promise<string 
     candidates.push(tokenCondition);
   }
 
-  const promptPrefix = task.prompt.slice(0, 60).trim();
+  const promptPrefix = stripFocusmapSyncId(task.prompt).slice(0, 60).trim();
   if (promptPrefix) {
     const prefixCondition = `first_user_message LIKE ${sqlString(`${promptPrefix}%`)} AND updated_at_ms >= ${sinceMs}`;
     if (cwdCondition) candidates.push(`${prefixCondition}${cwdCondition}`);
@@ -2488,6 +2500,12 @@ function resultSnapshot(
     codex_source_task_id: typeof result.codex_source_task_id === 'string'
       ? result.codex_source_task_id
       : task.source_task_id ?? null,
+    codex_source_note_id: typeof result.codex_source_note_id === 'string'
+      ? result.codex_source_note_id
+      : task.source_note_id ?? null,
+    codex_source_ideal_goal_id: typeof result.codex_source_ideal_goal_id === 'string'
+      ? result.codex_source_ideal_goal_id
+      : task.source_ideal_goal_id ?? null,
     current_step: currentStep,
     last_activity_at: lastActivityAt,
     codex_turn_started_at: codexTimerStartedAt ?? undefined,
@@ -3398,6 +3416,8 @@ export async function markThreadGone(api: AgentApiClient, runnerId: string, task
     codex_archived_at: reason === 'archived' ? nowIso : null,
     codex_source_task_completed: sourceTaskCompleted,
     codex_source_task_id: task.source_task_id ?? null,
+    codex_source_note_id: task.source_note_id ?? null,
+    codex_source_ideal_goal_id: task.source_ideal_goal_id ?? null,
     codex_source_task_completion_reason: sourceTaskCompleted ? 'archived' : null,
     codex_source_task_completion_suppressed: sourceCompletionSuppressed,
     codex_archive_request_state: archiveRequestCompleted

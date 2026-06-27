@@ -112,6 +112,8 @@ export interface TaskResultJson {
   codex_timer_offset_ms?: number | null;
   codex_source_task_completed?: boolean;
   codex_source_task_id?: string | null;
+  codex_source_note_id?: string | null;
+  codex_source_ideal_goal_id?: string | null;
   codex_source_task_completion_reason?: string | null;
   codex_source_task_completion_suppressed?: boolean;
   codex_archive_request_state?: 'waiting_for_grace' | 'pending' | 'completed' | 'cancelled';

@@ -1559,6 +1559,14 @@ function codexHandoffTokenForTask(task: MonitoredCodexTask): string | null {
   return match?.[1]?.trim() || null
 }
 
+function stripFocusmapSyncId(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, '')
+    .replace(/\n{0,2}Focusmap同期ID:\s*FM-[^\n]+\s*$/u, '')
+    .trim()
+}
+
 function codexThreadCwdCondition(cwd: string | null | undefined): string {
   const value = cwd?.trim()
   return value ? ` AND cwd = '${sqlText(value)}'` : ''
@@ -1584,7 +1592,7 @@ function findMatchingCodexThread(dbPath: string, task: MonitoredCodexTask): stri
     candidates.push(tokenCondition)
   }
 
-  const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
+  const promptPrefix = stripFocusmapSyncId(task.prompt).slice(0, 40).replace(/'/g, "''")
   const prefixCondition = `first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs}`
   if (cwdCondition) candidates.push(`${prefixCondition}${cwdCondition}`)
   candidates.push(prefixCondition)

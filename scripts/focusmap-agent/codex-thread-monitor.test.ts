@@ -1421,6 +1421,17 @@ describe('codex-thread-monitor state detection', () => {
         prompt: 'マインドマップから送ったCodex依頼\n詳細',
         cwd: '/Users/me/project',
         source_task_id: null,
+        source_ideal_goal_id: 'ideal-goal-1',
+        result: { codex_manual_handoff: true, codex_run_state: 'prompt_waiting' },
+      }),
+    ] as never)).toBe(true);
+    expect(isFocusmapManualHandoffThread(row, [
+      task({
+        prompt: 'マインドマップから送ったCodex依頼\n詳細',
+        cwd: '/Users/me/project',
+        source_task_id: null,
+        source_note_id: null,
+        source_ideal_goal_id: null,
         result: { codex_manual_handoff: true, codex_run_state: 'prompt_waiting' },
       }),
     ] as never)).toBe(false);

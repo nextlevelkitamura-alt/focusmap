@@ -198,6 +198,12 @@ function compactDisplayText(value: string) {
     .trim()
 }
 
+function stripFocusmapSyncId(value: string) {
+  return normalizeNewlines(value)
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, "")
+    .replace(/\n{0,2}Focusmap同期ID:\s*FM-[^\n]+\s*$/u, "")
+}
+
 function truncateText(value: string, maxChars: number) {
   if (value.length <= maxChars) return { text: value, truncated: false }
   return {
@@ -222,7 +228,7 @@ export function sanitizeCodexDisplayText(
   const { text: withoutFiles, omitted: omittedFiles } = stripFilesMentionedSection(withoutBlocks)
   const requestText = extractCodexUserRequest(withoutFiles)
   const structuredCodexInput = requestText !== null || omittedFiles.length > 0 || attachments.length > 0
-  const compacted = compactDisplayText(requestText ?? withoutFiles)
+  const compacted = compactDisplayText(stripFocusmapSyncId(requestText ?? withoutFiles))
   const attachmentSummary = formatAttachmentSummary(attachments)
   const notice = !structuredCodexInput && omitted.length > 0 && options.appendOmissionNotice !== false
     ? `（${omitted.join("・")}は省略）`

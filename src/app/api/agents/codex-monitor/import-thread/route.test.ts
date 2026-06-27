@@ -213,6 +213,8 @@ describe('codex orphan thread import helpers', () => {
     const handoffTask = {
       id: 'ai-task-1',
       source_task_id: 'mindmap-node-1',
+      source_note_id: null,
+      source_ideal_goal_id: null,
       prompt: '最初の依頼です\n詳細',
       cwd: '/Users/me/project',
       executor: 'codex_app',
@@ -230,6 +232,11 @@ describe('codex orphan thread import helpers', () => {
       ...handoffTask,
       source_task_id: null,
     })).toBe(false)
+    expect(isImportedThreadMatchingManualHandoff(thread, {
+      ...handoffTask,
+      source_task_id: null,
+      source_ideal_goal_id: 'ideal-goal-1',
+    })).toBe(true)
     expect(isImportedThreadMatchingManualHandoff(thread, {
       ...handoffTask,
       cwd: '/Users/me/other',
@@ -256,6 +263,16 @@ describe('codex orphan thread import helpers', () => {
     expect(linkedResult.codex_thread_id).toBe(thread.id)
     expect(linkedResult.codex_run_state).toBe('running')
     expect(linkedResult.codex_source_task_id).toBe('mindmap-node-1')
+
+    const linkedIdealGoalResult = linkedManualHandoffThreadResult(thread, {
+      result: {
+        codex_manual_handoff: true,
+        codex_handoff_token: 'FM-token',
+        codex_run_state: 'prompt_waiting',
+      },
+      source_ideal_goal_id: 'ideal-goal-1',
+    }, '2026-06-10T10:01:00.000Z')
+    expect(linkedIdealGoalResult.codex_source_ideal_goal_id).toBe('ideal-goal-1')
   })
 
   test('keeps manual handoff linked completed thread in awaiting approval', () => {

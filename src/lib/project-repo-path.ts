@@ -3,11 +3,7 @@ import { stat, realpath } from "node:fs/promises"
 import path from "node:path"
 
 type SupabaseLike = {
-  from: (table: string) => AvailableRepoSelect
-}
-
-type AvailableRepoSelect = {
-  select: (columns: string) => AvailableRepoFilter
+  from: (table: string) => { select: (columns: string) => unknown }
 }
 
 type AvailableRepoFilter = {
@@ -16,8 +12,27 @@ type AvailableRepoFilter = {
   maybeSingle: () => PromiseLike<{ data: { absolute_path?: string } | null; error: { message: string } | null }>
 }
 
+type AgentRepoFilter = {
+  eq: (
+    column: string,
+    value: string,
+  ) => PromiseLike<{ data: { repo_paths?: unknown }[] | null; error: { message: string } | null }>
+}
+
 function normalizeRepoPath(value: string) {
   return value.trim().replace(/\/+$/, "")
+}
+
+function repoPathValues(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return []
+  return Object.values(value)
+    .map(value => (typeof value === "string" ? normalizeRepoPath(value) : ""))
+    .filter(Boolean)
+}
+
+function isMissingLegacyAvailableRepos(error: { message?: string } | null) {
+  return !!error?.message &&
+    /(relation .*available_repos.*does not exist|available_repos.*does not exist|Could not find .*available_repos)/i.test(error.message)
 }
 
 function gitTopLevel(cwd: string): Promise<string | null> {
@@ -51,6 +66,19 @@ async function resolveLocalGitRepoPath(repoPath: string) {
   return { repoPath: normalizeRepoPath(normalizedRoot) }
 }
 
+async function resolveAgentHeartbeatRepoPath(client: SupabaseLike, userId: string, repoPath: string) {
+  const query = client.from("ai_runners").select("repo_paths") as AgentRepoFilter
+  const { data, error } = await query.eq("user_id", userId)
+  if (error) return { error: error.message }
+
+  for (const runner of data ?? []) {
+    const match = repoPathValues(runner.repo_paths).find(candidate => candidate === repoPath)
+    if (match) return { repoPath: match }
+  }
+
+  return { repoPath: null }
+}
+
 export async function resolveProjectRepoPath(
   supabase: unknown,
   userId: string,
@@ -63,15 +91,20 @@ export async function resolveProjectRepoPath(
   if (!repoPath) return { repoPath: null }
 
   const client = supabase as SupabaseLike
-  const { data, error } = await client
+  const agentRepo = await resolveAgentHeartbeatRepoPath(client, userId, repoPath)
+  if (agentRepo.error) return { error: agentRepo.error }
+  if (agentRepo.repoPath) return { repoPath: agentRepo.repoPath }
+
+  const availableRepoQuery = client
     .from("available_repos")
-    .select("absolute_path")
+    .select("absolute_path") as AvailableRepoFilter
+  const { data, error } = await availableRepoQuery
     .eq("user_id", userId)
     .eq("absolute_path", repoPath)
     .limit(1)
     .maybeSingle()
 
-  if (error) return { error: error.message }
+  if (error && !isMissingLegacyAvailableRepos(error)) return { error: error.message }
   if (!data) return resolveLocalGitRepoPath(repoPath)
 
   return { repoPath: data.absolute_path ?? repoPath }

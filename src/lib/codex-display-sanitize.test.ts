@@ -55,4 +55,10 @@ raw image payload
 添付ファイル
 画像: 1件`)
   })
+
+  test("hides Focusmap handoff sync ids from visible prompt text", () => {
+    expect(sanitizeCodexDisplayText(`依頼本文です
+
+Focusmap同期ID: FM-token-123`, { maxChars: 2_000 }).text).toBe("依頼本文です")
+  })
 })

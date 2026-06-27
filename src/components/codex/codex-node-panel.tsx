@@ -270,6 +270,7 @@ function createPendingAttachmentId(file: File, index: number) {
 function stripFocusmapSyncId(prompt: string) {
   return prompt
     .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, "")
+    .replace(/\n{0,2}Focusmap同期ID:\s*FM-[^\n]+\s*$/u, "")
     .trim()
 }
 

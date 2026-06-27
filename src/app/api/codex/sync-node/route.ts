@@ -52,6 +52,8 @@ type CodexTaskRow = {
   started_at: string | null
   created_at: string | null
   source_task_id: string | null
+  source_note_id: string | null
+  source_ideal_goal_id: string | null
   executor: 'codex' | 'codex_app'
 }
 
@@ -67,6 +69,17 @@ function canUseLocalSync(req: NextRequest): boolean {
     host: req.headers.get('host'),
     forwardedHost: req.headers.get('x-forwarded-host'),
   })
+}
+
+function taskProgressSource(input: {
+  source_task_id?: string | null
+  source_note_id?: string | null
+  source_ideal_goal_id?: string | null
+}) {
+  if (input.source_task_id) return { source_type: 'mindmap', source_id: input.source_task_id }
+  if (input.source_note_id) return { source_type: 'note', source_id: input.source_note_id }
+  if (input.source_ideal_goal_id) return { source_type: 'ideal_goal', source_id: input.source_ideal_goal_id }
+  return { source_type: null, source_id: null }
 }
 
 async function resolveCodexStateDbPath() {
@@ -137,6 +150,14 @@ function sqlText(value: string): string {
   return value.replace(/'/g, "''")
 }
 
+function stripFocusmapSyncId(value: string) {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, '')
+    .replace(/\n{0,2}Focusmap同期ID:\s*FM-[^\n]+\s*$/u, '')
+    .trim()
+}
+
 function codexTaskThreadId(task: CodexTaskRow): string | null {
   if (task.codex_thread_id?.trim()) return task.codex_thread_id.trim()
   const resultThreadId = asRecord(task.result).codex_thread_id
@@ -173,7 +194,7 @@ async function findMatchingCodexThread(dbPath: string, task: CodexTaskRow): Prom
     candidates.push(tokenCondition)
   }
 
-  const promptPrefix = task.prompt.slice(0, 60).trim()
+  const promptPrefix = stripFocusmapSyncId(task.prompt).slice(0, 60).trim()
   if (promptPrefix) {
     const prefixCondition = `first_user_message LIKE '${sqlText(promptPrefix)}%' AND updated_at_ms >= ${sinceMs}`
     if (cwdCondition) candidates.push(`${prefixCondition}${cwdCondition}`)
@@ -537,6 +558,7 @@ async function mirrorCodexSyncToTurso(input: {
   completedAt?: string | null
 }) {
   if (!isTursoConfigured()) return
+  const source = taskProgressSource(input.task)
   await upsertTursoAiTask({
     id: input.task.id,
     user_id: input.task.user_id,
@@ -544,8 +566,8 @@ async function mirrorCodexSyncToTurso(input: {
     title: compactText(input.task.prompt, 140),
     status: input.status,
     executor: input.task.executor,
-    source_type: input.task.source_task_id ? 'mindmap' : null,
-    source_id: input.task.source_task_id,
+    source_type: source.source_type,
+    source_id: source.source_id,
     codex_thread_id: input.threadId,
     current_step: compactText(input.currentStep, MAX_CURRENT_STEP_CHARS),
     summary: compactText(input.summary, MAX_SUMMARY_CHARS),
@@ -887,7 +909,7 @@ export async function POST(req: NextRequest) {
 
   let query = supabase
     .from('ai_tasks')
-    .select('id, user_id, space_id, prompt, codex_thread_id, cwd, result, status, started_at, created_at, source_task_id, executor')
+    .select('id, user_id, space_id, prompt, codex_thread_id, cwd, result, status, started_at, created_at, source_task_id, source_note_id, source_ideal_goal_id, executor')
     .eq('user_id', user.id)
     .in('executor', ['codex', 'codex_app'])
     .order('created_at', { ascending: false })

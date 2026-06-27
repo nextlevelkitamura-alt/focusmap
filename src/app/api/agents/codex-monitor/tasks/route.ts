@@ -4,7 +4,7 @@ import { authenticateAgent } from '@/lib/agent-auth'
 const ACTIVE_MONITOR_STATUSES = ['pending', 'running', 'awaiting_approval', 'needs_input'] as const
 const MONITOR_STATUSES = [...ACTIVE_MONITOR_STATUSES, 'completed'] as const
 const VALID_EXECUTORS = ['codex', 'codex_app'] as const
-const MANUAL_HANDOFF_DISCOVERY_WINDOW_MS = 10 * 60 * 1000
+const MANUAL_HANDOFF_DISCOVERY_WINDOW_MS = 24 * 60 * 60 * 1000
 const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived'
 
 function isRecord(value: unknown): value is Record<string, unknown> {

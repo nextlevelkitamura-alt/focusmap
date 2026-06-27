@@ -24,7 +24,15 @@ vi.mock("node:child_process", () => ({
 
 import { resolveProjectRepoPath } from "./project-repo-path"
 
-function supabaseWithAvailableRepo(data: { absolute_path?: string } | null) {
+function runnerRepoPaths(paths: string[]) {
+  return paths.length
+    ? [{ repo_paths: Object.fromEntries(paths.map((value, index) => [`repo-${index}`, value])) }]
+    : []
+}
+
+function supabaseWithAvailableRepo(data: { absolute_path?: string } | null, heartbeatPaths: string[] = []) {
+  const runnerEq = vi.fn().mockResolvedValue({ data: runnerRepoPaths(heartbeatPaths), error: null })
+  const runnerSelect = vi.fn(() => ({ eq: runnerEq }))
   const maybeSingle = vi.fn().mockResolvedValue({ data, error: null })
   const limit = vi.fn(() => ({ maybeSingle }))
   const eq2 = vi.fn(() => ({ limit }))
@@ -32,7 +40,7 @@ function supabaseWithAvailableRepo(data: { absolute_path?: string } | null) {
   const select = vi.fn(() => ({ eq: eq1 }))
   return {
     client: {
-      from: vi.fn(() => ({ select })),
+      from: vi.fn((table: string) => table === "ai_runners" ? { select: runnerSelect } : { select }),
     },
     maybeSingle,
   }
@@ -53,6 +61,15 @@ describe("resolveProjectRepoPath", () => {
 
     await expect(resolveProjectRepoPath(client, "user-1", "/Users/me/scanned")).resolves.toEqual({
       repoPath: "/Users/me/scanned",
+    })
+    expect(mocks.stat).not.toHaveBeenCalled()
+  })
+
+  test("keeps repo paths reported by the active Focusmap agent heartbeat", async () => {
+    const { client } = supabaseWithAvailableRepo(null, ["/Users/me/from-agent"])
+
+    await expect(resolveProjectRepoPath(client, "user-1", "/Users/me/from-agent/")).resolves.toEqual({
+      repoPath: "/Users/me/from-agent",
     })
     expect(mocks.stat).not.toHaveBeenCalled()
   })

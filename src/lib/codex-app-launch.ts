@@ -142,8 +142,11 @@ export function buildCodexHandoffToken(seed?: string | null) {
 
 export function appendCodexHandoffToken(prompt: string, token: string | null | undefined) {
   const normalizedPrompt = normalizeCodexPrompt(prompt)
-  if (token?.trim()) return normalizedPrompt
-  return normalizedPrompt
+  const normalizedToken = token?.trim()
+  if (!normalizedToken) return normalizedPrompt
+  const marker = `Focusmap同期ID: ${normalizedToken}`
+  if (normalizedPrompt.includes(marker)) return normalizedPrompt
+  return `${normalizedPrompt}\n\n${marker}`
 }
 
 export function beginCopyTextToClipboard(text: string): CodexPromptCopyAttempt {

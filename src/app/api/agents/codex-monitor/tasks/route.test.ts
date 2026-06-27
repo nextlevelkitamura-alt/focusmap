@@ -36,7 +36,7 @@ describe('shouldReturnCodexMonitorTask', () => {
 
   test('does not scan stale or non-manual tasks without a thread id', () => {
     const recentIso = new Date(Date.now() - 2 * 60 * 1000).toISOString()
-    const oldIso = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+    const oldIso = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
 
     expect(shouldReturnCodexMonitorTask({
       executor: 'codex_app',

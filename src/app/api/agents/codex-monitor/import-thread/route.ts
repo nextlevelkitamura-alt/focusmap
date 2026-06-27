@@ -42,6 +42,8 @@ type ManualHandoffAiTask = {
   user_id: string
   space_id: string | null
   source_task_id: string | null
+  source_note_id: string | null
+  source_ideal_goal_id: string | null
   prompt: string | null
   cwd: string | null
   executor: string | null
@@ -59,8 +61,27 @@ function compactString(value: unknown, max = 2_000) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 }
 
+function stripFocusmapSyncId(value: string) {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, '')
+    .replace(/\n{0,2}Focusmap同期ID:\s*FM-[^\n]+\s*$/u, '')
+    .trim()
+}
+
+function taskProgressSource(input: {
+  source_task_id?: string | null
+  source_note_id?: string | null
+  source_ideal_goal_id?: string | null
+}) {
+  if (input.source_task_id) return { source_type: 'mindmap', source_id: input.source_task_id }
+  if (input.source_note_id) return { source_type: 'note', source_id: input.source_note_id }
+  if (input.source_ideal_goal_id) return { source_type: 'ideal_goal', source_id: input.source_ideal_goal_id }
+  return { source_type: null, source_id: null }
+}
+
 function promptMatchText(value: unknown) {
-  return compactString(value, MAX_PROMPT_CHARS)
+  return compactString(typeof value === 'string' ? stripFocusmapSyncId(value) : value, MAX_PROMPT_CHARS)
     ?.toLowerCase()
     .replace(/\s+/g, ' ') ?? ''
 }
@@ -229,7 +250,8 @@ export function importedThreadResult(thread: ImportedCodexThread, sourceTaskId: 
 
 export function linkedManualHandoffThreadResult(
   thread: ImportedCodexThread,
-  task: Pick<ManualHandoffAiTask, 'result' | 'source_task_id'>,
+  task: Pick<ManualHandoffAiTask, 'result'> &
+    Partial<Pick<ManualHandoffAiTask, 'source_task_id' | 'source_note_id' | 'source_ideal_goal_id'>>,
   nowIso: string,
 ) {
   const current = isRecord(task.result) ? task.result : {}
@@ -250,6 +272,8 @@ export function linkedManualHandoffThreadResult(
       (thread.archived ? 'archived' : runState === 'running' ? 'manual_handoff_thread_detected' : 'completed'),
     codex_thread_archived: thread.archived === true,
     codex_source_task_id: sourceTaskId,
+    codex_source_note_id: compactString(task.source_note_id, 120),
+    codex_source_ideal_goal_id: compactString(task.source_ideal_goal_id, 120),
     current_step: importedThreadCurrentStep(thread),
     message: runState === 'running'
       ? 'Focusmapから送ったCodexスレッドを検出しました。'
@@ -297,7 +321,13 @@ export function isImportedThreadMatchingManualHandoff(
   const firstUserMessage = compactString(thread.first_user_message, MAX_PROMPT_CHARS)
   if (!firstUserMessage || isInternalCodexUserMessage(firstUserMessage)) return false
   if (compactString(task.executor, 80) !== 'codex_app') return false
-  if (!compactString(task.source_task_id, 120)) return false
+  if (
+    !compactString(task.source_task_id, 120) &&
+    !compactString(task.source_note_id, 120) &&
+    !compactString(task.source_ideal_goal_id, 120)
+  ) {
+    return false
+  }
   if (compactString(task.codex_thread_id, 200)) return false
   const result = isRecord(task.result) ? task.result : {}
   if (compactString(result.codex_thread_id, 200)) return false
@@ -497,10 +527,9 @@ async function existingManualHandoffForThread(
 
   const { data, error } = await supabase
     .from('ai_tasks')
-    .select('id, user_id, space_id, source_task_id, prompt, cwd, executor, codex_thread_id, result, created_at, started_at')
+    .select('id, user_id, space_id, source_task_id, source_note_id, source_ideal_goal_id, prompt, cwd, executor, codex_thread_id, result, created_at, started_at')
     .eq('user_id', token.user_id)
     .eq('executor', 'codex_app')
-    .not('source_task_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(200)
   if (error) throw error
@@ -518,6 +547,11 @@ async function linkManualHandoffThread(
 ) {
   const nowIso = new Date().toISOString()
   const sourceTaskId = compactString(task.source_task_id, 120)
+  const source = taskProgressSource({
+    source_task_id: sourceTaskId,
+    source_note_id: compactString(task.source_note_id, 120),
+    source_ideal_goal_id: compactString(task.source_ideal_goal_id, 120),
+  })
   const result = linkedManualHandoffThreadResult(thread, task, nowIso)
   const status = importedThreadStatus(thread)
   const startedAt = compactString(task.started_at, 80) ?? nowIso
@@ -561,8 +595,8 @@ async function linkManualHandoffThread(
           status,
           executor: 'codex_app',
           dispatch_mode: 'manual',
-        source_type: sourceTaskId ? 'mindmap' : null,
-        source_id: sourceTaskId,
+        source_type: source.source_type,
+        source_id: source.source_id,
         codex_thread_id: thread.id,
         current_step: result.current_step,
         summary: result.message,
@@ -578,6 +612,8 @@ async function linkManualHandoffThread(
   return {
     ai_task_id: task.id,
     source_task_id: sourceTaskId,
+    source_note_id: compactString(task.source_note_id, 120),
+    source_ideal_goal_id: compactString(task.source_ideal_goal_id, 120),
   }
 }
 
