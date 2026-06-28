@@ -14,6 +14,7 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
 UID_VALUE="$(id -u)"
 LEGACY_ROOT="${LEGACY_ROOT:-/Users/kitamuranaohiro/Private/focusmap}"
+TEMPLATE_ROOT="${TEMPLATE_ROOT:-/Users/kitamuranaohiro/Private/projects/active/focusmap}"
 
 MODE="install"
 GROUP="core"
@@ -57,7 +58,10 @@ fi
 render_plist() {
   local src="$1"
   local dst="$2"
-  sed "s|$LEGACY_ROOT|$REPO_ROOT|g" "$src" > "$dst"
+  sed \
+    -e "s|$LEGACY_ROOT|$REPO_ROOT|g" \
+    -e "s|$TEMPLATE_ROOT|$REPO_ROOT|g" \
+    "$src" > "$dst"
 }
 
 lint_plist() {

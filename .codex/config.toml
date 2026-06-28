@@ -2,6 +2,6 @@
 args = [
     "@playwright/mcp@latest",
     "--config",
-    "/Users/kitamuranaohiro/Private/focusmap/scripts/playwright-mcp-config.json",
+    "/Users/kitamuranaohiro/Private/projects/active/focusmap/scripts/playwright-mcp-config.json",
 ]
 command = "npx"

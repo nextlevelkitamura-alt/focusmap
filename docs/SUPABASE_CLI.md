@@ -36,7 +36,7 @@ SUPABASE_ACCESS_TOKEN="<トークン>" supabase <command>
 supabase login --token <アクセストークン>
 
 # 2. プロジェクトをリンク
-cd /Users/kitamuranaohiro/Private/focusmap
+cd /Users/kitamuranaohiro/Private/projects/active/focusmap
 supabase link --project-ref whsjsscgmkkkzgcwxjko
 ```
 
@@ -51,7 +51,7 @@ supabase link --project-ref whsjsscgmkkkzgcwxjko
 この方法は `db push` ではなく、指定SQLファイルだけを `--linked` のDBへ実行する。
 
 ```bash
-cd /Users/kitamuranaohiro/Private/focusmap
+cd /Users/kitamuranaohiro/Private/projects/active/focusmap
 supabase projects list
 supabase db query --linked --file supabase/migrations/<ファイル名>.sql
 ```
@@ -181,7 +181,7 @@ curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/datab
 ## 環境変数（.env.local）の場所
 
 ```
-/Users/kitamuranaohiro/Private/focusmap/.env.local
+/Users/kitamuranaohiro/Private/projects/active/focusmap/.env.local
 ```
 
 必要なキー:

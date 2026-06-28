@@ -9,12 +9,12 @@ Create a reusable Skill named `agents-md-governance` for auditing and improving 
 
 ## Current Repo Context
 
-- Active plan location: `/Users/kitamuranaohiro/Private/focusmap-main-ai-history-integration` on `main`.
+- Active plan location: `/Users/kitamuranaohiro/Private/projects/active/focusmap-worktrees/main-ai-history-integration` on `main`.
 - Local `main` is ahead of `origin/main` after implementation work. Push is not part of this task; confirm the exact ahead count with `git status --short --branch` before any future push decision.
 - Existing `AGENTS.md` is 189 lines, already under the 300-line target and 400-line maximum.
 - Existing Skill directory is present at `/Users/kitamuranaohiro/.agents/skills/agents-md-governance`.
 - The Skill install directory is not currently Git-managed, so Skill diffs, rollback, and review history do not have their own source-of-truth repository yet.
-- Existing worktrees: `main` at `focusmap-main-ai-history-integration`, `temp-cleanup-branch` at `focusmap`, and `codex/focusmap-calendar` at `focusmap-focusmap-calendar`.
+- Existing worktrees: `main` at `projects/active/focusmap-worktrees/main-ai-history-integration`, `temp-cleanup-branch` at `projects/active/focusmap`, and `codex/focusmap-calendar` at `projects/active/focusmap-worktrees/focusmap-calendar`.
 
 ## Implementation Status
 

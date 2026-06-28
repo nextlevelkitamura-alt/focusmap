@@ -7,7 +7,7 @@ Use $focusmap-ui-quality in worker mode.
 <role> workerです。担当範囲だけを実装してください。
 
 Repo:
-/Users/kitamuranaohiro/Private/focusmap
+/Users/kitamuranaohiro/Private/projects/active/focusmap
 
 Base commit:
 <base commit>

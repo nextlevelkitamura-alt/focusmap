@@ -6,7 +6,7 @@ Last updated: 2026-05-30
 
 Main Focusmap repo:
 
-- `/Users/kitamuranaohiro/Private/focusmap`
+- `/Users/kitamuranaohiro/Private/projects/active/focusmap`
 
 Current branch at audit time:
 

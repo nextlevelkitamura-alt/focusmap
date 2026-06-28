@@ -585,7 +585,7 @@ Focusmap dashboard UI quality planを実装タスクへ分解し、P0復旧UIと
 Use $focusmap-ui-quality as Chat 2: Implementation Orchestrator.
 
 Repo:
-/Users/kitamuranaohiro/Private/focusmap
+/Users/kitamuranaohiro/Private/projects/active/focusmap
 
 Read first:
 - AGENTS.md
