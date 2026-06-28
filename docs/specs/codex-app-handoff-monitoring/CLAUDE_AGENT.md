@@ -3,7 +3,7 @@
 次の短い依頼文を、Codex/Claudeへ渡す作業プロンプトの冒頭に入れてください。
 
 ```md
-/Users/kitamuranaohiro/Private/focusmap で作業してください。
+/Users/kitamuranaohiro/Private/projects/active/focusmap で作業してください。
 
 編集前に `docs/specs/codex-app-handoff-monitoring/README.md` を読み、変更領域に応じて以下も読んでください。
 

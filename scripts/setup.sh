@@ -141,13 +141,18 @@ PLIST_NAME="com.focusmap.task-runner.plist"
 PLIST_SRC="scripts/$PLIST_NAME"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LEGACY_PROJECT_DIR="/Users/kitamuranaohiro/Private/focusmap"
+TEMPLATE_PROJECT_DIR="/Users/kitamuranaohiro/Private/projects/active/focusmap"
 
 if [ -f "$PLIST_DST" ]; then
   ok "task-runner は既にインストール済みです"
 else
   if [ -f "$PLIST_SRC" ]; then
     # plist 内のパスを現在のプロジェクトディレクトリに合わせる
-    sed "s|/Users/kitamuranaohiro/Private/focusmap|$PROJECT_DIR|g" "$PLIST_SRC" > /tmp/$PLIST_NAME
+    sed \
+      -e "s|$LEGACY_PROJECT_DIR|$PROJECT_DIR|g" \
+      -e "s|$TEMPLATE_PROJECT_DIR|$PROJECT_DIR|g" \
+      "$PLIST_SRC" > /tmp/$PLIST_NAME
 
     # ユーザー名も更新
     CURRENT_USER=$(whoami)

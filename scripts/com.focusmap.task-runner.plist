@@ -28,7 +28,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/kitamuranaohiro/Private/focusmap/scripts/run-task-runner.sh</string>
+    <string>/Users/kitamuranaohiro/Private/projects/active/focusmap/scripts/run-task-runner.sh</string>
   </array>
 
   <!-- 毎60秒ごとに実行（idle時のSupabase egress抑制。即時Codex投入は --fast 起動で補う） -->
@@ -37,7 +37,7 @@
 
   <!-- 作業ディレクトリ -->
   <key>WorkingDirectory</key>
-  <string>/Users/kitamuranaohiro/Private/focusmap</string>
+  <string>/Users/kitamuranaohiro/Private/projects/active/focusmap</string>
 
   <!-- 環境変数（.env.local に書かない場合はここで設定） -->
   <!--

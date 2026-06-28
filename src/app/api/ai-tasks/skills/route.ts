@@ -9,7 +9,7 @@ const SKILL_REPOS = [
   { label: '人生管理', path: '/Users/kitamuranaohiro/Private/人生管理' },
   { label: 'AI カンパニー', path: '/Users/kitamuranaohiro/Private/AI カンパニー' },
   { label: 'リモートワーカー', path: '/Users/kitamuranaohiro/Private/リモートワーカー' },
-  { label: 'focusmap', path: '/Users/kitamuranaohiro/Private/focusmap' },
+  { label: 'focusmap', path: '/Users/kitamuranaohiro/Private/projects/active/focusmap' },
 ]
 
 interface SkillInfo {
