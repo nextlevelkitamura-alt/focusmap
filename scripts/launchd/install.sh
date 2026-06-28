@@ -70,6 +70,20 @@ unload_label() {
   launchctl bootout "gui/$UID_VALUE/$label" >/dev/null 2>&1 || true
 }
 
+bootstrap_label() {
+  local plist="$1"
+  local attempt
+
+  for attempt in 1 2 3 4 5; do
+    sleep 1
+    if launchctl bootstrap "gui/$UID_VALUE" "$plist" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  launchctl bootstrap "gui/$UID_VALUE" "$plist"
+}
+
 install_label() {
   local label="$1"
   local src="$2"
@@ -81,7 +95,7 @@ install_label() {
   lint_plist "$dst"
 
   unload_label "$label"
-  launchctl bootstrap "gui/$UID_VALUE" "$dst"
+  bootstrap_label "$dst"
   launchctl enable "gui/$UID_VALUE/$label"
 }
 
