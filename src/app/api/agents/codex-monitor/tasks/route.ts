@@ -6,6 +6,46 @@ const MONITOR_STATUSES = [...ACTIVE_MONITOR_STATUSES, 'completed'] as const
 const VALID_EXECUTORS = ['codex', 'codex_app'] as const
 const MANUAL_HANDOFF_DISCOVERY_WINDOW_MS = 24 * 60 * 60 * 1000
 const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived'
+const DEFAULT_MONITOR_LIMIT = 40
+const MAX_MONITOR_LIMIT = 80
+const MAX_MONITOR_PROMPT_CHARS = 8_000
+const MAX_MONITOR_STEP_DETAIL_CHARS = 500
+const MAX_MONITOR_ACTIVITY_BODY_CHARS = 1_000
+const MONITOR_RESULT_KEYS = [
+  'executor',
+  'codex_thread_id',
+  'codex_thread_url',
+  'codex_handoff_token',
+  'codex_manual_handoff',
+  'codex_run_state',
+  'codex_review_reason',
+  'codex_thread_archived',
+  'codex_archived_at',
+  'codex_external_origin',
+  'codex_source_task_id',
+  'codex_source_note_id',
+  'codex_source_ideal_goal_id',
+  'codex_source_task_completed',
+  'codex_source_task_completion_suppressed',
+  'codex_source_task_completion_reason',
+  'codex_archive_request_state',
+  'codex_archive_requested_at',
+  'codex_archive_request_reason',
+  'codex_archive_request_cancelled_at',
+  'codex_archive_completed_at',
+  'codex_archive_last_attempted_at',
+  'codex_archive_last_failed_at',
+  'codex_archive_next_attempt_at',
+  'codex_archive_last_error',
+  'codex_history_item_id',
+  'ai_history_item_id',
+  'current_step',
+  'last_activity_at',
+  'awaiting_approval_at',
+  'codex_activity_synced_at',
+  'codex_activity_synced_sequence',
+  'codex_activity_backfill_complete',
+] as const
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -13,6 +53,60 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function compactText(value: unknown, maxChars: number) {
+  if (typeof value !== 'string') return value
+  if (value.length <= maxChars) return value
+  return value.slice(0, maxChars)
+}
+
+function compactPrompt(value: unknown) {
+  if (typeof value !== 'string') return value
+  if (value.length <= MAX_MONITOR_PROMPT_CHARS) return value
+  const syncId = value.match(/Focusmap同期ID:\s*(FM-[A-Za-z0-9._:-]+)/)?.[1]
+  const head = value.slice(0, MAX_MONITOR_PROMPT_CHARS)
+  if (!syncId || head.includes(syncId)) return head
+  return `${head}\n\nFocusmap同期ID: ${syncId}`
+}
+
+function compactStep(value: unknown) {
+  if (!isRecord(value)) return value
+  return {
+    ...value,
+    detail: compactText(value.detail, MAX_MONITOR_STEP_DETAIL_CHARS),
+  }
+}
+
+function compactActivityMessage(value: unknown) {
+  if (!isRecord(value)) return value
+  return {
+    ...value,
+    body: compactText(value.body, MAX_MONITOR_ACTIVITY_BODY_CHARS),
+  }
+}
+
+function compactMonitorResult(result: unknown) {
+  if (!isRecord(result)) return result ?? null
+  const compact: Record<string, unknown> = {}
+  for (const key of MONITOR_RESULT_KEYS) {
+    if (result[key] !== undefined) compact[key] = result[key]
+  }
+  if (Array.isArray(result.steps)) {
+    compact.steps = result.steps.slice(-3).map(compactStep)
+  }
+  if (Array.isArray(result.codex_visible_messages)) {
+    compact.codex_visible_messages = result.codex_visible_messages.slice(-1).map(compactActivityMessage)
+  }
+  return compact
+}
+
+function compactMonitorTask(row: Record<string, unknown>) {
+  return {
+    ...row,
+    prompt: compactPrompt(row.prompt),
+    result: compactMonitorResult(row.result),
+  }
 }
 
 function jsonThreadId(result: unknown) {
@@ -80,7 +174,9 @@ export function shouldKeepCodexMonitorTaskForSourceTask(
 
 function parseLimit(value: unknown) {
   const parsed = Number(value)
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(200, Math.floor(parsed))) : 80
+  return Number.isFinite(parsed)
+    ? Math.max(1, Math.min(MAX_MONITOR_LIMIT, Math.floor(parsed)))
+    : DEFAULT_MONITOR_LIMIT
 }
 
 function collectStringIds(rows: unknown[], key: string) {
@@ -209,6 +305,7 @@ export async function POST(request: NextRequest) {
         return true
       })
       .slice(0, limit)
+      .map(row => compactMonitorTask(row as Record<string, unknown>))
 
     return NextResponse.json({ tasks })
   } catch (error) {

@@ -10,8 +10,8 @@
  *   2. Config 読み込み + 検証
  *   3. Focusmap API client 作成 (agent_token認証)
  *   4. ai_runners に登録 → runner_id 取得
- *   5. 実行中は5秒、アイドル時は30秒基準で lightweight heartbeat ループ
- *   6. 3秒ごとに claim_ai_task_for_runner で task pull
+ *   5. 実行中は15秒、アイドル時は60秒基準で lightweight heartbeat ループ
+ *   6. 15秒ごとに claim_ai_task_for_runner で task pull
  *   7. claim したタスクを executor で実行
  *   8. SIGINT/SIGTERM でグレースフルシャットダウン
  */
@@ -38,13 +38,13 @@ function intervalFromEnv(name: string, fallbackMs: number, minMs: number, maxMs:
   return Math.max(minMs, Math.min(maxMs, raw));
 }
 
-const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL_MS', 5_000, 5_000, 60_000);
-const IDLE_HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_IDLE_HEARTBEAT_INTERVAL_MS', 30_000, 5_000, 5 * 60_000);
-const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 3_000, 3_000, 60_000);
+const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL_MS', 15_000, 5_000, 5 * 60_000);
+const IDLE_HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_IDLE_HEARTBEAT_INTERVAL_MS', 60_000, 15_000, 10 * 60_000);
+const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 15_000, 5_000, 5 * 60_000);
 const COMMAND_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_COMMAND_INTERVAL_MS', 15_000, 5_000, 60_000);
-const CODEX_THREAD_MONITOR_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_INTERVAL_MS', 1_000, 1_000, 60_000);
-const CODEX_THREAD_MONITOR_TARGET_REFRESH_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_TARGET_REFRESH_MS', DEFAULT_TARGET_REFRESH_INTERVAL_MS, 1_000, 60_000);
-const CODEX_THREAD_MONITOR_RECENT_SCAN_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_RECENT_SCAN_MS', DEFAULT_RECENT_SCAN_INTERVAL_MS, 1_000, 60_000);
+const CODEX_THREAD_MONITOR_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_INTERVAL_MS', 5_000, 5_000, 5 * 60_000);
+const CODEX_THREAD_MONITOR_TARGET_REFRESH_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_TARGET_REFRESH_MS', DEFAULT_TARGET_REFRESH_INTERVAL_MS, 30_000, 15 * 60_000);
+const CODEX_THREAD_MONITOR_RECENT_SCAN_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_RECENT_SCAN_MS', DEFAULT_RECENT_SCAN_INTERVAL_MS, 30_000, 15 * 60_000);
 const CODEX_THREAD_MONITOR_RECONCILE_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_RECONCILE_MS', DEFAULT_RECONCILE_INTERVAL_MS, 60_000, 6 * 60 * 60_000);
 
 async function main(): Promise<void> {
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
 
   let currentTaskId: string | null = null;
 
-  // 5. Heartbeat ループ (runningは2s、idleは30sのlightweight Turso upsert by default)
+  // 5. Heartbeat ループ (runningは15s、idleは60sのlightweight Turso upsert by default)
   const heartbeatTimer = startHeartbeatLoop(
     api,
     config,

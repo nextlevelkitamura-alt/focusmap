@@ -603,6 +603,11 @@ Goals → Projects → TaskGroups → Tasks
 
 ---
 
+## 運用コスト制御
+- 2026-06-29以降、Mac `focusmap-agent` の本番API巡回はCloud Run費用を抑えるため低頻度を既定にする。heartbeatは通常15秒/idle 60秒、task claimは15秒、Codex Active Watchは5秒、Target Refreshは60秒、Recent Scanは30秒、Detail Hydrateのactive pollは5秒、idle pollは30秒を基準にする。環境変数で短く指定されても、Target RefreshとRecent Scanは30秒未満へ下げない。`/api/agents/codex-monitor/tasks` は一覧監視に必要なCodexメタデータだけを返し、`result` の長いログ本文・大量activity・長いstep detailは返さない。401/403などagent認証失敗は1時間バックオフし、404/405/503など一時的なAPI不可は10分バックオフする。監視精度を戻したい場合も、Cloud Run billingとリクエスト量を見ながらこの方針を変更する。
+
+---
+
 ## 技術スタック
 - **フロントエンド**: Next.js 16.1.3 (App Router), React 19
 - **UI**: Radix UI, Tailwind CSS 4, Lucide Icons
@@ -638,4 +643,4 @@ Goals → Projects → TaskGroups → Tasks
 
 ---
 
-最終更新: 2026-02-08
+最終更新: 2026-06-29

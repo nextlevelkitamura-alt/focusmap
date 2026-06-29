@@ -9,19 +9,21 @@ import {
 type SupabaseServiceClient = Awaited<ReturnType<typeof authenticateAgent>>['supabase']
 
 const VALID_EXECUTORS = ['codex_app', 'codex'] as const
+const DEFAULT_LIMIT = 20
+const MAX_LIMIT = 40
 
 function compactString(value: unknown, max = 500) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 }
 
 function parseLimit(value: string | null) {
-  const parsed = Number.parseInt(value || '50', 10)
-  return Math.min(Math.max(Number.isFinite(parsed) ? parsed : 50, 1), 200)
+  const parsed = Number.parseInt(value || String(DEFAULT_LIMIT), 10)
+  return Math.min(Math.max(Number.isFinite(parsed) ? parsed : DEFAULT_LIMIT, 1), MAX_LIMIT)
 }
 
 function parseLimitValue(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.min(Math.max(Math.floor(value), 1), 200)
+    return Math.min(Math.max(Math.floor(value), 1), MAX_LIMIT)
   }
   return parseLimit(typeof value === 'string' ? value : null)
 }

@@ -235,7 +235,7 @@ export class AgentApiClient {
     return data.task;
   }
 
-  async listCodexMonitorTasks(runnerId: string, limit = 80): Promise<AiTask[]> {
+  async listCodexMonitorTasks(runnerId: string, limit = 40): Promise<AiTask[]> {
     const data = await this.request<{ tasks: AiTask[] }>('/agents/codex-monitor/tasks', {
       runner_id: runnerId,
       limit,
@@ -299,7 +299,7 @@ export class AgentApiClient {
 
   async listAiHistoryDetailHydrateRequests(
     runnerId: string,
-    limit = 50,
+    limit = 20,
   ): Promise<AiHistoryDetailHydrateRequest[]> {
     const data = await this.request<{ requests?: AiHistoryDetailHydrateRequest[] }>(
       '/agents/ai-history/detail-hydrate-requests',
@@ -313,7 +313,7 @@ export class AgentApiClient {
 
   async listActiveAiHistoryMonitorTargets(
     runnerId: string,
-    limit = 100,
+    limit = 40,
   ): Promise<AiHistoryMonitorTarget[]> {
     const data = await this.request<{ targets?: AiHistoryMonitorTarget[] }>(
       '/agents/ai-history/active-monitor-targets',

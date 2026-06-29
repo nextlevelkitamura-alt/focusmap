@@ -24,21 +24,21 @@ import { debug, error as logError, info } from './logger.js';
 
 const execFileAsync = promisify(execFile);
 const SQLITE_BIN = '/usr/bin/sqlite3';
-const MONITOR_LIMIT = 200;
+const MONITOR_LIMIT = 40;
 const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12;
 const MAX_ACTIVITY_BODY_CHARS = 8_000;
 const SQLITE_READ_RETRY_DELAYS_MS = [80, 220, 500] as const;
 const ROLLOUT_READ_CACHE_LIMIT = 300;
 const ROLLOUT_INSPECT_CACHE_LIMIT = 1_000;
-const PRE_IMPORT_SYNC_LIMIT = 40;
-const POST_IMPORT_SYNC_LIMIT = 20;
+const PRE_IMPORT_SYNC_LIMIT = 20;
+const POST_IMPORT_SYNC_LIMIT = 10;
 const PRE_IMPORT_SYNC_YIELD_EVERY = 25;
-const RUNNING_HOT_ORPHAN_IMPORT_LIMIT = 3;
+const RUNNING_HOT_ORPHAN_IMPORT_LIMIT = 1;
 const syncCache = new Map<string, string>();
 const rolloutReadCache = new Map<string, { mtimeMs: number; size: number; raw: string }>();
 const rolloutSummaryCache = new Map<string, { rawRollout: string; summary: RolloutSummary }>();
-export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 2_000;
-export const DEFAULT_RECENT_SCAN_INTERVAL_MS = 1_000;
+export const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 60_000;
+export const DEFAULT_RECENT_SCAN_INTERVAL_MS = 30_000;
 export const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
 export const RESUME_RUNNING_VISIBILITY_MS = 6_000;
 export const AWAITING_APPROVAL_STABILITY_MS = 1_000;
@@ -46,34 +46,34 @@ export const TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS = 30 * 60 * 1000;
 export const CODEX_THREAD_STATUS_RESOLVER_VERSION = '2026-06-25-ai-history-title-watch-v1';
 export const CODEX_ARCHIVE_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const MONITOR_DB_PATH_CACHE_TTL_MS = 30_000;
-const ORPHAN_IMPORT_LIMIT = 30;
-const ORPHAN_IMPORT_SCAN_LIMIT = 200;
+const ORPHAN_IMPORT_LIMIT = 10;
+const ORPHAN_IMPORT_SCAN_LIMIT = 80;
 const AI_HISTORY_PROVIDER = 'codex_app';
 export const AI_HISTORY_FAST_WATCH_LIMIT = 20;
 const AI_HISTORY_HOT_SYNC_LIMIT = AI_HISTORY_FAST_WATCH_LIMIT;
 const AI_HISTORY_HOT_SYNC_TOTAL_LIMIT = ORPHAN_IMPORT_SCAN_LIMIT;
 const AI_HISTORY_RECONCILE_SCOPE_BATCH_LIMIT = 20;
-const AI_HISTORY_BATCH_SIZE = 80;
+const AI_HISTORY_BATCH_SIZE = 40;
 const AI_HISTORY_RUNNING_DURATION_WRITE_INTERVAL_MS = 60_000;
 const AI_HISTORY_RECONCILE_QUEUE_YIELD_MS = 20;
 export const AI_HISTORY_SOURCE_TASK_RECONCILE_INTERVAL_MS = 10 * 60 * 1000;
-export const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 5_000;
-export const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 1_000;
+export const AI_HISTORY_DETAIL_HYDRATE_POLL_MS = 30_000;
+export const AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS = 5_000;
 export const AI_HISTORY_DETAIL_HYDRATE_OPEN_BURST_MS = 10_000;
 export const CODEX_TIMER_ALIGNMENT_RECHECK_DELAYS_MS = [10_000, 60_000] as const;
 export const CODEX_TIMER_ALIGNMENT_RECHECK_MAX_WATCHES = 100;
-const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 50;
-const AI_HISTORY_DETAIL_HYDRATE_PER_TICK = 5;
-const AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT = 100;
+const AI_HISTORY_DETAIL_HYDRATE_LIMIT = 20;
+const AI_HISTORY_DETAIL_HYDRATE_PER_TICK = 3;
+const AI_HISTORY_ACTIVE_MONITOR_TARGET_LIMIT = 40;
 const AI_HISTORY_DETAIL_WATCH_TTL_MS = 120_000;
-const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 1_000;
+const AI_HISTORY_DETAIL_FAST_WATCH_RECHECK_MS = 5_000;
 const AI_HISTORY_ARCHIVE_REQUEST_REASON = 'ai_history_archived';
 export const AI_HISTORY_PLACEHOLDER_TITLE = '新しいチャット';
 const AI_HISTORY_PLACEHOLDER_TITLE_WATCH_TTL_MS = 5 * 60 * 1000;
 const MAX_AI_HISTORY_DETAIL_MESSAGES_PER_POST = 50;
 export const AI_HISTORY_STALE_RUNNING_GENERAL_MS = TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
 export const AI_HISTORY_STALE_RUNNING_AUTOMATION_MS = TASK_STALE_RUNNING_NO_TERMINAL_EVENT_MS;
-const RUNNING_THREAD_ROLLOUT_RECHECK_MS = 1_000;
+const RUNNING_THREAD_ROLLOUT_RECHECK_MS = 5_000;
 const ACTIVE_RUNNING_ACTIVITY_WINDOW_MS = 30_000;
 const STALE_RUNNING_THREAD_ROLLOUT_RECHECK_MS = 30_000;
 const STABLE_TASK_ROLLOUT_RECHECK_MS = 30_000;
@@ -81,7 +81,8 @@ const configuredOrphanImportWindowMs = Number(process.env.FOCUSMAP_CODEX_ORPHAN_
 const ORPHAN_IMPORT_WINDOW_MS = Number.isFinite(configuredOrphanImportWindowMs) && configuredOrphanImportWindowMs > 0
   ? configuredOrphanImportWindowMs
   : 2 * 60 * 60 * 1000;
-const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
+const ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS = 10 * 60 * 1000;
+const API_AUTH_REJECTED_BACKOFF_MS = 60 * 60 * 1000;
 const FOCUSMAP_HANDOFF_THREAD_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PROMPT_MATCH_PREFIX_CHARS = 500;
 const MIN_PROMPT_MATCH_CHARS = 120;
@@ -1310,7 +1311,18 @@ export function matchingThreadImportScope(
 }
 
 export function isOrphanImportApiUnavailable(error: unknown): error is AgentApiError {
-  return error instanceof AgentApiError && (error.status === 404 || error.status === 405);
+  return error instanceof AgentApiError &&
+    (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 405 || error.status === 503);
+}
+
+function apiUnavailableBackoffMs(error: AgentApiError): number {
+  return error.status === 401 || error.status === 403
+    ? API_AUTH_REJECTED_BACKOFF_MS
+    : ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+}
+
+function apiUnavailableBackoffSeconds(error: AgentApiError): number {
+  return Math.round(apiUnavailableBackoffMs(error) / 1000);
 }
 
 type PreparedAiHistoryItem = {
@@ -2794,13 +2806,13 @@ async function listThreadImportScopes(
     return await api.listCodexThreadImportScopes(runnerId);
   } catch (error) {
     if (isOrphanImportApiUnavailable(error)) {
-      importScopesApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+      importScopesApiUnavailableUntil = Date.now() + apiUnavailableBackoffMs(error);
       updateCodexThreadMonitorHeartbeatState({
         last_scope_refresh_at: new Date().toISOString(),
         last_scope_refresh_error: `api_unavailable:${error.status}`,
         scopes: [],
       });
-      info(`codex import scopes API unavailable status=${error.status}; pausing orphan import for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      info(`codex import scopes API unavailable status=${error.status}; pausing orphan import for ${apiUnavailableBackoffSeconds(error)}s`);
       return [];
     }
     updateCodexThreadMonitorHeartbeatState({
@@ -2814,7 +2826,8 @@ async function listThreadImportScopes(
 }
 
 function isAiHistorySyncApiUnavailable(error: unknown): error is AgentApiError {
-  return error instanceof AgentApiError && (error.status === 404 || error.status === 405 || error.status === 503);
+  return error instanceof AgentApiError &&
+    (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 405 || error.status === 503);
 }
 
 function normalizedHydrateRequest(value: AiHistoryDetailHydrateRequest): AiHistoryDetailHydrateRequest | null {
@@ -2966,7 +2979,7 @@ async function sendAiHistoryMetadataBatch(
           await postPreparedAiHistoryDetailMessages(api, runnerId, responseItem, prepared);
         } catch (error) {
           if (isAiHistorySyncApiUnavailable(error)) {
-            aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+            aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + apiUnavailableBackoffMs(error);
             debug(`ai history detail activity API unavailable status=${error.status}`);
           } else {
             logError('ai history detail activity upsert failed', error instanceof Error ? error.message : error);
@@ -2976,8 +2989,8 @@ async function sendAiHistoryMetadataBatch(
       upserted += response.upserted ?? 0;
     } catch (error) {
       if (isAiHistorySyncApiUnavailable(error)) {
-        orphanImportApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
-        info(`ai history batch upsert API unavailable status=${error.status}; pausing metadata sync for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+        orphanImportApiUnavailableUntil = Date.now() + apiUnavailableBackoffMs(error);
+        info(`ai history batch upsert API unavailable status=${error.status}; pausing metadata sync for ${apiUnavailableBackoffSeconds(error)}s`);
         return upserted;
       }
       logError('ai history batch upsert failed', error instanceof Error ? error.message : error);
@@ -3257,8 +3270,8 @@ async function pollAiHistoryDetailHydrateRequests(
     return activeRequestCount;
   } catch (error) {
     if (isAiHistorySyncApiUnavailable(error)) {
-      aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
-      info(`ai history detail hydrate API unavailable status=${error.status}; pausing detail hydrate for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + apiUnavailableBackoffMs(error);
+      info(`ai history detail hydrate API unavailable status=${error.status}; pausing detail hydrate for ${apiUnavailableBackoffSeconds(error)}s`);
       return 0;
     }
     logError('ai history detail hydrate request poll failed', error instanceof Error ? error.message : error);
@@ -3279,8 +3292,8 @@ async function listActiveAiHistoryMonitorTargets(
       .filter((target): target is AiHistoryMonitorTarget => Boolean(target));
   } catch (error) {
     if (isAiHistorySyncApiUnavailable(error)) {
-      activeAiHistoryMonitorTargetsApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
-      info(`ai history active monitor API unavailable status=${error.status}; pausing active history watch for ${Math.round(ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS / 1000)}s`);
+      activeAiHistoryMonitorTargetsApiUnavailableUntil = Date.now() + apiUnavailableBackoffMs(error);
+      info(`ai history active monitor API unavailable status=${error.status}; pausing active history watch for ${apiUnavailableBackoffSeconds(error)}s`);
       return [];
     }
     logError('ai history active monitor target refresh failed', error instanceof Error ? error.message : error);
@@ -3366,7 +3379,7 @@ async function syncAiHistoryDetailHydrateRequests(
       }
     } catch (error) {
       if (isAiHistorySyncApiUnavailable(error)) {
-        aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + ORPHAN_IMPORT_API_UNAVAILABLE_BACKOFF_MS;
+        aiHistoryDetailHydrateApiUnavailableUntil = Date.now() + apiUnavailableBackoffMs(error);
         logError('ai history detail hydrate API unavailable', error.message);
         return hydrated;
       }
@@ -3977,7 +3990,7 @@ export function startCodexThreadMonitorLoop(
     }, recentScanIntervalMs),
     setInterval(() => {
       void runDetailHydrate();
-    }, Math.min(1_000, AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS)),
+    }, Math.max(5_000, Math.min(30_000, AI_HISTORY_DETAIL_HYDRATE_ACTIVE_POLL_MS))),
     setInterval(() => {
       void runReconcile();
     }, Math.min(60_000, Math.max(10_000, reconcileIntervalMs))),
