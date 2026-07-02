@@ -85,6 +85,11 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 作業実績は `docs/ai/task-runs.jsonl`、再発防止メモは `docs/ai/mistakes.md`、並列化判断の分析は `docs/ai/task-router-analysis.md` に置く
 - 毎回守るべき重要ルールは task-router Skill / workflow へ昇格し、状況依存・観察中の知見は analysis に留める
 
+### Personal OS標準への接続（2026-07-02・薄い接続）
+- 作業の段階・規模の共通語彙（フル/ライト/サクッと・人間ゲート）は `~/Private/personal-os/説明書/運用契約.md` §2 を正とする。
+- repo内の開発タスクの並列化・進め方判断は従来どおり `task-router` が正。repoをまたぐ依頼や Personal OS のレーン（Orca cockpit）・盤面に乗せる時だけ、入口判断を global skill `plan-triage` に通す。
+- 計画書の雛形が要る時は personal-os の `skills/plan-ops/scripts/new-plan.sh`（scaffold）を使ってよい。
+
 ### 本番デプロイ運用（重要）
 - 本番 Cloud Run は **origin/main の内容だけ**を正とする
 - feature ブランチや未コミット差分を本番に直接デプロイしない
