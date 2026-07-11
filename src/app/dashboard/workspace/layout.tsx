@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/server';
-import { Building2, Users, CreditCard, BarChart3, Server } from 'lucide-react';
+import { Building2, Users, CreditCard, BarChart3, Clock3, Server } from 'lucide-react';
 import { WorkspaceTabs } from '@/components/workspace/workspace-tabs';
 import { WorkspaceSelector } from '@/components/workspace/workspace-selector';
 
@@ -12,6 +12,7 @@ const TABS = [
   { href: '/members', label: 'メンバー', icon: Users },
   { href: '/billing', label: '課金', icon: CreditCard },
   { href: '/analytics', label: '使用量', icon: BarChart3 },
+  { href: '/sessions', label: 'セッション', icon: Clock3 },
   { href: '/agents', label: 'エージェント', icon: Server },
 ] as const;
 
