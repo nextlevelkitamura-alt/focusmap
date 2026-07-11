@@ -1,20 +1,11 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/server';
-import { Building2, Users, CreditCard, BarChart3, Clock3, Server } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 import { WorkspaceTabs } from '@/components/workspace/workspace-tabs';
 import { WorkspaceSelector } from '@/components/workspace/workspace-selector';
 
 export const dynamic = 'force-dynamic';
-
-const TABS = [
-  { href: '', label: '概要', icon: Building2 },
-  { href: '/members', label: 'メンバー', icon: Users },
-  { href: '/billing', label: '課金', icon: CreditCard },
-  { href: '/analytics', label: '使用量', icon: BarChart3 },
-  { href: '/sessions', label: 'セッション', icon: Clock3 },
-  { href: '/agents', label: 'エージェント', icon: Server },
-] as const;
 
 interface WorkspaceLayoutProps {
   children: React.ReactNode;
@@ -78,7 +69,7 @@ export default async function WorkspaceLayout({ children }: WorkspaceLayoutProps
             </div>
             <WorkspaceSelector spaces={allSpaces} />
           </div>
-          <WorkspaceTabs tabs={[...TABS]} />
+          <WorkspaceTabs />
         </div>
       </div>
 
