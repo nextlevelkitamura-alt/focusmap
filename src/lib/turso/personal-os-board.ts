@@ -253,31 +253,37 @@ export async function getStuckWait(thresholdMinutes = 15): Promise<StuckWait[]> 
   }))
 }
 
-export async function getCurrentSessions(): Promise<CurrentSession[]> {
-  const result = await getPersonalOsBoardClient().execute(`
-    WITH latest_events AS (
+export async function getCurrentSessions(date?: string): Promise<CurrentSession[]> {
+  const result = await getPersonalOsBoardClient().execute({
+    sql: `
+      WITH latest_events AS (
+        SELECT
+          session_key, state,
+          ROW_NUMBER() OVER (PARTITION BY session_key ORDER BY at DESC, id DESC) AS rn
+        FROM session_events
+      )
       SELECT
-        session_key, state,
-        ROW_NUMBER() OVER (PARTITION BY session_key ORDER BY at DESC, id DESC) AS rn
-      FROM session_events
-    )
-    SELECT
-      sessions.session_key,
-      sessions.goal,
-      sessions.now,
-      sessions.type,
-      sessions.repo,
-      sessions.model,
-      sessions.plan,
-      COALESCE(latest_events.state, sessions.state) AS state,
-      sessions.updated_at,
-      sessions.sub_n
-    FROM sessions
-    LEFT JOIN latest_events
-      ON latest_events.session_key = sessions.session_key
-     AND latest_events.rn = 1
-    ORDER BY sessions.updated_at DESC, sessions.session_key
-  `)
+        sessions.session_key,
+        sessions.goal,
+        sessions.now,
+        sessions.type,
+        sessions.repo,
+        sessions.model,
+        sessions.plan,
+        COALESCE(latest_events.state, sessions.state) AS state,
+        sessions.updated_at,
+        sessions.sub_n
+      FROM sessions
+      LEFT JOIN latest_events
+        ON latest_events.session_key = sessions.session_key
+       AND latest_events.rn = 1
+      WHERE sessions.updated_at >= (
+        COALESCE(:date, DATE('now', '+9 hours')) || 'T00:00:00'
+      )
+      ORDER BY sessions.updated_at DESC, sessions.session_key
+    `,
+    args: { date: date ?? null },
+  })
   return result.rows.map((row) => ({
     sessionKey: asString(row.session_key),
     goal: asString(row.goal),
