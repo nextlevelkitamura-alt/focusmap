@@ -77,6 +77,10 @@ jobs:
             --set-env-vars NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
             --set-env-vars NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }} \
             --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
+            --set-env-vars PERSONAL_OS_BOARD_DATABASE_URL=libsql://personal-os-board-nextlevelkitamura-alt.aws-ap-northeast-1.turso.io \
+            --set-env-vars PERSONAL_OS_BOARD_AUTH_TOKEN=${{ secrets.PERSONAL_OS_BOARD_AUTH_TOKEN }} \
+            --set-env-vars PERSONAL_OS_INBOX_DATABASE_URL=libsql://personal-os-inbox-nextlevelkitamura-alt.aws-ap-northeast-1.turso.io \
+            --set-env-vars PERSONAL_OS_INBOX_AUTH_TOKEN=${{ secrets.PERSONAL_OS_INBOX_AUTH_TOKEN }} \
             --set-env-vars NEXT_PUBLIC_SITE_URL=${PUBLIC_URL} \
             --set-env-vars GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }} \
             --set-env-vars GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }} \

@@ -601,6 +601,13 @@ Goals → Projects → TaskGroups → Tasks
 - `user_calendar_settings` - Google Calendar 設定
 - `calendar_sync_log` - 同期ログ
 
+### Personal OS 連携（Turso・2026-07-11）
+- 画面: `/dashboard/workspace/sessions` — 「今日の目標」主役のセッション時間ダッシュボード（目標別のメイン実行/サブ実行/待ち・⏸放置アラート・✔終わったこと・日付切替）
+- 読み取り: Turso `personal-os-board`（session-boardフックが記録する sessions / session_events / session_logs）。**読み取り専用トークン**・env `PERSONAL_OS_BOARD_DATABASE_URL` / `PERSONAL_OS_BOARD_AUTH_TOKEN`
+- 書き込み: 目標宣言のみ、専用DB `personal-os-inbox` の `goals` へ（＋ボタン→server action）。env `PERSONAL_OS_INBOX_DATABASE_URL` / `PERSONAL_OS_INBOX_AUTH_TOKEN`
+- 接続は `src/lib/turso/client.ts` の名前付きクライアント、クエリ層は `src/lib/turso/personal-os-board.ts`（数字の定義は personal-os 側 queries/ の保存SQLと同一・待ち=⏸区間のみ）
+- 正本はデイリーmd（personal-os）。この画面は読み取りミラー。時間はSQLで都度計算しどこにも保存しない
+
 ---
 
 ## 運用コスト制御
