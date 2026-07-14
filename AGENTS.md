@@ -149,6 +149,9 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - status の遷移: pending → running → awaiting_approval / completed / failed
 - Supabase Realtime で画面自動更新
 
+### Repo-local loop
+- Focusmap固有の新規loopの実体正本は `loops/<loop-id>/` とし、新設・変更はGlobal Skill `loop-creator` を必ず通す。既存の `scripts/`、`scripts/focusmap-agent/`、launchd実装は、このroot導入だけでは移動・変更しない。
+
 ### マインドマップ移行方針
 - React Flow版は本番導線として維持し、自作マップは並走表示で育てる
 - マップの状態・階層・レイアウト計算は `src/lib/mindmap-model.ts` / `src/lib/mindmap-geometry.ts` を起点にする

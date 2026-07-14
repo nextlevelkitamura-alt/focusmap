@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FocusmapのLoop運用</title>
+  <style>
+    :root { color-scheme: light; --bg:#fff; --surface:#fff; --soft:#f6f8fc; --ink:#172033; --muted:#5d6778; --line:#d8dfeb; --blue:#2456bd; --blue-soft:#edf2ff; --green:#216e48; --green-soft:#e8f5ed; --amber:#8b5600; --amber-soft:#fff3dc; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); line-height:1.7; } main { max-width:980px; margin:0 auto; padding:48px 26px 80px; } h1 { margin:0; font-size:40px; letter-spacing:-.03em; line-height:1.2; } h2 { margin:0; font-size:24px; letter-spacing:-.02em; } p { margin:8px 0 0; } .eyebrow,.muted { color:var(--muted); } .eyebrow { font-size:12px; font-weight:700; letter-spacing:.13em; } .lede { max-width:64ch; font-size:17px; color:var(--muted); } section { margin-top:48px; } .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:18px; } .card,.panel,.note { border:1px solid var(--line); border-radius:14px; background:var(--surface); padding:18px; } .card h3,.panel h3 { margin:9px 0 0; font-size:17px; } .card p,.panel p { font-size:14px; color:var(--muted); } .pill { display:inline-block; padding:3px 9px; border-radius:999px; font-size:12px; font-weight:700; } .real { color:var(--green); background:var(--green-soft); } .link { color:var(--blue); background:var(--blue-soft); } .gate { color:var(--amber); background:var(--amber-soft); } pre { margin:18px 0 0; overflow:auto; border:1px solid var(--line); border-radius:14px; background:var(--soft); padding:18px; font:13px/1.85 "SF Mono",Menlo,Consolas,monospace; } code { font:12px "SF Mono",Menlo,Consolas,monospace; background:var(--soft); border:1px solid var(--line); border-radius:5px; padding:1px 5px; } ol { margin:16px 0 0; padding-left:24px; } li { margin:10px 0; } .note { margin-top:16px; background:var(--amber-soft); border-color:#efd7a7; } @media (max-width:700px) { main { padding:30px 18px 60px; } h1 { font-size:32px; } .cards { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">FOCUSMAP · REPO-LOCAL LOOP GUIDE</p>
+      <h1>Focusmapの新規loopは<br><code>loops/</code> に置く</h1>
+      <p class="lede">ここはFocusmapが所有する新規loopの実体正本です。基盤は発見の入口、launchdは実行時刻、registryは全体状態を担当します。AIが読む正本は同階層の <code>AGENTS.md</code> です。</p>
+    </header>
+
+    <section>
+      <h2>役割を分ける</h2>
+      <div class="cards">
+        <article class="card"><span class="pill real">実装の正本</span><h3>この <code>loops/</code></h3><p>新規loopは <code>loops/&lt;loop-id&gt;/</code> に置きます。基盤へ同じ実装をコピーしません。</p></article>
+        <article class="card"><span class="pill link">実行の正本</span><h3>plist / launchd</h3><p>いつ動くかはplistと実機の <code>launchctl</code> が決めます。基盤リンクは実行経路ではありません。</p></article>
+        <article class="card"><span class="pill link">発見の入口</span><h3>基盤directory link</h3><p><code>implementation-links/Focusmap</code> はこのroot全体へ繋がり、人が基盤から辿るためだけにあります。</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>最小構成</h2>
+      <p class="muted">必須は定義だけ。必要な実装・ログ・launchdだけを後から足します。</p>
+      <pre>Focusmap/loops/
+├── AGENTS.md                 AI向けの正本
+├── CLAUDE.md → AGENTS.md
+├── AGENTS.html               人間向けの説明
+└── &lt;loop-id&gt;/
+    ├── loop.md               目的・発火・runner・停止手順
+    ├── scripts/              実装が必要な時だけ
+    ├── logs/                 ファイルログが必要な時だけ・gitignore
+    └── *.plist               launchdを使う時だけ</pre>
+    </section>
+
+    <section>
+      <h2>新設の流れ</h2>
+      <ol>
+        <li>Global Skill <code>loop-creator</code> で所有repoとこのrootを確定する。</li>
+        <li><code>loop.md</code> から作り、必要性がある時だけscript・logs・plistを追加する。</li>
+        <li>基盤のroot directory linkと、その時点のregistry正本を照合する。</li>
+        <li>launchdの有効化・再登録・周期変更は、対象とrollbackを確認した人の承認後だけに行う。</li>
+      </ol>
+      <div class="note"><strong>既存導線は据え置きです。</strong><br>このrootを作っただけでは、<code>scripts/focusmap-agent/</code>、<code>scripts/task-runner.ts</code>、既存のscriptsやlaunchdを移動・変更しません。</div>
+    </section>
+
+    <section>
+      <h2>判断するときの正本</h2>
+      <div class="panel"><p><strong>このrootの規則:</strong> <code>loops/AGENTS.md</code></p><p><strong>Focusmapの入口:</strong> <code>Focusmap/AGENTS.md</code></p><p><strong>基盤のloop規則:</strong> <code>AIエージェント基盤/loops-registry/AGENTS.md</code></p><p><strong>リンクの安全規則:</strong> <code>loops-registry/implementation-links/AGENTS.md</code></p></div>
+    </section>
+  </main>
+</body>
+</html>
