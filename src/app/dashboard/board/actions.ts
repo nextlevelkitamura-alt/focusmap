@@ -25,6 +25,15 @@ function endOfJstWeek(offsetWeeks: number) {
   return now.toISOString().slice(0, 10);
 }
 
+// 「来週」= 来週月曜（JST）。docs/CONTEXT.md と子計画01の宣言に一致させる
+function startOfNextJstWeek() {
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const day = now.getUTCDay();
+  const daysUntilNextMonday = (8 - day) % 7 || 7;
+  now.setUTCDate(now.getUTCDate() + daysUntilNextMonday);
+  return now.toISOString().slice(0, 10);
+}
+
 function isValidDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -34,7 +43,7 @@ function isValidDate(value: string): boolean {
 function computeDoDate(doKind: string, customDate: string): string {
   if (doKind === 'tomorrow') return getJstDate(1);
   if (doKind === 'this_week') return endOfJstWeek(0);
-  if (doKind === 'next_week') return endOfJstWeek(1);
+  if (doKind === 'next_week') return startOfNextJstWeek();
   if (doKind === 'custom' && isValidDate(customDate)) return customDate;
   return getJstDate(0);
 }
