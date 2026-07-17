@@ -237,7 +237,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
   const stuckBySession = new Map(stuckResult.data.map((stuck) => [stuck.sessionKey, stuck]));
 
   return (
-    <div className="relative space-y-6 pb-20">
+    <div className="relative min-h-0 flex-1 space-y-6 overflow-y-auto pb-20">
       {isToday ? <BoardPoller /> : null}
 
       <header className="flex items-center justify-between gap-2">

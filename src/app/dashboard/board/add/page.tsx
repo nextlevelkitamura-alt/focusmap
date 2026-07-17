@@ -53,7 +53,7 @@ export default async function AddTodoPage({ searchParams }: PageProps) {
   const repos = await getRepos().catch(() => []);
 
   return (
-    <div className="mx-auto max-w-lg space-y-5 pb-10">
+    <div className="mx-auto min-h-0 w-full max-w-lg flex-1 space-y-5 overflow-y-auto pb-10">
       <header className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="h-11 w-11" asChild>
           <Link href="/dashboard/board" aria-label="戻る">
