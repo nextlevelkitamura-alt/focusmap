@@ -608,6 +608,17 @@ Goals → Projects → TaskGroups → Tasks
 - 接続は `src/lib/turso/client.ts` の名前付きクライアント、クエリ層は `src/lib/turso/personal-os-board.ts`（数字の定義は personal-os 側 queries/ の保存SQLと同一・待ち=⏸区間のみ）
 - 正本はデイリーmd（personal-os）。この画面は読み取りミラー。時間はSQLで都度計算しどこにも保存しない
 
+### やること箱と今日ボード（Turso・2026-07-17）
+- 画面: `/dashboard/board` — 今日ボード（今日のやること・動いているエージェント・終わったこと・本日サマリ、日付切替、右下FABから起票）。`/dashboard/board/add` — 起票画面（タイトル/いつ/実行repo/任せる必須、締切・メモ・的紐付けは「詳しく▾」）
+- どちらも `WorkspaceLayout`（business向けspace選択）配下ではなく `dashboard/layout.tsx` 直下の独立ページ。認証チェックは各page.tsxが自前で行う（`ai-todos/page.tsx` と同じパターン）。既存 `src/components/today/*`（カレンダーTodo機能）とは無関係の別機能なので命名を衝突させない
+- DB置き先: **personal-os-inbox**（`todos` / `repos` テーブルを新設）。board dbはfocusmapから読み取り専用トークンしか持たないため書けない。inboxは既存の `goals` 追加フォームと同じくfocusmapがWeb書込トークンを持つため、人間起票のtodoもここに置く。子02のAI検知ループ（Mac側）がai_statusを更新する際は、Keychain経由でinbox書込権限を追加すれば足り、focusmap側の変更は不要という設計判断
+- スキーマ: `db/turso/migrations/20260717000000_todos_and_repos.sql`。`repos`はrepo-registry（`repo-registry/repo概要.md`）からの参照コピー（同期方向: registry→DBのみ、slug: shigoto/focusmap/private/ai-platform/none）。`todos`のai_status語彙は 未検知→検知→立案中/実行中→確認待ち→完了（確認待ち=人間承認ゲート）
+- クエリ層: `src/lib/turso/todos.ts`（`getRepos` / `getTodosForDate` / `insertTodo` / `approveTodo` / `toggleSelfTodoStatus`）。env `PERSONAL_OS_INBOX_DATABASE_URL` / `PERSONAL_OS_INBOX_AUTH_TOKEN` を流用（既存goalsと同じinbox db）
+- 承認ゲート: `approveTodo`は `ai_status='確認待ち'` の行だけを `status=done, ai_status=完了` に更新するSQLガード付き。自分でやる（assignee=self）行は `toggleSelfTodoStatus` でチェックボックス完結（`assignee='self'` ガード付きでAI行には効かない）
+- 画面更新: Turso側にrealtime pushが無いため、今日ボードは isToday の間だけ `_components/board-poller.tsx`（クライアント）が20秒間隔で `router.refresh()` するポーリング方式
+- 「いつ」の簡易マッピング（子02の週/月ビュー実装までの暫定）: 今日=当日 / 明日=翌日 / 今週=今週の日曜（JST） / 来週=来週月曜（JST） / 日付...=カスタム日付。do_date単一カラムのみのため、週バケット表示は子02で正式対応する
+- エージェント・終わったこと・サマリは `personal-os-board.ts` の既存クエリ（`getCurrentSessions` / `getFinishedLogs` / `getDailyTotals` / `getStuckWait`）をそのまま流用（読み取りのみ・変更なし）
+
 ---
 
 ## 運用コスト制御
