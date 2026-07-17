@@ -70,3 +70,6 @@ scripts/task-runner.paused
 scripts/task-runner.log
 scripts/task-runner.err
 scripts/task-runner.paused
+
+# Local verification data (コミット禁止のローカル検証DB等)
+.local/
