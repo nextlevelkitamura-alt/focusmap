@@ -23,6 +23,10 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - Cloud Run デプロイ（GitHub Actions）
 - Codex -p（Mac常駐スクリプトから実行、Max契約内）
 
+## Codex / Skill構成
+- repo-local Skillは `.agents/skills/[name]/SKILL.md` を正本とし、`.claude/skills` はそこへの互換symlinkとする。Codexは `.agents/skills` をネイティブに読むため、`.codex/skills` には同名Skillを重複配置しない（1 skill 1窓）。
+- Codex固有の hooks・rules・custom agents・config（`.codex/config.toml`・`.codex/hooks.json`等）は `.codex/` に限定し、Skill本体は置かない。
+
 ## Git ルール
 
 ### 基本方針
