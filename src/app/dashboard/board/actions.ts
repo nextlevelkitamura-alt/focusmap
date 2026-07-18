@@ -3,9 +3,13 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import {
+  answerTodoQuestion,
   approveTodo as approveTodoQuery,
+  completeAiTodoHeading,
   insertTodo,
+  reattachFixStep,
   toggleSelfTodoStatus,
+  undoCompleteAiTodoHeading,
   type TodoAssignee,
 } from '@/lib/turso/todos';
 
@@ -106,4 +110,66 @@ export async function toggleTodoAction(formData: FormData) {
   }
 
   redirect(date ? `${BOARD_PATH}?date=${date}` : BOARD_PATH);
+}
+
+function boardRedirect(date: string, extra?: Record<string, string>): never {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  for (const [key, value] of Object.entries(extra ?? {})) params.set(key, value);
+  const query = params.toString();
+  redirect(query ? `${BOARD_PATH}?${query}` : BOARD_PATH);
+}
+
+// 段階2: 見出しの完了は人間のタップのみ。完了後は 5秒取り消し（undo）用に justCompleted を渡す。
+export async function completeHeadingAction(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (id) {
+    const done = await completeAiTodoHeading(id);
+    revalidatePath(BOARD_PATH);
+    if (done) boardRedirect(date, { justCompleted: id });
+  }
+
+  boardRedirect(date);
+}
+
+export async function undoCompleteAction(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (id) {
+    await undoCompleteAiTodoHeading(id);
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 段階4: スマホからの質問回答（選択肢タップ / 自由入力）をDB保存。
+export async function answerQuestionAction(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  const answer = String(formData.get('answer') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (id && answer.trim()) {
+    await answerTodoQuestion(id, answer);
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 段階3: 手直し(fix)行を別タスクへ1タップ付け替え。
+export async function reattachFixAction(formData: FormData) {
+  const stepId = String(formData.get('stepId') ?? '');
+  const targetTodoId = String(formData.get('targetTodoId') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (stepId && targetTodoId) {
+    await reattachFixStep(stepId, targetTodoId);
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
 }
