@@ -192,6 +192,9 @@ function AiTodoCard({
         <StatusPct status={status} agg={agg} />
       </div>
       {pct !== null ? <ProgressBar pct={pct} tone={pct >= 100 ? 'review' : 'run'} /> : null}
+      {todo.answer && !todo.answerConsumedAt ? (
+        <p className="mt-1 text-xs text-muted-foreground">回答済（未消費）: {todo.answer}</p>
+      ) : null}
       {steps.length > 0 ? (
         <StepList steps={steps} />
       ) : (
