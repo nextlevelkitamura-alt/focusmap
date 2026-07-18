@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS todos (
   ai_status TEXT NOT NULL DEFAULT '未検知' CHECK (ai_status IN ('未検知', '検知', '立案中', '実行中', '確認待ち', '完了')),
   source TEXT NOT NULL DEFAULT 'web' CHECK (source IN ('web', 'chat', 'cli')),
   goal_ref TEXT,
+  -- AIがこのやることを実行する時に自セッションkey（board DBのsessions.session_key）を書く。
+  -- ボード上で「やること行⇄稼働エージェント」を紐付けるための任意列（2026-07-18・調整2）。
+  session_key TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   completed_at TEXT
