@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 
 export interface UserCalendar {
   id: string;
@@ -319,12 +319,16 @@ export function useCalendars() {
   }, [calendars, fetchCalendars]);
 
   // 選択されたカレンダーのIDリストを返す
-  const selectedCalendarIds = calendars
-    .filter(c => c.selected)
-    .map(c => c.google_calendar_id);
-  const effectiveSelectedCalendarIds = calendars.length > 0
-    ? selectedCalendarIds
-    : cachedSelectedCalendarIds;
+  // useMemoで参照を安定させる（毎レンダー新配列を返すと、下流のuseMemo/useEffect連鎖が
+  // 無限レンダーループになり本番で白画面クラッシュする）
+  const selectedCalendarIds = useMemo(
+    () => calendars.filter(c => c.selected).map(c => c.google_calendar_id),
+    [calendars]
+  );
+  const effectiveSelectedCalendarIds = useMemo(
+    () => (calendars.length > 0 ? selectedCalendarIds : cachedSelectedCalendarIds),
+    [calendars.length, selectedCalendarIds]
+  );
 
   return {
     calendars,
