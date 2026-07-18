@@ -276,10 +276,21 @@ function SummaryTile({ label, value, icon: Icon }: { label: string; value: strin
 }
 
 // 「終わったこと」の完了済みタスク行（入れ子保持・経路アイコン）。
-function DoneTodoRow({ todo, steps }: { todo: Todo; steps: TodoStep[] }) {
+// fix行には付け替えUIを結線する（完了済みに自動紐付いた手直しを別タスクへ動かす経路・修正01）。
+function DoneTodoRow({
+  todo,
+  steps,
+  selectedDate,
+  fixTargets,
+}: {
+  todo: Todo;
+  steps: TodoStep[];
+  selectedDate: string;
+  fixTargets: { id: string; title: string }[];
+}) {
   const routine = todo.route === 'routine' || todo.completedBy === 'routine';
   const single = todo.route === 'single';
-  const hasFix = steps.some((step) => step.kind === 'fix');
+  const fixSteps = steps.filter((step) => step.kind === 'fix');
   return (
     <div className="rounded-md border border-border/40 px-3 py-2">
       <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
@@ -287,7 +298,7 @@ function DoneTodoRow({ todo, steps }: { todo: Todo; steps: TodoStep[] }) {
           {routine ? <Settings2 className="h-4 w-4 text-emerald-600" /> : single ? <span className="text-muted-foreground">·</span> : <Check className="h-4 w-4 text-emerald-600" />}
         </span>
         <span className="min-w-0 flex-1 break-words">{todo.title}</span>
-        {hasFix ? (
+        {fixSteps.length > 0 ? (
           <span className="flex shrink-0 items-center gap-0.5 text-xs text-amber-600">
             <Wrench className="h-3 w-3" />
             手直し中
@@ -295,6 +306,13 @@ function DoneTodoRow({ todo, steps }: { todo: Todo; steps: TodoStep[] }) {
         ) : null}
       </div>
       {steps.length > 0 ? <StepList steps={steps} /> : null}
+      {fixSteps.length > 0 && fixTargets.length > 0 ? (
+        <div className="mt-1 flex flex-wrap gap-2">
+          {fixSteps.map((step) => (
+            <FixReattach key={step.id} stepId={step.id} date={selectedDate} targets={fixTargets} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -369,9 +387,10 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
   const attention = withStatus.filter((item) => item.status.tone === 'question' || item.status.tone === 'review');
   const working = withStatus.filter((item) => item.status.tone === 'plan' || item.status.tone === 'run');
 
-  // 手直し付け替えの候補（他の開いているAI todo）。
+  // 手直し付け替えの候補: 当日の open todo＋完了済み todo の両方・自分自身は除外（修正01・指揮官裁定。
+  // 設計正本「手直しは当日の関連タスクの入れ子へ・完了済みでも追記」に一致）。
   const fixTargetsFor = (currentId: string) =>
-    aiOpen.filter((todo) => todo.id !== currentId).map((todo) => ({ id: todo.id, title: todo.title }));
+    aiTodos.filter((todo) => todo.id !== currentId).map((todo) => ({ id: todo.id, title: todo.title }));
 
   const dedupedLogs = dedupeLogs(logsResult.data);
   const justCompletedId = params.justCompleted && aiDone.some((todo) => todo.id === params.justCompleted) ? params.justCompleted : null;
@@ -532,7 +551,13 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
           {aiDone.length > 0 ? (
             <div className="space-y-2">
               {aiDone.map((todo) => (
-                <DoneTodoRow key={todo.id} todo={todo} steps={stepsByTodo.get(todo.id) ?? []} />
+                <DoneTodoRow
+                  key={todo.id}
+                  todo={todo}
+                  steps={stepsByTodo.get(todo.id) ?? []}
+                  selectedDate={selectedDate}
+                  fixTargets={fixTargetsFor(todo.id)}
+                />
               ))}
             </div>
           ) : null}
