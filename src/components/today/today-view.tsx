@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { Today3DaysCalendar } from "./today-3days-calendar"
+import { BoardPaneSwitch } from "./board-pane-switch"
 import { TodayMonthCalendar } from "./today-month-calendar"
 import { MobileEventEditModal } from "./mobile-event-edit-modal"
 import { AiExecutionTimeline } from "./ai-execution-timeline"
@@ -388,6 +389,7 @@ export function TodayView({
                         </svg>
                     </div>
                 )}
+                <BoardPaneSwitch active="schedule" className="mb-2" />
                 <div className="flex min-h-10 items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-1">

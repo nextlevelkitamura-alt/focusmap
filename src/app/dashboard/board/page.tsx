@@ -34,6 +34,7 @@ import {
 import { getRepos, getTodosForDate, type Repo, type Todo, type TodoAiStatus } from '@/lib/turso/todos';
 import { approveTodoAction, toggleTodoAction } from './actions';
 import { BoardPoller } from './_components/board-poller';
+import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
 
 export const dynamic = 'force-dynamic';
 
@@ -239,6 +240,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
   return (
     <div className="relative min-h-0 flex-1 space-y-6 overflow-y-auto pb-20">
       {isToday ? <BoardPoller /> : null}
+
+      <BoardPaneSwitch active="board" />
 
       <header className="flex items-center justify-between gap-2">
         <Button variant="outline" size="icon" className="h-11 w-11" asChild>
