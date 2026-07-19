@@ -45,6 +45,10 @@ export type CurrentSession = {
   state: string
   updatedAt: string
   subN: number
+  // 子09: プロンプト登録時にAIが board.py update --todo/--theme で宣言した所属先。
+  // 未宣言（NULL）は空文字。エージェント行の「テーマ›タスク」表示と人間チェックの格納先判定に使う。
+  todoId: string
+  themeId: string
 }
 
 export type FinishedLog = {
@@ -272,7 +276,9 @@ export async function getCurrentSessions(date?: string): Promise<CurrentSession[
         sessions.plan,
         COALESCE(latest_events.state, sessions.state) AS state,
         sessions.updated_at,
-        sessions.sub_n
+        sessions.sub_n,
+        sessions.todo_id,
+        sessions.theme_id
       FROM sessions
       LEFT JOIN latest_events
         ON latest_events.session_key = sessions.session_key
@@ -295,7 +301,52 @@ export async function getCurrentSessions(date?: string): Promise<CurrentSession[
     state: asString(row.state),
     updatedAt: asString(row.updated_at),
     subN: asNumber(row.sub_n),
+    todoId: asString(row.todo_id),
+    themeId: asString(row.theme_id),
   }))
+}
+
+// 子09 エージェント行の人間チェック（方針6）: 宣言済み todo_id を「読むだけ」で格納先を決める。
+// (a) todo_id あり → 「終わったこと」のそのタスク入れ子へ成果1行（parent=todoTitle・todo_id刻む）
+// (b) 宣言なし    → 新見出しとして格納（parent=goal・todo_id なし）
+// 判定を再作成せず、session_logs へ1行 INSERT + sessions から当該行を DELETE する（＝格納＝finish相当）。
+// 状態機械（run/wait/sub の session_events）はこの操作で書き換えない（events は積まない）。
+export async function fileAgentToFinished(
+  sessionKey: string,
+  todoTitle: string,
+  sessionDate: string,
+): Promise<boolean> {
+  const client = getPersonalOsBoardClient()
+  // 宣言済みの所属先を「読むだけ」（判定を再作成しない）。
+  const readResult = await client.execute({
+    sql: `SELECT session_key, goal, repo, todo_id FROM sessions WHERE session_key = :key`,
+    args: { key: sessionKey },
+  })
+  const row = readResult.rows[0] as Row | undefined
+  if (!row) return false
+
+  const goal = asString(row.goal)
+  const repo = asString(row.repo)
+  const todoId = asString(row.todo_id)
+  const now = new Date().toISOString()
+  // parent は宣言に従う: todo_id あり=タスク見出し / なし=目標名の新見出し。
+  const parent = todoId ? todoTitle || goal || '作業' : goal || '作業'
+  const entry = goal || todoTitle || '完了'
+
+  // session_logs へ格納（todo_id 列は migration 適用後に有効。宣言なしは NULL）。
+  await client.execute({
+    sql: `
+      INSERT INTO session_logs (repo, parent, entry, session_date, created_at, session_key, todo_id)
+      VALUES (:repo, :parent, :entry, :date, :now, :key, :todoId)
+    `,
+    args: { repo, parent, entry, date: sessionDate, now, key: sessionKey, todoId: todoId || null },
+  })
+  // 動いているエージェントからは外す（格納＝終了。run/wait/sub の遷移 event は積まない）。
+  const del = await client.execute({
+    sql: `DELETE FROM sessions WHERE session_key = :key`,
+    args: { key: sessionKey },
+  })
+  return del.rowsAffected > 0
 }
 
 export async function getFinishedLogs(date?: string): Promise<FinishedLog[]> {

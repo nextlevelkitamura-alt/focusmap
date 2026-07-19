@@ -28,6 +28,10 @@ export type Todo = {
   goalRef: string
   route: TodoRoute
   completedBy: string
+  // 子09: 大課題テーマ階層と繰越し。theme_id 未設定は「未分類」。
+  themeId: string
+  carriedFrom: string
+  awaitingSince: string
   // 段階4: AIの質問（選択肢＋自由入力）。question が空なら質問なし。
   question: string
   questionChoices: string[]
@@ -49,6 +53,7 @@ export type NewTodoInput = {
   repo: string
   assignee: TodoAssignee
   goalRef?: string | null
+  themeId?: string | null
 }
 
 function asString(value: unknown): string {
@@ -94,6 +99,9 @@ function toTodo(row: Row): Todo {
     goalRef: asString(row.goal_ref),
     route: (route === 'routine' || route === 'single' ? route : 'plan') as TodoRoute,
     completedBy: asString(row.completed_by),
+    themeId: asString(row.theme_id),
+    carriedFrom: asString(row.carried_from),
+    awaitingSince: asString(row.awaiting_since),
     question: asString(row.question),
     questionChoices: parseChoices(row.question_choices),
     questionAllowFree: row.question_allow_free === null || row.question_allow_free === undefined ? true : asBool(row.question_allow_free),
@@ -124,7 +132,8 @@ export async function getTodosForDate(date: string): Promise<Todo[]> {
     sql: `
       SELECT id, title, note, do_date, due_date, repo, assignee, status, ai_status, source, goal_ref,
              route, completed_by, question, question_choices, question_allow_free, question_gate,
-             answer, answered_at, answer_consumed_at, created_at, updated_at, completed_at
+             answer, answered_at, answer_consumed_at, created_at, updated_at, completed_at,
+             theme_id, carried_from, awaiting_since
       FROM todos
       WHERE do_date = :date AND status != 'dropped'
       ORDER BY created_at
@@ -139,8 +148,8 @@ export async function insertTodo(input: NewTodoInput): Promise<string> {
   const now = new Date().toISOString()
   await getPersonalOsInboxClient().execute({
     sql: `
-      INSERT INTO todos (id, title, note, do_date, due_date, repo, assignee, status, ai_status, source, goal_ref, created_at, updated_at)
-      VALUES (:id, :title, :note, :doDate, :dueDate, :repo, :assignee, 'open', '未検知', 'web', :goalRef, :now, :now)
+      INSERT INTO todos (id, title, note, do_date, due_date, repo, assignee, status, ai_status, source, goal_ref, theme_id, created_at, updated_at)
+      VALUES (:id, :title, :note, :doDate, :dueDate, :repo, :assignee, 'open', '未検知', 'web', :goalRef, :themeId, :now, :now)
     `,
     args: {
       id,
@@ -151,10 +160,28 @@ export async function insertTodo(input: NewTodoInput): Promise<string> {
       repo: input.repo,
       assignee: input.assignee,
       goalRef: input.goalRef ?? null,
+      themeId: input.themeId ?? null,
       now,
     },
   })
   return id
+}
+
+// 子09 繰越し: 未完了(open)タスクを翌日へ1タップ移動。do_date+1・carried_from は初回のみ記録
+// （COALESCE で再繰越しでも最初の元日付を保つ）。繰越しは人間タップのみ・AIが勝手に日付を動かさない。
+export async function carryOverTodo(id: string): Promise<boolean> {
+  const now = new Date().toISOString()
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      UPDATE todos
+      SET carried_from = COALESCE(carried_from, do_date),
+          do_date = DATE(do_date, '+1 day'),
+          updated_at = :now
+      WHERE id = :id AND status = 'open'
+    `,
+    args: { id, now },
+  })
+  return result.rowsAffected > 0
 }
 
 export async function approveTodo(id: string): Promise<boolean> {

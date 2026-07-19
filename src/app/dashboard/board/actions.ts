@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import {
   answerTodoQuestion,
   approveTodo as approveTodoQuery,
+  carryOverTodo,
   completeAiTodoHeading,
   insertTodo,
   reattachFixStep,
@@ -12,6 +13,8 @@ import {
   undoCompleteAiTodoHeading,
   type TodoAssignee,
 } from '@/lib/turso/todos';
+import { archiveTheme, insertTheme, updateTheme } from '@/lib/turso/themes';
+import { fileAgentToFinished } from '@/lib/turso/personal-os-board';
 
 const BOARD_PATH = '/dashboard/board';
 const ADD_PATH = '/dashboard/board/add';
@@ -61,6 +64,9 @@ export async function addTodo(formData: FormData) {
   const note = String(formData.get('note') ?? '').trim();
   const dueDate = String(formData.get('dueDate') ?? '').trim();
   const goalRef = String(formData.get('goalRef') ?? '').trim();
+  // 子09: テーマ選択（新規作成は "__new__" ＋ newThemeName）。未選択は「未分類」。
+  const themeChoice = String(formData.get('themeId') ?? '').trim();
+  const newThemeName = String(formData.get('newThemeName') ?? '').trim();
 
   if (!title || !repo || (assigneeRaw !== 'self' && assigneeRaw !== 'ai')) {
     redirect(`${ADD_PATH}?addError=1`);
@@ -70,6 +76,11 @@ export async function addTodo(formData: FormData) {
   const doDate = computeDoDate(doKind, customDate);
 
   try {
+    // テーマ「新規作成」を選んだ時は名前だけで即席作成（目的・完了条件は空＝未記入バッジ・人間の空作成は可）。
+    let themeId: string | null = themeChoice && themeChoice !== '__new__' ? themeChoice : null;
+    if (themeChoice === '__new__' && newThemeName) {
+      themeId = await insertTheme({ name: newThemeName });
+    }
     await insertTodo({
       title,
       note: note || null,
@@ -78,6 +89,7 @@ export async function addTodo(formData: FormData) {
       repo,
       assignee,
       goalRef: goalRef || null,
+      themeId,
     });
   } catch {
     redirect(`${ADD_PATH}?addError=1`);
@@ -168,6 +180,92 @@ export async function reattachFixAction(formData: FormData) {
 
   if (stepId && targetTodoId) {
     await reattachFixStep(stepId, targetTodoId);
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 子09: テーマ作成（ボード上の即席作成）。目的・完了条件は任意（空可＝未記入バッジ）。
+export async function addThemeAction(formData: FormData) {
+  const name = String(formData.get('name') ?? '').trim();
+  const purpose = String(formData.get('purpose') ?? '').trim();
+  const doneCriteria = String(formData.get('doneCriteria') ?? '').trim();
+  const goalRef = String(formData.get('goalRef') ?? '').trim();
+  const date = String(formData.get('date') ?? '');
+
+  if (name) {
+    await insertTheme({
+      name,
+      purpose: purpose || null,
+      doneCriteria: doneCriteria || null,
+      goalRef: goalRef || null,
+    });
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 子09: テーマ編集（インライン鉛筆）。目的・完了条件を人間が直せる。
+export async function updateThemeAction(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  const name = String(formData.get('name') ?? '').trim();
+  const purpose = String(formData.get('purpose') ?? '').trim();
+  const doneCriteria = String(formData.get('doneCriteria') ?? '').trim();
+  const goalRef = String(formData.get('goalRef') ?? '').trim();
+  const date = String(formData.get('date') ?? '');
+
+  if (id && name) {
+    await updateTheme({
+      id,
+      name,
+      purpose: purpose || null,
+      doneCriteria: doneCriteria || null,
+      goalRef: goalRef || null,
+    });
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 子09: テーマのアーカイブ（論理削除）。配下タスクは「未分類」に落ちる（theme_id は温存）。
+export async function archiveThemeAction(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (id) {
+    await archiveTheme(id);
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 子09 繰越し: 未完了タスクを翌日へ1タップ移動（do_date+1・carried_from初回記録）。
+// 人間タップのみ（AIが勝手に日付を動かさない）。移動先の翌日ボードで「昨日から」表示。
+export async function carryOverAction(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (id) {
+    await carryOverTodo(id);
+    revalidatePath(BOARD_PATH);
+  }
+
+  boardRedirect(date);
+}
+
+// 子09 エージェント行の人間チェック（方針6）: 宣言済み todo_id を読むだけで格納先を決め、
+// 「終わったこと」へ格納（タスク入れ子 or 新見出し）。状態機械（run/wait/sub）は書き換えない。
+export async function fileAgentAction(formData: FormData) {
+  const sessionKey = String(formData.get('sessionKey') ?? '');
+  const todoTitle = String(formData.get('todoTitle') ?? '');
+  const date = String(formData.get('date') ?? '');
+
+  if (sessionKey) {
+    await fileAgentToFinished(sessionKey, todoTitle, date || getJstDate(0));
     revalidatePath(BOARD_PATH);
   }
 
