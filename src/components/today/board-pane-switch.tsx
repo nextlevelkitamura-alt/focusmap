@@ -1,13 +1,13 @@
 import Link from 'next/link';
-import { Bot, CalendarDays } from 'lucide-react';
+import { Bot, CalendarDays, ClipboardList } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Todoタブ内の「予定（カレンダー）⇄ AIボード」切替ピル。
- * どちらの画面でも同じ見た目・同じ位置に出し、タップでルートを行き来する。
+ * Todoタブ内の「予定（カレンダー）⇄ AIボード ⇄ 計画」切替ピル（子07で3枚化）。
+ * どの画面でも同じ見た目・同じ位置に出し、タップでルートを行き来する。
  * Server/Client両対応にするためLinkのみで構成する（状態を持たない）。
  */
-export function BoardPaneSwitch({ active, className }: { active: 'schedule' | 'board'; className?: string }) {
+export function BoardPaneSwitch({ active, className }: { active: 'schedule' | 'board' | 'plans'; className?: string }) {
   const base =
     'inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-[12.5px] font-bold transition-colors';
   return (
@@ -17,7 +17,7 @@ export function BoardPaneSwitch({ active, className }: { active: 'schedule' | 'b
         className,
       )}
       role="tablist"
-      aria-label="予定とAIボードの切替"
+      aria-label="予定とAIボードと計画の切替"
     >
       <Link
         href="/dashboard"
@@ -36,6 +36,15 @@ export function BoardPaneSwitch({ active, className }: { active: 'schedule' | 'b
       >
         <Bot className="h-3.5 w-3.5" />
         AIボード
+      </Link>
+      <Link
+        href="/dashboard/plans"
+        role="tab"
+        aria-selected={active === 'plans'}
+        className={cn(base, active === 'plans' ? 'bg-black text-neutral-50 shadow-sm' : 'text-neutral-400 active:bg-white/[0.07]')}
+      >
+        <ClipboardList className="h-3.5 w-3.5" />
+        計画
       </Link>
     </div>
   );
