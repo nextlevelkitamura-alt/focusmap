@@ -51,6 +51,8 @@ import { UndoBar } from './_components/undo-bar';
 import { FixReattach } from './_components/fix-reattach';
 import { ThemeEditor } from './_components/theme-editor';
 import { FileAgentCheck } from './_components/file-agent-check';
+import { SubagentNest } from './_components/subagent-nest';
+import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
 
 export const dynamic = 'force-dynamic';
@@ -515,12 +517,14 @@ function AgentRow({
   themeById,
   todosById,
   selectedDate,
+  subagents,
 }: {
   session: CurrentSession;
   stuck?: StuckWait;
   themeById: Map<string, Theme>;
   todosById: Map<string, Todo>;
   selectedDate: string;
+  subagents?: SessionSubagent[];
 }) {
   const state = getAgentStatePresentation(session.state);
   const linkedTodo = session.todoId ? todosById.get(session.todoId) : undefined;
@@ -553,6 +557,7 @@ function AgentRow({
         >
           {session.state === 'wait' && stuck ? `待機 ${stuck.waitMin}分` : state.label}
         </span>
+        {subagents && subagents.length > 0 ? <SubagentNest subagents={subagents} /> : null}
       </div>
     </div>
   );
@@ -632,6 +637,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     logsResult,
     currentResult,
     stuckResult,
+    subagentsResult,
   ] = await Promise.all([
     load('inbox', [] as Repo[], () => getRepos()),
     load('inbox', [] as Todo[], () => getTodosForDate(selectedDate)),
@@ -648,6 +654,9 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     isToday
       ? load('board', [] as StuckWait[], () => getStuckWait(0))
       : Promise.resolve({ data: [] as StuckWait[], error: null } as LoadResult<StuckWait[]>),
+    isToday
+      ? load('board', new Map<string, SessionSubagent[]>(), () => getSubagentsBySession(selectedDate))
+      : Promise.resolve({ data: new Map<string, SessionSubagent[]>(), error: null } as LoadResult<Map<string, SessionSubagent[]>>),
   ]);
 
   const errors = new Set(
@@ -663,6 +672,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
       logsResult.error,
       currentResult.error,
       stuckResult.error,
+      subagentsResult.error,
     ].filter((error): error is DataSource => error !== null),
   );
 
@@ -793,6 +803,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
                   themeById={themeById}
                   todosById={todosById}
                   selectedDate={selectedDate}
+                  subagents={subagentsResult.data.get(session.sessionKey)}
                 />
               ))}
             </div>
