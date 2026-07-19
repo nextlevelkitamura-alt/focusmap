@@ -155,12 +155,16 @@ export async function insertTheme(input: NewThemeInput): Promise<string> {
 
 export async function updateTheme(input: UpdateThemeInput): Promise<boolean> {
   const now = new Date().toISOString()
-  const planRefs = input.planRefs && input.planRefs.length > 0 ? JSON.stringify(input.planRefs) : null
+  // planRefs未指定（undefined）の編集では既存のplan_refsを保持する（鉛筆編集で計画チップが消えないように）
+  const planRefsProvided = input.planRefs !== undefined
+  const planRefs = planRefsProvided && input.planRefs!.length > 0 ? JSON.stringify(input.planRefs) : null
   const result = await getPersonalOsInboxClient().execute({
     sql: `
       UPDATE themes
       SET name = :name, purpose = :purpose, done_criteria = :doneCriteria,
-          goal_ref = :goalRef, plan_refs = :planRefs, updated_at = :now
+          goal_ref = :goalRef,
+          plan_refs = CASE WHEN :planRefsProvided = 1 THEN :planRefs ELSE plan_refs END,
+          updated_at = :now
       WHERE id = :id AND status = 'active'
     `,
     args: {
@@ -170,6 +174,7 @@ export async function updateTheme(input: UpdateThemeInput): Promise<boolean> {
       doneCriteria: input.doneCriteria ?? null,
       goalRef: input.goalRef ?? null,
       planRefs,
+      planRefsProvided: planRefsProvided ? 1 : 0,
       now,
     },
   })
