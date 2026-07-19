@@ -235,7 +235,7 @@ function TaskCheck({ todo, reviewReady, selectedDate }: { todo: Todo; reviewRead
       {filled ? <Check className="h-3.5 w-3.5" /> : null}
     </span>
   );
-  const tapClass = '-ml-1.5 -mt-1.5 inline-grid h-10 w-10 shrink-0 place-items-center rounded-xl active:scale-95';
+  const tapClass = '-ml-1.5 -mt-1.5 inline-grid h-11 w-11 shrink-0 place-items-center rounded-xl active:scale-95';
 
   if (todo.assignee === 'self') {
     const isDone = todo.status === 'done';

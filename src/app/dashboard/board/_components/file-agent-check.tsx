@@ -27,7 +27,7 @@ export function FileAgentCheck({
         onClick={() => setArmed((value) => !value)}
         aria-label={`${label}を完了として終わったことへ格納`}
         aria-expanded={armed}
-        className="-ml-1.5 -mt-1.5 inline-grid h-10 w-10 place-items-center rounded-xl active:scale-95"
+        className="-ml-1.5 -mt-1.5 inline-grid h-11 w-11 place-items-center rounded-xl active:scale-95"
       >
         <span
           className={
@@ -41,7 +41,7 @@ export function FileAgentCheck({
       </button>
 
       {armed ? (
-        <div className="absolute left-0 top-10 z-20 flex items-center gap-1.5 rounded-xl border border-border bg-background p-1.5 shadow-lg">
+        <div className="absolute left-0 top-11 z-20 flex items-center gap-1.5 rounded-xl border border-border bg-background p-1.5 shadow-lg">
           <form action={fileAgentAction}>
             <input type="hidden" name="sessionKey" value={sessionKey} />
             <input type="hidden" name="todoTitle" value={todoTitle} />
