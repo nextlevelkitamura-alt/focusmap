@@ -5,7 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { createClient } from '@/utils/supabase/server';
 import { getRepos } from '@/lib/turso/todos';
+import { getActiveThemes } from '@/lib/turso/themes';
 import { addTodo } from '../actions';
+import { ThemeSelect } from '../_components/theme-select';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,7 +52,7 @@ export default async function AddTodoPage({ searchParams }: PageProps) {
   if (!user) redirect('/login');
 
   const params = await searchParams;
-  const repos = await getRepos().catch(() => []);
+  const [repos, themes] = await Promise.all([getRepos().catch(() => []), getActiveThemes().catch(() => [])]);
 
   return (
     <div className="mx-auto min-h-0 w-full max-w-lg flex-1 space-y-5 overflow-y-auto pb-10">
@@ -120,6 +122,14 @@ export default async function AddTodoPage({ searchParams }: PageProps) {
           </div>
         </fieldset>
 
+        <fieldset>
+          <legend className="mb-1.5 text-sm font-medium">大課題テーマ</legend>
+          <ThemeSelect themes={themes.map((theme) => ({ id: theme.id, name: theme.name }))} />
+          <p className="mt-1 text-xs text-muted-foreground">
+            未選択は「未分類」。新規テーマの目的・完了条件は、作成後にボードの鉛筆から書けます。
+          </p>
+        </fieldset>
+
         <details className="rounded-lg border border-border">
           <summary className="cursor-pointer select-none px-3 py-2.5 text-sm text-muted-foreground">
             締切・メモ・的への紐付けは詳しく ▾
@@ -149,7 +159,7 @@ export default async function AddTodoPage({ searchParams }: PageProps) {
             </div>
             <div>
               <label htmlFor="goalRef" className="mb-1 block text-xs text-muted-foreground">
-                紐付ける的（slug）
+                紐付ける的（slug・任意）
               </label>
               <Input id="goalRef" name="goalRef" placeholder="例: 2026-07-17-当日ボードSQL化" className="h-10" />
             </div>
