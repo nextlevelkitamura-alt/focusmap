@@ -7,7 +7,6 @@ import {
   Clock3,
   PauseCircle,
   Plus,
-  Target,
   Users,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +28,7 @@ import {
   type StuckWait,
 } from '@/lib/turso/personal-os-board';
 import { cn } from '@/lib/utils';
+import { SessionGoalSelect } from '@/components/workspace/session-goal-select';
 import { addGoal } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -36,7 +36,7 @@ export const dynamic = 'force-dynamic';
 interface PageProps {
   searchParams: Promise<{
     date?: string;
-    space?: string;
+    goal?: string;
     added?: string;
     addError?: string;
   }>;
@@ -118,9 +118,9 @@ async function load<T>(
   }
 }
 
-function buildDateHref(date: string, space?: string) {
+function buildDateHref(date: string, goal?: string) {
   const params = new URLSearchParams({ date });
-  if (space) params.set('space', space);
+  if (goal) params.set('goal', goal);
   return `/dashboard/workspace/sessions?${params.toString()}`;
 }
 
@@ -350,6 +350,10 @@ export default async function SessionsPage({ searchParams }: PageProps) {
   for (const log of logsResult.data) getBlock(log.parent).logs.push(log);
 
   const goalBlocks = Array.from(blocks.values());
+  const selectedGoal = goalBlocks.some((block) => block.name === params.goal)
+    ? params.goal
+    : goalBlocks[0]?.name;
+  const selectedGoalBlock = goalBlocks.find((block) => block.name === selectedGoal);
   const breakdownBySession = new Map(
     breakdownResult.data.map((breakdown) => [breakdown.sessionKey, breakdown]),
   );
@@ -368,12 +372,12 @@ export default async function SessionsPage({ searchParams }: PageProps) {
           <p className="text-xs font-medium text-muted-foreground">
             {isToday ? '本日' : 'アーカイブ'}
           </p>
-          <h2 className="text-xl font-semibold tracking-tight">セッション時間</h2>
+          <h1 className="text-xl font-semibold tracking-tight">デイリー</h1>
         </div>
         <div className="flex items-center justify-between gap-2 sm:justify-end">
           <Button variant="outline" size="icon" className="h-11 w-11" asChild>
             <Link
-              href={buildDateHref(shiftDate(selectedDate, -1), params.space)}
+              href={buildDateHref(shiftDate(selectedDate, -1), selectedGoal)}
               aria-label="前の日へ"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -384,7 +388,7 @@ export default async function SessionsPage({ searchParams }: PageProps) {
           </div>
           <Button variant="outline" size="icon" className="h-11 w-11" asChild>
             <Link
-              href={buildDateHref(shiftDate(selectedDate, 1), params.space)}
+              href={buildDateHref(shiftDate(selectedDate, 1), selectedGoal)}
               aria-label="次の日へ"
             >
               <ChevronRight className="h-4 w-4" />
@@ -401,7 +405,7 @@ export default async function SessionsPage({ searchParams }: PageProps) {
           <CardContent className="space-y-1 text-sm text-muted-foreground">
             {errors.has('board') ? (
               <p>
-                セッション履歴には <code>PERSONAL_OS_BOARD_DATABASE_URL</code> と、リモートDBの場合は
+                実行履歴には <code>PERSONAL_OS_BOARD_DATABASE_URL</code> と、リモートDBの場合は
                 <code> PERSONAL_OS_BOARD_AUTH_TOKEN</code> が必要です。
               </p>
             ) : null}
@@ -416,17 +420,14 @@ export default async function SessionsPage({ searchParams }: PageProps) {
         </Card>
       ) : null}
 
-      <section className="space-y-3" aria-labelledby="goals-heading">
+      <section className="space-y-3" aria-label="今日の目標">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex items-center gap-2">
-            <Target className="h-5 w-5 text-primary" />
-            <h2 id="goals-heading" className="text-lg font-semibold">
-              今日の目標
-            </h2>
-          </div>
+          <SessionGoalSelect
+            goals={goalBlocks.map((block) => block.name)}
+            selectedGoal={selectedGoal}
+          />
           {isToday ? (
             <form action={addGoal} className="flex w-full gap-2 sm:w-auto">
-              <input type="hidden" name="space" value={params.space ?? ''} />
               <Input
                 key={params.added ?? 'new-goal'}
                 name="name"
@@ -449,23 +450,11 @@ export default async function SessionsPage({ searchParams }: PageProps) {
           </p>
         ) : null}
 
-        {goalBlocks.length > 0 ? (
-          <div className="space-y-3">
-            {goalBlocks.map((block) => (
-              <GoalCard
-                key={block.name}
-                block={block}
-                isToday={isToday}
-                breakdownBySession={breakdownBySession}
-                stuckBySession={stuckBySession}
-              />
-            ))}
-          </div>
-        ) : (
+        {!selectedGoalBlock ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            {isToday ? '今日の目標はまだありません。' : 'この日の目標と完了記録はありません。'}
+            {isToday ? '今日の目標はまだありません。' : 'この日の記録はありません。'}
           </div>
-        )}
+        ) : null}
       </section>
 
       <section className="space-y-3" aria-labelledby="summary-heading">
@@ -526,11 +515,22 @@ export default async function SessionsPage({ searchParams }: PageProps) {
                 </div>
               ) : (
                 <p className="py-3 text-center text-sm text-muted-foreground">
-                  15分を超えて待機しているセッションはありません。
+                  15分を超えて待機している実行はありません。
                 </p>
               )}
             </CardContent>
           </Card>
+        </section>
+      ) : null}
+
+      {selectedGoalBlock ? (
+        <section className="space-y-3" aria-label="選択した目標の記録">
+          <GoalCard
+            block={selectedGoalBlock}
+            isToday={isToday}
+            breakdownBySession={breakdownBySession}
+            stuckBySession={stuckBySession}
+          />
         </section>
       ) : null}
     </div>

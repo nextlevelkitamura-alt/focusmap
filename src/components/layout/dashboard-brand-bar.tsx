@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { GlobalWorkspaceSwitcher } from "@/components/layout/global-workspace-switcher"
+import { DailyContentSelector } from "@/components/workspace/daily-content-selector"
 import { MessageSquare, PanelLeft, SquarePen } from "lucide-react"
 import { useView } from "@/contexts/ViewContext"
 import { Button } from "@/components/ui/button"
@@ -38,6 +39,7 @@ export function DashboardBrandBar() {
         } catch {}
     }
     const isChatPage = pathname === "/dashboard/chat"
+    const isDailySessionPage = pathname === "/dashboard/workspace/sessions"
     const handleToggleChatSidebar = () => {
         window.dispatchEvent(new Event("focusmap:chat:toggle-sidebar"))
     }
@@ -62,6 +64,7 @@ export function DashboardBrandBar() {
                 >
                     <FocusmapLogo className="h-9 w-auto text-foreground" />
                 </Link>
+                {isDailySessionPage && <DailyContentSelector />}
                 {isChatPage && (
                     <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-muted/25 p-0.5">
                         <Button
@@ -99,9 +102,11 @@ export function DashboardBrandBar() {
                     <MessageSquare className="h-3 w-3" />
                     <span className="hidden sm:inline">チャット</span>
                 </Link>
-                <Suspense fallback={null}>
-                    <GlobalWorkspaceSwitcher />
-                </Suspense>
+                {!isDailySessionPage && (
+                    <Suspense fallback={null}>
+                        <GlobalWorkspaceSwitcher />
+                    </Suspense>
+                )}
             </div>
         </header>
     )

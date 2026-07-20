@@ -16,7 +16,6 @@ export async function addGoal(formData: FormData) {
   if (!name) return;
 
   const goalDate = getJstDate();
-  const space = String(formData.get('space') ?? '').trim();
   let failed = false;
 
   try {
@@ -34,7 +33,6 @@ export async function addGoal(formData: FormData) {
   revalidatePath(SESSIONS_PATH);
 
   const params = new URLSearchParams({ date: goalDate });
-  if (space) params.set('space', space);
   params.set(failed ? 'addError' : 'added', '1');
   redirect(`${SESSIONS_PATH}?${params.toString()}`);
 }
