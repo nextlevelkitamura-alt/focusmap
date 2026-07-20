@@ -6,7 +6,7 @@
 # Dailyセッション画面の単一表示化
 
 - Task ID: TASK-20260721-001
-- Status: in_progress
+- Status: done_pending_archive
 - Created: 2026-07-21
 - Board: `docs/ai/task-board.md`
 
@@ -55,14 +55,17 @@
 
 ## 完了条件
 
-- [ ] `WorkspaceLayout` が画面内のWorkspace管理ヘッダー、スペース/プラン選択、タブ列を描画しない。
-- [ ] `/dashboard/workspace/sessions` のロゴ横に内容種別 `デイリー` のプルダウンがあり、日付切替は従来どおり動作する。
-- [ ] `今日の目標` で選んだ目標だけの時間・進行・完了記録が表示され、画面見出しに `セッション` がない。
-- [ ] `docs/CONTEXT.md` が新しいUI構成を正として説明し、変更はlocal `main`へコミット・pushされる。
+- [x] `WorkspaceLayout` が画面内のWorkspace管理ヘッダー、スペース/プラン選択、タブ列を描画しない。
+- [x] `/dashboard/workspace/sessions` のロゴ横に内容種別 `デイリー` のプルダウンがあり、日付切替は従来どおり動作する。
+- [x] `今日の目標` で選んだ目標だけの時間・進行・完了記録が表示され、画面見出しに `セッション` がない。
+- [x] `docs/CONTEXT.md` が新しいUI構成を正として説明し、変更はlocal `main`へコミット・pushされる。
 
 ## 実装結果
 
-実装後にplanctlが追記・更新する。実行前は記入しない。
+- 実装commit: `0046abc4`（`デイリー: セッション画面を単一表示に整理`）
+- 本番反映: `origin/main` へpush済み。GitHub Actions `Deploy to Cloud Run` #29785579620 は成功（2026-07-21）。
+- 未実行: ローカルtest/lint/build、ブラウザ表示確認。いずれもユーザーから明示依頼がないため、`AGENTS.md` の自動検証ポリシーに従い実行していない。
+- archive移動: 計画ファイルの移動は人間承認が必要なため未実行。
 
 ## 終了記録
 
