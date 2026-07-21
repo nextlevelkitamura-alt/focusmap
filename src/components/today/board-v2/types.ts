@@ -52,6 +52,7 @@ export type AskItem =
 export interface StrayData {
   tasks: TaskItem[]; // themeId 無所属の open todo
   sessions: SessionItem[]; // todoId/themeId とも無所属のライブセッション
+  finishedTodos: FinishedTodoItem[]; // テーマ無所属の完了AI todo（修正01・条件4）
   finishedLogs: { parent: string; items: { entry: string; count: number }[] }[]; // テーマ名に一致しない parent のログ
 }
 

@@ -1,11 +1,22 @@
 import { cn } from '@/lib/utils';
 import { SubagentNest } from '@/app/dashboard/board/_components/subagent-nest';
+import { FileAgentCheck } from '@/app/dashboard/board/_components/file-agent-check';
 import type { SessionItem } from './types';
 
 // board-v2 セッション行（モックv2 .sess／.s-row 準拠）: やること行の直下・テーマ直下にぶら下がるライブ行。
 // 左の縦線レール＋状態ドット（run/sub=緑明滅・wait=琥珀）＋名前＋runtimeピル＋稼働ステート＋サブ入れ子。
+// 右端に FileAgentCheck（子09方針6の人間チェック・宣言済み todo_id を読むだけで「終わったこと」へ格納）を復旧（修正01・指摘3）。
 // 既存 AgentRow / SubagentNest を流用改造。追加クエリは持たず SessionItem（契約）だけで描画する。
-export function SessionRow({ item, selectedDate: _selectedDate }: { item: SessionItem; selectedDate: string }) {
+// todoTitle: 親タスク見出し（TaskRow から渡す。fileAgentToFinished は todo_id 宣言時のみ parent に使う）。
+export function SessionRow({
+  item,
+  selectedDate,
+  todoTitle,
+}: {
+  item: SessionItem;
+  selectedDate: string;
+  todoTitle?: string;
+}) {
   const { session, stuck, subagents } = item;
   const live = session.state === 'run' || session.state === 'sub';
   const wait = session.state === 'wait';
@@ -49,6 +60,12 @@ export function SessionRow({ item, selectedDate: _selectedDate }: { item: Sessio
           </p>
           {subagents.length > 0 ? <SubagentNest subagents={subagents} /> : null}
         </div>
+        <FileAgentCheck
+          sessionKey={session.sessionKey}
+          todoTitle={todoTitle ?? name}
+          date={selectedDate}
+          label={name}
+        />
       </div>
     </div>
   );

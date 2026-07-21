@@ -25,8 +25,8 @@ export function StrayBox({
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
 }) {
-  const finishedCount = stray.finishedLogs.reduce((sum, group) => sum + group.items.length, 0);
-  const total = stray.tasks.length + stray.sessions.length + finishedCount;
+  const finishedLogCount = stray.finishedLogs.reduce((sum, group) => sum + group.items.length, 0);
+  const total = stray.tasks.length + stray.sessions.length + stray.finishedTodos.length + finishedLogCount;
   if (total === 0) return null;
 
   return (
@@ -65,6 +65,34 @@ export function StrayBox({
           <span className="shrink-0 text-[10.5px] text-muted-foreground">{agentStateLabel(item.session.state)}</span>
         </div>
       ))}
+
+      {stray.finishedTodos.length > 0 ? (
+        <details open className="border-t border-amber-400/30 pt-2">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px] text-muted-foreground [&::-webkit-details-marker]:hidden">
+            <span className="text-[9px] transition-transform [details[open]_&]:rotate-90">▶</span>
+            終わったこと（未分類）{stray.finishedTodos.length}件
+          </summary>
+          <div className="space-y-1.5 pl-4 pt-1">
+            {stray.finishedTodos.map((f) => (
+              <div
+                key={f.todo.id}
+                className="flex items-baseline gap-2 text-[11.5px] text-slate-600 dark:text-slate-300"
+              >
+                <span className="shrink-0 font-bold text-emerald-600">✓</span>
+                <span className="min-w-0 flex-1 break-words">
+                  {f.todo.title}
+                  {f.doneSteps > 0 ? (
+                    <span className="ml-1 text-muted-foreground">（✓ {f.doneSteps}ステップ完了）</span>
+                  ) : null}
+                </span>
+                {f.runMin ? (
+                  <span className="shrink-0 text-[10px] tabular-nums text-slate-400">実行{f.runMin}分</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       {stray.finishedLogs.map((group) => (
         <div key={group.parent} className="space-y-1">

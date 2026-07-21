@@ -18,19 +18,20 @@ import type { ThemeCardData, TaskItem, FinishedTodoItem } from './types';
 // テーマ帯左インデント（縦線ワークフロー・進捗バー・繰越しボタンをチェックボックス幅へ揃える）。
 const INDENT = 'ml-[46px]';
 
-// 縦線ワークフロー（既存 StepFlow 流用）: done緑✓／doing青▶／todo白抜き。右に所要（SQL導出値）。
+// 縦線ワークフロー（既存 StepFlow 流用）: done緑✓＋取り消し線グレー／doing明滅ドット＋「今ここ」／todo白抜き。
+// 右に所要（SQL導出値）。明滅は motion-safe 系（prefers-reduced-motion で停止）。モックv2 準拠（修正01・条件1）。
 function StepFlow({ steps }: { steps: TodoStep[] }) {
   if (steps.length === 0) return null;
   return (
     <ul className={cn('relative mt-2 list-none', INDENT)}>
       {steps.map((step, index) => {
         const last = index === steps.length - 1;
-        const glyph = step.status === 'done' ? '✓' : step.status === 'doing' ? '▶' : '';
+        const glyph = step.status === 'done' ? '✓' : '';
         const nodeClass =
           step.status === 'done'
             ? 'bg-emerald-700'
             : step.status === 'doing'
-              ? 'bg-blue-600'
+              ? 'bg-blue-600 animate-pulse motion-reduce:animate-none'
               : step.status === 'skipped'
                 ? 'bg-slate-200 text-slate-400 dark:bg-slate-700'
                 : 'border-2 border-slate-300 bg-white dark:border-slate-600 dark:bg-transparent';
@@ -61,13 +62,19 @@ function StepFlow({ steps }: { steps: TodoStep[] }) {
             <span
               className={cn(
                 'min-w-0 flex-1 break-words',
+                step.status === 'done' && 'text-slate-400 line-through dark:text-slate-500',
                 step.status === 'skipped' && 'line-through opacity-60',
-                step.kind === 'fix' && 'text-amber-700 dark:text-amber-400',
+                step.kind === 'fix' && step.status !== 'done' && 'text-amber-700 dark:text-amber-400',
               )}
             >
               {step.kind === 'fix' ? <span className="mr-1">🔧</span> : null}
               {step.title}
               {step.kind === 'fix' ? <span className="ml-1 text-[10px]">手直し</span> : null}
+              {step.status === 'doing' ? (
+                <span className="ml-1.5 rounded bg-blue-100 px-1 py-px align-middle text-[9px] font-bold text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+                  今ここ
+                </span>
+              ) : null}
             </span>
             {timeLabel ? (
               <span
@@ -220,7 +227,7 @@ function TaskRow({
         {sessions.length > 0 ? (
           <div className="mt-2 space-y-1">
             {sessions.map((s) => (
-              <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} />
+              <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} todoTitle={todo.title} />
             ))}
           </div>
         ) : null}
@@ -284,7 +291,7 @@ function TaskRow({
       {sessions.length > 0 ? (
         <div className="mt-2 space-y-1">
           {sessions.map((s) => (
-            <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} />
+            <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} todoTitle={todo.title} />
           ))}
         </div>
       ) : null}

@@ -29,7 +29,6 @@ import {
   type Theme,
   type ThemeProgress,
 } from '@/lib/turso/themes';
-import { deriveBoardStatus } from '@/lib/board-status';
 import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
 import { BoardPoller } from './_components/board-poller';
 import { UndoBar } from './_components/undo-bar';
@@ -38,15 +37,7 @@ import { ThemeCardV2 } from '@/components/today/board-v2/theme-card';
 import { DayHeader } from '@/components/today/board-v2/day-header';
 import { AskLane } from '@/components/today/board-v2/ask-lane';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
-import type {
-  AskItem,
-  BoardV2Data,
-  FinishedTodoItem,
-  SessionItem,
-  StrayData,
-  TaskItem,
-  ThemeCardData,
-} from '@/components/today/board-v2/types';
+import { buildBoardV2Data } from '@/components/today/board-v2/build';
 
 export const dynamic = 'force-dynamic';
 
@@ -98,211 +89,6 @@ async function load<T>(source: DataSource, fallback: T, getter: () => Promise<T>
   } catch {
     return { data: fallback, error: source };
   }
-}
-
-// 「終わったこと」ログの表示時de-dup（連続する同一entryを ×N バッジにまとめる）。
-function dedupeLogs(logs: FinishedLog[]): { log: FinishedLog; count: number }[] {
-  const out: { log: FinishedLog; count: number }[] = [];
-  for (const log of logs) {
-    const last = out[out.length - 1];
-    if (last && last.log.entry === log.entry && last.log.repo === log.repo) {
-      last.count += 1;
-    } else {
-      out.push({ log, count: 1 });
-    }
-  }
-  return out;
-}
-
-interface BuildInput {
-  selectedDate: string;
-  isToday: boolean;
-  todos: Todo[];
-  stepsByTodo: Map<string, TodoStep[]>;
-  aggByTodo: Map<string, TodoStepAggregate>;
-  timesByTodo: Map<string, TodoTimes>;
-  activeThemes: Theme[];
-  themeProgress: Map<string, ThemeProgress>;
-  totals: DailyTotals;
-  finishedLogs: FinishedLog[];
-  currentSessions: CurrentSession[];
-  stuckBySession: Map<string, StuckWait>;
-  subagentsBySession: Map<string, SessionSubagent[]>;
-  repoNameBySlug: Map<string, string>;
-}
-
-// 取得済みデータ（新クエリなし）から契約型 BoardV2Data を構築する純関数。
-// テーマ軸へ一本化: セッション・完了ログ・完了AI todoを、それぞれ所属テーマ/タスク/未分類へ振り分ける。
-function buildBoardV2Data(input: BuildInput): BoardV2Data {
-  const {
-    selectedDate,
-    isToday,
-    todos,
-    stepsByTodo,
-    aggByTodo,
-    timesByTodo,
-    activeThemes,
-    themeProgress,
-    totals,
-    finishedLogs,
-    currentSessions,
-    stuckBySession,
-    subagentsBySession,
-    repoNameBySlug,
-  } = input;
-
-  const todosById = new Map(todos.map((todo) => [todo.id, todo]));
-  const themeById = new Map(activeThemes.map((theme) => [theme.id, theme]));
-  const themeByName = new Map(activeThemes.map((theme) => [theme.name, theme]));
-
-  const aiTodos = todos.filter((todo) => todo.assignee === 'ai');
-  const aiTargets = aiTodos.map((todo) => ({ id: todo.id, title: todo.title }));
-
-  // やること（TaskItem）= self（完了打消しはtodo.statusで表現）＋ AI open。
-  const taskTodos = todos.filter((todo) => todo.assignee === 'self' || todo.status !== 'done');
-  const taskItemById = new Map<string, TaskItem>();
-  const taskItems: TaskItem[] = taskTodos.map((todo) => {
-    const item: TaskItem = {
-      todo,
-      steps: stepsByTodo.get(todo.id) ?? [],
-      agg: aggByTodo.get(todo.id) ?? null,
-      times: timesByTodo.get(todo.id) ?? null,
-      sessions: [],
-      repoName: repoNameBySlug.get(todo.repo) ?? todo.repo,
-    };
-    taskItemById.set(todo.id, item);
-    return item;
-  });
-
-  const sessionItems: SessionItem[] = currentSessions.map((session) => ({
-    session,
-    stuck: stuckBySession.get(session.sessionKey) ?? null,
-    subagents: subagentsBySession.get(session.sessionKey) ?? [],
-  }));
-
-  // セッション振り分け: todoId一致→TaskItem直下／themeId一致→テーマ直下／どちらも無し→未分類。
-  const themeSessionsByTheme = new Map<string, SessionItem[]>();
-  const straySessions: SessionItem[] = [];
-  for (const item of sessionItems) {
-    const s = item.session;
-    const taskItem = s.todoId ? taskItemById.get(s.todoId) : undefined;
-    if (taskItem) {
-      taskItem.sessions.push(item);
-      continue;
-    }
-    const themeId = s.themeId && themeById.has(s.themeId) ? s.themeId : null;
-    if (themeId) {
-      const list = themeSessionsByTheme.get(themeId) ?? [];
-      list.push(item);
-      themeSessionsByTheme.set(themeId, list);
-      continue;
-    }
-    straySessions.push(item);
-  }
-
-  // 完了AI todo（テーマ折りたたみ内）。未分類テーマの完了AI todoは契約に置き場が無いため表示しない。
-  const finishedTodoByTheme = new Map<string, FinishedTodoItem[]>();
-  for (const todo of todos) {
-    if (todo.assignee !== 'ai' || todo.status !== 'done') continue;
-    if (!todo.themeId || !themeById.has(todo.themeId)) continue;
-    const list = finishedTodoByTheme.get(todo.themeId) ?? [];
-    list.push({
-      todo,
-      doneSteps: (stepsByTodo.get(todo.id) ?? []).filter((step) => step.status === 'done').length,
-      runMin: timesByTodo.get(todo.id)?.runMin ?? null,
-    });
-    finishedTodoByTheme.set(todo.themeId, list);
-  }
-
-  // 完了ログ: parentがテーマ名一致→そのテーマ／不一致→未分類（parent別グループ）。
-  const finishedLogsByTheme = new Map<string, { entry: string; count: number }[]>();
-  const strayLogsByParent = new Map<string, { entry: string; count: number }[]>();
-  for (const { log, count } of dedupeLogs(finishedLogs)) {
-    const theme = log.parent ? themeByName.get(log.parent) : undefined;
-    if (theme) {
-      const list = finishedLogsByTheme.get(theme.id) ?? [];
-      list.push({ entry: log.entry, count });
-      finishedLogsByTheme.set(theme.id, list);
-    } else {
-      const parent = log.parent || '新見出し';
-      const list = strayLogsByParent.get(parent) ?? [];
-      list.push({ entry: log.entry, count });
-      strayLogsByParent.set(parent, list);
-    }
-  }
-
-  // テーマカード群（activeThemes順・空テーマも出す）。
-  const themes: ThemeCardData[] = activeThemes.map((theme) => {
-    const tasks = taskItems.filter((item) => item.todo.themeId === theme.id);
-    const themeSessions = themeSessionsByTheme.get(theme.id) ?? [];
-    const themeAllSessions = [...tasks.flatMap((t) => t.sessions), ...themeSessions];
-    const liveCount = themeAllSessions.filter(
-      (s) => s.session.state === 'run' || s.session.state === 'sub',
-    ).length;
-    const waitCount = themeAllSessions.filter((s) => s.session.state === 'wait').length;
-    return {
-      theme,
-      progress: themeProgress.get(theme.id) ?? null,
-      tasks,
-      themeSessions,
-      finishedTodos: finishedTodoByTheme.get(theme.id) ?? [],
-      finishedLogs: finishedLogsByTheme.get(theme.id) ?? [],
-      liveCount,
-      waitCount,
-    };
-  });
-
-  // 未分類（テーマ無所属のtask・session・ログ）。
-  const stray: StrayData = {
-    tasks: taskItems.filter((item) => !item.todo.themeId || !themeById.has(item.todo.themeId)),
-    sessions: straySessions,
-    finishedLogs: [...strayLogsByParent.entries()].map(([parent, items]) => ({ parent, items })),
-  };
-
-  // きみの番: (a) 質問中のAI todo, (b) 確認待ちセッション。
-  const asks: AskItem[] = [];
-  for (const todo of aiTodos) {
-    const status = deriveBoardStatus(todo, aggByTodo.get(todo.id));
-    if (status.tone === 'question') {
-      asks.push({
-        kind: 'question',
-        todo,
-        themeName: todo.themeId ? themeById.get(todo.themeId)?.name ?? null : null,
-      });
-    }
-  }
-  for (const item of sessionItems) {
-    if (item.session.state !== 'wait') continue;
-    const s = item.session;
-    const linkedTodo = s.todoId ? todosById.get(s.todoId) : undefined;
-    const themeName =
-      (linkedTodo?.themeId ? themeById.get(linkedTodo.themeId)?.name : undefined) ??
-      (s.themeId ? themeById.get(s.themeId)?.name : undefined) ??
-      null;
-    asks.push({ kind: 'wait', session: s, waitMin: item.stuck?.waitMin ?? 0, themeName });
-  }
-
-  const totalCount = todos.length;
-  const doneCount = todos.filter((todo) => todo.status === 'done').length;
-  const progressPct = totalCount === 0 ? null : Math.round((doneCount / totalCount) * 100);
-  const liveTotal = sessionItems.filter(
-    (s) => s.session.state === 'run' || s.session.state === 'sub',
-  ).length;
-  const waitTotal = sessionItems.filter((s) => s.session.state === 'wait').length;
-
-  return {
-    selectedDate,
-    isToday,
-    progressPct,
-    liveTotal,
-    waitTotal,
-    runMin: totals.runMin,
-    waitMinTotal: totals.waitMin,
-    asks,
-    themes,
-    stray,
-    aiTargets,
-  };
 }
 
 export default async function TodayBoardPage({ searchParams }: PageProps) {
@@ -404,7 +190,10 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
       : null;
 
   const strayHasContent =
-    board.stray.tasks.length > 0 || board.stray.sessions.length > 0 || board.stray.finishedLogs.length > 0;
+    board.stray.tasks.length > 0 ||
+    board.stray.sessions.length > 0 ||
+    board.stray.finishedTodos.length > 0 ||
+    board.stray.finishedLogs.length > 0;
   const isEmpty = board.themes.length === 0 && !strayHasContent;
 
   return (

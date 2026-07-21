@@ -1,38 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { getTodosForDate, type Todo } from '@/lib/turso/todos';
-import { getStepAggregatesForDate, type TodoStepAggregate } from '@/lib/turso/todo-steps';
-import { getActiveThemes, getThemeProgressForDate } from '@/lib/turso/themes';
-import { getCurrentSessions, type CurrentSession } from '@/lib/turso/personal-os-board';
-import { deriveBoardStatus } from '@/lib/board-status';
+import { getRepos, getTodosForDate, type Repo, type Todo } from '@/lib/turso/todos';
+import {
+  getStepAggregatesForDate,
+  getStepsForDate,
+  getTodoTimesForDate,
+  type TodoStep,
+  type TodoStepAggregate,
+  type TodoTimes,
+} from '@/lib/turso/todo-steps';
+import { getActiveThemes, getThemeProgressForDate, type Theme, type ThemeProgress } from '@/lib/turso/themes';
+import {
+  getCurrentSessions,
+  getDailyTotals,
+  getFinishedLogs,
+  getStuckWait,
+  type CurrentSession,
+  type DailyTotals,
+  type FinishedLog,
+  type StuckWait,
+} from '@/lib/turso/personal-os-board';
+import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
+import { buildBoardV2Data } from '@/components/today/board-v2/build';
 
-// PCサイドバー上段の「当日ボード要約」用の軽量サブセット。
-// board/page.tsx の buildBoardV2Data 全体は複製せず、必要最小の導出だけを行う（レーンC2）。
+// PCサイドバーの当日ボード要約用API。スマホboardページ（board/page.tsx）と同一部品・同一導出にするため、
+// 完全な BoardV2Data を返す（修正01・条件7）。導出は共有純関数 buildBoardV2Data を呼び、二重実装を持たない。
 export const dynamic = 'force-dynamic';
 
-interface SummaryTask {
-  id: string;
-  title: string;
-  statusLabel: string | null;
-}
-
-interface SummaryTheme {
-  id: string;
-  name: string;
-  pct: number | null;
-  liveCount: number;
-  waitCount: number;
-  openTasks: SummaryTask[];
-  doneCount: number;
-}
-
-interface BoardSummary {
-  progressPct: number | null;
-  liveTotal: number;
-  waitTotal: number;
-  asksCount: number;
-  themes: SummaryTheme[];
-}
+const EMPTY_TOTALS: DailyTotals = { sessionDate: '', runMin: 0, waitMin: 0, subMin: 0, sessions: 0 };
 
 function isDate(value: string | null): value is string {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -43,12 +38,6 @@ function isDate(value: string | null): value is string {
 function getJstDate() {
   const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
   return now.toISOString().slice(0, 10);
-}
-
-// AI open タスクの状態ラベルはステップ集計から導出（board/page.tsx と同じ deriveBoardStatus を流用）。
-function statusLabelFor(todo: Todo, agg: TodoStepAggregate | undefined): string | null {
-  if (todo.assignee !== 'ai') return null;
-  return deriveBoardStatus(todo, agg).label;
 }
 
 export async function GET(request: NextRequest) {
@@ -72,7 +61,7 @@ export async function GET(request: NextRequest) {
     const isToday = selectedDate === getJstDate();
 
     // board/page.tsx の load() と同じフェイルソフト: 片方のDB（inbox/board）に接続できなくても
-    // 取れたデータだけで要約を返す（全体500にしない）。
+    // 取れたデータだけで要約を返す（全体500にしない）。isToday でない日はライブ系を空にする。
     const soft = async <T,>(fallback: T, getter: () => Promise<T>): Promise<T> => {
       try {
         return await getter();
@@ -80,86 +69,64 @@ export async function GET(request: NextRequest) {
         return fallback;
       }
     };
-    const [todos, aggByTodo, activeThemes, themeProgress, currentSessions] = await Promise.all([
+
+    const [
+      repos,
+      todos,
+      steps,
+      aggByTodo,
+      timesByTodo,
+      activeThemes,
+      themeProgress,
+      totals,
+      finishedLogs,
+      currentSessions,
+      stuck,
+      subagentsBySession,
+    ] = await Promise.all([
+      soft([] as Repo[], () => getRepos()),
       soft([] as Todo[], () => getTodosForDate(selectedDate)),
+      soft([] as TodoStep[], () => getStepsForDate(selectedDate)),
       soft(new Map<string, TodoStepAggregate>(), () => getStepAggregatesForDate(selectedDate)),
-      soft([], () => getActiveThemes()),
-      soft(new Map(), () => getThemeProgressForDate(selectedDate)),
+      soft(new Map<string, TodoTimes>(), () => getTodoTimesForDate(selectedDate)),
+      soft([] as Theme[], () => getActiveThemes()),
+      soft(new Map<string, ThemeProgress>(), () => getThemeProgressForDate(selectedDate)),
+      soft(EMPTY_TOTALS, () => getDailyTotals(selectedDate)),
+      soft([] as FinishedLog[], () => getFinishedLogs(selectedDate)),
       isToday ? soft([] as CurrentSession[], () => getCurrentSessions()) : Promise.resolve([] as CurrentSession[]),
+      isToday ? soft([] as StuckWait[], () => getStuckWait(0)) : Promise.resolve([] as StuckWait[]),
+      isToday
+        ? soft(new Map<string, SessionSubagent[]>(), () => getSubagentsBySession(selectedDate))
+        : Promise.resolve(new Map<string, SessionSubagent[]>()),
     ]);
 
-    const todosById = new Map(todos.map((todo) => [todo.id, todo]));
-    const themeIds = new Set(activeThemes.map((theme) => theme.id));
-
-    // セッションの所属テーマ判定: session.todoId→そのtodoのthemeId、無ければ session.themeId。
-    const themeIdForSession = (session: CurrentSession): string | null => {
-      const linked = session.todoId ? todosById.get(session.todoId) : undefined;
-      const viaTodo = linked?.themeId;
-      if (viaTodo && themeIds.has(viaTodo)) return viaTodo;
-      if (session.themeId && themeIds.has(session.themeId)) return session.themeId;
-      return null;
-    };
-
-    // 全体プログレス（board/page.tsx と同一導出: 済todo/全todo）。
-    const totalCount = todos.length;
-    const doneCount = todos.filter((todo) => todo.status === 'done').length;
-    const progressPct = totalCount === 0 ? null : Math.round((doneCount / totalCount) * 100);
-
-    const isLive = (state: string) => state === 'run' || state === 'sub';
-    const liveTotal = currentSessions.filter((s) => isLive(s.state)).length;
-    const waitTotal = currentSessions.filter((s) => s.state === 'wait').length;
-
-    // きみの番件数: (a) 質問中のAI todo, (b) 確認待ちセッション。
-    let asksCount = 0;
-    for (const todo of todos) {
-      if (todo.assignee !== 'ai') continue;
-      if (deriveBoardStatus(todo, aggByTodo.get(todo.id)).tone === 'question') asksCount += 1;
-    }
-    asksCount += waitTotal;
-
-    // テーマ別のライブ/待ち件数を集計。
-    const liveByTheme = new Map<string, number>();
-    const waitByTheme = new Map<string, number>();
-    for (const session of currentSessions) {
-      const themeId = themeIdForSession(session);
-      if (!themeId) continue;
-      if (isLive(session.state)) liveByTheme.set(themeId, (liveByTheme.get(themeId) ?? 0) + 1);
-      else if (session.state === 'wait') waitByTheme.set(themeId, (waitByTheme.get(themeId) ?? 0) + 1);
+    const repoNameBySlug = new Map(repos.map((repo) => [repo.slug, repo.name]));
+    const stuckBySession = new Map(stuck.map((s) => [s.sessionKey, s]));
+    const stepsByTodo = new Map<string, TodoStep[]>();
+    for (const step of steps) {
+      const list = stepsByTodo.get(step.todoId) ?? [];
+      list.push(step);
+      stepsByTodo.set(step.todoId, list);
     }
 
-    const themes: SummaryTheme[] = activeThemes.map((theme) => {
-      // open のやること = self（完了打消しは status で表現）または AI open。
-      const openTasks: SummaryTask[] = todos
-        .filter(
-          (todo) =>
-            todo.themeId === theme.id && (todo.assignee === 'self' || todo.status !== 'done'),
-        )
-        .map((todo) => ({
-          id: todo.id,
-          title: todo.title,
-          statusLabel: statusLabelFor(todo, aggByTodo.get(todo.id)),
-        }));
-      const progress = themeProgress.get(theme.id);
-      return {
-        id: theme.id,
-        name: theme.name,
-        pct: progress?.pct ?? null,
-        liveCount: liveByTheme.get(theme.id) ?? 0,
-        waitCount: waitByTheme.get(theme.id) ?? 0,
-        openTasks,
-        doneCount: progress?.done ?? 0,
-      };
+    const board = buildBoardV2Data({
+      selectedDate,
+      isToday,
+      todos,
+      stepsByTodo,
+      aggByTodo,
+      timesByTodo,
+      activeThemes,
+      themeProgress,
+      totals,
+      finishedLogs,
+      currentSessions,
+      stuckBySession,
+      subagentsBySession,
+      repoNameBySlug,
     });
 
-    const summary: BoardSummary = {
-      progressPct,
-      liveTotal,
-      waitTotal,
-      asksCount,
-      themes,
-    };
-
-    return NextResponse.json({ success: true, summary });
+    return NextResponse.json({ success: true, board });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to build board summary';
     return NextResponse.json(
