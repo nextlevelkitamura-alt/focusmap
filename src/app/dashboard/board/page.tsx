@@ -1,20 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import {
-  Activity,
-  Bot,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Folder,
-  HelpCircle,
-  ListTodo,
-  PauseCircle,
-  Plus,
-  Users,
-} from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Plus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { createClient } from '@/utils/supabase/server';
 import { cn } from '@/lib/utils';
@@ -43,17 +29,24 @@ import {
   type Theme,
   type ThemeProgress,
 } from '@/lib/turso/themes';
-import { deriveBoardStatus, boardStatusClassName } from '@/lib/board-status';
-import { carryOverAction, completeHeadingAction, toggleTodoAction } from './actions';
-import { BoardPoller } from './_components/board-poller';
-import { QuestionAnswer } from './_components/question-answer';
-import { UndoBar } from './_components/undo-bar';
-import { FixReattach } from './_components/fix-reattach';
-import { ThemeEditor } from './_components/theme-editor';
-import { FileAgentCheck } from './_components/file-agent-check';
-import { SubagentNest } from './_components/subagent-nest';
+import { deriveBoardStatus } from '@/lib/board-status';
 import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
+import { BoardPoller } from './_components/board-poller';
+import { UndoBar } from './_components/undo-bar';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
+import { ThemeCardV2 } from '@/components/today/board-v2/theme-card';
+import { DayHeader } from '@/components/today/board-v2/day-header';
+import { AskLane } from '@/components/today/board-v2/ask-lane';
+import { StrayBox } from '@/components/today/board-v2/stray-box';
+import type {
+  AskItem,
+  BoardV2Data,
+  FinishedTodoItem,
+  SessionItem,
+  StrayData,
+  TaskItem,
+  ThemeCardData,
+} from '@/components/today/board-v2/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,9 +62,6 @@ interface LoadResult<T> {
 }
 
 const EMPTY_TOTALS: DailyTotals = { sessionDate: '', runMin: 0, waitMin: 0, subMin: 0, sessions: 0 };
-
-// テーマ帯左インデント（縦線ワークフロー・進捗バー・繰越しボタンをチェックボックス幅へ揃える）。
-const INDENT = 'ml-[46px]';
 
 function getJstDate() {
   const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -98,13 +88,6 @@ function formatDateLabel(date: string, isToday: boolean) {
   return `${month}/${day}（${weekday}）${isToday ? ' 今日' : ''}`;
 }
 
-function formatMinutes(minutes: number) {
-  const safeMinutes = Math.max(0, Math.round(minutes));
-  const hours = Math.floor(safeMinutes / 60);
-  const rest = safeMinutes % 60;
-  return hours > 0 ? `${hours}h${String(rest).padStart(2, '0')}m` : `${rest}m`;
-}
-
 function buildDateHref(date: string) {
   return `/dashboard/board?${new URLSearchParams({ date }).toString()}`;
 }
@@ -115,466 +98,6 @@ async function load<T>(source: DataSource, fallback: T, getter: () => Promise<T>
   } catch {
     return { data: fallback, error: source };
   }
-}
-
-// 縦線ワークフロー（子09・v5モック準拠）: 上から下へステップを縦線で繋ぎ、
-// done緑✓／doing青▶／todo白抜き。右に所要（done=実測分・doing=経過分）をSQL導出値で表示。
-function StepFlow({ steps }: { steps: TodoStep[] }) {
-  if (steps.length === 0) return null;
-  return (
-    <ul className={cn('relative mt-2 list-none', INDENT)}>
-      {steps.map((step, index) => {
-        const last = index === steps.length - 1;
-        const glyph = step.status === 'done' ? '✓' : step.status === 'doing' ? '▶' : '';
-        const nodeClass =
-          step.status === 'done'
-            ? 'bg-emerald-700'
-            : step.status === 'doing'
-              ? 'bg-blue-600'
-              : step.status === 'skipped'
-                ? 'bg-slate-200 text-slate-400 dark:bg-slate-700'
-                : 'border-2 border-slate-300 bg-white dark:border-slate-600 dark:bg-transparent';
-        const timeLabel =
-          step.elapsedMin === null
-            ? null
-            : step.status === 'done'
-              ? `${step.elapsedMin}分`
-              : step.status === 'doing'
-                ? `${step.elapsedMin}分経過`
-                : null;
-        return (
-          <li
-            key={step.id}
-            className="relative flex items-start gap-2 py-[3px] text-[11px] leading-[1.45] text-muted-foreground"
-          >
-            {!last ? (
-              <span aria-hidden className="absolute bottom-[-4px] left-[6px] top-[19px] w-0.5 bg-slate-200 dark:bg-slate-700" />
-            ) : null}
-            <span
-              className={cn(
-                'relative z-[1] mt-[1.5px] grid h-3.5 w-3.5 shrink-0 place-items-center rounded-[4.5px] text-[8.5px] font-extrabold leading-none text-white',
-                nodeClass,
-              )}
-            >
-              {glyph}
-            </span>
-            <span
-              className={cn(
-                'min-w-0 flex-1 break-words',
-                step.status === 'skipped' && 'line-through opacity-60',
-                step.kind === 'fix' && 'text-amber-700 dark:text-amber-400',
-              )}
-            >
-              {step.kind === 'fix' ? <span className="mr-1">🔧</span> : null}
-              {step.title}
-              {step.kind === 'fix' ? <span className="ml-1 text-[10px]">手直し</span> : null}
-            </span>
-            {timeLabel ? (
-              <span
-                className={cn(
-                  'ml-1.5 shrink-0 text-[10px] tabular-nums',
-                  step.status === 'doing' ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-slate-400',
-                )}
-              >
-                {timeLabel}
-              </span>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-// タスク見出し右の累計2値（子09・v5モック準拠）: 実行N分・確認待ちN分。すべてSQL導出。
-function TaskTimes({ times, running }: { times: TodoTimes; running: boolean }) {
-  return (
-    <div className="flex shrink-0 flex-col items-end gap-0.5 pt-0.5">
-      <span
-        className={cn(
-          'whitespace-nowrap text-[10px] font-semibold tabular-nums',
-          running ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500',
-        )}
-      >
-        実行 {times.runMin}分
-      </span>
-      <span
-        className={cn(
-          'whitespace-nowrap text-[10px] font-semibold tabular-nums',
-          times.waitMin > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400',
-        )}
-      >
-        確認待ち {times.waitMin}分
-      </span>
-    </div>
-  );
-}
-
-function ProgressBar({ pct, tone }: { pct: number; tone: 'run' | 'review' }) {
-  return (
-    <div className={cn('mt-2 h-1 overflow-hidden rounded-full bg-muted', INDENT)}>
-      <div
-        className={cn('h-full rounded-full', tone === 'review' ? 'bg-emerald-500' : 'bg-blue-500')}
-        style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-      />
-    </div>
-  );
-}
-
-// 左のチェックボックス（v5モック準拠・全タスク同一様式）。
-// self=完了トグル／AIレビュー待ち=見出し完了（人間タップ・全step done時のみ・5秒undoで戻せる）／
-// AI実行中=未完了の静的枠（完了は全ステップ後）。子05の完了/undoロジックは server action 側で不変。
-function TaskCheck({ todo, reviewReady, selectedDate }: { todo: Todo; reviewReady: boolean; selectedDate: string }) {
-  const square = (filled: boolean, invite: boolean) => (
-    <span
-      className={cn(
-        'grid h-6 w-6 place-items-center rounded-lg',
-        filled
-          ? 'bg-emerald-600 text-white'
-          : cn('border-2 bg-white dark:bg-transparent', invite ? 'border-emerald-500' : 'border-slate-300 dark:border-slate-600'),
-      )}
-    >
-      {filled ? <Check className="h-3.5 w-3.5" /> : null}
-    </span>
-  );
-  const tapClass = '-ml-1.5 -mt-1.5 inline-grid h-11 w-11 shrink-0 place-items-center rounded-xl active:scale-95';
-
-  if (todo.assignee === 'self') {
-    const isDone = todo.status === 'done';
-    return (
-      <form action={toggleTodoAction} className="shrink-0">
-        <input type="hidden" name="id" value={todo.id} />
-        <input type="hidden" name="nextStatus" value={isDone ? 'open' : 'done'} />
-        <input type="hidden" name="date" value={selectedDate} />
-        <button type="submit" aria-label={isDone ? `${todo.title}を未完了に戻す` : `${todo.title}を完了にする`} className={tapClass}>
-          {square(isDone, false)}
-        </button>
-      </form>
-    );
-  }
-
-  if (!reviewReady) {
-    return (
-      <span className={cn(tapClass, 'opacity-60')} title="全ステップ完了後に完了にできます" aria-hidden>
-        {square(false, false)}
-      </span>
-    );
-  }
-
-  return (
-    <form action={completeHeadingAction} className="shrink-0">
-      <input type="hidden" name="id" value={todo.id} />
-      <input type="hidden" name="date" value={selectedDate} />
-      <button type="submit" aria-label={`${todo.title}をレビューして完了にする`} className={tapClass}>
-        {square(false, true)}
-      </button>
-    </form>
-  );
-}
-
-// 未完了タスクの「明日へ引き継ぐ」1タップ（子09・繰越し）。do_date+1・carried_from初回記録。
-function CarryButton({ todoId, title, selectedDate }: { todoId: string; title: string; selectedDate: string }) {
-  return (
-    <form action={carryOverAction} className={cn('mt-2', INDENT)}>
-      <input type="hidden" name="id" value={todoId} />
-      <input type="hidden" name="date" value={selectedDate} />
-      <button
-        type="submit"
-        aria-label={`${title}を明日へ引き継ぐ`}
-        className="min-h-8 rounded-lg border border-border bg-background px-2.5 text-[11.5px] font-semibold text-muted-foreground active:scale-[0.99]"
-      >
-        明日へ引き継ぐ
-      </button>
-    </form>
-  );
-}
-
-// テーマ帯内のタスク1件。self=軽量行／AI=状態ラベル・%・累計時間・縦線ワークフロー・質問/レビュー導線。
-function TaskCard({
-  todo,
-  steps,
-  agg,
-  times,
-  aiTargets,
-  repoName,
-  selectedDate,
-}: {
-  todo: Todo;
-  steps: TodoStep[];
-  agg: TodoStepAggregate | undefined;
-  times: TodoTimes | undefined;
-  aiTargets: { id: string; title: string }[];
-  repoName: string;
-  selectedDate: string;
-}) {
-  if (todo.assignee === 'self') {
-    const isDone = todo.status === 'done';
-    return (
-      <div className="pt-3">
-        <div className="flex items-start gap-2">
-          <TaskCheck todo={todo} reviewReady={false} selectedDate={selectedDate} />
-          <div className="min-w-0 flex-1">
-            <p className={cn('break-words text-sm font-semibold', isDone && 'text-muted-foreground line-through')}>{todo.title}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <Badge variant="secondary" className="font-normal">
-                {repoName || 'repo未設定'}
-              </Badge>
-              {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
-            </div>
-          </div>
-        </div>
-        {!isDone ? <CarryButton todoId={todo.id} title={todo.title} selectedDate={selectedDate} /> : null}
-      </div>
-    );
-  }
-
-  const status = deriveBoardStatus(todo, agg);
-  const pct = agg?.pct ?? null;
-  const fixSteps = steps.filter((step) => step.kind === 'fix');
-  const fixTargets = aiTargets.filter((target) => target.id !== todo.id);
-
-  return (
-    <div className="pt-3">
-      <div className="flex items-start gap-2">
-        <TaskCheck todo={todo} reviewReady={status.tone === 'review'} selectedDate={selectedDate} />
-        <div className="min-w-0 flex-1">
-          <p className="break-words text-sm font-semibold">{todo.title}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <Badge variant="outline" className={cn('gap-1 font-semibold', boardStatusClassName(status.tone))}>
-              {status.label}
-            </Badge>
-            {pct !== null ? (
-              <span className={cn('text-[11.5px] font-bold tabular-nums', pct >= 100 ? 'text-emerald-600' : 'text-blue-600')}>{pct}%</span>
-            ) : null}
-            {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
-          </div>
-        </div>
-        {times ? <TaskTimes times={times} running={status.tone === 'run'} /> : null}
-      </div>
-
-      {pct !== null ? <ProgressBar pct={pct} tone={pct >= 100 ? 'review' : 'run'} /> : null}
-
-      {todo.answer && !todo.answerConsumedAt ? (
-        <p className={cn('mt-1 text-xs text-muted-foreground', INDENT)}>回答済（未消費）: {todo.answer}</p>
-      ) : null}
-
-      {steps.length > 0 ? (
-        <StepFlow steps={steps} />
-      ) : (
-        <p className={cn('mt-1 text-xs text-muted-foreground', INDENT)}>ステップ未登録（計画待ち）</p>
-      )}
-
-      {status.tone === 'question' && todo.question ? (
-        <div className={cn('mt-2', INDENT)}>
-          {todo.questionGate ? (
-            <p className="text-xs text-muted-foreground">
-              これは承認が要る操作です。ボードからは回答できません。セッションで明示承認してください。
-            </p>
-          ) : (
-            <>
-              <p className="mb-1.5 flex items-start gap-1.5 text-sm text-amber-800 dark:text-amber-300">
-                <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span className="min-w-0">AIの質問: {todo.question}</span>
-              </p>
-              <QuestionAnswer todoId={todo.id} choices={todo.questionChoices} allowFree={todo.questionAllowFree} date={selectedDate} />
-            </>
-          )}
-        </div>
-      ) : null}
-
-      {status.tone === 'review' ? (
-        <p className={cn('mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-400', INDENT)}>
-          全ステップ完了 — 左のチェックでレビュー完了にできます
-        </p>
-      ) : null}
-
-      {fixSteps.length > 0 && fixTargets.length > 0 ? (
-        <div className={cn('mt-2 flex flex-wrap gap-2', INDENT)}>
-          {fixSteps.map((step) => (
-            <FixReattach key={step.id} stepId={step.id} date={selectedDate} targets={fixTargets} />
-          ))}
-        </div>
-      ) : null}
-
-      <CarryButton todoId={todo.id} title={todo.title} selectedDate={selectedDate} />
-    </div>
-  );
-}
-
-// テーマ帯（案A・v5モック準拠）: 名前＋右に完了%＋鉛筆／目的・完了条件の小見出し＋本文／
-// 未記入バッジ（人間の空作成）／配下計画チップ（子07計画タブへのリンクのみ・進捗の重複描画なし）。
-function ThemeBand({
-  theme,
-  progress,
-  todos,
-  stepsByTodo,
-  aggByTodo,
-  timesByTodo,
-  aiTargets,
-  repoNameBySlug,
-  selectedDate,
-}: {
-  theme: Theme | null;
-  progress: ThemeProgress | undefined;
-  todos: Todo[];
-  stepsByTodo: Map<string, TodoStep[]>;
-  aggByTodo: Map<string, TodoStepAggregate>;
-  timesByTodo: Map<string, TodoTimes>;
-  aiTargets: { id: string; title: string }[];
-  repoNameBySlug: Map<string, string>;
-  selectedDate: string;
-}) {
-  const isUncat = theme === null;
-  const unfilled = !isUncat && !theme.purpose && !theme.doneCriteria;
-
-  return (
-    <article className="overflow-hidden rounded-2xl border border-border">
-      <div className={cn('px-3 py-3', isUncat ? 'bg-muted/40' : 'bg-blue-50/60 dark:bg-blue-500/10')}>
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="min-w-0 text-[14.5px] font-bold leading-snug">{isUncat ? '未分類' : theme.name}</h3>
-          <div className="flex shrink-0 items-center">
-            {!isUncat && progress && progress.pct !== null ? (
-              <span
-                className="text-xs font-extrabold tabular-nums text-blue-700 dark:text-blue-300"
-                aria-label={`完了${progress.pct}パーセント`}
-              >
-                {progress.pct}%
-              </span>
-            ) : null}
-            {!isUncat ? (
-              <ThemeEditor
-                theme={{ id: theme.id, name: theme.name, purpose: theme.purpose, doneCriteria: theme.doneCriteria, goalRef: theme.goalRef }}
-                date={selectedDate}
-              />
-            ) : null}
-          </div>
-        </div>
-
-        {!isUncat ? (
-          unfilled ? (
-            <span className="mt-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
-              目的・完了条件 未記入
-            </span>
-          ) : (
-            <div className="mt-1.5 space-y-1">
-              <div>
-                <p className="text-[11px] font-semibold text-muted-foreground">目的</p>
-                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{theme.purpose || '—'}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold text-muted-foreground">完了条件</p>
-                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{theme.doneCriteria || '—'}</p>
-              </div>
-            </div>
-          )
-        ) : null}
-
-        {!isUncat && theme.planRefs.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {theme.planRefs.map((slug) => (
-              <Link
-                key={slug}
-                href={`/dashboard/plans#${encodeURIComponent(slug)}`}
-                className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-background px-2 py-0.5 text-[10.5px] text-muted-foreground active:scale-95"
-              >
-                {slug}
-              </Link>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="divide-y divide-border/60 px-3 pb-3">
-        {todos.map((todo) => (
-          <TaskCard
-            key={todo.id}
-            todo={todo}
-            steps={stepsByTodo.get(todo.id) ?? []}
-            agg={aggByTodo.get(todo.id)}
-            times={timesByTodo.get(todo.id)}
-            aiTargets={aiTargets}
-            repoName={repoNameBySlug.get(todo.repo) ?? todo.repo}
-            selectedDate={selectedDate}
-          />
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function getAgentStatePresentation(state: string) {
-  if (state === 'run') return { label: '稼働中', dot: 'bg-emerald-500' };
-  if (state === 'sub') return { label: 'サブ稼働中', dot: 'bg-blue-500' };
-  if (state === 'wait') return { label: '待機中', dot: 'bg-amber-500' };
-  return { label: state || '状態不明', dot: 'bg-muted-foreground' };
-}
-
-// 動いているエージェント行（子09）: 宣言済み todo_id/theme_id を既取得のtodos/themesでMap join（追加クエリなし）し
-// 「テーマ›タスク」パンくずを表示。左の人間チェックは宣言済み todo_id を読むだけで「終わったこと」へ格納する。
-function AgentRow({
-  session,
-  stuck,
-  themeById,
-  todosById,
-  selectedDate,
-  subagents,
-}: {
-  session: CurrentSession;
-  stuck?: StuckWait;
-  themeById: Map<string, Theme>;
-  todosById: Map<string, Todo>;
-  selectedDate: string;
-  subagents?: SessionSubagent[];
-}) {
-  const state = getAgentStatePresentation(session.state);
-  const linkedTodo = session.todoId ? todosById.get(session.todoId) : undefined;
-  const themeName =
-    (linkedTodo?.themeId ? themeById.get(linkedTodo.themeId)?.name : undefined) ??
-    (session.themeId ? themeById.get(session.themeId)?.name : undefined) ??
-    '';
-  const taskTitle = linkedTodo?.title ?? '';
-  const breadcrumb = taskTitle
-    ? themeName
-      ? `${themeName} › ${taskTitle}`
-      : taskTitle
-    : themeName || '未紐付け→新見出しへ';
-  const name = session.now || session.goal || 'エージェント';
-
-  return (
-    <div className="flex items-start gap-2 px-3 py-3">
-      <FileAgentCheck sessionKey={session.sessionKey} todoTitle={taskTitle} date={selectedDate} label={name} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', state.dot)} title={state.label} />
-          <span className="min-w-0 truncate text-[13px] font-semibold">{name}</span>
-        </div>
-        <p className="mt-0.5 text-[10.5px] leading-tight text-muted-foreground">{breadcrumb}</p>
-        <span
-          className={cn(
-            'mt-0.5 block text-[10.5px] font-semibold',
-            session.state === 'wait' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400',
-          )}
-        >
-          {session.state === 'wait' && stuck ? `待機 ${stuck.waitMin}分` : state.label}
-        </span>
-        {subagents && subagents.length > 0 ? <SubagentNest subagents={subagents} /> : null}
-      </div>
-    </div>
-  );
-}
-
-function SummaryTile({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Activity }) {
-  return (
-    <Card>
-      <CardContent className="space-y-1.5 p-3 text-center sm:p-4">
-        <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-          <Icon className="h-3.5 w-3.5" />
-          <span>{label}</span>
-        </div>
-        <div className="text-xl font-bold tabular-nums">{value}</div>
-      </CardContent>
-    </Card>
-  );
 }
 
 // 「終わったこと」ログの表示時de-dup（連続する同一entryを ×N バッジにまとめる）。
@@ -591,26 +114,195 @@ function dedupeLogs(logs: FinishedLog[]): { log: FinishedLog; count: number }[] 
   return out;
 }
 
-// 汎用: todos をアクティブテーマ順＋末尾「未分類」でグルーピング（今日のやること・終わったこと共通）。
-function groupTodosByTheme(items: Todo[], activeThemes: Theme[], themeById: Map<string, Theme>) {
-  const byTheme = new Map<string, Todo[]>();
-  const uncategorized: Todo[] = [];
-  for (const item of items) {
-    if (item.themeId && themeById.has(item.themeId)) {
-      const list = byTheme.get(item.themeId) ?? [];
+interface BuildInput {
+  selectedDate: string;
+  isToday: boolean;
+  todos: Todo[];
+  stepsByTodo: Map<string, TodoStep[]>;
+  aggByTodo: Map<string, TodoStepAggregate>;
+  timesByTodo: Map<string, TodoTimes>;
+  activeThemes: Theme[];
+  themeProgress: Map<string, ThemeProgress>;
+  totals: DailyTotals;
+  finishedLogs: FinishedLog[];
+  currentSessions: CurrentSession[];
+  stuckBySession: Map<string, StuckWait>;
+  subagentsBySession: Map<string, SessionSubagent[]>;
+  repoNameBySlug: Map<string, string>;
+}
+
+// 取得済みデータ（新クエリなし）から契約型 BoardV2Data を構築する純関数。
+// テーマ軸へ一本化: セッション・完了ログ・完了AI todoを、それぞれ所属テーマ/タスク/未分類へ振り分ける。
+function buildBoardV2Data(input: BuildInput): BoardV2Data {
+  const {
+    selectedDate,
+    isToday,
+    todos,
+    stepsByTodo,
+    aggByTodo,
+    timesByTodo,
+    activeThemes,
+    themeProgress,
+    totals,
+    finishedLogs,
+    currentSessions,
+    stuckBySession,
+    subagentsBySession,
+    repoNameBySlug,
+  } = input;
+
+  const todosById = new Map(todos.map((todo) => [todo.id, todo]));
+  const themeById = new Map(activeThemes.map((theme) => [theme.id, theme]));
+  const themeByName = new Map(activeThemes.map((theme) => [theme.name, theme]));
+
+  const aiTodos = todos.filter((todo) => todo.assignee === 'ai');
+  const aiTargets = aiTodos.map((todo) => ({ id: todo.id, title: todo.title }));
+
+  // やること（TaskItem）= self（完了打消しはtodo.statusで表現）＋ AI open。
+  const taskTodos = todos.filter((todo) => todo.assignee === 'self' || todo.status !== 'done');
+  const taskItemById = new Map<string, TaskItem>();
+  const taskItems: TaskItem[] = taskTodos.map((todo) => {
+    const item: TaskItem = {
+      todo,
+      steps: stepsByTodo.get(todo.id) ?? [],
+      agg: aggByTodo.get(todo.id) ?? null,
+      times: timesByTodo.get(todo.id) ?? null,
+      sessions: [],
+      repoName: repoNameBySlug.get(todo.repo) ?? todo.repo,
+    };
+    taskItemById.set(todo.id, item);
+    return item;
+  });
+
+  const sessionItems: SessionItem[] = currentSessions.map((session) => ({
+    session,
+    stuck: stuckBySession.get(session.sessionKey) ?? null,
+    subagents: subagentsBySession.get(session.sessionKey) ?? [],
+  }));
+
+  // セッション振り分け: todoId一致→TaskItem直下／themeId一致→テーマ直下／どちらも無し→未分類。
+  const themeSessionsByTheme = new Map<string, SessionItem[]>();
+  const straySessions: SessionItem[] = [];
+  for (const item of sessionItems) {
+    const s = item.session;
+    const taskItem = s.todoId ? taskItemById.get(s.todoId) : undefined;
+    if (taskItem) {
+      taskItem.sessions.push(item);
+      continue;
+    }
+    const themeId = s.themeId && themeById.has(s.themeId) ? s.themeId : null;
+    if (themeId) {
+      const list = themeSessionsByTheme.get(themeId) ?? [];
       list.push(item);
-      byTheme.set(item.themeId, list);
+      themeSessionsByTheme.set(themeId, list);
+      continue;
+    }
+    straySessions.push(item);
+  }
+
+  // 完了AI todo（テーマ折りたたみ内）。未分類テーマの完了AI todoは契約に置き場が無いため表示しない。
+  const finishedTodoByTheme = new Map<string, FinishedTodoItem[]>();
+  for (const todo of todos) {
+    if (todo.assignee !== 'ai' || todo.status !== 'done') continue;
+    if (!todo.themeId || !themeById.has(todo.themeId)) continue;
+    const list = finishedTodoByTheme.get(todo.themeId) ?? [];
+    list.push({
+      todo,
+      doneSteps: (stepsByTodo.get(todo.id) ?? []).filter((step) => step.status === 'done').length,
+      runMin: timesByTodo.get(todo.id)?.runMin ?? null,
+    });
+    finishedTodoByTheme.set(todo.themeId, list);
+  }
+
+  // 完了ログ: parentがテーマ名一致→そのテーマ／不一致→未分類（parent別グループ）。
+  const finishedLogsByTheme = new Map<string, { entry: string; count: number }[]>();
+  const strayLogsByParent = new Map<string, { entry: string; count: number }[]>();
+  for (const { log, count } of dedupeLogs(finishedLogs)) {
+    const theme = log.parent ? themeByName.get(log.parent) : undefined;
+    if (theme) {
+      const list = finishedLogsByTheme.get(theme.id) ?? [];
+      list.push({ entry: log.entry, count });
+      finishedLogsByTheme.set(theme.id, list);
     } else {
-      uncategorized.push(item);
+      const parent = log.parent || '新見出し';
+      const list = strayLogsByParent.get(parent) ?? [];
+      list.push({ entry: log.entry, count });
+      strayLogsByParent.set(parent, list);
     }
   }
-  const groups: { theme: Theme | null; todos: Todo[] }[] = [];
-  for (const theme of activeThemes) {
-    const list = byTheme.get(theme.id);
-    if (list && list.length > 0) groups.push({ theme, todos: list });
+
+  // テーマカード群（activeThemes順・空テーマも出す）。
+  const themes: ThemeCardData[] = activeThemes.map((theme) => {
+    const tasks = taskItems.filter((item) => item.todo.themeId === theme.id);
+    const themeSessions = themeSessionsByTheme.get(theme.id) ?? [];
+    const themeAllSessions = [...tasks.flatMap((t) => t.sessions), ...themeSessions];
+    const liveCount = themeAllSessions.filter(
+      (s) => s.session.state === 'run' || s.session.state === 'sub',
+    ).length;
+    const waitCount = themeAllSessions.filter((s) => s.session.state === 'wait').length;
+    return {
+      theme,
+      progress: themeProgress.get(theme.id) ?? null,
+      tasks,
+      themeSessions,
+      finishedTodos: finishedTodoByTheme.get(theme.id) ?? [],
+      finishedLogs: finishedLogsByTheme.get(theme.id) ?? [],
+      liveCount,
+      waitCount,
+    };
+  });
+
+  // 未分類（テーマ無所属のtask・session・ログ）。
+  const stray: StrayData = {
+    tasks: taskItems.filter((item) => !item.todo.themeId || !themeById.has(item.todo.themeId)),
+    sessions: straySessions,
+    finishedLogs: [...strayLogsByParent.entries()].map(([parent, items]) => ({ parent, items })),
+  };
+
+  // きみの番: (a) 質問中のAI todo, (b) 確認待ちセッション。
+  const asks: AskItem[] = [];
+  for (const todo of aiTodos) {
+    const status = deriveBoardStatus(todo, aggByTodo.get(todo.id));
+    if (status.tone === 'question') {
+      asks.push({
+        kind: 'question',
+        todo,
+        themeName: todo.themeId ? themeById.get(todo.themeId)?.name ?? null : null,
+      });
+    }
   }
-  if (uncategorized.length > 0) groups.push({ theme: null, todos: uncategorized });
-  return groups;
+  for (const item of sessionItems) {
+    if (item.session.state !== 'wait') continue;
+    const s = item.session;
+    const linkedTodo = s.todoId ? todosById.get(s.todoId) : undefined;
+    const themeName =
+      (linkedTodo?.themeId ? themeById.get(linkedTodo.themeId)?.name : undefined) ??
+      (s.themeId ? themeById.get(s.themeId)?.name : undefined) ??
+      null;
+    asks.push({ kind: 'wait', session: s, waitMin: item.stuck?.waitMin ?? 0, themeName });
+  }
+
+  const totalCount = todos.length;
+  const doneCount = todos.filter((todo) => todo.status === 'done').length;
+  const progressPct = totalCount === 0 ? null : Math.round((doneCount / totalCount) * 100);
+  const liveTotal = sessionItems.filter(
+    (s) => s.session.state === 'run' || s.session.state === 'sub',
+  ).length;
+  const waitTotal = sessionItems.filter((s) => s.session.state === 'wait').length;
+
+  return {
+    selectedDate,
+    isToday,
+    progressPct,
+    liveTotal,
+    waitTotal,
+    runMin: totals.runMin,
+    waitMinTotal: totals.waitMin,
+    asks,
+    themes,
+    stray,
+    aiTargets,
+  };
 }
 
 export default async function TodayBoardPage({ searchParams }: PageProps) {
@@ -678,10 +370,6 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
 
   const repoNameBySlug = new Map(reposResult.data.map((repo) => [repo.slug, repo.name]));
   const stuckBySession = new Map(stuckResult.data.map((stuck) => [stuck.sessionKey, stuck]));
-  const activeThemes = themesResult.data;
-  const themeById = new Map(activeThemes.map((theme) => [theme.id, theme]));
-  const themeProgress = themeProgressResult.data;
-  const timesByTodo = timesResult.data;
 
   // ステップを todo_id ごとにまとめる。
   const stepsByTodo = new Map<string, TodoStep[]>();
@@ -690,197 +378,95 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     list.push(step);
     stepsByTodo.set(step.todoId, list);
   }
-  const aggByTodo = aggResult.data;
 
   const todos = todosResult.data;
-  const todosById = new Map(todos.map((todo) => [todo.id, todo]));
-  const aiTodos = todos.filter((todo) => todo.assignee === 'ai');
-  const aiTargets = aiTodos.map((todo) => ({ id: todo.id, title: todo.title }));
-  const aiDone = aiTodos.filter((todo) => todo.status === 'done');
+  const board = buildBoardV2Data({
+    selectedDate,
+    isToday,
+    todos,
+    stepsByTodo,
+    aggByTodo: aggResult.data,
+    timesByTodo: timesResult.data,
+    activeThemes: themesResult.data,
+    themeProgress: themeProgressResult.data,
+    totals: totalsResult.data,
+    finishedLogs: logsResult.data,
+    currentSessions: currentResult.data,
+    stuckBySession,
+    subagentsBySession: subagentsResult.data,
+    repoNameBySlug,
+  });
 
-  // 今日のやること = self（全件・完了はバンド内で打消し線）＋ AI open。テーマ帯でグルーピングする。
-  const todayItems = todos.filter((todo) => todo.assignee === 'self' || todo.status !== 'done');
-  const todayGroups = groupTodosByTheme(todayItems, activeThemes, themeById);
-  const finishedGroups = groupTodosByTheme(aiDone, activeThemes, themeById);
+  const justCompletedId =
+    params.justCompleted &&
+    todos.some((todo) => todo.id === params.justCompleted && todo.assignee === 'ai' && todo.status === 'done')
+      ? params.justCompleted
+      : null;
 
-  const dedupedLogs = dedupeLogs(logsResult.data);
-  // session_logs を親（見出し）ごとにまとめる（filed agent=タスク名／finish=目標名・新見出し）。
-  const logsByParent = new Map<string, { entry: string; count: number }[]>();
-  for (const { log, count } of dedupedLogs) {
-    const parent = log.parent || '新見出し';
-    const list = logsByParent.get(parent) ?? [];
-    list.push({ entry: log.entry, count });
-    logsByParent.set(parent, list);
-  }
-
-  const justCompletedId = params.justCompleted && aiDone.some((todo) => todo.id === params.justCompleted) ? params.justCompleted : null;
-  const hasFinished = aiDone.length > 0 || logsByParent.size > 0;
+  const strayHasContent =
+    board.stray.tasks.length > 0 || board.stray.sessions.length > 0 || board.stray.finishedLogs.length > 0;
+  const isEmpty = board.themes.length === 0 && !strayHasContent;
 
   return (
-    <div className="relative min-h-0 flex-1 space-y-6 overflow-y-auto pb-20">
+    <div className="relative min-h-0 flex-1 overflow-y-auto pb-20">
       {isToday ? <BoardPoller /> : null}
 
-      <BoardPaneSwitch active="board" />
+      <div className="mx-auto w-full max-w-2xl space-y-4 px-3 py-4 xl:max-w-6xl">
+        <BoardPaneSwitch active="board" />
 
-      <header className="flex items-center justify-between gap-2">
-        <Button variant="outline" size="icon" className="h-11 w-11" asChild>
-          <Link href={buildDateHref(shiftDate(selectedDate, -1))} aria-label="前の日へ">
-            <ChevronLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <div className="min-w-0 flex-1 text-center text-base font-semibold">{formatDateLabel(selectedDate, isToday)}</div>
-        <Button variant="outline" size="icon" className="h-11 w-11" asChild>
-          <Link href={buildDateHref(shiftDate(selectedDate, 1))} aria-label="次の日へ">
-            <ChevronRight className="h-4 w-4" />
-          </Link>
-        </Button>
-      </header>
+        <DayHeader
+          dateLabel={formatDateLabel(selectedDate, isToday)}
+          prevHref={buildDateHref(shiftDate(selectedDate, -1))}
+          nextHref={buildDateHref(shiftDate(selectedDate, 1))}
+          progressPct={board.progressPct}
+          liveTotal={board.liveTotal}
+          waitTotal={board.waitTotal}
+          runMin={board.runMin}
+        />
 
-      {errors.size > 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="space-y-1 p-4 text-sm text-muted-foreground">
-            {errors.has('inbox') ? <p>やること箱には PERSONAL_OS_INBOX_* の接続設定が必要です。</p> : null}
-            {errors.has('board') ? <p>エージェント・サマリには PERSONAL_OS_BOARD_* の接続設定が必要です。</p> : null}
-            <p>接続できたデータだけで画面を表示しています。</p>
-          </CardContent>
-        </Card>
-      ) : null}
+        {errors.size > 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="space-y-1 p-4 text-sm text-muted-foreground">
+              {errors.has('inbox') ? <p>やること箱には PERSONAL_OS_INBOX_* の接続設定が必要です。</p> : null}
+              {errors.has('board') ? <p>エージェント・サマリには PERSONAL_OS_BOARD_* の接続設定が必要です。</p> : null}
+              <p>接続できたデータだけで画面を表示しています。</p>
+            </CardContent>
+          </Card>
+        ) : null}
 
-      {params.addError === '1' ? (
-        <p role="alert" className="text-sm text-destructive">
-          追加できませんでした。入力内容とDB接続設定を確認してください。
-        </p>
-      ) : null}
+        {params.addError === '1' ? (
+          <p role="alert" className="text-sm text-destructive">
+            追加できませんでした。入力内容とDB接続設定を確認してください。
+          </p>
+        ) : null}
 
-      <section className="space-y-2.5" aria-labelledby="todos-heading">
-        <div className="flex items-center gap-2">
-          <ListTodo className="h-5 w-5 text-primary" />
-          <h2 id="todos-heading" className="text-lg font-semibold">
-            今日のやること
-          </h2>
-          <span className="text-sm text-muted-foreground">{todayItems.length}件</span>
-        </div>
-        {todayGroups.length > 0 ? (
-          <div className="space-y-2.5">
-            {todayGroups.map((group) => (
-              <ThemeBand
-                key={group.theme?.id ?? '__uncat__'}
-                theme={group.theme}
-                progress={group.theme ? themeProgress.get(group.theme.id) : undefined}
-                todos={group.todos}
-                stepsByTodo={stepsByTodo}
-                aggByTodo={aggByTodo}
-                timesByTodo={timesByTodo}
-                aiTargets={aiTargets}
-                repoNameBySlug={repoNameBySlug}
+        {justCompletedId ? <UndoBar todoId={justCompletedId} date={selectedDate} /> : null}
+
+        {board.asks.length > 0 ? <AskLane asks={board.asks} selectedDate={selectedDate} /> : null}
+
+        {board.themes.length > 0 ? (
+          <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
+            {board.themes.map((theme) => (
+              <ThemeCardV2
+                key={theme.theme?.id ?? '__theme__'}
+                data={theme}
                 selectedDate={selectedDate}
+                aiTargets={board.aiTargets}
               />
             ))}
           </div>
-        ) : (
+        ) : null}
+
+        {strayHasContent ? (
+          <StrayBox stray={board.stray} selectedDate={selectedDate} aiTargets={board.aiTargets} />
+        ) : null}
+
+        {isEmpty ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            この日のやることはまだありません。右下の＋から追加できます。
+            この日のテーマ・やることはまだありません。右下の＋から追加できます。
           </div>
-        )}
-      </section>
-
-      {isToday ? (
-        <section className="space-y-2.5" aria-labelledby="agents-heading">
-          <div className="flex items-center gap-2">
-            <Bot className="h-5 w-5 text-primary" />
-            <h2 id="agents-heading" className="text-lg font-semibold">
-              動いているエージェント
-            </h2>
-            <span className="text-sm text-muted-foreground">{currentResult.data.length}体</span>
-          </div>
-          {currentResult.data.length > 0 ? (
-            <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border">
-              {currentResult.data.map((session) => (
-                <AgentRow
-                  key={session.sessionKey}
-                  session={session}
-                  stuck={stuckBySession.get(session.sessionKey)}
-                  themeById={themeById}
-                  todosById={todosById}
-                  selectedDate={selectedDate}
-                  subagents={subagentsResult.data.get(session.sessionKey)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-              稼働中のエージェントはいません。
-            </div>
-          )}
-        </section>
-      ) : null}
-
-      {hasFinished ? (
-        <section className="space-y-2.5" aria-labelledby="finished-heading">
-          <div className="flex items-center gap-2">
-            <Check className="h-5 w-5 text-emerald-600" />
-            <h2 id="finished-heading" className="text-lg font-semibold">
-              終わったこと
-            </h2>
-          </div>
-          {justCompletedId ? <UndoBar todoId={justCompletedId} date={selectedDate} /> : null}
-
-          {finishedGroups.map((group) => (
-            <div key={group.theme?.id ?? '__uncat__'} className="rounded-2xl border border-border p-3">
-              <div
-                className={cn(
-                  'flex items-center gap-1.5 text-[11.5px] font-extrabold',
-                  group.theme ? 'text-blue-700 dark:text-blue-300' : 'text-muted-foreground',
-                )}
-              >
-                <Folder className="h-3 w-3 shrink-0" />
-                <span className="min-w-0 truncate">{group.theme ? group.theme.name : '未分類'}</span>
-              </div>
-              {group.todos.map((todo) => {
-                const doneSteps = (stepsByTodo.get(todo.id) ?? []).filter((step) => step.status === 'done').length;
-                const runMin = timesByTodo.get(todo.id)?.runMin;
-                return (
-                  <div key={todo.id} className="mt-2 flex items-baseline gap-2 text-[11.5px] text-slate-600 dark:text-slate-300">
-                    <span className="shrink-0 font-bold text-emerald-600">✓</span>
-                    <span className="min-w-0 flex-1 break-words">
-                      {todo.title}
-                      {doneSteps > 0 ? <span className="ml-1 text-muted-foreground">（✓ {doneSteps}ステップ完了）</span> : null}
-                    </span>
-                    {runMin ? <span className="shrink-0 text-[10px] tabular-nums text-slate-400">実行{runMin}分</span> : null}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-
-          {[...logsByParent.entries()].map(([parent, items]) => (
-            <div key={parent} className="rounded-2xl border border-border p-3">
-              <div className="flex items-center gap-1.5 text-[11.5px] font-extrabold text-muted-foreground">
-                <Folder className="h-3 w-3 shrink-0" />
-                <span className="min-w-0 truncate">{parent}</span>
-              </div>
-              {items.map((item, index) => (
-                <div key={`${parent}-${index}`} className="mt-2 flex items-baseline gap-2 text-[11.5px] text-slate-600 dark:text-slate-300">
-                  <span className="shrink-0 font-bold text-emerald-600">✓</span>
-                  <span className="min-w-0 flex-1 break-words">{item.entry}</span>
-                  {item.count > 1 ? <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px]">×{item.count}</span> : null}
-                </div>
-              ))}
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      <section className="space-y-3" aria-labelledby="summary-heading">
-        <h2 id="summary-heading" className="text-lg font-semibold">
-          本日サマリ
-        </h2>
-        <div className="grid grid-cols-3 gap-3">
-          <SummaryTile label="実行" value={formatMinutes(totalsResult.data.runMin)} icon={Activity} />
-          <SummaryTile label="待ち" value={formatMinutes(totalsResult.data.waitMin)} icon={PauseCircle} />
-          <SummaryTile label="稼働" value={isToday ? `${currentResult.data.length}体` : '−'} icon={Users} />
-        </div>
-      </section>
+        ) : null}
+      </div>
 
       <Link
         href="/dashboard/board/add"
