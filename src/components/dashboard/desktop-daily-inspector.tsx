@@ -6,6 +6,7 @@ import { ja } from "date-fns/locale"
 import { CalendarDays, Check, Clock3, Pencil, Square, X } from "lucide-react"
 import type { TimeBlock } from "@/lib/time-block"
 import { cn } from "@/lib/utils"
+import { BoardSummaryPanel } from "@/components/dashboard/board-summary-panel"
 
 interface DesktopDailyInspectorProps {
     selectedDate: Date
@@ -68,6 +69,8 @@ export function DesktopDailyInspector({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
+                <BoardSummaryPanel selectedDate={selectedDate} />
+
                 <section className="border-b border-border/35 px-3 py-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
                         <h3 className="text-[11px] font-semibold text-muted-foreground">選んだ予定</h3>
