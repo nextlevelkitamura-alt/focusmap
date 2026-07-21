@@ -5,7 +5,6 @@ import { format } from "date-fns"
 import { LayoutGrid, ArrowUpRight } from "lucide-react"
 import Link from "next/link"
 import { ThemeCardV2 } from "@/components/today/board-v2/theme-card"
-import { AskLane } from "@/components/today/board-v2/ask-lane"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
 import type { BoardV2Data } from "@/components/today/board-v2/types"
 
@@ -14,7 +13,8 @@ interface BoardSummaryPanelProps {
 }
 
 // PCサイドバー上段の当日ボード。スマホboardページと同一DB・同一導出・同一部品（/api/board/summary が
-// 完全な BoardV2Data を返し、ThemeCardV2 / AskLane / StrayBox でそのまま描画する。修正01・条件7）。
+// 完全な BoardV2Data を返し、ThemeCardV2 / StrayBox でそのまま描画する。修正01・条件7）。
+// 折りたたみ挙動も同一部品側に持たせる（パネル側に個別実装しない。修正02・条件2）。
 // 失敗時はサイドバーを壊さないため非表示、取得中は薄いスケルトンを出す。
 export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
     const dateStr = format(selectedDate, "yyyy-MM-dd")
@@ -121,18 +121,11 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                         <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                         {board.waitTotal}
                     </span>
-                    {board.asks.length > 0 && (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
-                            きみの番 {board.asks.length}
-                        </span>
-                    )}
                 </span>
             </div>
 
-            {/* スマホboardと同一部品でそのまま描画（きみの番→テーマカード→未分類） */}
+            {/* スマホboardと同一部品でそのまま描画（テーマカード→未分類） */}
             <div className="space-y-2.5">
-                {board.asks.length > 0 ? <AskLane asks={board.asks} selectedDate={dateStr} /> : null}
-
                 {board.themes.length > 0 ? (
                     <div className="space-y-2.5">
                         {board.themes.map((theme) => (

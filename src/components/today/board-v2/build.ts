@@ -12,9 +12,7 @@ import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
 import type { Theme, ThemeProgress } from '@/lib/turso/themes';
 import type { SessionSubagent } from '@/lib/turso/session-subagents';
-import { deriveBoardStatus } from '@/lib/board-status';
 import type {
-  AskItem,
   BoardV2Data,
   FinishedTodoItem,
   SessionItem,
@@ -86,7 +84,6 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     resolvablePlanSlugs,
   } = input;
 
-  const todosById = new Map(todos.map((todo) => [todo.id, todo]));
   const themeById = new Map(activeThemes.map((theme) => [theme.id, theme]));
   const themeByName = new Map(activeThemes.map((theme) => [theme.name, theme]));
 
@@ -204,29 +201,6 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     finishedLogs: [...strayLogsByParent.entries()].map(([parent, items]) => ({ parent, items })),
   };
 
-  // きみの番: (a) 質問中のAI todo, (b) 確認待ちセッション。
-  const asks: AskItem[] = [];
-  for (const todo of aiTodos) {
-    const status = deriveBoardStatus(todo, aggByTodo.get(todo.id));
-    if (status.tone === 'question') {
-      asks.push({
-        kind: 'question',
-        todo,
-        themeName: todo.themeId ? themeById.get(todo.themeId)?.name ?? null : null,
-      });
-    }
-  }
-  for (const item of sessionItems) {
-    if (item.session.state !== 'wait') continue;
-    const s = item.session;
-    const linkedTodo = s.todoId ? todosById.get(s.todoId) : undefined;
-    const themeName =
-      (linkedTodo?.themeId ? themeById.get(linkedTodo.themeId)?.name : undefined) ??
-      (s.themeId ? themeById.get(s.themeId)?.name : undefined) ??
-      null;
-    asks.push({ kind: 'wait', session: s, waitMin: item.stuck?.waitMin ?? 0, themeName });
-  }
-
   const totalCount = todos.length;
   const doneCount = todos.filter((todo) => todo.status === 'done').length;
   const progressPct = totalCount === 0 ? null : Math.round((doneCount / totalCount) * 100);
@@ -243,7 +217,6 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     waitTotal,
     runMin: totals.runMin,
     waitMinTotal: totals.waitMin,
-    asks,
     themes,
     stray,
     aiTargets,

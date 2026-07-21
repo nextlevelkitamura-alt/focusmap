@@ -1,5 +1,8 @@
+'use client';
+
+import { useState } from 'react';
 import Link from 'next/link';
-import { Check, HelpCircle } from 'lucide-react';
+import { Check, ChevronRight, HelpCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Todo } from '@/lib/turso/todos';
@@ -11,6 +14,7 @@ import {
   toggleTodoAction,
 } from '@/app/dashboard/board/actions';
 import { FixReattach } from '@/app/dashboard/board/_components/fix-reattach';
+import { QuestionAnswer } from '@/app/dashboard/board/_components/question-answer';
 import { ThemeEditor } from '@/app/dashboard/board/_components/theme-editor';
 import { SessionRow } from './session-row';
 import type { ThemeCardData, TaskItem, FinishedTodoItem } from './types';
@@ -219,8 +223,8 @@ function PlanChip({ planSlug, planResolved }: { planSlug: string; planResolved: 
   );
 }
 
-// レールのタスク行（既存 TaskCard 流用・改造）。質問回答UI(QuestionAnswer)は「きみの番」レーンへ移設済みのため描画しない。
-// 質問中は状態バッジのみで示す。行の直下に task.sessions を SessionRow でぶら下げる。
+// レールのタスク行（既存 TaskCard 流用・改造）。行の直下に task.sessions を SessionRow でぶら下げる。
+// 質問中のAI todoはこの行内に質問文と回答UI(QuestionAnswer)を出す（「きみの番」レーンは修正02で廃止・行内へ移設）。
 function TaskRow({
   task,
   aiTargets,
@@ -283,6 +287,28 @@ function TaskRow({
             <PlanChip planSlug={task.planSlug} planResolved={task.planResolved} />
             {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
           </div>
+          {status.tone === 'question' && todo.question ? (
+            <div className="mt-2">
+              <p className="flex items-start gap-1.5 text-sm leading-relaxed">
+                <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <span className="min-w-0">{todo.question}</span>
+              </p>
+              <div className="mt-2">
+                {todo.questionGate ? (
+                  <p className="text-xs text-muted-foreground">
+                    これは承認が要る操作です。ボードからは回答できません。セッションで明示承認してください。
+                  </p>
+                ) : (
+                  <QuestionAnswer
+                    todoId={todo.id}
+                    choices={todo.questionChoices}
+                    allowFree={todo.questionAllowFree}
+                    date={selectedDate}
+                  />
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
         {times ? <TaskTimes times={times} running={status.tone === 'run'} /> : null}
       </div>
@@ -359,8 +385,11 @@ function FinishedFold({ todos, logs }: { todos: FinishedTodoItem[]; logs: { entr
   );
 }
 
-// board-v2 テーマカード（モックv2 .theme 準拠）: テーマ帯（名前＋進捗％＋鉛筆＋細メーター＋ライブ帯＋目的/完了条件＋計画チップ）と
-// 入れ子レール（タスク行＋その直下のセッション行＋テーマ直下セッション＋終わったこと折りたたみ）。
+// board-v2 テーマカード（修正02・デフォルト折りたたみ）: 通常状態はヘッダ1行サマリだけ
+// （テーマ名・進捗％・稼働N緑点・待機N琥珀点・済/総やること数）。ヘッダタップで展開して初めて
+// 細メーター・ライブ帯・計画チップ・入れ子レール（タスク行＋セッション行＋終わったこと折りたたみ）を出す。
+// 折りたたみ状態はカード単位の useState（初期値=折りたたみ・永続化しない）。
+// テーマの目的・完了条件・計画本文はボードに描画しない（計画はチップ→plans詳細ページの2段導線。修正02・条件3）。
 export function ThemeCardV2({
   data,
   selectedDate,
@@ -370,122 +399,136 @@ export function ThemeCardV2({
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
 }) {
+  const [open, setOpen] = useState(false);
   const { theme, progress, tasks, themeSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
   const isUncat = theme === null;
-  const unfilled = !isUncat && !theme.purpose && !theme.doneCriteria;
   const pct = progress?.pct ?? null;
   const doneCount = progress?.done ?? finishedTodos.length;
-  const todoCount = tasks.length;
+  const totalCount = progress?.total ?? tasks.length + finishedTodos.length;
 
   return (
     <article className="overflow-hidden rounded-2xl border border-border bg-card">
-      {/* テーマ帯 */}
-      <div className={cn('px-3 py-3', isUncat ? 'bg-muted/40' : 'bg-blue-50/60 dark:bg-blue-500/10')}>
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="min-w-0 text-[14.5px] font-bold leading-snug">{isUncat ? '未分類' : theme.name}</h3>
-          <div className="flex shrink-0 items-center">
-            {!isUncat && pct !== null ? (
-              <span
-                className={cn(
-                  'text-xs font-extrabold tabular-nums',
-                  pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-700 dark:text-blue-300',
-                )}
-                aria-label={`完了${pct}パーセント`}
-              >
-                {pct}%
-              </span>
-            ) : null}
-            {!isUncat ? (
+      {/* テーマ帯（ヘッダ1行サマリ。タップで展開/折りたたみ） */}
+      <div className={cn(isUncat ? 'bg-muted/40' : 'bg-blue-50/60 dark:bg-blue-500/10')}>
+        <div className="flex items-center">
+          <button
+            type="button"
+            onClick={() => setOpen((prev) => !prev)}
+            aria-expanded={open}
+            aria-label={`${isUncat ? '未分類' : theme.name}を${open ? '折りたたむ' : '展開する'}`}
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left"
+          >
+            <ChevronRight
+              className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
+              aria-hidden
+            />
+            <h3 className="min-w-0 flex-1 truncate text-[14.5px] font-bold leading-snug">{isUncat ? '未分類' : theme.name}</h3>
+            <span className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
+              {!isUncat && pct !== null ? (
+                <span
+                  className={cn(
+                    'text-xs font-extrabold',
+                    pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-700 dark:text-blue-300',
+                  )}
+                  aria-label={`完了${pct}パーセント`}
+                >
+                  {pct}%
+                </span>
+              ) : null}
+              {liveCount > 0 ? (
+                <span className="flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-400" title="稼働中">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" aria-hidden />
+                  {liveCount}
+                </span>
+              ) : null}
+              {waitCount > 0 ? (
+                <span className="flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" title="確認待ち">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden />
+                  {waitCount}
+                </span>
+              ) : null}
+              <span>済 {doneCount}/{totalCount}</span>
+            </span>
+          </button>
+          {open && !isUncat ? (
+            <div className="shrink-0 pr-2">
               <ThemeEditor
                 theme={{ id: theme.id, name: theme.name, purpose: theme.purpose, doneCriteria: theme.doneCriteria, goalRef: theme.goalRef }}
                 date={selectedDate}
               />
+            </div>
+          ) : null}
+        </div>
+
+        {open ? (
+          <div className="px-3 pb-3">
+            {/* 細い進捗メーター */}
+            {!isUncat && pct !== null ? (
+              <div className="h-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500')}
+                  style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+                />
+              </div>
+            ) : null}
+
+            {/* ライブ帯 */}
+            {liveCount > 0 || waitCount > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground tabular-nums">
+                {liveCount > 0 ? (
+                  <span className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" />
+                    {liveCount}体が作業中
+                  </span>
+                ) : null}
+                {waitCount > 0 ? (
+                  <span className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400">
+                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                    {waitCount}体が確認待ち
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* 配下計画チップ（計画名のみ。本文はplans詳細ページで見る） */}
+            {!isUncat && theme.planRefs.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {theme.planRefs.map((slug) => (
+                  <Link
+                    key={slug}
+                    href={`/dashboard/plans#${encodeURIComponent(slug)}`}
+                    className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-background px-2 py-0.5 text-[10.5px] text-muted-foreground active:scale-95"
+                  >
+                    {slug}
+                  </Link>
+                ))}
+              </div>
             ) : null}
           </div>
-        </div>
-
-        {/* 細い進捗メーター */}
-        {!isUncat && pct !== null ? (
-          <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
-            <div
-              className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500')}
-              style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-            />
-          </div>
         ) : null}
+      </div>
 
-        {/* ライブ帯 */}
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground tabular-nums">
-          {liveCount > 0 ? (
-            <span className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" />
-              {liveCount}体が作業中
-            </span>
-          ) : null}
-          {waitCount > 0 ? (
-            <span className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400">
-              <span className="h-2 w-2 rounded-full bg-amber-500" />
-              {waitCount}体が確認待ち
-            </span>
-          ) : null}
-          <span>やること {todoCount} ・ 済 {doneCount}</span>
-        </div>
+      {/* 入れ子レール（展開時のみ） */}
+      {open ? (
+        <div className="border-t border-border px-3 pb-3 pt-1">
+          <div className="divide-y divide-border/60">
+            {tasks.map((task) => (
+              <TaskRow key={task.todo.id} task={task} aiTargets={aiTargets} selectedDate={selectedDate} />
+            ))}
+          </div>
 
-        {/* 目的・完了条件 */}
-        {!isUncat ? (
-          unfilled ? (
-            <span className="mt-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
-              目的・完了条件 未記入
-            </span>
-          ) : (
-            <div className="mt-1.5 space-y-1">
-              <div>
-                <p className="text-[11px] font-semibold text-muted-foreground">目的</p>
-                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{theme.purpose || '—'}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold text-muted-foreground">完了条件</p>
-                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{theme.doneCriteria || '—'}</p>
-              </div>
+          {/* テーマ直下のライブ行（todo無所属） */}
+          {themeSessions.length > 0 ? (
+            <div className="mt-3 space-y-1">
+              {themeSessions.map((s) => (
+                <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} />
+              ))}
             </div>
-          )
-        ) : null}
+          ) : null}
 
-        {/* 配下計画チップ */}
-        {!isUncat && theme.planRefs.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {theme.planRefs.map((slug) => (
-              <Link
-                key={slug}
-                href={`/dashboard/plans#${encodeURIComponent(slug)}`}
-                className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-background px-2 py-0.5 text-[10.5px] text-muted-foreground active:scale-95"
-              >
-                {slug}
-              </Link>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      {/* 入れ子レール */}
-      <div className="border-t border-border px-3 pb-3 pt-1">
-        <div className="divide-y divide-border/60">
-          {tasks.map((task) => (
-            <TaskRow key={task.todo.id} task={task} aiTargets={aiTargets} selectedDate={selectedDate} />
-          ))}
+          <FinishedFold todos={finishedTodos} logs={finishedLogs} />
         </div>
-
-        {/* テーマ直下のライブ行（todo無所属） */}
-        {themeSessions.length > 0 ? (
-          <div className="mt-3 space-y-1">
-            {themeSessions.map((s) => (
-              <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} />
-            ))}
-          </div>
-        ) : null}
-
-        <FinishedFold todos={finishedTodos} logs={finishedLogs} />
-      </div>
+      ) : null}
     </article>
   );
 }

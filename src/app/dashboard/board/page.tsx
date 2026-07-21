@@ -36,7 +36,6 @@ import { UndoBar } from './_components/undo-bar';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
 import { ThemeCardV2 } from '@/components/today/board-v2/theme-card';
 import { DayHeader } from '@/components/today/board-v2/day-header';
-import { AskLane } from '@/components/today/board-v2/ask-lane';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
 
@@ -237,8 +236,6 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
         ) : null}
 
         {justCompletedId ? <UndoBar todoId={justCompletedId} date={selectedDate} /> : null}
-
-        {board.asks.length > 0 ? <AskLane asks={board.asks} selectedDate={selectedDate} /> : null}
 
         {board.themes.length > 0 ? (
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">

@@ -1,9 +1,10 @@
 // board-v2 契約（30分スプリント・レーンD先行確定）
 // 正本モック: ~/Private/personal-os/my-brain/areas/ai運用/plans/active/2026-07-21-ボードUI計画統合/references/board-mock-v2.html
-// 骨子: テーマ軸一本化（独立3区画を廃止）＋「きみの番」レーン＋未分類枠＋ライブ帯。
+// 骨子: テーマ軸一本化（独立3区画を廃止）＋未分類枠＋ライブ帯。
+// 「きみの番」レーンは修正02で廃止（質問回答はタスク行内・確認待ちはセッション行の琥珀表示で示す）。
 // レーン分担（同一ファイルを2レーンで触らない）:
 //   レーンA: board-v2/theme-card.tsx（ThemeCardV2・TaskRow・SessionRow・FinishedFold）
-//   レーンB: board-v2/ask-lane.tsx / board-v2/stray-box.tsx / board-v2/day-header.tsx
+//   レーンB: board-v2/stray-box.tsx / board-v2/day-header.tsx
 //   レーンC: board/page.tsx 組替え（BoardV2Data 構築）・PCサイドバー統合・レスポンシブ
 // この型定義の変更が必要になったレーンは自走せず指揮官へ差し戻す。
 
@@ -49,10 +50,6 @@ export interface ThemeCardData {
   waitCount: number; // state==='wait'
 }
 
-export type AskItem =
-  | { kind: 'question'; todo: Todo; themeName: string | null } // AIの質問（questionGate=falseは回答UI・trueは注意文）
-  | { kind: 'wait'; session: CurrentSession; waitMin: number; themeName: string | null }; // 確認待ちセッション
-
 export interface StrayData {
   tasks: TaskItem[]; // themeId 無所属の open todo
   sessions: SessionItem[]; // todoId/themeId とも無所属のライブセッション
@@ -68,7 +65,6 @@ export interface BoardV2Data {
   waitTotal: number;
   runMin: number; // 本日サマリ相当はヘッダー1行へ集約（daily totals）
   waitMinTotal: number;
-  asks: AskItem[];
   themes: ThemeCardData[];
   stray: StrayData;
   aiTargets: { id: string; title: string }[]; // FixReattach 用
