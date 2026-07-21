@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep } from '@/lib/turso/todo-steps';
 import type { SessionSubagent } from '@/lib/turso/session-subagents';
-import { carryOverAction, completeHeadingAction } from '@/app/dashboard/board/actions';
+import { CarryOverButton, CompleteHeadingButton } from '@/app/dashboard/board/_components/optimistic-controls';
 import { FixReattach } from '@/app/dashboard/board/_components/fix-reattach';
 import { QuestionAnswer } from '@/app/dashboard/board/_components/question-answer';
 import { FileAgentCheck } from '@/app/dashboard/board/_components/file-agent-check';
@@ -352,22 +352,14 @@ export function PlanTaskSteps({
         <p className="text-[11.5px] text-muted-foreground">工程未登録（計画待ち）</p>
       )}
 
-      {/* 2層チェック: 全工程完了で見出しをレビュー完了にできる（既存 completeHeadingAction を維持） */}
+      {/* 2層チェック: 全工程完了で見出しをレビュー完了にできる（既存 completeHeadingAction を楽観的UI化・修正01） */}
       {allDone ? (
-        <form action={completeHeadingAction} className="mt-2 flex items-center gap-1">
-          <input type="hidden" name="id" value={todo.id} />
-          <input type="hidden" name="date" value={selectedDate} />
-          <button
-            type="submit"
-            aria-label={`${todo.title}をレビューして完了にする`}
-            className="-ml-1.5 inline-grid h-11 w-11 shrink-0 place-items-center rounded-xl active:scale-95"
-          >
-            <span className="grid h-6 w-6 place-items-center rounded-lg border-2 border-emerald-500 bg-white dark:bg-transparent" />
-          </button>
-          <span className="text-[11.5px] font-medium text-emerald-700 dark:text-emerald-400">
-            全工程完了 — チェックでレビュー完了にできます
-          </span>
-        </form>
+        <CompleteHeadingButton
+          todoId={todo.id}
+          date={selectedDate}
+          title={todo.title}
+          label="全工程完了 — チェックでレビュー完了にできます"
+        />
       ) : null}
 
       {/* 手直し付け替え（既存 FixReattach を維持） */}
@@ -379,18 +371,8 @@ export function PlanTaskSteps({
         </div>
       ) : null}
 
-      {/* 明日へ引き継ぐ（既存 carryOverAction を維持） */}
-      <form action={carryOverAction} className="mt-2">
-        <input type="hidden" name="id" value={todo.id} />
-        <input type="hidden" name="date" value={selectedDate} />
-        <button
-          type="submit"
-          aria-label={`${todo.title}を明日へ引き継ぐ`}
-          className="min-h-8 rounded-lg border border-border bg-background px-2.5 text-[11.5px] font-semibold text-muted-foreground active:scale-[0.99]"
-        >
-          明日へ引き継ぐ
-        </button>
-      </form>
+      {/* 明日へ引き継ぐ（既存 carryOverAction を楽観的UI化・修正01） */}
+      <CarryOverButton todoId={todo.id} date={selectedDate} title={todo.title} />
     </div>
   );
 }

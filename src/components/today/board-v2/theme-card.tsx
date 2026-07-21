@@ -8,11 +8,12 @@ import { cn } from '@/lib/utils';
 import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
 import { deriveBoardStatus, boardStatusClassName, type BoardStatus } from '@/lib/board-status';
+import { toggleTodoAction } from '@/app/dashboard/board/actions';
 import {
-  carryOverAction,
-  completeHeadingAction,
-  toggleTodoAction,
-} from '@/app/dashboard/board/actions';
+  CarryOverButton,
+  CompleteHeadingButton,
+  UndoHeadingButton,
+} from '@/app/dashboard/board/_components/optimistic-controls';
 import { FixReattach } from '@/app/dashboard/board/_components/fix-reattach';
 import { QuestionAnswer } from '@/app/dashboard/board/_components/question-answer';
 import { ThemeEditor } from '@/app/dashboard/board/_components/theme-editor';
@@ -171,32 +172,13 @@ function TaskCheck({ todo, reviewReady, selectedDate }: { todo: Todo; reviewRead
     );
   }
 
-  return (
-    <form action={completeHeadingAction} className="shrink-0">
-      <input type="hidden" name="id" value={todo.id} />
-      <input type="hidden" name="date" value={selectedDate} />
-      <button type="submit" aria-label={`${todo.title}をレビューして完了にする`} className={tapClass}>
-        {square(false, true)}
-      </button>
-    </form>
-  );
+  // レビュー待ちAI見出しの完了は楽観的UI（修正01・CompleteHeadingButton）。押下即時にチェック充填→完了。
+  return <CompleteHeadingButton todoId={todo.id} date={selectedDate} title={todo.title} />;
 }
 
-// 未完了タスクの「明日へ引き継ぐ」1タップ（既存 CarryButton 流用）。
+// 未完了タスクの「明日へ引き継ぐ」1タップ（既存 carryOverAction を楽観的UI化・修正01。INDENT でチェック幅に揃える）。
 function CarryButton({ todoId, title, selectedDate }: { todoId: string; title: string; selectedDate: string }) {
-  return (
-    <form action={carryOverAction} className={cn('mt-2', INDENT)}>
-      <input type="hidden" name="id" value={todoId} />
-      <input type="hidden" name="date" value={selectedDate} />
-      <button
-        type="submit"
-        aria-label={`${title}を明日へ引き継ぐ`}
-        className="min-h-8 rounded-lg border border-border bg-background px-2.5 text-[11.5px] font-semibold text-muted-foreground active:scale-[0.99]"
-      >
-        明日へ引き継ぐ
-      </button>
-    </form>
-  );
+  return <CarryOverButton todoId={todoId} date={selectedDate} title={title} className={INDENT} />;
 }
 
 // 子02: やること行の計画チップ。解決可（plan_docsにある）→計画詳細へのリンク／解決不能→グレー非リンク（沈黙故障させない）。
@@ -422,7 +404,17 @@ function TaskRow({
 }
 
 // 「終わったこと」折りたたみ（モックv2 details.fin 準拠・既定open）。完了AI todo と session_logs をまとめて出す。
-function FinishedFold({ todos, logs }: { todos: FinishedTodoItem[]; logs: { entry: string; count: number }[] }) {
+// 修正01: 完了AI todo の先頭✓を「タップで未完了へ戻す」可逆トグル（UndoHeadingButton）にする（完了→縮小で戻せない問題の解消）。
+// session_logs は取り消し対象の todo が無いため静的✓のまま。
+function FinishedFold({
+  todos,
+  logs,
+  selectedDate,
+}: {
+  todos: FinishedTodoItem[];
+  logs: { entry: string; count: number }[];
+  selectedDate: string;
+}) {
   const count = todos.length + logs.length;
   if (count === 0) return null;
   return (
@@ -431,10 +423,10 @@ function FinishedFold({ todos, logs }: { todos: FinishedTodoItem[]; logs: { entr
         <span className="text-[9px] transition-transform [details[open]_&]:rotate-90">▶</span>
         終わったこと {count}件
       </summary>
-      <div className="space-y-1.5 pl-4 pt-1">
+      <div className="space-y-1 pl-4 pt-1">
         {todos.map((f) => (
-          <div key={f.todo.id} className="flex items-baseline gap-2 text-[11.5px] text-slate-600 dark:text-slate-300">
-            <span className="shrink-0 font-bold text-emerald-600">✓</span>
+          <div key={f.todo.id} className="flex min-h-11 items-center gap-1 text-[11.5px] text-slate-600 dark:text-slate-300">
+            <UndoHeadingButton todoId={f.todo.id} date={selectedDate} title={f.todo.title} />
             <span className="min-w-0 flex-1 break-words">
               {f.todo.title}
               {f.doneSteps > 0 ? <span className="ml-1 text-muted-foreground">（✓ {f.doneSteps}ステップ完了）</span> : null}
@@ -677,7 +669,7 @@ export function PlanCardV2({
             </div>
           ) : null}
 
-          <FinishedFold todos={finishedTodos} logs={finishedLogs} />
+          <FinishedFold todos={finishedTodos} logs={finishedLogs} selectedDate={selectedDate} />
         </div>
       ) : null}
     </article>

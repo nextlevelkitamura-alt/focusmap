@@ -132,30 +132,25 @@ function boardRedirect(date: string, extra?: Record<string, string>): never {
   redirect(query ? `${BOARD_PATH}?${query}` : BOARD_PATH);
 }
 
-// 段階2: 見出しの完了は人間のタップのみ。完了後は 5秒取り消し（undo）用に justCompleted を渡す。
+// 段階2: 見出しの完了は人間のタップのみ。修正01で楽観的UI化（CompleteHeadingButton）＝押下即時にチェック充填。
+// boardRedirect（往復 navigation）は廃し revalidatePath のみ。undo は「終わったこと」の可逆トグル（UndoHeadingButton）へ集約。
 export async function completeHeadingAction(formData: FormData) {
   const id = String(formData.get('id') ?? '');
-  const date = String(formData.get('date') ?? '');
 
   if (id) {
-    const done = await completeAiTodoHeading(id);
+    await completeAiTodoHeading(id);
     revalidatePath(BOARD_PATH);
-    if (done) boardRedirect(date, { justCompleted: id });
   }
-
-  boardRedirect(date);
 }
 
+// 完了→未完了の可逆トグル。修正01で楽観的UI化（UndoHeadingButton）＝押下即時に工程表示へ戻す。revalidatePath のみ。
 export async function undoCompleteAction(formData: FormData) {
   const id = String(formData.get('id') ?? '');
-  const date = String(formData.get('date') ?? '');
 
   if (id) {
     await undoCompleteAiTodoHeading(id);
     revalidatePath(BOARD_PATH);
   }
-
-  boardRedirect(date);
 }
 
 // 段階4: スマホからの質問回答（選択肢タップ / 自由入力）をDB保存。
@@ -245,16 +240,14 @@ export async function archiveThemeAction(formData: FormData) {
 
 // 子09 繰越し: 未完了タスクを翌日へ1タップ移動（do_date+1・carried_from初回記録）。
 // 人間タップのみ（AIが勝手に日付を動かさない）。移動先の翌日ボードで「昨日から」表示。
+// 修正01で楽観的UI化（CarryOverButton）＝押下即時に「引き継ぎ中…」。boardRedirect は廃し revalidatePath のみ。
 export async function carryOverAction(formData: FormData) {
   const id = String(formData.get('id') ?? '');
-  const date = String(formData.get('date') ?? '');
 
   if (id) {
     await carryOverTodo(id);
     revalidatePath(BOARD_PATH);
   }
-
-  boardRedirect(date);
 }
 
 // 子09 エージェント行の人間チェック（方針6）: 宣言済み todo_id を読むだけで格納先を決め、

@@ -39,7 +39,6 @@ import {
   type PlanStepProgress,
 } from '@/lib/turso/plan-links';
 import { BoardPoller } from './_components/board-poller';
-import { UndoBar } from './_components/undo-bar';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
 import { PlanCardV2 } from '@/components/today/board-v2/theme-card';
 import { DayHeader } from '@/components/today/board-v2/day-header';
@@ -49,7 +48,7 @@ import { buildBoardV2Data } from '@/components/today/board-v2/build';
 export const dynamic = 'force-dynamic';
 
 interface PageProps {
-  searchParams: Promise<{ date?: string; added?: string; addError?: string; justCompleted?: string }>;
+  searchParams: Promise<{ date?: string; added?: string; addError?: string }>;
 }
 
 type DataSource = 'board' | 'inbox';
@@ -202,12 +201,6 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     planStepProgress: planStepProgressResult.data,
   });
 
-  const justCompletedId =
-    params.justCompleted &&
-    todos.some((todo) => todo.id === params.justCompleted && todo.assignee === 'ai' && todo.status === 'done')
-      ? params.justCompleted
-      : null;
-
   const strayHasContent =
     board.stray.tasks.length > 0 ||
     board.stray.sessions.length > 0 ||
@@ -247,8 +240,6 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
             追加できませんでした。入力内容とDB接続設定を確認してください。
           </p>
         ) : null}
-
-        {justCompletedId ? <UndoBar todoId={justCompletedId} date={selectedDate} /> : null}
 
         {board.planCards.length > 0 ? (
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
