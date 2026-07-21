@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    List, Flame, Play, Pause, Loader2
+    List, Flame, Play, Pause, Loader2, PanelRightClose, PanelRightOpen
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -24,10 +24,14 @@ import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useClickOutside } from "@/hooks/useClickOutside"
 import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
 import type { MindMapNodeCalendarDragPayload } from "@/lib/calendar-constants"
+import type { TimeBlock } from "@/lib/time-block"
 import { CalendarSelector } from "@/components/calendar/calendar-selector"
+import { DesktopDailyInspector } from "@/components/dashboard/desktop-daily-inspector"
 
 // --- Types ---
 const MINDMAP_NODE_DROP_IN_FLIGHT_MS = 4000
+const DAILY_PANEL_STORAGE_KEY = "focusmap:desktop-daily-panel-open"
+const DAILY_PANEL_DOCKED_BREAKPOINT = "(min-width: 1440px)"
 type CalendarRangeMode = 'day' | '3days' | 'month'
 
 interface DesktopTodayPanelProps {
@@ -74,6 +78,10 @@ export function DesktopTodayPanel({
         calendarId: string | null
     } | null>(null)
     const [calendarRangeMode, setCalendarRangeMode] = useState<CalendarRangeMode>(defaultRangeMode)
+    const [isDailyPanelOpen, setIsDailyPanelOpen] = useState(false)
+    const [isDailyPanelDocked, setIsDailyPanelDocked] = useState(false)
+    const [hasMeasuredDailyPanelLayout, setHasMeasuredDailyPanelLayout] = useState(false)
+    const [selectedDailyItem, setSelectedDailyItem] = useState<TimeBlock | null>(null)
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -147,6 +155,16 @@ export function DesktopTodayPanel({
     const handleCalendarRangeModeChange = useCallback((mode: CalendarRangeMode) => {
         setCalendarRangeMode(mode)
     }, [])
+    const setDailyPanelVisibility = useCallback((open: boolean) => {
+        setIsDailyPanelOpen(open)
+        if (typeof window !== "undefined") {
+            window.localStorage.setItem(DAILY_PANEL_STORAGE_KEY, String(open))
+        }
+    }, [])
+    const handleDailyItemTap = useCallback((item: TimeBlock) => {
+        setSelectedDailyItem(item)
+        setDailyPanelVisibility(true)
+    }, [setDailyPanelVisibility])
     const handleRangeDateSelect = useCallback((date: Date) => {
         const normalized = new Date(date)
         normalized.setHours(0, 0, 0, 0)
@@ -200,6 +218,27 @@ export function DesktopTodayPanel({
         onNavigateRight: handleRangeNavigateRight,
         postNavigateLockMs: 340,
     })
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia(DAILY_PANEL_DOCKED_BREAKPOINT)
+        const updateLayout = () => {
+            setIsDailyPanelDocked(mediaQuery.matches)
+            setHasMeasuredDailyPanelLayout(true)
+        }
+        updateLayout()
+        mediaQuery.addEventListener("change", updateLayout)
+        return () => mediaQuery.removeEventListener("change", updateLayout)
+    }, [])
+
+    useEffect(() => {
+        if (!hasMeasuredDailyPanelLayout) return
+        const storedValue = window.localStorage.getItem(DAILY_PANEL_STORAGE_KEY)
+        setIsDailyPanelOpen(storedValue == null ? isDailyPanelDocked : storedValue === "true")
+    }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked])
+
+    useEffect(() => {
+        setSelectedDailyItem(null)
+    }, [selectedDateStr])
 
     const defaultQuickCreateCalendarId =
         calendars.find(c =>
@@ -376,6 +415,21 @@ export function DesktopTodayPanel({
                                 />
                             </div>
                         )}
+                        <button
+                            type="button"
+                            onClick={() => setDailyPanelVisibility(!isDailyPanelOpen)}
+                            className={cn(
+                                "mt-1 grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
+                                isDailyPanelOpen
+                                    ? "bg-primary/10 text-primary"
+                                    : "bg-background/80 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                            )}
+                            aria-label={isDailyPanelOpen ? "デイリーを閉じる" : "デイリーを開く"}
+                            aria-pressed={isDailyPanelOpen}
+                            title={isDailyPanelOpen ? "デイリーを閉じる" : "デイリーを開く"}
+                        >
+                            {isDailyPanelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
+                        </button>
                         <div className="inline-flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5">
                             {(['day', '3days', 'month'] as const).map(mode => (
                                 <button
@@ -612,7 +666,8 @@ export function DesktopTodayPanel({
 
             {/* Timeline content */}
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
-                <div className="relative flex-1 min-h-0">
+                <div className="relative flex flex-1 min-h-0">
+                    <div className="relative min-w-0 flex-1">
                     <div className={cn("h-full min-h-0 flex flex-col transition-all duration-200", showSideTaskForm && "pl-[352px]")}>
                 {/* Calendar Events Error */}
                 {eventsError && calendars.length > 0 && (
@@ -656,7 +711,7 @@ export function DesktopTodayPanel({
                         getInitialScrollTop={getTimelineInitialScrollTop}
                         onScrollPositionChange={handleTimelineScrollPositionChange}
                         onDateSelect={handleRangeDateSelect}
-                        onItemTap={handleItemTap}
+                        onItemTap={handleDailyItemTap}
                         currentTime={currentTime}
                         onToggleTask={toggleTask}
                         onToggleEvent={toggleEventCompletion}
@@ -681,7 +736,7 @@ export function DesktopTodayPanel({
                         currentTime={currentTime}
                         onToggleTask={toggleTask}
                         onToggleEvent={toggleEventCompletion}
-                        onItemTap={handleItemTap}
+                        onItemTap={handleDailyItemTap}
                         onDragDrop={handleDragDrop}
                         childTasksMap={childTasksMap}
                         onCreateSubTask={logicOnCreateSubTask}
@@ -716,7 +771,7 @@ export function DesktopTodayPanel({
                             currentTime={currentTime}
                             onToggleTask={toggleTask}
                             onToggleEvent={toggleEventCompletion}
-                            onItemTap={handleItemTap}
+                            onItemTap={handleDailyItemTap}
                             projectNameMap={projectNameMap}
                         />
                     </div>
@@ -745,6 +800,31 @@ export function DesktopTodayPanel({
                                 initialEstimatedTime={taskFormPreset?.estimatedTime}
                                 initialCalendarId={defaultQuickCreateCalendarId}
                                 onDraftChange={setTaskFormDraft}
+                            />
+                        </div>
+                    )}
+                    </div>
+
+                    {isDailyPanelOpen && isDailyPanelDocked && (
+                        <DesktopDailyInspector
+                            selectedDate={selectedDate}
+                            items={displayItems}
+                            selectedItem={selectedDailyItem}
+                            onSelectItem={setSelectedDailyItem}
+                            onEditItem={handleItemTap}
+                            onClose={() => setDailyPanelVisibility(false)}
+                        />
+                    )}
+
+                    {isDailyPanelOpen && !isDailyPanelDocked && (
+                        <div className="absolute inset-y-0 right-0 z-30 animate-in slide-in-from-right-4 duration-200">
+                            <DesktopDailyInspector
+                                selectedDate={selectedDate}
+                                items={displayItems}
+                                selectedItem={selectedDailyItem}
+                                onSelectItem={setSelectedDailyItem}
+                                onEditItem={handleItemTap}
+                                onClose={() => setDailyPanelVisibility(false)}
                             />
                         </div>
                     )}
