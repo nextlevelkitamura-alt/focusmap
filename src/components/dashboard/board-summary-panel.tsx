@@ -44,31 +44,48 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
     const [loading, setLoading] = useState(true)
     const [failed, setFailed] = useState(false)
 
+    // スマホboardページのBoardPoller(10秒)と同じ周期で再取得し、開きっぱなしのPCでも
+    // スマホ側の変更が自動で追随する。裏の再取得ではloadingを立てない（ちらつき防止）。
     useEffect(() => {
         let cancelled = false
-        setLoading(true)
-        setFailed(false)
-        fetch(`/api/board/summary?date=${dateStr}`)
-            .then((res) => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                return res.json()
-            })
-            .then((json) => {
-                if (cancelled) return
-                if (json?.success && json.summary) {
-                    setSummary(json.summary as BoardSummary)
-                } else {
-                    setFailed(true)
-                }
-            })
-            .catch(() => {
-                if (!cancelled) setFailed(true)
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false)
-            })
+        const load = (initial: boolean) => {
+            if (initial) {
+                setLoading(true)
+                setFailed(false)
+            }
+            fetch(`/api/board/summary?date=${dateStr}`)
+                .then((res) => {
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                    return res.json()
+                })
+                .then((json) => {
+                    if (cancelled) return
+                    if (json?.success && json.summary) {
+                        setSummary(json.summary as BoardSummary)
+                        setFailed(false)
+                    } else if (initial) {
+                        setFailed(true)
+                    }
+                })
+                .catch(() => {
+                    if (!cancelled && initial) setFailed(true)
+                })
+                .finally(() => {
+                    if (!cancelled && initial) setLoading(false)
+                })
+        }
+        load(true)
+        const timer = window.setInterval(() => load(false), 10_000)
+        const refreshOnReturn = () => {
+            if (document.visibilityState === "visible") load(false)
+        }
+        document.addEventListener("visibilitychange", refreshOnReturn)
+        window.addEventListener("focus", refreshOnReturn)
         return () => {
             cancelled = true
+            window.clearInterval(timer)
+            document.removeEventListener("visibilitychange", refreshOnReturn)
+            window.removeEventListener("focus", refreshOnReturn)
         }
     }, [dateStr])
 
