@@ -17,6 +17,7 @@ import { FixReattach } from '@/app/dashboard/board/_components/fix-reattach';
 import { QuestionAnswer } from '@/app/dashboard/board/_components/question-answer';
 import { ThemeEditor } from '@/app/dashboard/board/_components/theme-editor';
 import { SessionRow } from './session-row';
+import { CommanderBar, PlanTaskSteps } from './plan-steps';
 import type { PlanCardData, TaskItem, FinishedTodoItem } from './types';
 
 // テーマ帯左インデント（縦線ワークフロー・進捗バー・繰越しボタンをチェックボックス幅へ揃える）。
@@ -478,6 +479,16 @@ export function PlanCardV2({
   const hasActivity = tasks.length > 0 || cardSessions.length > 0 || finishedTodos.length > 0 || finishedLogs.length > 0;
   const detailHref = !isThemeOnly && planResolved ? `/dashboard/plans/${encodeURIComponent(planSlug)}` : null;
 
+  // 指揮官の識別（子06・v6）: そのカードの計画に紐づくセッションのうち、稼働(run/sub)を優先し、無ければ確認待ち(wait)を1本。
+  // = todo_stepsを実行中に打刻しているメインセッション（session.todoId で task へ振り分け済み）。過剰に複雑化しない。
+  const allSessions = [...tasks.flatMap((task) => task.sessions), ...cardSessions];
+  const commander =
+    allSessions.find((s) => s.session.state === 'run' || s.session.state === 'sub') ??
+    allSessions.find((s) => s.session.state === 'wait') ??
+    allSessions[0] ??
+    null;
+  const commanderKey = commander?.session.sessionKey ?? '';
+
   // 当日動きのない計画: 展開する中身が無いので、静かな1行カード（タップで計画詳細ページへ）。
   if (!isThemeOnly && !hasActivity) {
     const summary = (
@@ -542,15 +553,20 @@ export function PlanCardV2({
                   {pct}%
                 </span>
               ) : null}
+              {/* 稼働の粒（aidot）: 緑=稼働中・琥珀=確認待ち。点滅させない（点滅は工程の「実装中」ピルのみ・子06）。 */}
               {liveCount > 0 ? (
-                <span className="flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-400" title="稼働中">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" aria-hidden />
+                <span
+                  className="grid h-3.5 min-w-[14px] place-items-center rounded-full border border-emerald-500 bg-emerald-50 px-0.5 text-[8px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                  title="稼働中"
+                >
                   {liveCount}
                 </span>
               ) : null}
               {waitCount > 0 ? (
-                <span className="flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400" title="確認待ち">
-                  <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden />
+                <span
+                  className="grid h-3.5 min-w-[14px] place-items-center rounded-full border border-amber-500 bg-amber-100 px-0.5 text-[8px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                  title="確認待ち"
+                >
                   {waitCount}
                 </span>
               ) : null}
@@ -586,12 +602,12 @@ export function PlanCardV2({
               </div>
             ) : null}
 
-            {/* ライブ帯 */}
-            {liveCount > 0 || waitCount > 0 ? (
+            {/* ライブ帯（テーマのみカード等、指揮官バーを出さないカード用。稼働数は点滅させない・子06） */}
+            {!commander && (liveCount > 0 || waitCount > 0) ? (
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground tabular-nums">
                 {liveCount > 0 ? (
                   <span className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" />
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
                     {liveCount}体が作業中
                   </span>
                 ) : null}
@@ -626,13 +642,30 @@ export function PlanCardV2({
         ) : null}
       </div>
 
-      {/* 入れ子レール（展開時のみ） */}
+      {/* 入れ子レール（展開時のみ）= 段階2/3。指揮官バー→番号工程→工程タップでAIレーン（子06・v6） */}
       {open ? (
-        <div className="border-t border-border px-3 pb-3 pt-1">
+        <div className="border-t border-border px-3 pb-3 pt-2">
+          {/* 指揮官バー（プログラム/テーマ層に1本・工程レーンには出さない） */}
+          {!isThemeOnly && commander ? (
+            <div className="mb-2">
+              <CommanderBar item={commander} planTitle={planTitle} selectedDate={selectedDate} />
+            </div>
+          ) : null}
+
           <div className="divide-y divide-border/60">
-            {tasks.map((task) => (
-              <TaskRow key={task.todo.id} task={task} aiTargets={aiTargets} selectedDate={selectedDate} />
-            ))}
+            {tasks.map((task) =>
+              !isThemeOnly && task.todo.assignee === 'ai' ? (
+                <PlanTaskSteps
+                  key={task.todo.id}
+                  task={task}
+                  aiTargets={aiTargets}
+                  selectedDate={selectedDate}
+                  commanderKey={commanderKey}
+                />
+              ) : (
+                <TaskRow key={task.todo.id} task={task} aiTargets={aiTargets} selectedDate={selectedDate} />
+              ),
+            )}
           </div>
 
           {/* カード直下のライブ行（todo無所属・テーマ一致） */}
