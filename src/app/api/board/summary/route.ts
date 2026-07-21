@@ -71,12 +71,21 @@ export async function GET(request: NextRequest) {
     const selectedDate = isDate(dateParam) ? dateParam : getJstDate();
     const isToday = selectedDate === getJstDate();
 
+    // board/page.tsx の load() と同じフェイルソフト: 片方のDB（inbox/board）に接続できなくても
+    // 取れたデータだけで要約を返す（全体500にしない）。
+    const soft = async <T,>(fallback: T, getter: () => Promise<T>): Promise<T> => {
+      try {
+        return await getter();
+      } catch {
+        return fallback;
+      }
+    };
     const [todos, aggByTodo, activeThemes, themeProgress, currentSessions] = await Promise.all([
-      getTodosForDate(selectedDate),
-      getStepAggregatesForDate(selectedDate),
-      getActiveThemes(),
-      getThemeProgressForDate(selectedDate),
-      isToday ? getCurrentSessions() : Promise.resolve([] as CurrentSession[]),
+      soft([] as Todo[], () => getTodosForDate(selectedDate)),
+      soft(new Map<string, TodoStepAggregate>(), () => getStepAggregatesForDate(selectedDate)),
+      soft([], () => getActiveThemes()),
+      soft(new Map(), () => getThemeProgressForDate(selectedDate)),
+      isToday ? soft([] as CurrentSession[], () => getCurrentSessions()) : Promise.resolve([] as CurrentSession[]),
     ]);
 
     const todosById = new Map(todos.map((todo) => [todo.id, todo]));
