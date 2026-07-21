@@ -15,6 +15,7 @@ interface DesktopDailyInspectorProps {
     onSelectItem: (item: TimeBlock) => void
     onEditItem: (item: TimeBlock) => void
     onClose: () => void
+    width?: number
 }
 
 function itemKey(item: TimeBlock) {
@@ -32,6 +33,7 @@ export function DesktopDailyInspector({
     onSelectItem,
     onEditItem,
     onClose,
+    width,
 }: DesktopDailyInspectorProps) {
     const sortedItems = useMemo(
         () => [...items].sort((a, b) => a.startTime.getTime() - b.startTime.getTime()),
@@ -45,7 +47,8 @@ export function DesktopDailyInspector({
     return (
         <aside
             aria-label="デイリー"
-            className="flex h-full w-[360px] min-w-[328px] flex-col border-l border-border/60 bg-background/95 shadow-[-12px_0_32px_rgba(0,0,0,0.28)] backdrop-blur-sm"
+            className="flex h-full w-[360px] min-w-[320px] shrink-0 flex-col border-l border-border/60 bg-background/95 shadow-[-12px_0_32px_rgba(0,0,0,0.28)] backdrop-blur-sm"
+            style={width ? { width } : undefined}
         >
             <div className="flex items-center justify-between border-b border-border/40 px-3 py-2.5">
                 <div className="min-w-0">

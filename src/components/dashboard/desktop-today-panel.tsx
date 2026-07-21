@@ -31,7 +31,11 @@ import { DesktopDailyInspector } from "@/components/dashboard/desktop-daily-insp
 // --- Types ---
 const MINDMAP_NODE_DROP_IN_FLIGHT_MS = 4000
 const DAILY_PANEL_STORAGE_KEY = "focusmap:desktop-daily-panel-open"
+const DAILY_PANEL_WIDTH_STORAGE_KEY = "focusmap:desktop-daily-panel-width"
 const DAILY_PANEL_DOCKED_BREAKPOINT = "(min-width: 1440px)"
+const DAILY_PANEL_DEFAULT_WIDTH = 360
+const DAILY_PANEL_MIN_WIDTH = 320
+const DAILY_PANEL_MAX_WIDTH = 640
 type CalendarRangeMode = 'day' | '3days' | 'month'
 
 interface DesktopTodayPanelProps {
@@ -81,7 +85,11 @@ export function DesktopTodayPanel({
     const [isDailyPanelOpen, setIsDailyPanelOpen] = useState(false)
     const [isDailyPanelDocked, setIsDailyPanelDocked] = useState(false)
     const [hasMeasuredDailyPanelLayout, setHasMeasuredDailyPanelLayout] = useState(false)
+    const [dailyPanelWidth, setDailyPanelWidth] = useState(DAILY_PANEL_DEFAULT_WIDTH)
+    const [isDailyPanelResizing, setIsDailyPanelResizing] = useState(false)
     const [selectedDailyItem, setSelectedDailyItem] = useState<TimeBlock | null>(null)
+    const dailyPanelWidthRef = useRef(DAILY_PANEL_DEFAULT_WIDTH)
+    const dailyPanelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -161,6 +169,51 @@ export function DesktopTodayPanel({
             window.localStorage.setItem(DAILY_PANEL_STORAGE_KEY, String(open))
         }
     }, [])
+    const updateDailyPanelWidth = useCallback((nextWidth: number, persist = false) => {
+        const clampedWidth = Math.min(DAILY_PANEL_MAX_WIDTH, Math.max(DAILY_PANEL_MIN_WIDTH, Math.round(nextWidth)))
+        dailyPanelWidthRef.current = clampedWidth
+        setDailyPanelWidth(clampedWidth)
+        if (persist && typeof window !== "undefined") {
+            window.localStorage.setItem(DAILY_PANEL_WIDTH_STORAGE_KEY, String(clampedWidth))
+        }
+    }, [])
+    const handleDailyPanelResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (event.button !== 0) return
+        event.preventDefault()
+        dailyPanelResizeRef.current = {
+            startX: event.clientX,
+            startWidth: dailyPanelWidthRef.current,
+        }
+        event.currentTarget.setPointerCapture(event.pointerId)
+        setIsDailyPanelResizing(true)
+    }, [])
+    const handleDailyPanelResizePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        const resize = dailyPanelResizeRef.current
+        if (!resize) return
+        updateDailyPanelWidth(resize.startWidth + resize.startX - event.clientX)
+    }, [updateDailyPanelWidth])
+    const finishDailyPanelResize = useCallback(() => {
+        if (!dailyPanelResizeRef.current) return
+        dailyPanelResizeRef.current = null
+        setIsDailyPanelResizing(false)
+        updateDailyPanelWidth(dailyPanelWidthRef.current, true)
+    }, [updateDailyPanelWidth])
+    const handleDailyPanelResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+        const step = event.shiftKey ? 48 : 24
+        if (event.key === "ArrowLeft") {
+            event.preventDefault()
+            updateDailyPanelWidth(dailyPanelWidthRef.current + step, true)
+        } else if (event.key === "ArrowRight") {
+            event.preventDefault()
+            updateDailyPanelWidth(dailyPanelWidthRef.current - step, true)
+        } else if (event.key === "Home") {
+            event.preventDefault()
+            updateDailyPanelWidth(DAILY_PANEL_MIN_WIDTH, true)
+        } else if (event.key === "End") {
+            event.preventDefault()
+            updateDailyPanelWidth(DAILY_PANEL_MAX_WIDTH, true)
+        }
+    }, [updateDailyPanelWidth])
     const handleDailyItemTap = useCallback((item: TimeBlock) => {
         setSelectedDailyItem(item)
         setDailyPanelVisibility(true)
@@ -235,6 +288,14 @@ export function DesktopTodayPanel({
         const storedValue = window.localStorage.getItem(DAILY_PANEL_STORAGE_KEY)
         setIsDailyPanelOpen(storedValue == null ? isDailyPanelDocked : storedValue === "true")
     }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked])
+
+    useEffect(() => {
+        if (!hasMeasuredDailyPanelLayout || !isDailyPanelDocked) return
+        const storedWidth = Number(window.localStorage.getItem(DAILY_PANEL_WIDTH_STORAGE_KEY))
+        if (Number.isFinite(storedWidth) && storedWidth > 0) {
+            updateDailyPanelWidth(storedWidth)
+        }
+    }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked, updateDailyPanelWidth])
 
     useEffect(() => {
         setSelectedDailyItem(null)
@@ -806,14 +867,43 @@ export function DesktopTodayPanel({
                     </div>
 
                     {isDailyPanelOpen && isDailyPanelDocked && (
-                        <DesktopDailyInspector
-                            selectedDate={selectedDate}
-                            items={displayItems}
-                            selectedItem={selectedDailyItem}
-                            onSelectItem={setSelectedDailyItem}
-                            onEditItem={handleItemTap}
-                            onClose={() => setDailyPanelVisibility(false)}
-                        />
+                        <div className="group relative shrink-0">
+                            <div
+                                role="separator"
+                                aria-orientation="vertical"
+                                aria-label="デイリーと今日のスケジュールの幅を変更"
+                                aria-valuemin={DAILY_PANEL_MIN_WIDTH}
+                                aria-valuemax={DAILY_PANEL_MAX_WIDTH}
+                                aria-valuenow={dailyPanelWidth}
+                                aria-valuetext={`デイリーの幅 ${dailyPanelWidth}px`}
+                                tabIndex={0}
+                                title="ドラッグしてデイリーと今日のスケジュールの幅を調節"
+                                className={cn(
+                                    "absolute inset-y-0 -left-1.5 z-20 flex w-3 touch-none cursor-col-resize select-none items-center justify-center outline-none",
+                                    "focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary/50",
+                                )}
+                                onPointerDown={handleDailyPanelResizePointerDown}
+                                onPointerMove={handleDailyPanelResizePointerMove}
+                                onPointerUp={finishDailyPanelResize}
+                                onPointerCancel={finishDailyPanelResize}
+                                onLostPointerCapture={finishDailyPanelResize}
+                                onKeyDown={handleDailyPanelResizeKeyDown}
+                            >
+                                <span className={cn(
+                                    "h-10 w-0.5 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/70",
+                                    isDailyPanelResizing && "bg-primary/80",
+                                )} />
+                            </div>
+                            <DesktopDailyInspector
+                                selectedDate={selectedDate}
+                                items={displayItems}
+                                selectedItem={selectedDailyItem}
+                                onSelectItem={setSelectedDailyItem}
+                                onEditItem={handleItemTap}
+                                onClose={() => setDailyPanelVisibility(false)}
+                                width={dailyPanelWidth}
+                            />
+                        </div>
                     )}
 
                     {isDailyPanelOpen && !isDailyPanelDocked && (
