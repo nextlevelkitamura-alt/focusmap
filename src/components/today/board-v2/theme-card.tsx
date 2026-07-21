@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
-import { deriveBoardStatus, boardStatusClassName } from '@/lib/board-status';
+import { deriveBoardStatus, boardStatusClassName, type BoardStatus } from '@/lib/board-status';
 import {
   carryOverAction,
   completeHeadingAction,
@@ -17,7 +17,7 @@ import { FixReattach } from '@/app/dashboard/board/_components/fix-reattach';
 import { QuestionAnswer } from '@/app/dashboard/board/_components/question-answer';
 import { ThemeEditor } from '@/app/dashboard/board/_components/theme-editor';
 import { SessionRow } from './session-row';
-import type { ThemeCardData, TaskItem, FinishedTodoItem } from './types';
+import type { PlanCardData, TaskItem, FinishedTodoItem } from './types';
 
 // テーマ帯左インデント（縦線ワークフロー・進捗バー・繰越しボタンをチェックボックス幅へ揃える）。
 const INDENT = 'ml-[46px]';
@@ -223,8 +223,107 @@ function PlanChip({ planSlug, planResolved }: { planSlug: string; planResolved: 
   );
 }
 
+// 質問中のAI todoの行内質問文＋回答UI（見出しあり/なしの両行から使う。「きみの番」レーンは修正02で廃止・行内へ移設）。
+function QuestionBlock({ todo, selectedDate }: { todo: Todo; selectedDate: string }) {
+  if (!todo.question) return null;
+  return (
+    <div className="mt-2">
+      <p className="flex items-start gap-1.5 text-sm leading-relaxed">
+        <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+        <span className="min-w-0">{todo.question}</span>
+      </p>
+      <div className="mt-2">
+        {todo.questionGate ? (
+          <p className="text-xs text-muted-foreground">
+            これは承認が要る操作です。ボードからは回答できません。セッションで明示承認してください。
+          </p>
+        ) : (
+          <QuestionAnswer
+            todoId={todo.id}
+            choices={todo.questionChoices}
+            allowFree={todo.questionAllowFree}
+            date={selectedDate}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// AIタスク行の下部共通ブロック（進捗バー・回答・工程・レビュー完了・手直し・繰越し・セッション行）。
+// reviewCheck=true は見出しなし行（子05・plan_slug付き）で、レビュー完了チェックを「全ステップ完了」行へ移設する
+// （2層チェックの配線維持。見出しあり行は従来どおり左のチェック丸で完了する）。
+function AiTaskTail({
+  task,
+  status,
+  selectedDate,
+  aiTargets,
+  reviewCheck,
+}: {
+  task: TaskItem;
+  status: BoardStatus;
+  selectedDate: string;
+  aiTargets: { id: string; title: string }[];
+  reviewCheck: boolean;
+}) {
+  const { todo, steps, agg, sessions } = task;
+  const pct = agg?.pct ?? null;
+  const fixSteps = steps.filter((step) => step.kind === 'fix');
+  const fixTargets = aiTargets.filter((target) => target.id !== todo.id);
+  return (
+    <>
+      {pct !== null ? <ProgressBar pct={pct} tone={pct >= 100 ? 'review' : 'run'} /> : null}
+
+      {todo.answer && !todo.answerConsumedAt ? (
+        <p className={cn('mt-1 text-xs text-muted-foreground', INDENT)}>回答済（未消費）: {todo.answer}</p>
+      ) : null}
+
+      {steps.length > 0 ? (
+        <StepFlow steps={steps} />
+      ) : (
+        <p className={cn('mt-1 text-xs text-muted-foreground', INDENT)}>ステップ未登録（計画待ち）</p>
+      )}
+
+      {status.tone === 'review' ? (
+        reviewCheck ? (
+          <div className={cn('mt-2 flex items-center gap-1', INDENT)}>
+            <TaskCheck todo={todo} reviewReady selectedDate={selectedDate} />
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              全ステップ完了 — チェックでレビュー完了にできます
+            </p>
+          </div>
+        ) : (
+          <p className={cn('mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-400', INDENT)}>
+            全ステップ完了 — 左のチェックでレビュー完了にできます
+          </p>
+        )
+      ) : null}
+
+      {fixSteps.length > 0 && fixTargets.length > 0 ? (
+        <div className={cn('mt-2 flex flex-wrap gap-2', INDENT)}>
+          {fixSteps.map((step) => (
+            <FixReattach key={step.id} stepId={step.id} date={selectedDate} targets={fixTargets} />
+          ))}
+        </div>
+      ) : null}
+
+      <CarryButton todoId={todo.id} title={todo.title} selectedDate={selectedDate} />
+
+      {sessions.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {sessions.map((s) => (
+            <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} todoTitle={todo.title} />
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 // レールのタスク行（既存 TaskCard 流用・改造）。行の直下に task.sessions を SessionRow でぶら下げる。
 // 質問中のAI todoはこの行内に質問文と回答UI(QuestionAnswer)を出す（「きみの番」レーンは修正02で廃止・行内へ移設）。
+// 子05: plan_slug付きAI todoはタスク見出し行（タイトル・チェック丸）を描画しない（カード見出し＝計画名と
+// タイトル二重になるため）。メタ1行＋工程タイムラインをカード直下に直接出す。plan_slugなしは従来どおり。
 function TaskRow({
   task,
   aiTargets,
@@ -234,7 +333,7 @@ function TaskRow({
   aiTargets: { id: string; title: string }[];
   selectedDate: string;
 }) {
-  const { todo, steps, agg, times, sessions, repoName } = task;
+  const { todo, agg, times, sessions, repoName } = task;
 
   if (todo.assignee === 'self') {
     const isDone = todo.status === 'done';
@@ -267,8 +366,33 @@ function TaskRow({
 
   const status = deriveBoardStatus(todo, agg ?? undefined);
   const pct = agg?.pct ?? null;
-  const fixSteps = steps.filter((step) => step.kind === 'fix');
-  const fixTargets = aiTargets.filter((target) => target.id !== todo.id);
+
+  // 見出しなし行（子05）: タイトル・チェック丸を出さず、メタ1行（状態・%・計画チップ・累計時間）＋
+  // 質問回答＋工程タイムラインを直接出す。レビュー完了チェックは AiTaskTail 内の「全ステップ完了」行へ移設。
+  if (task.planSlug) {
+    return (
+      <div className="pt-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className={cn('gap-1 font-semibold', boardStatusClassName(status.tone))}>
+                {status.tone === 'question' ? <HelpCircle className="h-3 w-3" /> : null}
+                {status.label}
+              </Badge>
+              {pct !== null ? (
+                <span className={cn('text-[11.5px] font-bold tabular-nums', pct >= 100 ? 'text-emerald-600' : 'text-blue-600')}>{pct}%</span>
+              ) : null}
+              <PlanChip planSlug={task.planSlug} planResolved={task.planResolved} />
+              {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
+            </div>
+            {status.tone === 'question' ? <QuestionBlock todo={todo} selectedDate={selectedDate} /> : null}
+          </div>
+          {times ? <TaskTimes times={times} running={status.tone === 'run'} /> : null}
+        </div>
+        <AiTaskTail task={task} status={status} selectedDate={selectedDate} aiTargets={aiTargets} reviewCheck />
+      </div>
+    );
+  }
 
   return (
     <div className="pt-3">
@@ -287,67 +411,11 @@ function TaskRow({
             <PlanChip planSlug={task.planSlug} planResolved={task.planResolved} />
             {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
           </div>
-          {status.tone === 'question' && todo.question ? (
-            <div className="mt-2">
-              <p className="flex items-start gap-1.5 text-sm leading-relaxed">
-                <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                <span className="min-w-0">{todo.question}</span>
-              </p>
-              <div className="mt-2">
-                {todo.questionGate ? (
-                  <p className="text-xs text-muted-foreground">
-                    これは承認が要る操作です。ボードからは回答できません。セッションで明示承認してください。
-                  </p>
-                ) : (
-                  <QuestionAnswer
-                    todoId={todo.id}
-                    choices={todo.questionChoices}
-                    allowFree={todo.questionAllowFree}
-                    date={selectedDate}
-                  />
-                )}
-              </div>
-            </div>
-          ) : null}
+          {status.tone === 'question' ? <QuestionBlock todo={todo} selectedDate={selectedDate} /> : null}
         </div>
         {times ? <TaskTimes times={times} running={status.tone === 'run'} /> : null}
       </div>
-
-      {pct !== null ? <ProgressBar pct={pct} tone={pct >= 100 ? 'review' : 'run'} /> : null}
-
-      {todo.answer && !todo.answerConsumedAt ? (
-        <p className={cn('mt-1 text-xs text-muted-foreground', INDENT)}>回答済（未消費）: {todo.answer}</p>
-      ) : null}
-
-      {steps.length > 0 ? (
-        <StepFlow steps={steps} />
-      ) : (
-        <p className={cn('mt-1 text-xs text-muted-foreground', INDENT)}>ステップ未登録（計画待ち）</p>
-      )}
-
-      {status.tone === 'review' ? (
-        <p className={cn('mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-400', INDENT)}>
-          全ステップ完了 — 左のチェックでレビュー完了にできます
-        </p>
-      ) : null}
-
-      {fixSteps.length > 0 && fixTargets.length > 0 ? (
-        <div className={cn('mt-2 flex flex-wrap gap-2', INDENT)}>
-          {fixSteps.map((step) => (
-            <FixReattach key={step.id} stepId={step.id} date={selectedDate} targets={fixTargets} />
-          ))}
-        </div>
-      ) : null}
-
-      <CarryButton todoId={todo.id} title={todo.title} selectedDate={selectedDate} />
-
-      {sessions.length > 0 ? (
-        <div className="mt-2 space-y-1">
-          {sessions.map((s) => (
-            <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} todoTitle={todo.title} />
-          ))}
-        </div>
-      ) : null}
+      <AiTaskTail task={task} status={status} selectedDate={selectedDate} aiTargets={aiTargets} reviewCheck={false} />
     </div>
   );
 }
@@ -385,46 +453,85 @@ function FinishedFold({ todos, logs }: { todos: FinishedTodoItem[]; logs: { entr
   );
 }
 
-// board-v2 テーマカード（修正02・デフォルト折りたたみ）: 通常状態はヘッダ1行サマリだけ
-// （テーマ名・進捗％・稼働N緑点・待機N琥珀点・済/総やること数）。ヘッダタップで展開して初めて
-// 細メーター・ライブ帯・計画チップ・入れ子レール（タスク行＋セッション行＋終わったこと折りたたみ）を出す。
+// board-v2 計画カード（子05: カード＝active計画。修正02のデフォルト折りたたみ規約を維持）:
+// 通常状態はヘッダ1行サマリだけ（計画名・進捗％・稼働N緑点・待機N琥珀点・済/総）。ヘッダタップで展開して初めて
+// 細メーター・ライブ帯・朝の意図ラベル（テーマ降格）・計画チップ・入れ子レールを出す。
+// 当日動きのない計画は折りたたみ1行の静かなカード（計画名＋「今日は動きなし」。タップで計画詳細ページへ）。
 // 折りたたみ状態はカード単位の useState（初期値=折りたたみ・永続化しない）。
-// テーマの目的・完了条件・計画本文はボードに描画しない（計画はチップ→plans詳細ページの2段導線。修正02・条件3）。
-export function ThemeCardV2({
+// 計画の目的・完了条件・本文はボードに描画しない（チップ→plans詳細ページの2段導線。修正02・条件3）。
+export function PlanCardV2({
   data,
   selectedDate,
   aiTargets,
 }: {
-  data: ThemeCardData;
+  data: PlanCardData;
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
 }) {
   const [open, setOpen] = useState(false);
-  const { theme, progress, tasks, themeSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
-  const isUncat = theme === null;
-  const pct = progress?.pct ?? null;
-  const doneCount = progress?.done ?? finishedTodos.length;
-  const totalCount = progress?.total ?? tasks.length + finishedTodos.length;
+  const { planSlug, planTitle, planResolved, theme, stepProgress, progress, tasks, cardSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
+  const isThemeOnly = planSlug === '';
+  // 済/総: 計画カード=plan_slug一致のtodo_steps集計（子05・SQL導出）／テーマのみカード=従来の当日todo集計。
+  const pct = isThemeOnly ? (progress?.pct ?? null) : (stepProgress?.pct ?? null);
+  const doneCount = isThemeOnly ? (progress?.done ?? finishedTodos.length) : (stepProgress?.done ?? 0);
+  const totalCount = isThemeOnly ? (progress?.total ?? tasks.length + finishedTodos.length) : (stepProgress?.total ?? 0);
+  const hasActivity = tasks.length > 0 || cardSessions.length > 0 || finishedTodos.length > 0 || finishedLogs.length > 0;
+  const detailHref = !isThemeOnly && planResolved ? `/dashboard/plans/${encodeURIComponent(planSlug)}` : null;
+
+  // 当日動きのない計画: 展開する中身が無いので、静かな1行カード（タップで計画詳細ページへ）。
+  if (!isThemeOnly && !hasActivity) {
+    const summary = (
+      <>
+        <h3 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold leading-snug text-muted-foreground">{planTitle}</h3>
+        <span className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
+          {pct !== null ? <span className="font-bold">{pct}%</span> : null}
+          {stepProgress ? <span>済 {doneCount}/{totalCount}</span> : null}
+          <span className="text-[10.5px]">今日は動きなし</span>
+        </span>
+      </>
+    );
+    return (
+      <article className="overflow-hidden rounded-2xl border border-border/70 bg-card/60">
+        {detailHref ? (
+          <Link
+            href={detailHref}
+            aria-label={`計画 ${planTitle} の詳細を開く`}
+            className="flex min-h-11 items-center gap-2 px-3 py-2.5 active:scale-[0.99]"
+          >
+            {summary}
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          </Link>
+        ) : (
+          <div
+            className="flex min-h-11 items-center gap-2 px-3 py-2.5"
+            title="この計画slugは計画ミラーに解決しません（plansyncで確認）"
+          >
+            {summary}
+          </div>
+        )}
+      </article>
+    );
+  }
 
   return (
     <article className="overflow-hidden rounded-2xl border border-border bg-card">
-      {/* テーマ帯（ヘッダ1行サマリ。タップで展開/折りたたみ） */}
-      <div className={cn(isUncat ? 'bg-muted/40' : 'bg-blue-50/60 dark:bg-blue-500/10')}>
+      {/* 計画帯（ヘッダ1行サマリ。タップで展開/折りたたみ） */}
+      <div className={cn(isThemeOnly ? 'bg-muted/40' : 'bg-blue-50/60 dark:bg-blue-500/10')}>
         <div className="flex items-center">
           <button
             type="button"
             onClick={() => setOpen((prev) => !prev)}
             aria-expanded={open}
-            aria-label={`${isUncat ? '未分類' : theme.name}を${open ? '折りたたむ' : '展開する'}`}
+            aria-label={`${planTitle}を${open ? '折りたたむ' : '展開する'}`}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left"
           >
             <ChevronRight
               className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
               aria-hidden
             />
-            <h3 className="min-w-0 flex-1 truncate text-[14.5px] font-bold leading-snug">{isUncat ? '未分類' : theme.name}</h3>
+            <h3 className="min-w-0 flex-1 truncate text-[14.5px] font-bold leading-snug">{planTitle}</h3>
             <span className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
-              {!isUncat && pct !== null ? (
+              {pct !== null ? (
                 <span
                   className={cn(
                     'text-xs font-extrabold',
@@ -450,7 +557,7 @@ export function ThemeCardV2({
               <span>済 {doneCount}/{totalCount}</span>
             </span>
           </button>
-          {open && !isUncat ? (
+          {open && theme ? (
             <div className="shrink-0 pr-2">
               <ThemeEditor
                 theme={{ id: theme.id, name: theme.name, purpose: theme.purpose, doneCriteria: theme.doneCriteria, goalRef: theme.goalRef }}
@@ -462,8 +569,15 @@ export function ThemeCardV2({
 
         {open ? (
           <div className="px-3 pb-3">
+            {/* 朝の意図ラベル（テーマ降格: カード上部の小ラベル。テーマのみカードは見出しがテーマ名なので出さない） */}
+            {theme && !isThemeOnly ? (
+              <p className="mb-1.5 text-[10.5px] text-muted-foreground">
+                <span className="font-semibold">朝の意図</span> · {theme.name}
+              </p>
+            ) : null}
+
             {/* 細い進捗メーター */}
-            {!isUncat && pct !== null ? (
+            {pct !== null ? (
               <div className="h-1 overflow-hidden rounded-full bg-muted">
                 <div
                   className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500')}
@@ -490,8 +604,12 @@ export function ThemeCardV2({
               </div>
             ) : null}
 
-            {/* 配下計画チップ（計画名のみ。本文はplans詳細ページで見る） */}
-            {!isUncat && theme.planRefs.length > 0 ? (
+            {/* 計画チップ（計画名のみ→plans詳細ページ。テーマのみカードは従来どおり planRefs チップ） */}
+            {!isThemeOnly ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <PlanChip planSlug={planSlug} planResolved={planResolved} />
+              </div>
+            ) : theme && theme.planRefs.length > 0 ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {theme.planRefs.map((slug) => (
                   <Link
@@ -517,10 +635,10 @@ export function ThemeCardV2({
             ))}
           </div>
 
-          {/* テーマ直下のライブ行（todo無所属） */}
-          {themeSessions.length > 0 ? (
+          {/* カード直下のライブ行（todo無所属・テーマ一致） */}
+          {cardSessions.length > 0 ? (
             <div className="mt-3 space-y-1">
-              {themeSessions.map((s) => (
+              {cardSessions.map((s) => (
                 <SessionRow key={s.session.sessionKey} item={s} selectedDate={selectedDate} />
               ))}
             </div>

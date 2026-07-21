@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { format } from "date-fns"
 import { LayoutGrid, ArrowUpRight } from "lucide-react"
 import Link from "next/link"
-import { ThemeCardV2 } from "@/components/today/board-v2/theme-card"
+import { PlanCardV2 } from "@/components/today/board-v2/theme-card"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
 import type { BoardV2Data } from "@/components/today/board-v2/types"
 
@@ -124,14 +124,14 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                 </span>
             </div>
 
-            {/* スマホboardと同一部品でそのまま描画（テーマカード→未分類） */}
+            {/* スマホboardと同一部品でそのまま描画（計画カード→未分類） */}
             <div className="space-y-2.5">
-                {board.themes.length > 0 ? (
+                {board.planCards.length > 0 ? (
                     <div className="space-y-2.5">
-                        {board.themes.map((theme) => (
-                            <ThemeCardV2
-                                key={theme.theme?.id ?? "__theme__"}
-                                data={theme}
+                        {board.planCards.map((card) => (
+                            <PlanCardV2
+                                key={card.planSlug || `theme:${card.theme?.id ?? ""}`}
+                                data={card}
                                 selectedDate={dateStr}
                                 aiTargets={board.aiTargets}
                             />
@@ -143,9 +143,9 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                     <StrayBox stray={board.stray} selectedDate={dateStr} aiTargets={board.aiTargets} />
                 ) : null}
 
-                {board.themes.length === 0 && !strayHasContent ? (
+                {board.planCards.length === 0 && !strayHasContent ? (
                     <p className="rounded-lg border border-dashed border-border/50 px-3 py-3 text-center text-[11px] text-muted-foreground">
-                        この日のテーマ・やることはまだありません。
+                        この日の計画・やることはまだありません。
                     </p>
                 ) : null}
             </div>

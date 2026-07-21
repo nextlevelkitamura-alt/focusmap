@@ -86,6 +86,73 @@ export async function getUnresolvedPlanLinksForDate(date: string): Promise<Unres
   return out
 }
 
+// 子05「計画直結ボード」: ボードのカード軸に使う active 計画の一覧。
+// plan_docs の代表文書（program/single）だけを軽量に返す（body は読まない・カードに計画本文は出さない）。
+export type ActivePlan = {
+  slug: string // program_slug（カードのキー・todos.plan_slug のベースと突き合わせる）
+  title: string
+  bucket: string
+}
+
+export async function getActivePlans(): Promise<ActivePlan[]> {
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      SELECT program_slug, title, bucket FROM plan_docs
+      WHERE kind IN ('program', 'single') AND bucket = 'active'
+      ORDER BY program_slug
+    `,
+    args: {},
+  })
+  return result.rows.map((row: Row) => ({
+    slug: asString(row.program_slug),
+    title: asString(row.title) || asString(row.program_slug),
+    bucket: asString(row.bucket),
+  }))
+}
+
+// 子05: 計画単位の工程進捗（カードの済/総）。該当 plan_slug（完全一致 `slug` と前方一致 `slug#%`）に
+// リンクする todos の todo_steps を全期間で集計する。分母は skipped 除外（todo-steps.ts の%契約と同型）。
+// すべてSQL導出・保存しない。キーはベースslug。
+export type PlanStepProgress = {
+  planSlug: string
+  total: number // skipped 除外後の総ステップ数
+  done: number
+  pct: number | null // total>0 の時だけ数値（0件は null＝計画待ち）
+}
+
+export async function getPlanStepProgress(): Promise<Map<string, PlanStepProgress>> {
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      SELECT
+        CASE WHEN INSTR(t.plan_slug, '#') > 0
+          THEN SUBSTR(t.plan_slug, 1, INSTR(t.plan_slug, '#') - 1)
+          ELSE t.plan_slug
+        END AS base_slug,
+        COUNT(s.id) - SUM(CASE WHEN s.status = 'skipped' THEN 1 ELSE 0 END) AS total,
+        SUM(CASE WHEN s.status = 'done' THEN 1 ELSE 0 END) AS done
+      FROM todos t
+      JOIN todo_steps s ON s.todo_id = t.id
+      WHERE t.plan_slug IS NOT NULL AND t.plan_slug != '' AND t.status != 'dropped'
+      GROUP BY base_slug
+    `,
+    args: {},
+  })
+  const map = new Map<string, PlanStepProgress>()
+  for (const row of result.rows) {
+    const planSlug = asString(row.base_slug)
+    if (!planSlug) continue
+    const total = asNumber(row.total)
+    const done = asNumber(row.done)
+    map.set(planSlug, {
+      planSlug,
+      total,
+      done,
+      pct: total > 0 ? Math.round((100 * done) / total) : null,
+    })
+  }
+  return map
+}
+
 export type PlanLiveStep = TodoStep & {
   todoTitle: string
   todoDoDate: string

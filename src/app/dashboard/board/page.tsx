@@ -30,11 +30,18 @@ import {
   type ThemeProgress,
 } from '@/lib/turso/themes';
 import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
-import { getPlanSlugsForDate, getResolvablePlanSlugs } from '@/lib/turso/plan-links';
+import {
+  getActivePlans,
+  getPlanSlugsForDate,
+  getPlanStepProgress,
+  getResolvablePlanSlugs,
+  type ActivePlan,
+  type PlanStepProgress,
+} from '@/lib/turso/plan-links';
 import { BoardPoller } from './_components/board-poller';
 import { UndoBar } from './_components/undo-bar';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
-import { ThemeCardV2 } from '@/components/today/board-v2/theme-card';
+import { PlanCardV2 } from '@/components/today/board-v2/theme-card';
 import { DayHeader } from '@/components/today/board-v2/day-header';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
@@ -118,6 +125,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     subagentsResult,
     planSlugsResult,
     resolvablePlansResult,
+    activePlansResult,
+    planStepProgressResult,
   ] = await Promise.all([
     load('inbox', [] as Repo[], () => getRepos()),
     load('inbox', [] as Todo[], () => getTodosForDate(selectedDate)),
@@ -139,6 +148,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
       : Promise.resolve({ data: new Map<string, SessionSubagent[]>(), error: null } as LoadResult<Map<string, SessionSubagent[]>>),
     load('inbox', new Map<string, string>(), () => getPlanSlugsForDate(selectedDate)),
     load('inbox', new Set<string>(), () => getResolvablePlanSlugs()),
+    load('inbox', [] as ActivePlan[], () => getActivePlans()),
+    load('inbox', new Map<string, PlanStepProgress>(), () => getPlanStepProgress()),
   ]);
 
   const errors = new Set(
@@ -187,6 +198,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     repoNameBySlug,
     planSlugByTodo: planSlugsResult.data,
     resolvablePlanSlugs: resolvablePlansResult.data,
+    activePlans: activePlansResult.data,
+    planStepProgress: planStepProgressResult.data,
   });
 
   const justCompletedId =
@@ -200,7 +213,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     board.stray.sessions.length > 0 ||
     board.stray.finishedTodos.length > 0 ||
     board.stray.finishedLogs.length > 0;
-  const isEmpty = board.themes.length === 0 && !strayHasContent;
+  const isEmpty = board.planCards.length === 0 && !strayHasContent;
 
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto pb-20">
@@ -237,12 +250,12 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
 
         {justCompletedId ? <UndoBar todoId={justCompletedId} date={selectedDate} /> : null}
 
-        {board.themes.length > 0 ? (
+        {board.planCards.length > 0 ? (
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-            {board.themes.map((theme) => (
-              <ThemeCardV2
-                key={theme.theme?.id ?? '__theme__'}
-                data={theme}
+            {board.planCards.map((card) => (
+              <PlanCardV2
+                key={card.planSlug || `theme:${card.theme?.id ?? ''}`}
+                data={card}
                 selectedDate={selectedDate}
                 aiTargets={board.aiTargets}
               />
@@ -256,7 +269,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
 
         {isEmpty ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            この日のテーマ・やることはまだありません。右下の＋から追加できます。
+            この日の計画・やることはまだありません。右下の＋から追加できます。
           </div>
         ) : null}
       </div>

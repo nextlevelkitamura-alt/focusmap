@@ -12,13 +12,14 @@ import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
 import type { Theme, ThemeProgress } from '@/lib/turso/themes';
 import type { SessionSubagent } from '@/lib/turso/session-subagents';
+import type { ActivePlan, PlanStepProgress } from '@/lib/turso/plan-links';
 import type {
   BoardV2Data,
   FinishedTodoItem,
+  PlanCardData,
   SessionItem,
   StrayData,
   TaskItem,
-  ThemeCardData,
 } from './types';
 
 export interface BuildInput {
@@ -40,6 +41,10 @@ export interface BuildInput {
   // 未指定は「計画リンクなし」として扱う（後方互換・任意）。
   planSlugByTodo?: Map<string, string>;
   resolvablePlanSlugs?: Set<string>;
+  // 子05: 計画直結ボード。activePlans=plan_docs bucket='active' の全計画（カード軸）、
+  // planStepProgress={ベースslug->工程集計}（カードの済/総）。未指定は空扱い（後方互換・任意）。
+  activePlans?: ActivePlan[];
+  planStepProgress?: Map<string, PlanStepProgress>;
 }
 
 // plan_slug のベース slug（`slug#NN` → `slug`）。plan_links.ts の planSlugBase と同義（build.ts は純関数のため内蔵）。
@@ -62,8 +67,10 @@ export function dedupeLogs(logs: FinishedLog[]): { log: FinishedLog; count: numb
   return out;
 }
 
-// 取得済みデータ（新クエリなし）から契約型 BoardV2Data を構築する純関数。
-// テーマ軸へ一本化: セッション・完了ログ・完了AI todoを、それぞれ所属テーマ/タスク/未分類へ振り分ける。
+// 取得済みデータから契約型 BoardV2Data を構築する純関数。
+// 子05・計画軸: カード＝active計画（＋当日todoが参照する計画）。テーマは planRefs でカードのラベルに降格し、
+// どのカードにも解決しないテーマだけテーマのみカード（従来テーマカード相当）で受ける。
+// セッション・完了ログ・完了AI todoは、それぞれ所属カード/タスク/未分類へ振り分ける。
 export function buildBoardV2Data(input: BuildInput): BoardV2Data {
   const {
     selectedDate,
@@ -82,9 +89,10 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     repoNameBySlug,
     planSlugByTodo,
     resolvablePlanSlugs,
+    activePlans,
+    planStepProgress,
   } = input;
 
-  const themeById = new Map(activeThemes.map((theme) => [theme.id, theme]));
   const themeByName = new Map(activeThemes.map((theme) => [theme.name, theme]));
 
   const aiTodos = todos.filter((todo) => todo.assignee === 'ai');
@@ -116,8 +124,86 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     subagents: subagentsBySession.get(session.sessionKey) ?? [],
   }));
 
-  // セッション振り分け: todoId一致→TaskItem直下／themeId一致→テーマ直下／どちらも無し→未分類。
-  const themeSessionsByTheme = new Map<string, SessionItem[]>();
+  // カードの器（子05）: active計画 → 当日todoが参照する計画（非active/未解決も沈黙で消さない）の順に作る。
+  const cards: PlanCardData[] = [];
+  const cardByPlanSlug = new Map<string, PlanCardData>();
+  const newPlanCard = (slug: string, title: string, resolved: boolean, bucket: string) => {
+    const card: PlanCardData = {
+      planSlug: slug,
+      planTitle: title,
+      planResolved: resolved,
+      bucket,
+      theme: null,
+      stepProgress: planStepProgress?.get(slug) ?? null,
+      progress: null,
+      tasks: [],
+      cardSessions: [],
+      finishedTodos: [],
+      finishedLogs: [],
+      liveCount: 0,
+      waitCount: 0,
+    };
+    cards.push(card);
+    cardByPlanSlug.set(slug, card);
+    return card;
+  };
+  for (const plan of activePlans ?? []) {
+    if (!cardByPlanSlug.has(plan.slug)) newPlanCard(plan.slug, plan.title, true, plan.bucket);
+  }
+  for (const todo of todos) {
+    const base = planSlugBase(planSlugByTodo?.get(todo.id) ?? '');
+    if (base && !cardByPlanSlug.has(base)) {
+      newPlanCard(base, base, resolvablePlanSlugs?.has(base) ?? false, '');
+    }
+  }
+
+  // テーマの降格（子05）: planRefs が計画カードに解決するテーマは、そのカードの朝の意図ラベルへ。
+  // どのカードにも解決しないテーマは、テーマのみカード（従来テーマカード相当）で受ける。
+  // homeカード＝テーマ所属のtodo・セッション・完了ログの受け皿。
+  const homeCardByThemeId = new Map<string, PlanCardData>();
+  for (const theme of activeThemes) {
+    let home: PlanCardData | null = null;
+    for (const ref of theme.planRefs) {
+      const card = cardByPlanSlug.get(planSlugBase(ref));
+      if (!card) continue;
+      if (!card.theme) card.theme = theme;
+      if (!home) home = card;
+    }
+    if (!home) {
+      home = {
+        planSlug: '',
+        planTitle: theme.name,
+        planResolved: false,
+        bucket: '',
+        theme,
+        stepProgress: null,
+        progress: themeProgress.get(theme.id) ?? null,
+        tasks: [],
+        cardSessions: [],
+        finishedTodos: [],
+        finishedLogs: [],
+        liveCount: 0,
+        waitCount: 0,
+      };
+      cards.push(home);
+    }
+    homeCardByThemeId.set(theme.id, home);
+  }
+
+  // やること振り分け: plan_slug→計画カード／themeIdのみ→テーマのhomeカード／どちらも無し→未分類。
+  const strayTasks: TaskItem[] = [];
+  for (const item of taskItems) {
+    const planCard = item.planSlug ? cardByPlanSlug.get(planSlugBase(item.planSlug)) : undefined;
+    if (planCard) {
+      planCard.tasks.push(item);
+      continue;
+    }
+    const home = item.todo.themeId ? homeCardByThemeId.get(item.todo.themeId) : undefined;
+    if (home) home.tasks.push(item);
+    else strayTasks.push(item);
+  }
+
+  // セッション振り分け: todoId一致→TaskItem直下／themeId一致→homeカード直下／どちらも無し→未分類。
   const straySessions: SessionItem[] = [];
   for (const item of sessionItems) {
     const s = item.session;
@@ -126,18 +212,15 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
       taskItem.sessions.push(item);
       continue;
     }
-    const themeId = s.themeId && themeById.has(s.themeId) ? s.themeId : null;
-    if (themeId) {
-      const list = themeSessionsByTheme.get(themeId) ?? [];
-      list.push(item);
-      themeSessionsByTheme.set(themeId, list);
+    const home = s.themeId ? homeCardByThemeId.get(s.themeId) : undefined;
+    if (home) {
+      home.cardSessions.push(item);
       continue;
     }
     straySessions.push(item);
   }
 
-  // 完了AI todo: テーマ一致→そのテーマ折りたたみ／無所属→未分類枠（修正01・条件4）。
-  const finishedTodoByTheme = new Map<string, FinishedTodoItem[]>();
+  // 完了AI todo: plan_slug→計画カード／テーマ一致→homeカード折りたたみ／無所属→未分類枠（修正01・条件4）。
   const strayFinishedTodos: FinishedTodoItem[] = [];
   for (const todo of todos) {
     if (todo.assignee !== 'ai' || todo.status !== 'done') continue;
@@ -146,24 +229,23 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
       doneSteps: (stepsByTodo.get(todo.id) ?? []).filter((step) => step.status === 'done').length,
       runMin: timesByTodo.get(todo.id)?.runMin ?? null,
     };
-    if (todo.themeId && themeById.has(todo.themeId)) {
-      const list = finishedTodoByTheme.get(todo.themeId) ?? [];
-      list.push(item);
-      finishedTodoByTheme.set(todo.themeId, list);
-    } else {
-      strayFinishedTodos.push(item);
+    const planCard = cardByPlanSlug.get(planSlugBase(planSlugByTodo?.get(todo.id) ?? ''));
+    if (planCard) {
+      planCard.finishedTodos.push(item);
+      continue;
     }
+    const home = todo.themeId ? homeCardByThemeId.get(todo.themeId) : undefined;
+    if (home) home.finishedTodos.push(item);
+    else strayFinishedTodos.push(item);
   }
 
-  // 完了ログ: parentがテーマ名一致→そのテーマ／不一致→未分類（parent別グループ）。
-  const finishedLogsByTheme = new Map<string, { entry: string; count: number }[]>();
+  // 完了ログ: parentがテーマ名一致→そのテーマのhomeカード／不一致→未分類（parent別グループ）。
   const strayLogsByParent = new Map<string, { entry: string; count: number }[]>();
   for (const { log, count } of dedupeLogs(finishedLogs)) {
     const theme = log.parent ? themeByName.get(log.parent) : undefined;
-    if (theme) {
-      const list = finishedLogsByTheme.get(theme.id) ?? [];
-      list.push({ entry: log.entry, count });
-      finishedLogsByTheme.set(theme.id, list);
+    const home = theme ? homeCardByThemeId.get(theme.id) : undefined;
+    if (home) {
+      home.finishedLogs.push({ entry: log.entry, count });
     } else {
       const parent = log.parent || '新見出し';
       const list = strayLogsByParent.get(parent) ?? [];
@@ -172,30 +254,24 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     }
   }
 
-  // テーマカード群（activeThemes順・空テーマも出す）。
-  const themes: ThemeCardData[] = activeThemes.map((theme) => {
-    const tasks = taskItems.filter((item) => item.todo.themeId === theme.id);
-    const themeSessions = themeSessionsByTheme.get(theme.id) ?? [];
-    const themeAllSessions = [...tasks.flatMap((t) => t.sessions), ...themeSessions];
-    const liveCount = themeAllSessions.filter(
+  // カード帯のライブ数を集計し、当日動きのあるカードを先・動きなしの静かなカードを後ろへ（作成順は保つ）。
+  for (const card of cards) {
+    const cardAllSessions = [...card.tasks.flatMap((t) => t.sessions), ...card.cardSessions];
+    card.liveCount = cardAllSessions.filter(
       (s) => s.session.state === 'run' || s.session.state === 'sub',
     ).length;
-    const waitCount = themeAllSessions.filter((s) => s.session.state === 'wait').length;
-    return {
-      theme,
-      progress: themeProgress.get(theme.id) ?? null,
-      tasks,
-      themeSessions,
-      finishedTodos: finishedTodoByTheme.get(theme.id) ?? [],
-      finishedLogs: finishedLogsByTheme.get(theme.id) ?? [],
-      liveCount,
-      waitCount,
-    };
-  });
+    card.waitCount = cardAllSessions.filter((s) => s.session.state === 'wait').length;
+  }
+  const hasActivity = (card: PlanCardData) =>
+    card.tasks.length > 0 ||
+    card.cardSessions.length > 0 ||
+    card.finishedTodos.length > 0 ||
+    card.finishedLogs.length > 0;
+  const planCards = [...cards.filter(hasActivity), ...cards.filter((card) => !hasActivity(card))];
 
-  // 未分類（テーマ無所属のtask・session・完了AI todo・ログ）。
+  // 未分類（plan_slugもテーマも無いtask・session・完了AI todo・ログ）＝現状維持。
   const stray: StrayData = {
-    tasks: taskItems.filter((item) => !item.todo.themeId || !themeById.has(item.todo.themeId)),
+    tasks: strayTasks,
     sessions: straySessions,
     finishedTodos: strayFinishedTodos,
     finishedLogs: [...strayLogsByParent.entries()].map(([parent, items]) => ({ parent, items })),
@@ -217,7 +293,7 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     waitTotal,
     runMin: totals.runMin,
     waitMinTotal: totals.waitMin,
-    themes,
+    planCards,
     stray,
     aiTargets,
   };

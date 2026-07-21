@@ -1,6 +1,6 @@
 // board-v2 契約（30分スプリント・レーンD先行確定）
 // 正本モック: ~/Private/personal-os/my-brain/areas/ai運用/plans/active/2026-07-21-ボードUI計画統合/references/board-mock-v2.html
-// 骨子: テーマ軸一本化（独立3区画を廃止）＋未分類枠＋ライブ帯。
+// 骨子: 計画軸（子05: カード＝active計画・テーマは朝の意図ラベルへ降格）＋未分類枠＋ライブ帯。
 // 「きみの番」レーンは修正02で廃止（質問回答はタスク行内・確認待ちはセッション行の琥珀表示で示す）。
 // レーン分担（同一ファイルを2レーンで触らない）:
 //   レーンA: board-v2/theme-card.tsx（ThemeCardV2・TaskRow・SessionRow・FinishedFold）
@@ -39,14 +39,22 @@ export interface FinishedTodoItem {
   runMin: number | null;
 }
 
-export interface ThemeCardData {
-  theme: Theme | null; // null = 使わない（未分類は stray 枠で扱う）
-  progress: ThemeProgress | null;
-  tasks: TaskItem[]; // open のやること（self完了打消しは todo.status で判定）
-  themeSessions: SessionItem[]; // todoId 無しで themeId だけ一致するライブ行（テーマ直下に表示）
-  finishedTodos: FinishedTodoItem[]; // このテーマの完了AI todo（折りたたみ内）
-  finishedLogs: { entry: string; count: number }[]; // このテーマ名を parent に持つ session_logs
-  liveCount: number; // state==='run'|'sub' のセッション数（テーマ帯ライブ帯）
+// 子05「計画直結ボード」: カードの軸をテーマから計画へ改訂。
+// planSlug!=='' が計画カード（plan_docs bucket='active' の全計画＋当日todoが参照する計画）。
+// planSlug==='' はテーマのみカード（planRefs がどの計画カードにも解決しないテーマの受け皿・従来テーマカード相当）。
+export interface PlanCardData {
+  planSlug: string; // ベースslug（`slug#NN` の # 以降なし）。'' はテーマのみカード
+  planTitle: string; // plan_docs.title（テーマのみカードは theme.name／未解決slugはslugそのまま）
+  planResolved: boolean; // plan_docs に解決するか（false=グレー非リンク・沈黙故障させない）
+  bucket: string; // plan_docs.bucket（'active' 等。todo由来の非active・未解決・テーマのみは ''）
+  theme: Theme | null; // 朝の意図ラベル（planRefs でこの計画を指すテーマ。カード上部の小ラベルに降格）
+  stepProgress: { done: number; total: number; pct: number | null } | null; // 計画カードの済/総＝plan_slug一致のtodo_steps全期間集計（SQL導出）
+  progress: ThemeProgress | null; // テーマのみカードの済/総（従来の当日todo集計）
+  tasks: TaskItem[]; // open のやること（plan_slug付きAI todoは見出し行なしで工程直下描画・self完了打消しは todo.status で判定）
+  cardSessions: SessionItem[]; // todoId 無しで themeId だけ一致するライブ行（カード直下に表示）
+  finishedTodos: FinishedTodoItem[]; // このカードの完了AI todo（折りたたみ内）
+  finishedLogs: { entry: string; count: number }[]; // このカードのテーマ名を parent に持つ session_logs
+  liveCount: number; // state==='run'|'sub' のセッション数（カード帯ライブ帯）
   waitCount: number; // state==='wait'
 }
 
@@ -65,7 +73,7 @@ export interface BoardV2Data {
   waitTotal: number;
   runMin: number; // 本日サマリ相当はヘッダー1行へ集約（daily totals）
   waitMinTotal: number;
-  themes: ThemeCardData[];
+  planCards: PlanCardData[]; // 子05: カード＝active計画（＋計画未接続テーマの受け皿）。旧 themes を改名・再構成
   stray: StrayData;
   aiTargets: { id: string; title: string }[]; // FixReattach 用
 }
