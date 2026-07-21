@@ -21,6 +21,7 @@ import {
   type StuckWait,
 } from '@/lib/turso/personal-os-board';
 import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
+import { getPlanSlugsForDate, getResolvablePlanSlugs } from '@/lib/turso/plan-links';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
 
 // PCサイドバーの当日ボード要約用API。スマホboardページ（board/page.tsx）と同一部品・同一導出にするため、
@@ -83,6 +84,8 @@ export async function GET(request: NextRequest) {
       currentSessions,
       stuck,
       subagentsBySession,
+      planSlugByTodo,
+      resolvablePlanSlugs,
     ] = await Promise.all([
       soft([] as Repo[], () => getRepos()),
       soft([] as Todo[], () => getTodosForDate(selectedDate)),
@@ -98,6 +101,8 @@ export async function GET(request: NextRequest) {
       isToday
         ? soft(new Map<string, SessionSubagent[]>(), () => getSubagentsBySession(selectedDate))
         : Promise.resolve(new Map<string, SessionSubagent[]>()),
+      soft(new Map<string, string>(), () => getPlanSlugsForDate(selectedDate)),
+      soft(new Set<string>(), () => getResolvablePlanSlugs()),
     ]);
 
     const repoNameBySlug = new Map(repos.map((repo) => [repo.slug, repo.name]));
@@ -124,6 +129,8 @@ export async function GET(request: NextRequest) {
       stuckBySession,
       subagentsBySession,
       repoNameBySlug,
+      planSlugByTodo,
+      resolvablePlanSlugs,
     });
 
     return NextResponse.json({ success: true, board });

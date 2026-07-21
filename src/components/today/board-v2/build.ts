@@ -38,6 +38,16 @@ export interface BuildInput {
   stuckBySession: Map<string, StuckWait>;
   subagentsBySession: Map<string, SessionSubagent[]>;
   repoNameBySlug: Map<string, string>;
+  // 子02: 計画リンク。planSlugByTodo={todoId->plan_slug}、resolvablePlanSlugs=plan_docsに解決できる program_slug 集合。
+  // 未指定は「計画リンクなし」として扱う（後方互換・任意）。
+  planSlugByTodo?: Map<string, string>;
+  resolvablePlanSlugs?: Set<string>;
+}
+
+// plan_slug のベース slug（`slug#NN` → `slug`）。plan_links.ts の planSlugBase と同義（build.ts は純関数のため内蔵）。
+function planSlugBase(planSlug: string): string {
+  const hash = planSlug.indexOf('#');
+  return hash >= 0 ? planSlug.slice(0, hash) : planSlug;
 }
 
 // 「終わったこと」ログの表示時de-dup（連続する同一entryを ×N バッジにまとめる）。
@@ -72,6 +82,8 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     stuckBySession,
     subagentsBySession,
     repoNameBySlug,
+    planSlugByTodo,
+    resolvablePlanSlugs,
   } = input;
 
   const todosById = new Map(todos.map((todo) => [todo.id, todo]));
@@ -85,6 +97,8 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
   const taskTodos = todos.filter((todo) => todo.assignee === 'self' || todo.status !== 'done');
   const taskItemById = new Map<string, TaskItem>();
   const taskItems: TaskItem[] = taskTodos.map((todo) => {
+    const planSlug = planSlugByTodo?.get(todo.id) ?? '';
+    const planResolved = planSlug !== '' && (resolvablePlanSlugs?.has(planSlugBase(planSlug)) ?? false);
     const item: TaskItem = {
       todo,
       steps: stepsByTodo.get(todo.id) ?? [],
@@ -92,6 +106,8 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
       times: timesByTodo.get(todo.id) ?? null,
       sessions: [],
       repoName: repoNameBySlug.get(todo.repo) ?? todo.repo,
+      planSlug,
+      planResolved,
     };
     taskItemById.set(todo.id, item);
     return item;

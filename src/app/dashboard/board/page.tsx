@@ -30,6 +30,7 @@ import {
   type ThemeProgress,
 } from '@/lib/turso/themes';
 import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
+import { getPlanSlugsForDate, getResolvablePlanSlugs } from '@/lib/turso/plan-links';
 import { BoardPoller } from './_components/board-poller';
 import { UndoBar } from './_components/undo-bar';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
@@ -116,6 +117,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     currentResult,
     stuckResult,
     subagentsResult,
+    planSlugsResult,
+    resolvablePlansResult,
   ] = await Promise.all([
     load('inbox', [] as Repo[], () => getRepos()),
     load('inbox', [] as Todo[], () => getTodosForDate(selectedDate)),
@@ -135,6 +138,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     isToday
       ? load('board', new Map<string, SessionSubagent[]>(), () => getSubagentsBySession(selectedDate))
       : Promise.resolve({ data: new Map<string, SessionSubagent[]>(), error: null } as LoadResult<Map<string, SessionSubagent[]>>),
+    load('inbox', new Map<string, string>(), () => getPlanSlugsForDate(selectedDate)),
+    load('inbox', new Set<string>(), () => getResolvablePlanSlugs()),
   ]);
 
   const errors = new Set(
@@ -181,6 +186,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     stuckBySession,
     subagentsBySession: subagentsResult.data,
     repoNameBySlug,
+    planSlugByTodo: planSlugsResult.data,
+    resolvablePlanSlugs: resolvablePlansResult.data,
   });
 
   const justCompletedId =

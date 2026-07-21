@@ -26,6 +26,10 @@ export interface TaskItem {
   times: TodoTimes | null;
   sessions: SessionItem[]; // session.todoId === todo.id のライブ行（やること行の直下にぶら下げる）
   repoName: string;
+  // 子02: 計画リンク（todos.plan_slug）。planSlug='' はリンクなし。
+  // planResolved=false は plan_docs に解決しない slug＝グレー非リンク表示（沈黙故障させない）。
+  planSlug: string;
+  planResolved: boolean;
 }
 
 export interface FinishedTodoItem {

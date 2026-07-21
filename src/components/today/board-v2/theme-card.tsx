@@ -194,6 +194,31 @@ function CarryButton({ todoId, title, selectedDate }: { todoId: string; title: s
   );
 }
 
+// 子02: やること行の計画チップ。解決可（plan_docsにある）→計画詳細へのリンク／解決不能→グレー非リンク（沈黙故障させない）。
+function PlanChip({ planSlug, planResolved }: { planSlug: string; planResolved: boolean }) {
+  if (!planSlug) return null;
+  const base = planSlug.includes('#') ? planSlug.slice(0, planSlug.indexOf('#')) : planSlug;
+  const label = `計画 › ${planSlug}`;
+  if (planResolved) {
+    return (
+      <Link
+        href={`/dashboard/plans/${encodeURIComponent(base)}`}
+        className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10.5px] font-semibold text-blue-700 active:scale-95 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300"
+      >
+        {label}
+      </Link>
+    );
+  }
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10.5px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+      title="この計画slugは計画ミラーに解決しません（plansyncで確認）"
+    >
+      {label}（未解決）
+    </span>
+  );
+}
+
 // レールのタスク行（既存 TaskCard 流用・改造）。質問回答UI(QuestionAnswer)は「きみの番」レーンへ移設済みのため描画しない。
 // 質問中は状態バッジのみで示す。行の直下に task.sessions を SessionRow でぶら下げる。
 function TaskRow({
@@ -219,6 +244,7 @@ function TaskRow({
               <Badge variant="secondary" className="font-normal">
                 {repoName || 'repo未設定'}
               </Badge>
+              <PlanChip planSlug={task.planSlug} planResolved={task.planResolved} />
               {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
             </div>
           </div>
@@ -254,6 +280,7 @@ function TaskRow({
             {pct !== null ? (
               <span className={cn('text-[11.5px] font-bold tabular-nums', pct >= 100 ? 'text-emerald-600' : 'text-blue-600')}>{pct}%</span>
             ) : null}
+            <PlanChip planSlug={task.planSlug} planResolved={task.planResolved} />
             {todo.carriedFrom ? <span className="text-[10.5px] text-muted-foreground">昨日から</span> : null}
           </div>
         </div>
