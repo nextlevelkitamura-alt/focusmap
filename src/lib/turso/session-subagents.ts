@@ -15,6 +15,13 @@ export type SessionSubagent = {
   startedAt: string
   endedAt: string
   elapsedMin: number
+  // 子06: サブの「中身」5列（board migration 20260721_session_subagents_detail 適用後にのみ値を持つ・NULL許容）。
+  // 段階3のAIレーンで model / prompt / launch_via を出す。詳細が取れなくても running 行は積める（沈黙故障で本体を止めない）。
+  runtime: string // claude | codex（起動ランタイム）
+  model: string // opus | sonnet | ...（種別から推測不能なケースの独立列）
+  agentType: string // subagent_type（reviewer / general-purpose / impl-opus 等）
+  launchVia: string // agent-tool | exec | headless（どう起動したか）
+  prompt: string // 渡したプロンプト全文（board.py 側でマスキング後・UIは1行要約＋折りたたみ）
 }
 
 function asString(value: unknown): string {
@@ -37,6 +44,11 @@ function toSubagent(row: Row): SessionSubagent {
     startedAt: asString(row.started_at),
     endedAt: asString(row.ended_at),
     elapsedMin: asNumber(row.elapsed_min),
+    runtime: asString(row.runtime),
+    model: asString(row.model),
+    agentType: asString(row.agent_type),
+    launchVia: asString(row.launch_via),
+    prompt: asString(row.prompt),
   }
 }
 
@@ -50,6 +62,11 @@ const sessionSubagentsSql = `
     status,
     started_at,
     ended_at,
+    runtime,
+    model,
+    agent_type,
+    launch_via,
+    prompt,
     CAST(ROUND(
       MAX(0, (JULIANDAY(COALESCE(ended_at, DATETIME('now', '+9 hours'))) - JULIANDAY(started_at)) * 1440)
     ) AS INTEGER) AS elapsed_min

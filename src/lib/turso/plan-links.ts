@@ -153,6 +153,66 @@ export async function getPlanStepProgress(): Promise<Map<string, PlanStepProgres
   return map
 }
 
+// 子06「工程ごとの📄ビューア」: 工程行の📄から、その工程に対応する計画文書（plan_docs.body）を1本引く。
+// 実装/修正工程 → 子計画md（kind='child'・NN一致）、レビュー工程 → 評価md（kind='eval'）。
+// 厳密対応が難しい工程は program/single 代表文書へフォールバック（沈黙させない）。読み取り専用（DB→md書き戻し無し・憲法1）。
+// plan_docs は plansync が md→DB 一方向で書く表示キャッシュ。ここは SELECT のみ。
+export type PlanStepDoc = {
+  path: string
+  title: string
+  body: string
+  nn: string
+  kind: string
+  siblingPaths: string[] // 同一計画内の全docのpath（MarkdownDoc の相対リンク解決に使う）
+}
+
+// nn を数値比較用に正規化（'01' と '1' を同一視。非数値はそのまま）。
+function normalizeNn(nn: string): string {
+  const raw = (nn || '').trim()
+  if (raw === '') return ''
+  return /^\d+$/.test(raw) ? String(parseInt(raw, 10)) : raw
+}
+
+export async function getPlanStepDoc(slug: string, nn: string, kind: string): Promise<PlanStepDoc | null> {
+  const base = planSlugBase(slug)
+  if (!base) return null
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `SELECT path, kind, nn, title, body FROM plan_docs WHERE program_slug = :slug`,
+    args: { slug: base },
+  })
+  const docs = result.rows.map((row: Row) => ({
+    path: asString(row.path),
+    kind: asString(row.kind),
+    nn: asString(row.nn),
+    title: asString(row.title),
+    body: asString(row.body),
+  }))
+  if (docs.length === 0) return null
+  const siblingPaths = docs.map((d) => d.path)
+  const wantNn = normalizeNn(nn)
+  const nnMatch = (docNn: string) => wantNn !== '' && normalizeNn(docNn) === wantNn
+  const root = docs.find((d) => d.kind === 'program' || d.kind === 'single')
+
+  let target: (typeof docs)[number] | undefined
+  if (kind === 'review') {
+    // レビュー工程 → 評価md（NN一致優先・なければ最初のeval）。
+    target = docs.find((d) => d.kind === 'eval' && nnMatch(d.nn)) ?? docs.find((d) => d.kind === 'eval')
+  } else {
+    // 実装/修正工程 → 子計画md（NN一致）。単発（NN無し）は代表文書。
+    target = docs.find((d) => d.kind === 'child' && nnMatch(d.nn))
+  }
+  target = target ?? root ?? docs[0]
+  if (!target) return null
+  return {
+    path: target.path,
+    title: target.title,
+    body: target.body,
+    nn: target.nn,
+    kind: target.kind,
+    siblingPaths,
+  }
+}
+
 export type PlanLiveStep = TodoStep & {
   todoTitle: string
   todoDoDate: string
