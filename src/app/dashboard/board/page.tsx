@@ -40,7 +40,7 @@ import {
 } from '@/lib/turso/plan-links';
 import { BoardPoller } from './_components/board-poller';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
-import { PlanCardV2 } from '@/components/today/board-v2/theme-card';
+import { ThemeGroupCard } from '@/components/today/board-v2/theme-group';
 import { DayHeader } from '@/components/today/board-v2/day-header';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
@@ -206,7 +206,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     board.stray.sessions.length > 0 ||
     board.stray.finishedTodos.length > 0 ||
     board.stray.finishedLogs.length > 0;
-  const isEmpty = board.planCards.length === 0 && !strayHasContent;
+  const isEmpty = board.themeGroups.length === 0 && !strayHasContent;
 
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto pb-20">
@@ -241,12 +241,12 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
           </p>
         ) : null}
 
-        {board.planCards.length > 0 ? (
+        {board.themeGroups.length > 0 ? (
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-            {board.planCards.map((card) => (
-              <PlanCardV2
-                key={card.planSlug || `theme:${card.theme?.id ?? ''}`}
-                data={card}
+            {board.themeGroups.map((group) => (
+              <ThemeGroupCard
+                key={group.key}
+                group={group}
                 selectedDate={selectedDate}
                 aiTargets={board.aiTargets}
               />

@@ -20,6 +20,7 @@ import type {
   SessionItem,
   StrayData,
   TaskItem,
+  ThemeGroup,
 } from './types';
 
 export interface BuildInput {
@@ -269,6 +270,61 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     card.finishedLogs.length > 0;
   const planCards = [...cards.filter(hasActivity), ...cards.filter((card) => !hasActivity(card))];
 
+  // 子07・段階0: 計画カードをテーマ(themes active)の器へ束ねる（既存3段の上にテーマ層を1枚かぶせる）。
+  // real plan card は build 中に card.theme（planRefs 先勝ち）で所属テーマが決まっている。
+  // テーマのみカード（planSlug='' ＝ planRefs が全部未解決のテーマ）は card.theme が自テーマ。
+  // どのテーマにも属さない計画カード（card.theme===null）は「テーマ未設定」へまとめ、沈黙させない。
+  // 空のテーマのみカードは器（テーマ）の重複になるので表示対象から外す（テーマ自体は planCount=0 の「動きなし」で残る）。
+  const makeGroup = (key: string, theme: Theme | null, title: string): ThemeGroup => ({
+    key,
+    theme,
+    title,
+    plans: [],
+    planCount: 0,
+    stepDone: 0,
+    stepTotal: 0,
+    stepPct: null,
+    liveCount: 0,
+    waitCount: 0,
+    hasActivity: false,
+  });
+  const themeGroupById = new Map<string, ThemeGroup>();
+  const orderedGroups: ThemeGroup[] = [];
+  for (const theme of activeThemes) {
+    const group = makeGroup(theme.id, theme, theme.name);
+    themeGroupById.set(theme.id, group);
+    orderedGroups.push(group);
+  }
+  const unassigned = makeGroup('unassigned', null, 'テーマ未設定');
+  orderedGroups.push(unassigned);
+
+  for (const card of planCards) {
+    if (card.planSlug === '' && !hasActivity(card)) continue; // 空のテーマのみカードは畳む（沈黙ではなくテーマ側で「動きなし」表示）
+    const group = (card.theme ? themeGroupById.get(card.theme.id) : undefined) ?? unassigned;
+    group.plans.push(card);
+  }
+
+  for (const group of orderedGroups) {
+    for (const card of group.plans) {
+      if (card.planSlug !== '') group.planCount += 1;
+      const prog = card.planSlug === '' ? card.progress : card.stepProgress;
+      group.stepDone += prog?.done ?? 0;
+      group.stepTotal += prog?.total ?? 0;
+      group.liveCount += card.liveCount;
+      group.waitCount += card.waitCount;
+      if (hasActivity(card)) group.hasActivity = true;
+    }
+    group.stepPct = group.stepTotal > 0 ? Math.round((100 * group.stepDone) / group.stepTotal) : null;
+  }
+
+  // テーマ未設定は計画カードが無ければ出さない。active テーマは0計画でも「動きなし」で残す（沈黙させない）。
+  const visibleGroups = orderedGroups.filter((group) => group.theme !== null || group.plans.length > 0);
+  // 当日動きのあるテーマを先・静かなテーマを後ろへ（作成順は保つ・既存カードソートと同型）。
+  const themeGroups = [
+    ...visibleGroups.filter((group) => group.hasActivity),
+    ...visibleGroups.filter((group) => !group.hasActivity),
+  ];
+
   // 未分類（plan_slugもテーマも無いtask・session・完了AI todo・ログ）＝現状維持。
   const stray: StrayData = {
     tasks: strayTasks,
@@ -293,6 +349,7 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     waitTotal,
     runMin: totals.runMin,
     waitMinTotal: totals.waitMin,
+    themeGroups,
     planCards,
     stray,
     aiTargets,

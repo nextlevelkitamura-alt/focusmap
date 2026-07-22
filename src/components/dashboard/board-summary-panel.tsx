@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { format } from "date-fns"
 import { LayoutGrid, ArrowUpRight } from "lucide-react"
 import Link from "next/link"
-import { PlanCardV2 } from "@/components/today/board-v2/theme-card"
+import { ThemeGroupCard } from "@/components/today/board-v2/theme-group"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
 import type { BoardV2Data } from "@/components/today/board-v2/types"
 
@@ -124,14 +124,14 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                 </span>
             </div>
 
-            {/* スマホboardと同一部品でそのまま描画（計画カード→未分類） */}
+            {/* スマホboardと同一部品でそのまま描画（テーマ→計画カード→未分類・子07） */}
             <div className="space-y-2.5">
-                {board.planCards.length > 0 ? (
+                {board.themeGroups.length > 0 ? (
                     <div className="space-y-2.5">
-                        {board.planCards.map((card) => (
-                            <PlanCardV2
-                                key={card.planSlug || `theme:${card.theme?.id ?? ""}`}
-                                data={card}
+                        {board.themeGroups.map((group) => (
+                            <ThemeGroupCard
+                                key={group.key}
+                                group={group}
                                 selectedDate={dateStr}
                                 aiTargets={board.aiTargets}
                             />
@@ -143,7 +143,7 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                     <StrayBox stray={board.stray} selectedDate={dateStr} aiTargets={board.aiTargets} />
                 ) : null}
 
-                {board.planCards.length === 0 && !strayHasContent ? (
+                {board.themeGroups.length === 0 && !strayHasContent ? (
                     <p className="rounded-lg border border-dashed border-border/50 px-3 py-3 text-center text-[11px] text-muted-foreground">
                         この日の計画・やることはまだありません。
                     </p>

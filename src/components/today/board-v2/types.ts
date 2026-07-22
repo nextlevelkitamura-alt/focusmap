@@ -65,6 +65,23 @@ export interface StrayData {
   finishedLogs: { parent: string; items: { entry: string; count: number }[] }[]; // テーマ名に一致しない parent のログ
 }
 
+// 子07「テーマ上位・4段化」: themes(active) を最上位の器にし、planRefs で解決した計画カード群を束ねる。
+// 段階0=テーマカード（この型）→ 段階1=PlanCardData[]（既存 PlanCardV2 をそのまま入れ子）→ 段階2/3=工程・AIレーン（子06・不変）。
+// plans は表示対象カードだけ（real plan card＝planSlug!==''、＋活動のあるテーマのみカード）。空のテーマのみカードは器の重複になるので畳む。
+export interface ThemeGroup {
+  key: string; // theme.id ／ 'unassigned'（テーマ未設定の受け皿）
+  theme: Theme | null; // null=テーマ未設定
+  title: string; // theme.name ／ 'テーマ未設定'
+  plans: PlanCardData[]; // 配下の計画カード（PlanCardV2 を入れ子で描画）
+  planCount: number; // 束ねる計画数（real plan card＝planSlug!==''）。0=「動きなし」1行表示
+  stepDone: number; // 配下計画のstep集計合算（済）
+  stepTotal: number; // 同（総）
+  stepPct: number | null; // stepTotal>0 の時だけ数値（0件は null）
+  liveCount: number; // 配下計画の稼働(run/sub)合算
+  waitCount: number; // 配下計画の確認待ち(wait)合算
+  hasActivity: boolean; // 当日動きの有無（並び順=活動ありを先へ）
+}
+
 export interface BoardV2Data {
   selectedDate: string;
   isToday: boolean;
@@ -73,7 +90,8 @@ export interface BoardV2Data {
   waitTotal: number;
   runMin: number; // 本日サマリ相当はヘッダー1行へ集約（daily totals）
   waitMinTotal: number;
-  planCards: PlanCardData[]; // 子05: カード＝active計画（＋計画未接続テーマの受け皿）。旧 themes を改名・再構成
+  themeGroups: ThemeGroup[]; // 子07: 最上位＝テーマの器（段階0）。各テーマ配下に planCards を入れ子で束ねる
+  planCards: PlanCardData[]; // 子05: フラットな計画カード列（子07のテーマ振り分け前・後方互換で残置）
   stray: StrayData;
   aiTargets: { id: string; title: string }[]; // FixReattach 用
 }
