@@ -93,5 +93,8 @@ export interface BoardV2Data {
   themeGroups: ThemeGroup[]; // 子07: 最上位＝テーマの器（段階0）。各テーマ配下に planCards を入れ子で束ねる
   planCards: PlanCardData[]; // 子05: フラットな計画カード列（子07のテーマ振り分け前・後方互換で残置）
   stray: StrayData;
+  // 子05レーンB「計画外エージェント」: plan/theme/todo のどれも宣言せず動いているセッション。
+  // 未分類(StrayData.sessions)から分離した専用ゾーン。plan を宣言すると build 側で計画カードへ入り、次ポーリングでここから消える。
+  unplannedSessions: SessionItem[];
   aiTargets: { id: string; title: string }[]; // FixReattach 用
 }

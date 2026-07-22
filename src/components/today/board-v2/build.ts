@@ -204,8 +204,13 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     else strayTasks.push(item);
   }
 
-  // セッション振り分け: todoId一致→TaskItem直下／themeId一致→homeカード直下／どちらも無し→未分類。
-  const straySessions: SessionItem[] = [];
+  // セッション振り分け（子05レーンB・優先順）:
+  //  (a) todoId 一致 → その TaskItem 直下（工程行の下にぶら下げる・既存維持）
+  //  (b) plan 宣言（board.py update --plan）が計画カードのベースslugに解決 → その計画カード直下（新経路）
+  //  (c) themeId 一致 → テーマの home カード直下（既存維持）
+  //  (d) どれも無い → 計画外エージェント（未分類ではなく専用ゾーン unplannedSessions へ）
+  // (b) は plan が空、または planSlugBase(plan) がどのカードにも解決しない時は素通りするので (a)(c) を退行させない。
+  const unplannedSessions: SessionItem[] = [];
   for (const item of sessionItems) {
     const s = item.session;
     const taskItem = s.todoId ? taskItemById.get(s.todoId) : undefined;
@@ -213,12 +218,17 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
       taskItem.sessions.push(item);
       continue;
     }
+    const planCard = s.plan ? cardByPlanSlug.get(planSlugBase(s.plan)) : undefined;
+    if (planCard) {
+      planCard.cardSessions.push(item);
+      continue;
+    }
     const home = s.themeId ? homeCardByThemeId.get(s.themeId) : undefined;
     if (home) {
       home.cardSessions.push(item);
       continue;
     }
-    straySessions.push(item);
+    unplannedSessions.push(item);
   }
 
   // 完了AI todo: plan_slug→計画カード／テーマ一致→homeカード折りたたみ／無所属→未分類枠（修正01・条件4）。
@@ -325,10 +335,12 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     ...visibleGroups.filter((group) => !group.hasActivity),
   ];
 
-  // 未分類（plan_slugもテーマも無いtask・session・完了AI todo・ログ）＝現状維持。
+  // 未分類（plan_slugもテーマも無いtask・完了AI todo・ログ）。
+  // 子05レーンB: 無所属セッションは stray ではなく unplannedSessions（計画外エージェント）へ移したため、
+  // stray.sessions は後方互換で残しつつ常に空（既存フィールド削除・改名なし）。
   const stray: StrayData = {
     tasks: strayTasks,
-    sessions: straySessions,
+    sessions: [],
     finishedTodos: strayFinishedTodos,
     finishedLogs: [...strayLogsByParent.entries()].map(([parent, items]) => ({ parent, items })),
   };
@@ -352,6 +364,7 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     themeGroups,
     planCards,
     stray,
+    unplannedSessions,
     aiTargets,
   };
 }

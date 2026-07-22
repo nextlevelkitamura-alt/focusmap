@@ -6,6 +6,7 @@ import { LayoutGrid, ArrowUpRight } from "lucide-react"
 import Link from "next/link"
 import { ThemeGroupCard } from "@/components/today/board-v2/theme-group"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
+import { UnplannedAgents } from "@/components/today/board-v2/unplanned-agents"
 import type { BoardV2Data } from "@/components/today/board-v2/types"
 
 interface BoardSummaryPanelProps {
@@ -89,6 +90,7 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
         board.stray.sessions.length > 0 ||
         board.stray.finishedTodos.length > 0 ||
         board.stray.finishedLogs.length > 0
+    const hasUnplanned = board.unplannedSessions.length > 0
 
     return (
         <section className="border-b border-border/35 px-3 py-3">
@@ -139,11 +141,15 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                     </div>
                 ) : null}
 
+                {hasUnplanned ? (
+                    <UnplannedAgents sessions={board.unplannedSessions} selectedDate={dateStr} />
+                ) : null}
+
                 {strayHasContent ? (
                     <StrayBox stray={board.stray} selectedDate={dateStr} aiTargets={board.aiTargets} />
                 ) : null}
 
-                {board.themeGroups.length === 0 && !strayHasContent ? (
+                {board.themeGroups.length === 0 && !strayHasContent && !hasUnplanned ? (
                     <p className="rounded-lg border border-dashed border-border/50 px-3 py-3 text-center text-[11px] text-muted-foreground">
                         この日の計画・やることはまだありません。
                     </p>

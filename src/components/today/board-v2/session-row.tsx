@@ -47,6 +47,12 @@ export function SessionRow({
                 {pill}
               </span>
             ) : null}
+            {/* このセッションが動いている repo（sessions.repo＝git トップの basename）。どの計画/作業か理解の手がかり。空なら出さない。 */}
+            {session.repo ? (
+              <span className="ml-1.5 inline-block rounded border border-border/70 px-1.5 py-px align-middle text-[10.5px] font-medium text-muted-foreground/90">
+                {session.repo}
+              </span>
+            ) : null}
           </p>
           <p className="mt-0.5 text-[11.5px] tabular-nums text-muted-foreground">
             {wait ? (

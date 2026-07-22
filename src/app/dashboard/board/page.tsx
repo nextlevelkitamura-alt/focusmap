@@ -43,6 +43,7 @@ import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
 import { ThemeGroupCard } from '@/components/today/board-v2/theme-group';
 import { DayHeader } from '@/components/today/board-v2/day-header';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
+import { UnplannedAgents } from '@/components/today/board-v2/unplanned-agents';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
 
 export const dynamic = 'force-dynamic';
@@ -206,7 +207,8 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     board.stray.sessions.length > 0 ||
     board.stray.finishedTodos.length > 0 ||
     board.stray.finishedLogs.length > 0;
-  const isEmpty = board.themeGroups.length === 0 && !strayHasContent;
+  const hasUnplanned = board.unplannedSessions.length > 0;
+  const isEmpty = board.themeGroups.length === 0 && !strayHasContent && !hasUnplanned;
 
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto pb-20">
@@ -252,6 +254,10 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
               />
             ))}
           </div>
+        ) : null}
+
+        {hasUnplanned ? (
+          <UnplannedAgents sessions={board.unplannedSessions} selectedDate={selectedDate} />
         ) : null}
 
         {strayHasContent ? (
