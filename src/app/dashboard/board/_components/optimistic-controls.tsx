@@ -39,21 +39,30 @@ const TAP_TOP = '-ml-1.5 -mt-1.5 inline-grid h-11 w-11 shrink-0 place-items-cent
 
 // 完了（レビュー完了）: 空チェック→タップで充填（楽観）→completeHeadingAction。成功時は todo が
 // 「終わったこと」へ移り本コンポーネントは unmount。失敗時のみ空へ戻しエラーを出す。
+// stayOpen=true は工程表だけの表示用チェック。親todoを完了にせず、開いた詳細内でチェックを保持する。
 // label を渡すと工程表（plan-steps）用の行（チェック＋説明）として描画する。無ければチェック単体（theme-card）。
 export function CompleteHeadingButton({
   todoId,
   date,
   title,
   label,
+  stayOpen = false,
 }: {
   todoId: string;
   date: string;
   title: string;
   label?: string;
+  stayOpen?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [failed, setFailed] = useState(false);
+  const [isChecked, setIsChecked] = useState(false);
   const run = () => {
+    if (stayOpen) {
+      setIsChecked(true);
+      return;
+    }
+
     setFailed(false);
     startTransition(async () => {
       try {
@@ -63,16 +72,18 @@ export function CompleteHeadingButton({
       }
     });
   };
-  // 楽観: 保存中は充填（＝反映済み）＋淡色（＝保存中）。失敗時のみ空へ戻る。
+  // stayOpen時はDB保存をせず、表示中の工程詳細だけでチェックを保持する。
+  // 通常時は楽観: 保存中は充填（＝反映済み）＋淡色（＝保存中）。失敗時のみ空へ戻る。
   const button = (tap: string) => (
     <button
       type="button"
       onClick={run}
-      disabled={isPending}
-      aria-label={`${title}をレビューして完了にする`}
+      disabled={isPending || (stayOpen && isChecked)}
+      aria-label={stayOpen ? `${title}のレビュー完了を確認済みにする` : `${title}をレビューして完了にする`}
+      aria-pressed={stayOpen ? isChecked : undefined}
       className={cn(tap, isPending && 'opacity-60')}
     >
-      <CheckSquare filled={isPending} invite />
+      <CheckSquare filled={stayOpen ? isChecked : isPending} invite />
     </button>
   );
 
@@ -81,7 +92,13 @@ export function CompleteHeadingButton({
       <div className="mt-2 flex items-center gap-1">
         {button(TAP_CENTER)}
         <span className="text-[11.5px] font-medium text-emerald-700 dark:text-emerald-400">
-          {isPending ? '完了にしています…' : failed ? '完了にできませんでした。もう一度お試しください。' : label}
+          {stayOpen && isChecked
+            ? 'レビュー完了を確認しました'
+            : isPending
+              ? '完了にしています…'
+              : failed
+                ? '完了にできませんでした。もう一度お試しください。'
+                : label}
         </span>
       </div>
     );

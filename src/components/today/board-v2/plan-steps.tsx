@@ -352,13 +352,14 @@ export function PlanTaskSteps({
         <p className="text-[11.5px] text-muted-foreground">工程未登録（計画待ち）</p>
       )}
 
-      {/* 2層チェック: 全工程完了で見出しをレビュー完了にできる（既存 completeHeadingAction を楽観的UI化・修正01） */}
+      {/* 全工程完了の確認は、親todoを閉じずに工程欄へチェックだけを残す。 */}
       {allDone ? (
         <CompleteHeadingButton
           todoId={todo.id}
           date={selectedDate}
           title={todo.title}
           label="全工程完了 — チェックでレビュー完了にできます"
+          stayOpen
         />
       ) : null}
 
