@@ -31,12 +31,17 @@ import { DesktopDailyInspector } from "@/components/dashboard/desktop-daily-insp
 // --- Types ---
 const MINDMAP_NODE_DROP_IN_FLIGHT_MS = 4000
 const DAILY_PANEL_STORAGE_KEY = "focusmap:desktop-daily-panel-open"
-const DAILY_PANEL_WIDTH_STORAGE_KEY = "focusmap:desktop-daily-panel-width"
+const DAILY_PANEL_RATIO_STORAGE_KEY = "focusmap:desktop-daily-panel-width-ratio-v2"
 const DAILY_PANEL_DOCKED_BREAKPOINT = "(min-width: 1440px)"
-const DAILY_PANEL_DEFAULT_WIDTH = 360
-const DAILY_PANEL_MIN_WIDTH = 320
-const DAILY_PANEL_MAX_WIDTH = 640
+const DAILY_PANEL_DEFAULT_RATIO = 0.5
+const DAILY_PANEL_DEFAULT_WIDTH = 600
+const DAILY_PANEL_MIN_WIDTH = 360
+const SCHEDULE_PANEL_MIN_WIDTH = 420
 type CalendarRangeMode = 'day' | '3days' | 'month'
+
+function dailyPanelMaxWidth(containerWidth: number) {
+    return Math.max(DAILY_PANEL_MIN_WIDTH, Math.floor(containerWidth - SCHEDULE_PANEL_MIN_WIDTH))
+}
 
 interface DesktopTodayPanelProps {
     allTasks: Task[]
@@ -86,9 +91,12 @@ export function DesktopTodayPanel({
     const [isDailyPanelDocked, setIsDailyPanelDocked] = useState(false)
     const [hasMeasuredDailyPanelLayout, setHasMeasuredDailyPanelLayout] = useState(false)
     const [dailyPanelWidth, setDailyPanelWidth] = useState(DAILY_PANEL_DEFAULT_WIDTH)
+    const [dailyPanelMax, setDailyPanelMax] = useState(DAILY_PANEL_DEFAULT_WIDTH)
     const [isDailyPanelResizing, setIsDailyPanelResizing] = useState(false)
     const [selectedDailyItem, setSelectedDailyItem] = useState<TimeBlock | null>(null)
     const dailyPanelWidthRef = useRef(DAILY_PANEL_DEFAULT_WIDTH)
+    const dailyPanelRatioRef = useRef(DAILY_PANEL_DEFAULT_RATIO)
+    const dailyPanelContainerWidthRef = useRef(DAILY_PANEL_DEFAULT_WIDTH * 2)
     const dailyPanelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
     const logic = useTodayViewLogic({
@@ -170,13 +178,21 @@ export function DesktopTodayPanel({
         }
     }, [])
     const updateDailyPanelWidth = useCallback((nextWidth: number, persist = false) => {
-        const clampedWidth = Math.min(DAILY_PANEL_MAX_WIDTH, Math.max(DAILY_PANEL_MIN_WIDTH, Math.round(nextWidth)))
+        const containerWidth = dailyPanelContainerWidthRef.current
+        const maxWidth = dailyPanelMaxWidth(containerWidth)
+        const clampedWidth = Math.min(maxWidth, Math.max(DAILY_PANEL_MIN_WIDTH, Math.round(nextWidth)))
         dailyPanelWidthRef.current = clampedWidth
+        dailyPanelRatioRef.current = containerWidth > 0 ? clampedWidth / containerWidth : DAILY_PANEL_DEFAULT_RATIO
         setDailyPanelWidth(clampedWidth)
+        setDailyPanelMax(maxWidth)
         if (persist && typeof window !== "undefined") {
-            window.localStorage.setItem(DAILY_PANEL_WIDTH_STORAGE_KEY, String(clampedWidth))
+            window.localStorage.setItem(DAILY_PANEL_RATIO_STORAGE_KEY, dailyPanelRatioRef.current.toFixed(4))
         }
     }, [])
+    const resetDailyPanelWidth = useCallback(() => {
+        dailyPanelRatioRef.current = DAILY_PANEL_DEFAULT_RATIO
+        updateDailyPanelWidth(dailyPanelContainerWidthRef.current * DAILY_PANEL_DEFAULT_RATIO, true)
+    }, [updateDailyPanelWidth])
     const handleDailyPanelResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (event.button !== 0) return
         event.preventDefault()
@@ -211,9 +227,12 @@ export function DesktopTodayPanel({
             updateDailyPanelWidth(DAILY_PANEL_MIN_WIDTH, true)
         } else if (event.key === "End") {
             event.preventDefault()
-            updateDailyPanelWidth(DAILY_PANEL_MAX_WIDTH, true)
+            updateDailyPanelWidth(dailyPanelMaxWidth(dailyPanelContainerWidthRef.current), true)
+        } else if (event.key === "Enter") {
+            event.preventDefault()
+            resetDailyPanelWidth()
         }
-    }, [updateDailyPanelWidth])
+    }, [resetDailyPanelWidth, updateDailyPanelWidth])
     const handleDailyItemTap = useCallback((item: TimeBlock) => {
         setSelectedDailyItem(item)
         setDailyPanelVisibility(true)
@@ -290,11 +309,26 @@ export function DesktopTodayPanel({
     }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked])
 
     useEffect(() => {
-        if (!hasMeasuredDailyPanelLayout || !isDailyPanelDocked) return
-        const storedWidth = Number(window.localStorage.getItem(DAILY_PANEL_WIDTH_STORAGE_KEY))
-        if (Number.isFinite(storedWidth) && storedWidth > 0) {
-            updateDailyPanelWidth(storedWidth)
+        if (!hasMeasuredDailyPanelLayout || !isDailyPanelDocked || !panelRef.current) return
+        const storedRatio = Number(window.localStorage.getItem(DAILY_PANEL_RATIO_STORAGE_KEY))
+        dailyPanelRatioRef.current = Number.isFinite(storedRatio) && storedRatio > 0
+            ? storedRatio
+            : DAILY_PANEL_DEFAULT_RATIO
+
+        const applyContainerWidth = (containerWidth: number) => {
+            if (containerWidth <= 0) return
+            dailyPanelContainerWidthRef.current = containerWidth
+            updateDailyPanelWidth(containerWidth * dailyPanelRatioRef.current)
         }
+
+        const panel = panelRef.current
+        applyContainerWidth(panel.getBoundingClientRect().width)
+        const observer = new ResizeObserver(entries => {
+            const width = entries[0]?.contentRect.width ?? panel.getBoundingClientRect().width
+            applyContainerWidth(width)
+        })
+        observer.observe(panel)
+        return () => observer.disconnect()
     }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked, updateDailyPanelWidth])
 
     useEffect(() => {
@@ -873,13 +907,13 @@ export function DesktopTodayPanel({
                                 aria-orientation="vertical"
                                 aria-label="デイリーと今日のスケジュールの幅を変更"
                                 aria-valuemin={DAILY_PANEL_MIN_WIDTH}
-                                aria-valuemax={DAILY_PANEL_MAX_WIDTH}
+                                aria-valuemax={dailyPanelMax}
                                 aria-valuenow={dailyPanelWidth}
-                                aria-valuetext={`デイリーの幅 ${dailyPanelWidth}px`}
+                                aria-valuetext={`デイリーの幅 ${dailyPanelWidth}px、全体の約${Math.round(dailyPanelRatioRef.current * 100)}パーセント`}
                                 tabIndex={0}
-                                title="ドラッグしてデイリーと今日のスケジュールの幅を調節"
+                                title="ドラッグで幅を調節。ダブルクリックまたはEnterで半分に戻す"
                                 className={cn(
-                                    "absolute inset-y-0 -left-1.5 z-20 flex w-3 touch-none cursor-col-resize select-none items-center justify-center outline-none",
+                                    "absolute inset-y-0 -left-2.5 z-20 flex w-5 touch-none cursor-col-resize select-none items-center justify-center outline-none",
                                     "focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary/50",
                                 )}
                                 onPointerDown={handleDailyPanelResizePointerDown}
@@ -888,9 +922,10 @@ export function DesktopTodayPanel({
                                 onPointerCancel={finishDailyPanelResize}
                                 onLostPointerCapture={finishDailyPanelResize}
                                 onKeyDown={handleDailyPanelResizeKeyDown}
+                                onDoubleClick={resetDailyPanelWidth}
                             >
                                 <span className={cn(
-                                    "h-10 w-0.5 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/70",
+                                    "h-12 w-1 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/70",
                                     isDailyPanelResizing && "bg-primary/80",
                                 )} />
                             </div>
