@@ -1,12 +1,40 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { type TextareaHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, Layers, Pencil, Plus } from 'lucide-react';
 import { ThemeEditor, type EditableTheme } from '@/app/dashboard/board/_components/theme-editor';
 import type { Theme } from '@/lib/turso/themes';
 import { cn } from '@/lib/utils';
 import { PlanCardV2 } from './theme-card';
 import type { ThemeGroup } from './types';
+
+function AutoGrowingTextarea({ onInput, style, value, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const resize = () => {
+    const element = ref.current;
+    if (!element) return;
+    element.style.height = '0px';
+    element.style.height = `${element.scrollHeight}px`;
+  };
+
+  useEffect(() => {
+    resize();
+  }, [value]);
+
+  return (
+    <textarea
+      {...props}
+      ref={ref}
+      value={value}
+      style={style}
+      onInput={(event) => {
+        resize();
+        onInput?.(event);
+      }}
+    />
+  );
+}
 
 // Theme → Plan → 工程 → AI の入口。
 // V5では「現在の動き」を別レーンにせず、各Planカードの中へライブAI行を統合する。
@@ -107,21 +135,21 @@ export function ThemeGroupCard({
               required
               className="h-6 w-full rounded border border-primary/45 bg-background/65 px-1.5 text-[15px] font-extrabold leading-snug outline-none ring-0 placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
             />
-            <textarea
+            <AutoGrowingTextarea
               value={editor.draft.purpose}
               onChange={(event) => editor.updateDraft('purpose', event.target.value)}
               aria-label="目的"
               rows={1}
               placeholder="目的を入力"
-              className="mt-1 block min-h-5 w-full resize-none rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+              className="mt-1 block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
             />
-            <textarea
+            <AutoGrowingTextarea
               value={editor.draft.doneCriteria}
               onChange={(event) => editor.updateDraft('doneCriteria', event.target.value)}
               aria-label="完了条件"
               rows={1}
               placeholder="完了条件を入力"
-              className="mt-1 block min-h-5 w-full resize-none rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+              className="mt-1 block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
             />
           </div>
         );
