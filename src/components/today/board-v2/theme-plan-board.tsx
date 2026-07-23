@@ -85,12 +85,14 @@ export function ThemePlanBoard({
 }) {
   const [selectedRepo, setSelectedRepo] = useState('すべて');
   const projectGroups = useMemo(
-    () => projectRepoPath
+    // 開発サンプルには実在するplan_docs.pathが無い。workspaceのpath照合をかけると
+    // 完成形の確認そのものが0件になるため、サンプル表示時だけは全Themeをそのまま描画する。
+    () => projectRepoPath && !isPreview
       ? groups
         .map((group) => rebuildGroup(group, group.plans.filter((plan) => belongsToProject(plan, projectRepoPath))))
         .filter((group) => group.plans.length > 0)
       : groups,
-    [groups, projectRepoPath],
+    [groups, isPreview, projectRepoPath],
   );
   const repoOptions = useMemo(
     () => ['すべて', ...Array.from(new Set(projectGroups.flatMap((group) => group.plans).map(planRepo).filter(Boolean)))],

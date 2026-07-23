@@ -84,6 +84,7 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 - Theme編集は各Themeカード右上の鉛筆へ固定し、同じカード内に編集枠を開く。`PATCH /api/board/themes/[id]` はTurso `themes` の名前・目的・完了条件だけを更新し、画面は先に楽観的更新、通信失敗時だけ元へ戻す。
 - 実データが空の開発環境向けに、2 Theme・3 Plan・3 repo・Codex/Claude稼働/確認待ち・単発・完了見出しを含む表示確認用サンプルを追加した。
 - サンプルは共通 `BoardV2Data` でboardページとPCサイドバーへ同じように出す。Themeの編集操作は画面内だけへ反映して `サンプル変更（保存なし）` と表示し、Turso書き込みを発生させない。
+- ローカル開発の `personal-os-inbox.db` に `todo_steps`、`themes`、`plan_docs`、`plan_progress`、`plan_slug` のschemaを適用し、Focusmapプロジェクトの `repo_path` も現在のrepo位置へ更新した。Theme / Planの運用レコードはまだ0件であり、実データ表示はTheme作成とFocusmap repoのPlanミラー設計を確定してから行う。
 - PCのカレンダーとデイリーを別ペインへ組み替え、初期50:50の比率制・画面サイズ追従・広幅化・ドラッグ/キーボード操作・50:50リセットを追加した。日付操作はカレンダー側だけに置き、選択した1日を両ペインで共有する。
-- DB migration・hook・loop・push・本番反映は未変更。Tursoは既存 `themes` の更新と、既存 `plan_docs.path` の読み取りだけを行う。
+- DB migration・hook・loop・push・本番反映は未変更。ローカル開発DBだけに既存migrationを適用した。Tursoは既存 `themes` の更新と、既存 `plan_docs.path` の読み取りだけを行う。
 - test/lint/build/ブラウザ表示確認は、`AGENTS.md`の自動検証ポリシーに従い未実行。コード差分評価は`評価01.md`。
