@@ -482,6 +482,65 @@ function PlanActivityPreview({ sessions }: { sessions: SessionItem[] }) {
   );
 }
 
+function PreviewPlanTimeline({ data }: { data: PlanCardData }) {
+  const steps = data.tasks.flatMap((task) => task.steps);
+  return (
+    <div className="space-y-2">
+      <p className="rounded-lg border border-blue-200 bg-blue-50/70 px-2.5 py-2 text-[10.5px] text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
+        表示確認用サンプルです。ここでは工程の見え方だけを表示し、完了・回答・保存操作は行いません。
+      </p>
+      {steps.length > 0 ? (
+        <ol className="relative space-y-0.5 pl-1">
+          {steps.map((step, index) => {
+            const done = step.status === 'done';
+            const doing = step.status === 'doing';
+            return (
+              <li key={step.id} className="relative flex min-h-9 items-start gap-2.5 text-[11px]">
+                {index < steps.length - 1 ? (
+                  <span className="absolute bottom-[-3px] left-[7px] top-[17px] w-px bg-border" aria-hidden />
+                ) : null}
+                <span
+                  className={cn(
+                    'relative z-[1] mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border text-[9px] font-bold',
+                    done
+                      ? 'border-emerald-500 bg-emerald-500 text-white'
+                      : doing
+                        ? 'border-blue-500 bg-blue-500 text-white'
+                        : 'border-border bg-background text-muted-foreground',
+                  )}
+                >
+                  {done ? '✓' : index + 1}
+                </span>
+                <span className={cn('min-w-0 flex-1 pt-0.5', done && 'text-muted-foreground line-through')}>
+                  {step.title}
+                </span>
+                {doing ? (
+                  <span className="shrink-0 rounded-md bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+                    実装中 · Codex
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">工程はまだ登録されていません。</p>
+      )}
+      {data.finishedLogs.length > 0 ? (
+        <div className="border-t border-border/60 pt-2">
+          <p className="mb-1 text-[10.5px] font-semibold text-muted-foreground">終わったこと</p>
+          {data.finishedLogs.map((log, index) => (
+            <p key={`${log.entry}-${index}`} className="text-[11px] text-muted-foreground">
+              <span className="mr-1.5 font-bold text-emerald-600">✓</span>
+              {log.entry}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // V5 計画カード: 進捗とAIの現在状態を同じカードへ統合する。
 // 工程時系列は従来どおり初期非表示で、「工程を見る」からだけ展開する。
 export function PlanCardV2({
@@ -489,11 +548,13 @@ export function PlanCardV2({
   selectedDate,
   aiTargets,
   onPreviewOnlyAction,
+  isPreview = false,
 }: {
   data: PlanCardData;
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
   onPreviewOnlyAction?: (action: string) => void;
+  isPreview?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const { planSlug, planTitle, planResolved, bucket, stepProgress, progress, tasks, cardSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
@@ -503,7 +564,7 @@ export function PlanCardV2({
   const doneCount = isThemeOnly ? (progress?.done ?? finishedTodos.length) : (stepProgress?.done ?? 0);
   const totalCount = isThemeOnly ? (progress?.total ?? tasks.length + finishedTodos.length) : (stepProgress?.total ?? 0);
   const hasActivity = tasks.length > 0 || cardSessions.length > 0 || finishedTodos.length > 0 || finishedLogs.length > 0;
-  const detailHref = !isThemeOnly && planResolved ? `/dashboard/plans/${encodeURIComponent(planSlug)}` : null;
+  const detailHref = !isPreview && !isThemeOnly && planResolved ? `/dashboard/plans/${encodeURIComponent(planSlug)}` : null;
   const lifecycle = isThemeOnly ? 'theme' : bucket || 'linked';
 
   // 指揮官の識別（子06・v6）: そのカードの計画に紐づくセッションのうち、稼働(run/sub)を優先し、無ければ確認待ち(wait)を1本。
@@ -590,6 +651,10 @@ export function PlanCardV2({
       {/* 入れ子レール（展開時のみ）= 段階2/3。指揮官バー→番号工程→工程タップでAIレーン（子06・v6） */}
       {open ? (
         <div className="border-t border-border px-3 pb-3 pt-2">
+          {isPreview ? (
+            <PreviewPlanTimeline data={data} />
+          ) : (
+            <>
           {/* 指揮官バー（プログラム/テーマ層に1本・工程レーンには出さない） */}
           {!isThemeOnly && commander ? (
             <div className="mb-2">
@@ -623,6 +688,8 @@ export function PlanCardV2({
           ) : null}
 
           <FinishedFold todos={finishedTodos} logs={finishedLogs} selectedDate={selectedDate} />
+            </>
+          )}
         </div>
       ) : null}
     </article>

@@ -126,6 +126,13 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                 </p>
             ) : null}
 
+            {board.isPreview ? (
+                <div className="mb-2 rounded-lg border border-blue-200 bg-blue-50/80 px-2.5 py-2 text-[10.5px] text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+                    <span className="font-semibold">サンプル表示</span>
+                    <span className="ml-1 opacity-75">実データが空の開発環境だけ・保存なし</span>
+                </div>
+            ) : null}
+
             {/* 全体サマリ帯 */}
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-border/45 bg-muted/[0.06] px-2.5 py-2 text-[11px]">
                 <span className="font-semibold text-foreground">
@@ -147,7 +154,7 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
             {/* スマホboardと同一部品でそのまま描画（テーマ→計画カード→未分類・子07） */}
             <div className="space-y-2.5">
                 {board.themeGroups.length > 0 ? (
-                    <ThemePlanBoard groups={board.themeGroups} selectedDate={dateStr} aiTargets={board.aiTargets} compact />
+                    <ThemePlanBoard groups={board.themeGroups} selectedDate={dateStr} aiTargets={board.aiTargets} compact isPreview={board.isPreview} />
                 ) : null}
 
                 {hasUnplanned ? (

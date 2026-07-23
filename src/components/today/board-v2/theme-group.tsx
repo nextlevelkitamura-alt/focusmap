@@ -16,12 +16,14 @@ export function ThemeGroupCard({
   aiTargets,
   defaultOpen = false,
   compact = false,
+  isPreview = false,
 }: {
   group: ThemeGroup;
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
   defaultOpen?: boolean;
   compact?: boolean;
+  isPreview?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [phaseNotice, setPhaseNotice] = useState('');
@@ -106,7 +108,7 @@ export function ThemeGroupCard({
         <div className="border-t border-border bg-muted/[0.04] p-2.5">
           {!isUnassigned ? (
             <div className="mb-2.5 flex flex-wrap items-start gap-2 px-0.5">
-              {theme ? (
+              {theme && !isPreview ? (
                 <ThemeEditor
                   theme={{
                     id: theme.id,
@@ -154,6 +156,7 @@ export function ThemeGroupCard({
                 selectedDate={selectedDate}
                 aiTargets={aiTargets}
                 onPreviewOnlyAction={showNextPhaseNotice}
+                isPreview={isPreview}
               />
             ))}
           </div>

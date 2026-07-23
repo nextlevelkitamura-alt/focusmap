@@ -356,6 +356,7 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
   return {
     selectedDate,
     isToday,
+    isPreview: false,
     progressPct,
     liveTotal,
     waitTotal,

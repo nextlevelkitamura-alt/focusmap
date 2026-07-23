@@ -34,7 +34,7 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 
 - 対象repo: `/Users/kitamuranaohiro/Private/projects/active/focusmap`
 - 実行形: direct
-- 変更可能範囲: `src/components/today/board-v2/**`、`src/app/dashboard/board/page.tsx`、`src/app/dashboard/board/_components/theme-editor.tsx`、`src/components/dashboard/board-summary-panel.tsx`、`docs/CONTEXT.md`、`docs/ai/**`
+- 変更可能範囲: `src/components/today/board-v2/**`、`src/app/dashboard/board/page.tsx`、`src/app/api/board/summary/route.ts`、`src/app/dashboard/board/_components/theme-editor.tsx`、`src/components/dashboard/board-summary-panel.tsx`、`docs/CONTEXT.md`、`docs/ai/**`
 - 変更禁止範囲: `db/**`、`src/lib/turso/**`、`src/app/dashboard/board/actions.ts`、hook・loop・runtime設定
 - worktree方針: クリーンな既存`main` worktreeを使用。新規branch/worktreeを作らない。
 - 維持する契約: boardページとPCサイドバーは同じ共通部品を描画する。工程とAI詳細の既存操作は壊さない。
@@ -50,6 +50,7 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 5. Planカードは閉じた状態でも進捗バーと最大2件のAI稼働行を表示する。
 6. 工程時系列はPlanの「工程を見る」を選んだ時だけ既存UIで展開する。
 7. Theme追加、Plan追加、ドラッグ、翌日継続は次のDB接続段階であることが分かる非永続UIとして示す。操作不能な無反応ボタンにはしない。
+8. Theme/Plan構造が空の開発環境だけ、完成形を確認できる読み取り専用サンプルを共通データ契約へ差し込む。本番・Theme/Plan実データあり・DB保存経路には混ぜない。
 
 ## レビュー項目・完了条件
 
@@ -62,6 +63,8 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 - [x] 375px相当では1カラムとなり、操作対象に44px以上の領域とaria-labelがある。
 - [x] DB・Tursoクエリ・migration・hook・loopに差分がない。
 - [x] `docs/CONTEXT.md`にUI段階と後続DB段階の境界が記録される。
+- [x] 開発環境でDBデータが空でも、Theme複数・Plan複数・進捗・Codex/Claude状態・単発・完了一覧を確認できる。
+- [x] サンプルは本番では出ず、Theme/Plan実データが1件でもあれば混在せず、サンプル内の工程は読み取り専用になる。
 
 ## 実装結果
 
@@ -70,5 +73,7 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 - `PlanCardV2` の閉じた状態に進捗バーと最大2件のAI稼働行を統合し、工程は「工程を見る」まで非表示にした。
 - Theme追加・Plan追加・D&D・翌日継続は非永続の次段階UIとし、押下時にDB接続後の保存であることを通知する。
 - 既存Theme編集はTheme内の操作列へ移し、44pxの操作領域を維持した。
+- 実データが空の開発環境向けに、2 Theme・3 Plan・3 repo・Codex/Claude稼働/確認待ち・単発・完了見出しを含む表示確認用サンプルを追加した。
+- サンプルは共通 `BoardV2Data` でboardページとPCサイドバーへ同じように出し、工程展開も読み取り専用にしてDB操作を発生させない。
 - DB・migration・Tursoクエリ・hook・loop・push・本番反映は未変更。
 - test/lint/build/ブラウザ表示確認は、`AGENTS.md`の自動検証ポリシーに従い未実行。コード差分評価は`評価01.md`。

@@ -30,6 +30,7 @@ import {
   type PlanStepProgress,
 } from '@/lib/turso/plan-links';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
+import { withDevelopmentBoardPreview } from '@/components/today/board-v2/development-preview';
 
 // PCサイドバーの当日ボード要約用API。スマホboardページ（board/page.tsx）と同一部品・同一導出にするため、
 // 完全な BoardV2Data を返す（修正01・条件7）。導出は共有純関数 buildBoardV2Data を呼び、二重実装を持たない。
@@ -125,7 +126,7 @@ export async function GET(request: NextRequest) {
       stepsByTodo.set(step.todoId, list);
     }
 
-    const board = buildBoardV2Data({
+    const board = withDevelopmentBoardPreview(buildBoardV2Data({
       selectedDate,
       isToday,
       todos,
@@ -144,7 +145,7 @@ export async function GET(request: NextRequest) {
       resolvablePlanSlugs,
       activePlans,
       planStepProgress,
-    });
+    }));
 
     return NextResponse.json({ success: true, board });
   } catch (error: unknown) {

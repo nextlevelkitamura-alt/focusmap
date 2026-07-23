@@ -85,6 +85,7 @@ export interface ThemeGroup {
 export interface BoardV2Data {
   selectedDate: string;
   isToday: boolean;
+  isPreview: boolean; // 開発環境で実データが空の時だけ出す表示確認用サンプル。保存操作には使わない。
   progressPct: number | null; // 全テーマ+未分類の 済やること/全やること（対象0件なら null）
   liveTotal: number;
   waitTotal: number;

@@ -59,11 +59,13 @@ export function ThemePlanBoard({
   selectedDate,
   aiTargets,
   compact = false,
+  isPreview = false,
 }: {
   groups: ThemeGroup[];
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
   compact?: boolean;
+  isPreview?: boolean;
 }) {
   const [selectedRepo, setSelectedRepo] = useState('すべて');
   const repoOptions = useMemo(
@@ -119,6 +121,7 @@ export function ThemePlanBoard({
               aiTargets={aiTargets}
               defaultOpen={index === 0 && group.hasActivity}
               compact={compact}
+              isPreview={isPreview}
             />
           ))}
         </div>

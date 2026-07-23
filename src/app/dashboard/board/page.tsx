@@ -45,6 +45,7 @@ import { DayHeader } from '@/components/today/board-v2/day-header';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
 import { UnplannedAgents } from '@/components/today/board-v2/unplanned-agents';
 import { buildBoardV2Data } from '@/components/today/board-v2/build';
+import { withDevelopmentBoardPreview } from '@/components/today/board-v2/development-preview';
 
 export const dynamic = 'force-dynamic';
 
@@ -181,7 +182,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
   }
 
   const todos = todosResult.data;
-  const board = buildBoardV2Data({
+  const board = withDevelopmentBoardPreview(buildBoardV2Data({
     selectedDate,
     isToday,
     todos,
@@ -200,7 +201,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     resolvablePlanSlugs: resolvablePlansResult.data,
     activePlans: activePlansResult.data,
     planStepProgress: planStepProgressResult.data,
-  });
+  }));
 
   const strayHasContent =
     board.stray.tasks.length > 0 ||
@@ -228,6 +229,13 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
           showThemeDraftAction
         />
 
+        {board.isPreview ? (
+          <div className="rounded-xl border border-blue-200 bg-blue-50/80 px-3 py-2.5 text-xs text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+            <p className="font-semibold">表示確認用のサンプルデータ</p>
+            <p className="mt-0.5 text-[11px] opacity-80">開発環境で実データが空の時だけ表示しています。DB・hook・計画には保存されません。</p>
+          </div>
+        ) : null}
+
         {errors.size > 0 ? (
           <Card className="border-dashed">
             <CardContent className="space-y-1 p-4 text-sm text-muted-foreground">
@@ -245,7 +253,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
         ) : null}
 
         {board.themeGroups.length > 0 ? (
-          <ThemePlanBoard groups={board.themeGroups} selectedDate={selectedDate} aiTargets={board.aiTargets} />
+          <ThemePlanBoard groups={board.themeGroups} selectedDate={selectedDate} aiTargets={board.aiTargets} isPreview={board.isPreview} />
         ) : null}
 
         {hasUnplanned ? (
