@@ -1702,8 +1702,6 @@ export function DashboardClient({
                             syncFailedIds={syncFailedIds}
                             calendarScrollToHour={todayMemoScheduleFocus ? 12 : undefined}
                             calendarScrollRequestKey={todayMemoScheduleFocus?.requestKey}
-                            defaultRangeMode="3days"
-                            show3DayOverflowChips={false}
                         />
                     ) : activeView === 'long-term' ? (
                         <WishlistView

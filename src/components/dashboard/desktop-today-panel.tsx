@@ -6,13 +6,11 @@ import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
     List, Flame, Play, Pause, Loader2, PanelRightClose, PanelRightOpen
 } from "lucide-react"
-import { addDays, addMonths, format } from "date-fns"
+import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCalendar } from "@/components/today/today-timeline-calendar"
 import { TodayTimelineCards } from "@/components/today/today-timeline-cards"
-import { Today3DaysCalendar } from "@/components/today/today-3days-calendar"
-import { TodayMonthCalendar } from "@/components/today/today-month-calendar"
 import { MobileEventEditModal } from "@/components/today/mobile-event-edit-modal"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
@@ -22,7 +20,6 @@ import { PanelQuickTaskForm } from "@/components/dashboard/panel-quick-task-form
 import { DesktopPanelFab } from "@/components/dashboard/desktop-panel-fab"
 import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useClickOutside } from "@/hooks/useClickOutside"
-import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
 import type { MindMapNodeCalendarDragPayload } from "@/lib/calendar-constants"
 import type { TimeBlock } from "@/lib/time-block"
 import { CalendarSelector } from "@/components/calendar/calendar-selector"
@@ -30,15 +27,12 @@ import { DesktopDailyInspector } from "@/components/dashboard/desktop-daily-insp
 
 // --- Types ---
 const MINDMAP_NODE_DROP_IN_FLIGHT_MS = 4000
-const DAILY_PANEL_STORAGE_KEY = "focusmap:desktop-daily-panel-open"
-const DAILY_PANEL_RATIO_STORAGE_KEY = "focusmap:desktop-daily-panel-width-ratio-v2"
-const DAILY_PANEL_DOCKED_BREAKPOINT = "(min-width: 1440px)"
+const DAILY_PANEL_STORAGE_KEY = "focusmap:desktop-daily-panel-open-v3"
+const DAILY_PANEL_RATIO_STORAGE_KEY = "focusmap:desktop-daily-panel-width-ratio-v3"
 const DAILY_PANEL_DEFAULT_RATIO = 0.5
 const DAILY_PANEL_DEFAULT_WIDTH = 600
 const DAILY_PANEL_MIN_WIDTH = 360
 const SCHEDULE_PANEL_MIN_WIDTH = 420
-type CalendarRangeMode = 'day' | '3days' | 'month'
-
 function dailyPanelMaxWidth(containerWidth: number) {
     return Math.max(DAILY_PANEL_MIN_WIDTH, Math.floor(containerWidth - SCHEDULE_PANEL_MIN_WIDTH))
 }
@@ -55,8 +49,6 @@ interface DesktopTodayPanelProps {
     syncFailedIds?: Set<string>
     calendarScrollToHour?: number
     calendarScrollRequestKey?: number
-    defaultRangeMode?: CalendarRangeMode
-    show3DayOverflowChips?: boolean
 }
 
 // --- Component ---
@@ -73,8 +65,6 @@ export function DesktopTodayPanel({
     syncFailedIds,
     calendarScrollToHour,
     calendarScrollRequestKey,
-    defaultRangeMode = 'day',
-    show3DayOverflowChips = true,
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
     const calendarAreaRef = useRef<HTMLDivElement>(null)
@@ -86,10 +76,7 @@ export function DesktopTodayPanel({
         estimatedTime: number
         calendarId: string | null
     } | null>(null)
-    const [calendarRangeMode, setCalendarRangeMode] = useState<CalendarRangeMode>(defaultRangeMode)
-    const [isDailyPanelOpen, setIsDailyPanelOpen] = useState(false)
-    const [isDailyPanelDocked, setIsDailyPanelDocked] = useState(false)
-    const [hasMeasuredDailyPanelLayout, setHasMeasuredDailyPanelLayout] = useState(false)
+    const [isDailyPanelOpen, setIsDailyPanelOpen] = useState(true)
     const [dailyPanelWidth, setDailyPanelWidth] = useState(DAILY_PANEL_DEFAULT_WIDTH)
     const [dailyPanelMax, setDailyPanelMax] = useState(DAILY_PANEL_DEFAULT_WIDTH)
     const [isDailyPanelResizing, setIsDailyPanelResizing] = useState(false)
@@ -121,7 +108,6 @@ export function DesktopTodayPanel({
         displayItems,
         doneHabitCount,
         editTarget,
-        allFetchedEvents,
         calendarActionError,
         eventsError,
         eventsLoading,
@@ -146,7 +132,6 @@ export function DesktopTodayPanel({
         scrollPositionRef,
         selectedDate,
         selectedDateStr,
-        setSelectedDate,
         setCalendarMonth,
         setCalendarOpen,
         setExpandedHabitId,
@@ -161,16 +146,11 @@ export function DesktopTodayPanel({
         handleConvertEventToMemo,
         handleConvertCalendarPayloadToMemo,
         writableCalendars,
-        visibleTasks,
-        stableCalendarColorMap,
     } = logic
     const getTimelineInitialScrollTop = useCallback(() => scrollPositionRef.current, [scrollPositionRef])
     const handleTimelineScrollPositionChange = useCallback((pos: number) => {
         scrollPositionRef.current = pos
     }, [scrollPositionRef])
-    const handleCalendarRangeModeChange = useCallback((mode: CalendarRangeMode) => {
-        setCalendarRangeMode(mode)
-    }, [])
     const setDailyPanelVisibility = useCallback((open: boolean) => {
         setIsDailyPanelOpen(open)
         if (typeof window !== "undefined") {
@@ -237,48 +217,12 @@ export function DesktopTodayPanel({
         setSelectedDailyItem(item)
         setDailyPanelVisibility(true)
     }, [setDailyPanelVisibility])
-    const handleRangeDateSelect = useCallback((date: Date) => {
-        const normalized = new Date(date)
-        normalized.setHours(0, 0, 0, 0)
-        setSelectedDate(normalized)
-        handleCalendarRangeModeChange('day')
-    }, [handleCalendarRangeModeChange, setSelectedDate])
-    const moveSelectedDateByDays = useCallback((amount: number) => {
-        setSelectedDate(prev => {
-            const next = addDays(prev, amount)
-            next.setHours(0, 0, 0, 0)
-            return next
-        })
-    }, [setSelectedDate])
-    const moveSelectedDateByMonths = useCallback((amount: number) => {
-        setSelectedDate(prev => {
-            const next = addMonths(prev, amount)
-            next.setHours(0, 0, 0, 0)
-            return next
-        })
-    }, [setSelectedDate])
     const handleRangeNavigateLeft = useCallback(() => {
-        if (calendarRangeMode === 'month') {
-            moveSelectedDateByMonths(1)
-            return
-        }
-        if (calendarRangeMode === '3days') {
-            moveSelectedDateByDays(1)
-            return
-        }
         goToNextDay()
-    }, [calendarRangeMode, goToNextDay, moveSelectedDateByDays, moveSelectedDateByMonths])
+    }, [goToNextDay])
     const handleRangeNavigateRight = useCallback(() => {
-        if (calendarRangeMode === 'month') {
-            moveSelectedDateByMonths(-1)
-            return
-        }
-        if (calendarRangeMode === '3days') {
-            moveSelectedDateByDays(-1)
-            return
-        }
         goToPrevDay()
-    }, [calendarRangeMode, goToPrevDay, moveSelectedDateByDays, moveSelectedDateByMonths])
+    }, [goToPrevDay])
 
     // Close calendar on outside click
     useClickOutside(calendarAreaRef, useCallback(() => setCalendarOpen(false), [setCalendarOpen]), calendarOpen)
@@ -292,24 +236,12 @@ export function DesktopTodayPanel({
     })
 
     useEffect(() => {
-        const mediaQuery = window.matchMedia(DAILY_PANEL_DOCKED_BREAKPOINT)
-        const updateLayout = () => {
-            setIsDailyPanelDocked(mediaQuery.matches)
-            setHasMeasuredDailyPanelLayout(true)
-        }
-        updateLayout()
-        mediaQuery.addEventListener("change", updateLayout)
-        return () => mediaQuery.removeEventListener("change", updateLayout)
+        const storedValue = window.localStorage.getItem(DAILY_PANEL_STORAGE_KEY)
+        setIsDailyPanelOpen(storedValue == null ? true : storedValue === "true")
     }, [])
 
     useEffect(() => {
-        if (!hasMeasuredDailyPanelLayout) return
-        const storedValue = window.localStorage.getItem(DAILY_PANEL_STORAGE_KEY)
-        setIsDailyPanelOpen(storedValue == null ? isDailyPanelDocked : storedValue === "true")
-    }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked])
-
-    useEffect(() => {
-        if (!hasMeasuredDailyPanelLayout || !isDailyPanelDocked || !panelRef.current) return
+        if (!isDailyPanelOpen || !panelRef.current) return
         const storedRatio = Number(window.localStorage.getItem(DAILY_PANEL_RATIO_STORAGE_KEY))
         dailyPanelRatioRef.current = Number.isFinite(storedRatio) && storedRatio > 0
             ? storedRatio
@@ -323,13 +255,14 @@ export function DesktopTodayPanel({
 
         const panel = panelRef.current
         applyContainerWidth(panel.getBoundingClientRect().width)
-        const observer = new ResizeObserver(entries => {
-            const width = entries[0]?.contentRect.width ?? panel.getBoundingClientRect().width
-            applyContainerWidth(width)
+        const observer = new ResizeObserver(() => {
+            // padding-right is the calendar pane width; use the border box so that
+            // resizing the Daily pane does not recursively shrink its saved ratio.
+            applyContainerWidth(panel.getBoundingClientRect().width)
         })
         observer.observe(panel)
         return () => observer.disconnect()
-    }, [hasMeasuredDailyPanelLayout, isDailyPanelDocked, updateDailyPanelWidth])
+    }, [isDailyPanelOpen, updateDailyPanelWidth])
 
     useEffect(() => {
         setSelectedDailyItem(null)
@@ -378,57 +311,28 @@ export function DesktopTodayPanel({
         }
         : null
     const effectiveTimelineMode = calendarScrollRequestKey != null ? 'calendar' : timelineMode
-    const showSideTaskForm = !!(calendarRangeMode === 'day' && isTaskFormOpen && onCreateQuickTask && effectiveTimelineMode === 'calendar')
-    const showBottomTaskForm = !!(calendarRangeMode === 'day' && isTaskFormOpen && onCreateQuickTask && !showSideTaskForm)
+    const showSideTaskForm = !!(isTaskFormOpen && onCreateQuickTask && effectiveTimelineMode === 'calendar')
+    const showBottomTaskForm = !!(isTaskFormOpen && onCreateQuickTask && !showSideTaskForm)
     const rangeHeader = useMemo(() => {
-        if (calendarRangeMode === '3days') {
-            const rangeEnd = addDays(selectedDate, 2)
-            const count = countScheduleItemsForDateRange({
-                startDate: selectedDate,
-                dayCount: 3,
-                events: allFetchedEvents,
-                tasks: visibleTasks,
-                calendarColorMap: stableCalendarColorMap,
-            })
-            return {
-                title: `${format(selectedDate, 'M/d(E)', { locale: ja })} - ${format(rangeEnd, 'M/d(E)', { locale: ja })}`,
-                subtitle: `${count}件のスケジュール`,
-            }
-        }
-
-        if (calendarRangeMode === 'month') {
-            const count = countScheduleItemsForMonth({
-                date: selectedDate,
-                events: allFetchedEvents,
-                tasks: visibleTasks,
-                calendarColorMap: stableCalendarColorMap,
-            })
-            return {
-                title: format(selectedDate, 'yyyy年M月', { locale: ja }),
-                subtitle: `${count}件のスケジュール`,
-            }
-        }
-
         return {
             title: dateFmt,
             subtitle: `${displayItems.length}件のスケジュール${dateHabits.length > 0 ? ` · ${doneHabitCount}/${dateHabits.length} 習慣完了` : ''}`,
         }
     }, [
-        allFetchedEvents,
-        calendarRangeMode,
         dateFmt,
         dateHabits.length,
         displayItems.length,
         doneHabitCount,
-        selectedDate,
-        stableCalendarColorMap,
-        visibleTasks,
     ])
 
     return (
-        <div ref={panelRef} className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative overflow-hidden">
+        <div
+            ref={panelRef}
+            className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative overflow-hidden"
+            style={isDailyPanelOpen ? { paddingRight: dailyPanelWidth } : undefined}
+        >
 
-            {/* ① Header: left-aligned date nav + schedule count + mode toggle */}
+            {/* ① Calendar pane header: selected day navigation + schedule count */}
             <div className="flex-shrink-0 border-b border-border/30 bg-background/80">
                 <div className="flex items-start justify-between gap-2 px-3 py-1.5">
                     <div className="min-w-0 flex-1">
@@ -437,7 +341,7 @@ export function DesktopTodayPanel({
                                 type="button"
                                 onClick={handleRangeNavigateRight}
                                 className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                aria-label={calendarRangeMode === 'month' ? "前の月へ" : "前の日へ"}
+                                aria-label="前の日へ"
                             >
                                 <ChevronLeft className="h-4 w-4" />
                             </button>
@@ -456,13 +360,13 @@ export function DesktopTodayPanel({
                                 type="button"
                                 onClick={handleRangeNavigateLeft}
                                 className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                aria-label={calendarRangeMode === 'month' ? "次の月へ" : "次の日へ"}
+                                aria-label="次の日へ"
                             >
                                 <ChevronRight className="h-4 w-4" />
                             </button>
                         </div>
                         <p className="mt-1 flex min-h-[14px] min-w-0 items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground">
-                            {calendarRangeMode === 'day' && isToday && (
+                            {isToday && (
                                 <span className="inline-flex flex-shrink-0 rounded border border-primary/25 bg-primary/10 px-1 py-0.5 text-[9px] font-semibold leading-none text-primary">
                                     Today
                                 </span>
@@ -477,30 +381,21 @@ export function DesktopTodayPanel({
 
                     {/* Right-aligned display controls */}
                     <div className="flex flex-shrink-0 items-start justify-end gap-1">
-                        {(calendarRangeMode === 'day' || calendarRangeMode === '3days') && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (calendarRangeMode === 'day') {
-                                        setTimelineMode(effectiveTimelineMode === 'cards' ? 'calendar' : 'cards')
-                                    } else {
-                                        setTimelineMode('calendar')
-                                    }
-                                }}
-                                className={cn(
-                                    "mt-1 grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
-                                    effectiveTimelineMode === 'cards' && calendarRangeMode === 'day'
-                                        ? "bg-muted text-foreground"
-                                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground active:bg-muted/70",
-                                    calendarRangeMode === '3days' && "bg-background/80 text-foreground"
-                                )}
-                                aria-label={calendarRangeMode === 'day' && effectiveTimelineMode === 'cards' ? "時間軸表示に戻す" : "時間軸表示"}
-                                aria-pressed={calendarRangeMode === '3days' || effectiveTimelineMode !== 'cards'}
-                                title="時間軸表示"
-                            >
-                                <List className="h-3.5 w-3.5" />
-                            </button>
-                        )}
+                        <button
+                            type="button"
+                            onClick={() => setTimelineMode(effectiveTimelineMode === 'cards' ? 'calendar' : 'cards')}
+                            className={cn(
+                                "mt-1 grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
+                                effectiveTimelineMode === 'cards'
+                                    ? "bg-muted text-foreground"
+                                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground active:bg-muted/70",
+                            )}
+                            aria-label={effectiveTimelineMode === 'cards' ? "時間軸表示に戻す" : "予定一覧表示にする"}
+                            aria-pressed={effectiveTimelineMode !== 'cards'}
+                            title={effectiveTimelineMode === 'cards' ? "時間軸表示に戻す" : "予定一覧表示にする"}
+                        >
+                            <List className="h-3.5 w-3.5" />
+                        </button>
                         {calendars.length > 0 && (
                             <div className="mt-1">
                                 <CalendarSelector
@@ -525,26 +420,6 @@ export function DesktopTodayPanel({
                         >
                             {isDailyPanelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
                         </button>
-                        <div className="inline-flex w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5">
-                            {(['day', '3days', 'month'] as const).map(mode => (
-                                <button
-                                    key={mode}
-                                    type="button"
-                                    onClick={() => handleCalendarRangeModeChange(mode)}
-                                    aria-pressed={calendarRangeMode === mode}
-                                    className={cn(
-                                        "min-w-[52px] rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
-                                        calendarRangeMode === mode
-                                            ? "bg-background text-foreground shadow-sm"
-                                            : "text-muted-foreground hover:text-foreground"
-                                    )}
-                                >
-                                    {mode === 'day' && 'Day'}
-                                    {mode === '3days' && '3days'}
-                                    {mode === 'month' && 'Month'}
-                                </button>
-                            ))}
-                        </div>
                     </div>
                 </div>
             </div>
@@ -796,34 +671,7 @@ export function DesktopTodayPanel({
                 )}
 
                 {/* Timeline */}
-                {calendarRangeMode === '3days' ? (
-                    <Today3DaysCalendar
-                        selectedDate={selectedDate}
-                        events={allFetchedEvents}
-                        tasks={visibleTasks}
-                        calendarColorMap={stableCalendarColorMap}
-                        eventsLoading={eventsLoading}
-                        getInitialScrollTop={getTimelineInitialScrollTop}
-                        onScrollPositionChange={handleTimelineScrollPositionChange}
-                        onDateSelect={handleRangeDateSelect}
-                        onItemTap={handleDailyItemTap}
-                        currentTime={currentTime}
-                        onToggleTask={toggleTask}
-                        onToggleEvent={toggleEventCompletion}
-                        showOverflowChips={show3DayOverflowChips}
-                        onDragDrop={handleDragDrop}
-                    />
-                ) : calendarRangeMode === 'month' ? (
-                    <TodayMonthCalendar
-                        selectedDate={selectedDate}
-                        events={allFetchedEvents}
-                        tasks={visibleTasks}
-                        calendarColorMap={stableCalendarColorMap}
-                        eventsLoading={eventsLoading}
-                        onDateSelect={handleRangeDateSelect}
-                        variant="desktop-expanded"
-                    />
-                ) : effectiveTimelineMode === 'calendar' ? (
+                {effectiveTimelineMode === 'calendar' ? (
                     <TodayTimelineCalendar
                         timelineItems={displayItems}
                         allDayEvents={displayAllDayEvents}
@@ -900,62 +748,53 @@ export function DesktopTodayPanel({
                     )}
                     </div>
 
-                    {isDailyPanelOpen && isDailyPanelDocked && (
-                        <div className="group relative shrink-0">
-                            <div
-                                role="separator"
-                                aria-orientation="vertical"
-                                aria-label="デイリーと今日のスケジュールの幅を変更"
-                                aria-valuemin={DAILY_PANEL_MIN_WIDTH}
-                                aria-valuemax={dailyPanelMax}
-                                aria-valuenow={dailyPanelWidth}
-                                aria-valuetext={`デイリーの幅 ${dailyPanelWidth}px、全体の約${Math.round(dailyPanelRatioRef.current * 100)}パーセント`}
-                                tabIndex={0}
-                                title="ドラッグで幅を調節。ダブルクリックまたはEnterで半分に戻す"
-                                className={cn(
-                                    "absolute inset-y-0 -left-2.5 z-20 flex w-5 touch-none cursor-col-resize select-none items-center justify-center outline-none",
-                                    "focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary/50",
-                                )}
-                                onPointerDown={handleDailyPanelResizePointerDown}
-                                onPointerMove={handleDailyPanelResizePointerMove}
-                                onPointerUp={finishDailyPanelResize}
-                                onPointerCancel={finishDailyPanelResize}
-                                onLostPointerCapture={finishDailyPanelResize}
-                                onKeyDown={handleDailyPanelResizeKeyDown}
-                                onDoubleClick={resetDailyPanelWidth}
-                            >
-                                <span className={cn(
-                                    "h-12 w-1 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/70",
-                                    isDailyPanelResizing && "bg-primary/80",
-                                )} />
-                            </div>
-                            <DesktopDailyInspector
-                                selectedDate={selectedDate}
-                                items={displayItems}
-                                selectedItem={selectedDailyItem}
-                                onSelectItem={setSelectedDailyItem}
-                                onEditItem={handleItemTap}
-                                onClose={() => setDailyPanelVisibility(false)}
-                                width={dailyPanelWidth}
-                            />
-                        </div>
-                    )}
-
-                    {isDailyPanelOpen && !isDailyPanelDocked && (
-                        <div className="absolute inset-y-0 right-0 z-30 animate-in slide-in-from-right-4 duration-200">
-                            <DesktopDailyInspector
-                                selectedDate={selectedDate}
-                                items={displayItems}
-                                selectedItem={selectedDailyItem}
-                                onSelectItem={setSelectedDailyItem}
-                                onEditItem={handleItemTap}
-                                onClose={() => setDailyPanelVisibility(false)}
-                            />
-                        </div>
-                    )}
                 </div>
 
             </div>
+
+            {isDailyPanelOpen && (
+                <div
+                    className="group absolute inset-y-0 right-0 z-30"
+                    style={{ width: dailyPanelWidth }}
+                >
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="カレンダーとデイリーの幅を変更"
+                        aria-valuemin={DAILY_PANEL_MIN_WIDTH}
+                        aria-valuemax={dailyPanelMax}
+                        aria-valuenow={dailyPanelWidth}
+                        aria-valuetext={`デイリーの幅 ${dailyPanelWidth}px、全体の約${Math.round(dailyPanelRatioRef.current * 100)}パーセント`}
+                        tabIndex={0}
+                        title="ドラッグで幅を調節。ダブルクリックまたはEnterで半分に戻す"
+                        className={cn(
+                            "absolute inset-y-0 -left-2.5 z-20 flex w-5 touch-none cursor-col-resize select-none items-center justify-center outline-none",
+                            "focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary/50",
+                        )}
+                        onPointerDown={handleDailyPanelResizePointerDown}
+                        onPointerMove={handleDailyPanelResizePointerMove}
+                        onPointerUp={finishDailyPanelResize}
+                        onPointerCancel={finishDailyPanelResize}
+                        onLostPointerCapture={finishDailyPanelResize}
+                        onKeyDown={handleDailyPanelResizeKeyDown}
+                        onDoubleClick={resetDailyPanelWidth}
+                    >
+                        <span className={cn(
+                            "h-16 w-1 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/70",
+                            isDailyPanelResizing && "bg-primary/80",
+                        )} />
+                    </div>
+                    <DesktopDailyInspector
+                        selectedDate={selectedDate}
+                        items={displayItems}
+                        selectedItem={selectedDailyItem}
+                        onSelectItem={setSelectedDailyItem}
+                        onEditItem={handleItemTap}
+                        onClose={() => setDailyPanelVisibility(false)}
+                        width={dailyPanelWidth}
+                    />
+                </div>
+            )}
 
             {/* Edit Modal (shared with mobile for consistent UX) */}
             <MobileEventEditModal
@@ -982,7 +821,10 @@ export function DesktopTodayPanel({
 
             {/* Task form (opened from FAB) */}
             {showBottomTaskForm && onCreateQuickTask && (
-                <div className="absolute bottom-0 left-0 right-0 z-20 border-t border-border/30 bg-background/95 backdrop-blur-sm animate-in slide-in-from-bottom-2 duration-200">
+                <div
+                    className="absolute bottom-0 left-0 z-20 border-t border-border/30 bg-background/95 backdrop-blur-sm animate-in slide-in-from-bottom-2 duration-200"
+                    style={{ right: isDailyPanelOpen ? dailyPanelWidth : 0 }}
+                >
                     <PanelQuickTaskForm
                         projects={projects}
                         calendars={writableCalendars}
@@ -1007,7 +849,7 @@ export function DesktopTodayPanel({
             )}
 
             {/* Desktop Panel FAB */}
-            {calendarRangeMode === 'day' && onCreateQuickTask && onOpenAiChat && !isEditModalOpen && (
+            {onCreateQuickTask && onOpenAiChat && !isEditModalOpen && (
                 <DesktopPanelFab
                     onOpenAiChat={onOpenAiChat}
                     onOpenTaskForm={() => {
