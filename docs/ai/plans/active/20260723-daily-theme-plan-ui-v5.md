@@ -43,10 +43,10 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 
 ## 方針
 
-1. 最初の活動中Themeだけを初期展開し、他Themeは1行サマリにする。
-2. Theme見出しに目的、Plan数、進捗、稼働・確認待ち、既存編集導線を集約する。
+1. Themeは初期状態ですべて閉じ、閉じたカードだけで横比較できるようにする。
+2. Theme見出しは左に目的、右に大きい進捗率・工程完了数・進捗バー・Plan数・稼働/確認待ち・既存編集導線を集約する。
 3. 広い幅ではPlanを2カラム、狭い幅では1カラムにする。
-4. 選択中workspaceの `projects.repo_path` と、plansync済み `plan_docs.path` を照合し、Themeの `plan_refs` が参照する当該repoのPlanだけをDailyに表示する。さらにその範囲内で、すべて／repo別に表示を絞るフィルターを共通部品で提供する。
+4. 選択中workspaceの `projects.repo_path` と、plansync済み `plan_docs.path` を照合し、Themeの `plan_refs` が参照する当該repoのPlanだけをDailyに表示する。PC Dailyのrepoフィルターは見出し「デイリー」の横へ移し、boardページのフィルターは共通部品内に維持する。
 5. Planカードは閉じた状態でも進捗バーと最大2件のAI稼働行を表示する。
 6. 工程時系列はPlanの「工程を見る」を選んだ時だけ既存UIで展開する。
 7. Theme追加、Plan追加、ドラッグ、翌日継続は次のDB接続段階であることが分かる非永続UIとして示す。操作不能な無反応ボタンにはしない。
@@ -55,7 +55,7 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 
 ## レビュー項目・完了条件
 
-- [x] `ThemeGroupCard`で最初の活動中Themeだけを初期展開でき、複数Themeを同日に並べられる。
+- [x] `ThemeGroupCard`を初期状態ですべて閉じ、複数Themeを同日に横比較できる。
 - [x] Theme見出しで名前・目的・Plan数・進捗率・稼働/確認待ち・編集導線が読める。
 - [x] Planカード内でbucket、進捗率、済/総、担当AI、稼働状態、現在作業が同時に読める。
 - [x] すべて／repo別フィルターで、取得済みPlanをDB再取得なしに絞り込める。
@@ -76,8 +76,8 @@ Dailyを、複数Themeの中に複数Planを束ね、各Planの進捗とCodex・
 
 ## 実装結果
 
-- `ThemePlanBoard` を追加し、repo表示フィルターとTheme一覧の共通描画をboardページ・PCサイドバーへ配線した。
-- `ThemeGroupCard` を複数Themeのアコーディオン、目的・進捗・active/planningサマリ、Planカードgridへ変更した。
+- `ThemePlanBoard` を追加し、repo表示フィルターとTheme一覧の共通描画をboardページ・PCサイドバーへ配線した。PC Dailyではフィルターを「デイリー」見出しの横へ移し、当日ボード上部の案内・サンプル表示・重複フィルターを出さない。
+- `ThemeGroupCard` を複数Themeのアコーディオンへ変更し、初期状態はすべて閉じる。閉じたカードの右側には進捗率・工程・進捗バー・計画数・active/planning・稼働/確認待ちを集約する。
 - `PlanCardV2` の閉じた状態に進捗バーと最大2件のAI稼働行を統合し、工程は「工程を見る」まで非表示にした。
 - Theme追加・Plan追加・D&D・翌日継続は非永続の次段階UIとし、押下時にDB接続後の保存であることを通知する。
 - 選択中workspaceの `projects.repo_path` とplansyncの `plan_docs.path` を照合し、Themeの `plan_refs` が指すPlanだけをPC Dailyに表示するようにした。`active` と `planning` の計画を同じTheme配下で扱う。

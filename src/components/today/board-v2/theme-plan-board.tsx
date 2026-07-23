@@ -73,6 +73,8 @@ export function ThemePlanBoard({
   compact = false,
   isPreview = false,
   projectRepoPath,
+  selectedRepo,
+  showRepoFilter = true,
   onThemeChange,
 }: {
   groups: ThemeGroup[];
@@ -81,9 +83,12 @@ export function ThemePlanBoard({
   compact?: boolean;
   isPreview?: boolean;
   projectRepoPath?: string | null;
+  selectedRepo?: string;
+  showRepoFilter?: boolean;
   onThemeChange?: (theme: Theme) => void;
 }) {
-  const [selectedRepo, setSelectedRepo] = useState('すべて');
+  const [internalSelectedRepo, setInternalSelectedRepo] = useState('すべて');
+  const activeRepo = selectedRepo ?? internalSelectedRepo;
   const projectGroups = useMemo(
     // 開発サンプルには実在するplan_docs.pathが無い。workspaceのpath照合をかけると
     // 完成形の確認そのものが0件になるため、サンプル表示時だけは全Themeをそのまま描画する。
@@ -99,16 +104,17 @@ export function ThemePlanBoard({
     [projectGroups],
   );
   const filteredGroups = useMemo(() => {
-    if (selectedRepo === 'すべて') return projectGroups;
+    if (activeRepo === 'すべて') return projectGroups;
     return projectGroups
-      .map((group) => rebuildGroup(group, group.plans.filter((plan) => planRepo(plan) === selectedRepo)))
+      .map((group) => rebuildGroup(group, group.plans.filter((plan) => planRepo(plan) === activeRepo)))
       .filter((group) => group.plans.length > 0);
-  }, [projectGroups, selectedRepo]);
+  }, [activeRepo, projectGroups]);
   const visiblePlanCount = filteredGroups.reduce((total, group) => total + group.planCount, 0);
   const totalPlanCount = projectGroups.reduce((total, group) => total + group.planCount, 0);
 
   return (
     <div className="space-y-3">
+      {showRepoFilter ? (
       <div className={cn('flex gap-2', compact ? 'flex-col items-stretch' : 'flex-wrap items-center justify-between')}>
         <div className="min-w-0">
           <p className="text-[10.5px] font-medium text-muted-foreground">対象リポジトリ（表示フィルター）</p>
@@ -118,12 +124,12 @@ export function ThemePlanBoard({
         </div>
         <div className="flex max-w-full gap-1 overflow-x-auto pb-0.5" role="group" aria-label="対象リポジトリ">
           {repoOptions.map((repo) => {
-            const selected = selectedRepo === repo;
+            const selected = activeRepo === repo;
             return (
               <button
                 key={repo}
                 type="button"
-                onClick={() => setSelectedRepo(repo)}
+                onClick={() => setInternalSelectedRepo(repo)}
                 aria-pressed={selected}
                 className={cn(
                   'min-h-11 shrink-0 rounded-lg border px-3 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -136,16 +142,17 @@ export function ThemePlanBoard({
           })}
         </div>
       </div>
+      ) : null}
 
       {filteredGroups.length > 0 ? (
         <div className="space-y-3.5">
-          {filteredGroups.map((group, index) => (
+          {filteredGroups.map((group) => (
             <ThemeGroupCard
               key={group.key}
               group={group}
               selectedDate={selectedDate}
               aiTargets={aiTargets}
-              defaultOpen={index === 0 && group.hasActivity}
+              defaultOpen={false}
               compact={compact}
               isPreview={isPreview}
               onThemeChange={onThemeChange}

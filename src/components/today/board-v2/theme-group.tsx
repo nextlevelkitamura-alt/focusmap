@@ -93,19 +93,39 @@ export function ThemeGroupCard({
           onClick={() => setOpen((previous) => !previous)}
           aria-expanded={open}
           aria-label={`テーマ ${title} を${open ? '折りたたむ' : '展開する'}`}
-          className="flex min-h-14 min-w-0 flex-1 items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="flex min-h-[72px] min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <ChevronRight
-            className={cn('mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
+            className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
             aria-hidden
           />
-          <Layers className={cn('mt-0.5 h-4 w-4 shrink-0', isUnassigned ? 'text-muted-foreground' : 'text-primary')} aria-hidden />
-          <span className="min-w-0 flex-1">
+          <Layers className={cn('h-4 w-4 shrink-0 self-start pt-0.5', isUnassigned ? 'text-muted-foreground' : 'text-primary')} aria-hidden />
+          <span className="min-w-0 flex-1 self-start">
             <span className="block truncate text-[15px] font-extrabold leading-snug">{title}</span>
             {theme?.purpose ? (
               <span className="mt-0.5 block truncate text-[10.5px] font-normal text-muted-foreground">{theme.purpose}</span>
             ) : null}
-            <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
+          </span>
+          <span className="flex shrink-0 flex-col items-end gap-1.5 pr-1 text-right tabular-nums">
+            <span className="flex items-baseline gap-1.5">
+              <span
+                className={cn(
+                  'text-[20px] font-extrabold leading-none',
+                  stepPct === null ? 'text-muted-foreground' : stepPct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-700 dark:text-blue-300',
+                )}
+                aria-label={stepPct !== null ? `完了${stepPct}パーセント` : '進捗未設定'}
+              >
+                {stepPct !== null ? `${stepPct}%` : '—'}
+              </span>
+              {stepTotal > 0 ? <span className="text-[10px] font-medium text-muted-foreground">工程 {stepDone}/{stepTotal}</span> : null}
+            </span>
+            {stepTotal > 0 ? (
+              <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted-foreground/20" aria-hidden>
+                <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.min(stepPct ?? 0, 100)}%` }} />
+              </span>
+            ) : null}
+            <span className="flex max-w-[250px] flex-wrap justify-end gap-1 text-[10px] text-muted-foreground">
+              <span className="rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 font-semibold text-foreground">計画 {planCount}</span>
               {activeCount > 0 ? (
                 <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300">
                   active {activeCount}
@@ -116,21 +136,8 @@ export function ThemeGroupCard({
                   planning {planningCount}
                 </span>
               ) : null}
-              <span>{planCount}計画</span>
-              {stepPct !== null ? (
-                <span
-                  className={cn(
-                    'text-xs font-extrabold',
-                    stepPct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-700 dark:text-blue-300',
-                  )}
-                  aria-label={`完了${stepPct}パーセント`}
-                >
-                  {stepPct}%
-                </span>
-              ) : null}
-              {liveCount > 0 ? <span aria-label={`稼働中${liveCount}件`}>● 稼働 {liveCount}</span> : null}
-              {waitCount > 0 ? <span className="text-amber-700 dark:text-amber-300" aria-label={`確認待ち${waitCount}件`}>● 確認 {waitCount}</span> : null}
-              {stepTotal > 0 ? <span>済 {stepDone}/{stepTotal}</span> : null}
+              {liveCount > 0 ? <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300" aria-label={`稼働中${liveCount}件`}>稼働 {liveCount}</span> : null}
+              {waitCount > 0 ? <span className="rounded-md border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-semibold text-amber-700 dark:text-amber-300" aria-label={`確認待ち${waitCount}件`}>確認 {waitCount}</span> : null}
             </span>
           </span>
         </button>

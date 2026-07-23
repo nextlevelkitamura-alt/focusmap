@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { CalendarDays, Check, Clock3, Pencil, Square, X } from "lucide-react"
@@ -37,6 +37,7 @@ export function DesktopDailyInspector({
     width,
     projectRepoPath,
 }: DesktopDailyInspectorProps) {
+    const [selectedRepo, setSelectedRepo] = useState("すべて")
     const sortedItems = useMemo(
         () => [...items].sort((a, b) => a.startTime.getTime() - b.startTime.getTime()),
         [items],
@@ -52,11 +53,32 @@ export function DesktopDailyInspector({
             className="flex h-full w-[360px] min-w-[320px] shrink-0 flex-col border-l border-border/60 bg-background/95 shadow-[-12px_0_32px_rgba(0,0,0,0.28)] backdrop-blur-sm"
             style={width ? { width } : undefined}
         >
-            <div className="flex items-center justify-between border-b border-border/40 px-3 py-2.5">
-                <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
+            <div className="flex items-center justify-between gap-2 border-b border-border/40 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-1.5">
                         <CalendarDays className="h-4 w-4 text-primary" />
                         <h2 className="text-sm font-semibold tracking-tight">デイリー</h2>
+                        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pl-1" role="group" aria-label="表示するリポジトリ">
+                            {["すべて", "Focusmap", "AI基盤", "仕事"].map((repo) => {
+                                const selected = selectedRepo === repo
+                                return (
+                                    <button
+                                        key={repo}
+                                        type="button"
+                                        onClick={() => setSelectedRepo(repo)}
+                                        aria-pressed={selected}
+                                        className={cn(
+                                            "min-h-7 shrink-0 rounded-md border px-2 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                            selected
+                                                ? "border-primary bg-primary text-primary-foreground"
+                                                : "border-border/70 bg-background text-muted-foreground hover:bg-muted",
+                                        )}
+                                    >
+                                        {repo}
+                                    </button>
+                                )
+                            })}
+                        </div>
                     </div>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">
                         {format(selectedDate, "M月d日(E)", { locale: ja })}
@@ -74,7 +96,11 @@ export function DesktopDailyInspector({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-                <BoardSummaryPanel selectedDate={selectedDate} projectRepoPath={projectRepoPath} />
+                <BoardSummaryPanel
+                    selectedDate={selectedDate}
+                    projectRepoPath={projectRepoPath}
+                    selectedRepo={selectedRepo}
+                />
 
                 <section className="border-b border-border/35 px-3 py-3">
                     <div className="mb-2 flex items-center justify-between gap-2">

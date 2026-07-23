@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { format } from "date-fns"
-import { LayoutGrid, ArrowUpRight, Plus } from "lucide-react"
+import { LayoutGrid, ArrowUpRight } from "lucide-react"
 import Link from "next/link"
 import { ThemePlanBoard } from "@/components/today/board-v2/theme-plan-board"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
@@ -13,18 +13,18 @@ import type { Theme } from "@/lib/turso/themes"
 interface BoardSummaryPanelProps {
     selectedDate: Date
     projectRepoPath?: string | null
+    selectedRepo?: string
 }
 
 // PCサイドバー上段の当日ボード。スマホboardページと同一DB・同一導出・同一部品（/api/board/summary が
 // 完全な BoardV2Data を返し、ThemeCardV2 / StrayBox でそのまま描画する。修正01・条件7）。
 // 折りたたみ挙動も同一部品側に持たせる（パネル側に個別実装しない。修正02・条件2）。
 // 失敗時はサイドバーを壊さないため非表示、取得中は薄いスケルトンを出す。
-export function BoardSummaryPanel({ selectedDate, projectRepoPath }: BoardSummaryPanelProps) {
+export function BoardSummaryPanel({ selectedDate, projectRepoPath, selectedRepo }: BoardSummaryPanelProps) {
     const dateStr = format(selectedDate, "yyyy-MM-dd")
     const [board, setBoard] = useState<BoardV2Data | null>(null)
     const [loading, setLoading] = useState(true)
     const [failed, setFailed] = useState(false)
-    const [phaseNotice, setPhaseNotice] = useState(false)
 
     // Theme本体だけを楽観的に置き換える。plan_refsやPlan本文は変更しない。
     const applyOptimisticTheme = useCallback((nextTheme: Theme) => {
@@ -121,15 +121,6 @@ export function BoardSummaryPanel({ selectedDate, projectRepoPath }: BoardSummar
                     <h3 className="text-[11px] font-semibold text-muted-foreground">当日ボード</h3>
                 </div>
                 <div className="flex items-center gap-1">
-                    <button
-                        type="button"
-                        onClick={() => setPhaseNotice(true)}
-                        aria-label="テーマを追加"
-                        aria-describedby={phaseNotice ? "sidebar-theme-draft-notice" : undefined}
-                        className="inline-grid h-11 w-11 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                    </button>
                     <Link
                         href={`/dashboard/board?date=${dateStr}`}
                         className="inline-flex min-h-11 items-center gap-0.5 rounded-lg px-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-muted hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -139,19 +130,6 @@ export function BoardSummaryPanel({ selectedDate, projectRepoPath }: BoardSummar
                     </Link>
                 </div>
             </div>
-
-            {phaseNotice ? (
-                <p id="sidebar-theme-draft-notice" role="status" className="mb-2 rounded-lg border border-dashed border-border px-2.5 py-2 text-[10.5px] text-muted-foreground">
-                    テーマ追加の保存は次のDB接続段階で実装します。
-                </p>
-            ) : null}
-
-            {board.isPreview ? (
-                <div className="mb-2 rounded-lg border border-blue-200 bg-blue-50/80 px-2.5 py-2 text-[10.5px] text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
-                    <span className="font-semibold">サンプル表示</span>
-                    <span className="ml-1 opacity-75">実データが空の開発環境だけ・保存なし</span>
-                </div>
-            ) : null}
 
             {/* 全体サマリ帯 */}
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-border/45 bg-muted/[0.06] px-2.5 py-2 text-[11px]">
@@ -181,6 +159,8 @@ export function BoardSummaryPanel({ selectedDate, projectRepoPath }: BoardSummar
                         compact
                         isPreview={board.isPreview}
                         projectRepoPath={projectRepoPath}
+                        selectedRepo={selectedRepo}
+                        showRepoFilter={false}
                         onThemeChange={applyOptimisticTheme}
                     />
                 ) : null}
