@@ -21,7 +21,7 @@ export function ThemeEditor({
         type="button"
         onClick={() => setOpen(true)}
         aria-label={`テーマ「${theme.name}」を編集`}
-        className="-mr-1.5 -mt-1.5 ml-1 inline-grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted-foreground/70 active:scale-95"
+        className="inline-grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-95"
       >
         <Pencil className="h-4 w-4" />
       </button>

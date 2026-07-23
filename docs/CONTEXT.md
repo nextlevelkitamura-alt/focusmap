@@ -619,6 +619,8 @@ Goals → Projects → TaskGroups → Tasks
 - 「いつ」の簡易マッピング（子02の週/月ビュー実装までの暫定）: 今日=当日 / 明日=翌日 / 今週=今週の日曜（JST） / 来週=来週月曜（JST） / 日付...=カスタム日付。do_date単一カラムのみのため、週バケット表示は子02で正式対応する
 - エージェント・終わったこと・サマリは `personal-os-board.ts` の既存クエリ（`getCurrentSessions` / `getFinishedLogs` / `getDailyTotals` / `getStuckWait`）をそのまま流用（読み取りのみ・変更なし）
 - 大課題テーマ階層（子09・2026-07-19）: inbox `themes`（`db/turso/migrations/20260719000000_themes_and_carryover.sql`・`src/lib/turso/themes.ts`）を運用データ正本とし、今日のやること・終わったことをテーマ帯（案A）でグルーピング。テーマ帯=名前+目的/完了条件の小見出し+右に完了%（`getThemeProgressForDate` のSQL集計）+鉛筆インライン編集（`_components/theme-editor.tsx`）。目的・完了条件はAI起点（board.py `theme-add`）では必須、人間のボード即席作成は空可で「未記入」バッジ。的・計画へは `goal_ref`/`plan_refs` の参照slugのみ持ち本文コピーはしない（計画チップは子07計画タブへのリンクのみ）。未設定タスクは「未分類」
+- Daily V5 UI段階（2026-07-23）: `ThemeGroupCard` を複数Themeの縦積みアコーディオンとし、最初の活動中Themeだけを初期展開する。開いたThemeではPlanカードをboardページの広い幅で2カラム、PCデイリーサイドバーと狭い幅で1カラム表示する。Planカードは工程を開く前からbucket・repo・進捗率・済/総・最大2件のCodex/Claude等の状態と現在作業を同じカードに表示し、「現在の動き」という別区画は作らない。工程・AI詳細は従来どおり「工程を見る」でだけ展開する。`ThemePlanBoard` は取得済みPlan内のrepo情報だけを使う「すべて／repo別」表示フィルターと表示件数を持つ。boardページとPCサイドバーは同じ `ThemePlanBoard` / `ThemeGroupCard` / `PlanCardV2` を使い、表示ロジックを二重化しない。
+- Daily V5のDB境界（2026-07-23）: Theme追加、既存Planの追加・Theme間D&D、翌日へのTheme引継ぎはUI上で次段階の操作として見せるが、この段階では押下時に「DB接続後に保存」と通知するだけで永続化しない。既存のTheme鉛筆編集だけは従来server actionを維持する。日付別Theme選択・ThemeとPlanの所属・並び順・引継ぎの正本設計と保存は後続DB段階で扱い、このUI変更ではmigration・Tursoクエリ・hook・loopを変更しない。
 - 繰越し（子09）: 未完了タスクの「明日へ引き継ぐ」1タップ（`carryOverAction`→`carryOverTodo`）で `do_date+1`・`carried_from` を初回のみ記録し、翌日ボードに「昨日から」表示。人間タップのみ（AIは日付を動かさない）
 - 時間表示（子09・すべてSQL導出・主観値を保存しない）: ステップは縦線ワークフローで表示し右に所要（done=実測・doing=経過、`todo_steps.started_at` と `getTodoTimesForDate`/`getStepsForDate`）、タスク見出し右に「実行N分／確認待ちN分」（`todos.awaiting_since` 起点）
 - エージェント所属先（子09）: `sessions.todo_id/theme_id`（board migration `turso/migrations/20260719000000_sessions_todo_theme.sql`・session-board `update --todo/--theme` がプロンプト登録時に宣言）を既取得の todos/themes でアプリ層Map join（追加クエリ・cross-DB JOINなし）し、エージェント行に「テーマ›タスク」パンくずを出す。左の人間チェック（`_components/file-agent-check.tsx`→`fileAgentAction`→`fileAgentToFinished`）は宣言済み `todo_id` を読むだけで「終わったこと」へ格納（ありはタスク入れ子・なしは新見出し）し、状態機械（run/wait/sub）は書き換えない
@@ -666,4 +668,4 @@ Goals → Projects → TaskGroups → Tasks
 
 ---
 
-最終更新: 2026-06-29
+最終更新: 2026-07-23

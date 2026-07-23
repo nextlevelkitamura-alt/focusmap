@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronRight, HelpCircle } from 'lucide-react';
+import { Check, ChevronRight, GripVertical, HelpCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Todo } from '@/lib/turso/todos';
@@ -16,10 +16,9 @@ import {
 } from '@/app/dashboard/board/_components/optimistic-controls';
 import { FixReattach } from '@/app/dashboard/board/_components/fix-reattach';
 import { QuestionAnswer } from '@/app/dashboard/board/_components/question-answer';
-import { ThemeEditor } from '@/app/dashboard/board/_components/theme-editor';
 import { SessionRow } from './session-row';
 import { CommanderBar, PlanTaskSteps } from './plan-steps';
-import type { PlanCardData, TaskItem, FinishedTodoItem } from './types';
+import type { PlanCardData, TaskItem, FinishedTodoItem, SessionItem } from './types';
 
 // テーマ帯左インデント（縦線ワークフロー・進捗バー・繰越しボタンをチェックボックス幅へ揃える）。
 const INDENT = 'ml-[46px]';
@@ -446,23 +445,58 @@ function FinishedFold({
   );
 }
 
-// board-v2 計画カード（子05: カード＝active計画。修正02のデフォルト折りたたみ規約を維持）:
-// 通常状態はヘッダ1行サマリだけ（計画名・進捗％・稼働N緑点・待機N琥珀点・済/総）。ヘッダタップで展開して初めて
-// 細メーター・ライブ帯・朝の意図ラベル（テーマ降格）・計画チップ・入れ子レールを出す。
-// 当日動きのない計画は折りたたみ1行の静かなカード（計画名＋「今日は動きなし」。タップで計画詳細ページへ）。
-// 折りたたみ状態はカード単位の useState（初期値=折りたたみ・永続化しない）。
-// 計画の目的・完了条件・本文はボードに描画しない（チップ→plans詳細ページの2段導線。修正02・条件3）。
+function agentLabel(item: SessionItem) {
+  const session = item.session;
+  const source = `${session.type} ${session.model}`.toLowerCase();
+  if (source.includes('claude') || source.includes('anthropic') || source.includes('opus') || source.includes('sonnet')) return 'Claude';
+  if (source.includes('codex') || source.includes('openai') || source.includes('gpt')) return 'Codex';
+  if (source.includes('gemini')) return 'Gemini';
+  return session.type || session.model || 'AI';
+}
+
+function PlanActivityPreview({ sessions }: { sessions: SessionItem[] }) {
+  const visible = sessions.slice(0, 2);
+  if (visible.length === 0) return null;
+
+  return (
+    <div className="mt-2 divide-y divide-border/50 rounded-lg border border-border/60 bg-background/65 px-2.5">
+      {visible.map((item) => {
+        const session = item.session;
+        const live = session.state === 'run' || session.state === 'sub';
+        const wait = session.state === 'wait';
+        return (
+          <div key={session.sessionKey} className="flex min-h-9 items-center gap-2 py-1.5 text-[11px]">
+            <span className={cn('h-2 w-2 shrink-0 rounded-full', wait ? 'bg-amber-500' : live ? 'bg-emerald-500' : 'bg-muted-foreground')} aria-hidden />
+            <span className="w-14 shrink-0 font-semibold">{agentLabel(item)}</span>
+            <span className={cn('w-14 shrink-0 font-semibold', wait ? 'text-amber-700 dark:text-amber-300' : live ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground')}>
+              {wait ? '確認待ち' : live ? '稼働中' : '停止'}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">{session.now || session.goal || '作業内容を取得中'}</span>
+          </div>
+        );
+      })}
+      {sessions.length > visible.length ? (
+        <p className="py-1.5 text-right text-[10px] text-muted-foreground">ほか {sessions.length - visible.length} 件</p>
+      ) : null}
+    </div>
+  );
+}
+
+// V5 計画カード: 進捗とAIの現在状態を同じカードへ統合する。
+// 工程時系列は従来どおり初期非表示で、「工程を見る」からだけ展開する。
 export function PlanCardV2({
   data,
   selectedDate,
   aiTargets,
+  onPreviewOnlyAction,
 }: {
   data: PlanCardData;
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
+  onPreviewOnlyAction?: (action: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { planSlug, planTitle, planResolved, theme, stepProgress, progress, tasks, cardSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
+  const { planSlug, planTitle, planResolved, bucket, stepProgress, progress, tasks, cardSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
   const isThemeOnly = planSlug === '';
   // 済/総: 計画カード=plan_slug一致のtodo_steps集計（子05・SQL導出）／テーマのみカード=従来の当日todo集計。
   const pct = isThemeOnly ? (progress?.pct ?? null) : (stepProgress?.pct ?? null);
@@ -470,6 +504,7 @@ export function PlanCardV2({
   const totalCount = isThemeOnly ? (progress?.total ?? tasks.length + finishedTodos.length) : (stepProgress?.total ?? 0);
   const hasActivity = tasks.length > 0 || cardSessions.length > 0 || finishedTodos.length > 0 || finishedLogs.length > 0;
   const detailHref = !isThemeOnly && planResolved ? `/dashboard/plans/${encodeURIComponent(planSlug)}` : null;
+  const lifecycle = isThemeOnly ? 'theme' : bucket || 'linked';
 
   // 指揮官の識別（子06・v6）: そのカードの計画に紐づくセッションのうち、稼働(run/sub)を優先し、無ければ確認待ち(wait)を1本。
   // = todo_stepsを実行中に打刻しているメインセッション（session.todoId で task へ振り分け済み）。過剰に複雑化しない。
@@ -480,158 +515,76 @@ export function PlanCardV2({
     allSessions[0] ??
     null;
   const commanderKey = commander?.session.sessionKey ?? '';
-
-  // 当日動きのない計画: 展開する中身が無いので、静かな1行カード（タップで計画詳細ページへ）。
-  if (!isThemeOnly && !hasActivity) {
-    const summary = (
-      <>
-        <h3 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold leading-snug text-muted-foreground">{planTitle}</h3>
-        <span className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
-          {pct !== null ? <span className="font-bold">{pct}%</span> : null}
-          {stepProgress ? <span>済 {doneCount}/{totalCount}</span> : null}
-          <span className="text-[10.5px]">今日は動きなし</span>
-        </span>
-      </>
-    );
-    return (
-      <article className="overflow-hidden rounded-2xl border border-border/70 bg-card/60">
-        {detailHref ? (
-          <Link
-            href={detailHref}
-            aria-label={`計画 ${planTitle} の詳細を開く`}
-            className="flex min-h-11 items-center gap-2 px-3 py-2.5 active:scale-[0.99]"
-          >
-            {summary}
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          </Link>
-        ) : (
-          <div
-            className="flex min-h-11 items-center gap-2 px-3 py-2.5"
-            title="この計画slugは計画ミラーに解決しません（plansyncで確認）"
-          >
-            {summary}
-          </div>
-        )}
-      </article>
-    );
-  }
+  const repoName = tasks.find((task) => task.repoName)?.repoName || allSessions.find((item) => item.session.repo)?.session.repo || '';
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-border bg-card">
-      {/* 計画帯（ヘッダ1行サマリ。タップで展開/折りたたみ） */}
-      <div className={cn(isThemeOnly ? 'bg-muted/40' : 'bg-blue-50/60 dark:bg-blue-500/10')}>
-        <div className="flex items-center">
-          <button
-            type="button"
-            onClick={() => setOpen((prev) => !prev)}
-            aria-expanded={open}
-            aria-label={`${planTitle}を${open ? '折りたたむ' : '展開する'}`}
-            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left"
-          >
-            <ChevronRight
-              className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
-              aria-hidden
-            />
-            <h3 className="min-w-0 flex-1 truncate text-[14.5px] font-bold leading-snug">{planTitle}</h3>
-            <span className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
-              {pct !== null ? (
-                <span
-                  className={cn(
-                    'text-xs font-extrabold',
-                    pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-700 dark:text-blue-300',
-                  )}
-                  aria-label={`完了${pct}パーセント`}
-                >
-                  {pct}%
-                </span>
-              ) : null}
-              {/* 稼働の粒（aidot）: 緑=稼働中・琥珀=確認待ち。点滅させない（点滅は工程の「実装中」ピルのみ・子06）。 */}
-              {liveCount > 0 ? (
-                <span
-                  className="grid h-3.5 min-w-[14px] place-items-center rounded-full border border-emerald-500 bg-emerald-50 px-0.5 text-[8px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-                  title="稼働中"
-                >
-                  {liveCount}
-                </span>
-              ) : null}
-              {waitCount > 0 ? (
-                <span
-                  className="grid h-3.5 min-w-[14px] place-items-center rounded-full border border-amber-500 bg-amber-100 px-0.5 text-[8px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                  title="確認待ち"
-                >
-                  {waitCount}
-                </span>
-              ) : null}
-              <span>済 {doneCount}/{totalCount}</span>
-            </span>
-          </button>
-          {open && theme ? (
-            <div className="shrink-0 pr-2">
-              <ThemeEditor
-                theme={{ id: theme.id, name: theme.name, purpose: theme.purpose, doneCriteria: theme.doneCriteria, goalRef: theme.goalRef }}
-                date={selectedDate}
-              />
-            </div>
+    <article className={cn('overflow-hidden rounded-xl border bg-card', hasActivity ? 'border-border' : 'border-border/70 bg-card/60')}>
+      <div className="p-3">
+        <div className="flex items-start gap-2">
+          {onPreviewOnlyAction ? (
+            <button
+              type="button"
+              onClick={() => onPreviewOnlyAction('Planのドラッグ・Theme間移動')}
+              aria-label={`計画 ${planTitle} をドラッグして移動`}
+              className="-ml-1 -mt-1 inline-grid h-11 w-8 shrink-0 cursor-grab place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+            >
+              <GripVertical className="h-4 w-4" aria-hidden />
+            </button>
           ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-2">
+              <h3 className="min-w-0 flex-1 break-words text-[14px] font-bold leading-snug">{planTitle}</h3>
+              <span className={cn('shrink-0 rounded-md border px-1.5 py-0.5 text-[9.5px] font-bold', lifecycle === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : lifecycle === 'planning' ? 'border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-border text-muted-foreground')}>
+                {lifecycle}
+              </span>
+            </div>
+            <div className="mt-1 flex min-h-5 flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+              {repoName ? <span className="rounded-md border border-border/70 px-1.5 py-0.5">{repoName}</span> : null}
+              {liveCount > 0 ? <span>● 稼働 {liveCount}</span> : null}
+              {waitCount > 0 ? <span className="text-amber-700 dark:text-amber-300">● 確認 {waitCount}</span> : null}
+            </div>
+          </div>
         </div>
 
-        {open ? (
-          <div className="px-3 pb-3">
-            {/* 朝の意図ラベル（テーマ降格: カード上部の小ラベル。テーマのみカードは見出しがテーマ名なので出さない） */}
-            {theme && !isThemeOnly ? (
-              <p className="mb-1.5 text-[10.5px] text-muted-foreground">
-                <span className="font-semibold">朝の意図</span> · {theme.name}
-              </p>
-            ) : null}
+        <div className="mt-2 flex items-end justify-between gap-2 tabular-nums">
+          <span className={cn('text-2xl font-semibold tracking-tight', pct === null && 'text-muted-foreground')} aria-label={pct === null ? '進捗未集計' : `完了${pct}パーセント`}>
+            {pct === null ? '—' : `${pct}%`}
+          </span>
+          <span className="text-[11px] text-muted-foreground">済 {doneCount}/{totalCount}</span>
+        </div>
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn('h-full rounded-full', pct !== null && pct >= 100 ? 'bg-emerald-500' : 'bg-violet-500')}
+            style={{ width: `${Math.max(0, Math.min(100, pct ?? 0))}%` }}
+          />
+        </div>
 
-            {/* 細い進捗メーター */}
-            {pct !== null ? (
-              <div className="h-1 overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500')}
-                  style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-                />
-              </div>
-            ) : null}
+        <PlanActivityPreview sessions={allSessions} />
+        {!hasActivity ? <p className="mt-2 text-[11px] text-muted-foreground">今日は動きなし</p> : null}
 
-            {/* ライブ帯（テーマのみカード等、指揮官バーを出さないカード用。稼働数は点滅させない・子06） */}
-            {!commander && (liveCount > 0 || waitCount > 0) ? (
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground tabular-nums">
-                {liveCount > 0 ? (
-                  <span className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    {liveCount}体が作業中
-                  </span>
-                ) : null}
-                {waitCount > 0 ? (
-                  <span className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400">
-                    <span className="h-2 w-2 rounded-full bg-amber-500" />
-                    {waitCount}体が確認待ち
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-
-            {/* 計画チップ（計画名のみ→plans詳細ページ。テーマのみカードは従来どおり planRefs チップ） */}
-            {!isThemeOnly ? (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <PlanChip planSlug={planSlug} planResolved={planResolved} />
-              </div>
-            ) : theme && theme.planRefs.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {theme.planRefs.map((slug) => (
-                  <Link
-                    key={slug}
-                    href={`/dashboard/plans#${encodeURIComponent(slug)}`}
-                    className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-background px-2 py-0.5 text-[10.5px] text-muted-foreground active:scale-95"
-                  >
-                    {slug}
-                  </Link>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/60 pt-1.5">
+          {hasActivity || isThemeOnly ? (
+            <button
+              type="button"
+              onClick={() => setOpen((previous) => !previous)}
+              aria-expanded={open}
+              aria-label={`${planTitle}の工程を${open ? '閉じる' : '見る'}`}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-[11px] font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {open ? '工程を閉じる' : '工程を見る'}
+              <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} aria-hidden />
+            </button>
+          ) : <span />}
+          {detailHref ? (
+            <Link
+              href={detailHref}
+              aria-label={`計画 ${planTitle} の詳細を開く`}
+              className="inline-flex min-h-11 items-center rounded-lg px-2 text-[10.5px] font-medium text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              計画を開く
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       {/* 入れ子レール（展開時のみ）= 段階2/3。指揮官バー→番号工程→工程タップでAIレーン（子06・v6） */}

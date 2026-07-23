@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react"
 import { format } from "date-fns"
-import { LayoutGrid, ArrowUpRight } from "lucide-react"
+import { LayoutGrid, ArrowUpRight, Plus } from "lucide-react"
 import Link from "next/link"
-import { ThemeGroupCard } from "@/components/today/board-v2/theme-group"
+import { ThemePlanBoard } from "@/components/today/board-v2/theme-plan-board"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
 import { UnplannedAgents } from "@/components/today/board-v2/unplanned-agents"
 import type { BoardV2Data } from "@/components/today/board-v2/types"
@@ -22,6 +22,7 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
     const [board, setBoard] = useState<BoardV2Data | null>(null)
     const [loading, setLoading] = useState(true)
     const [failed, setFailed] = useState(false)
+    const [phaseNotice, setPhaseNotice] = useState(false)
 
     // スマホboardページのBoardPoller(10秒)と同じ周期で再取得し、開きっぱなしのPCでも
     // スマホ側の変更が自動で追随する。裏の再取得ではloadingを立てない（ちらつき防止）。
@@ -99,14 +100,31 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
                     <LayoutGrid className="h-3.5 w-3.5 text-primary" />
                     <h3 className="text-[11px] font-semibold text-muted-foreground">当日ボード</h3>
                 </div>
-                <Link
-                    href={`/dashboard/board?date=${dateStr}`}
-                    className="inline-flex items-center gap-0.5 text-[10px] font-medium text-primary transition-colors hover:text-primary/80"
-                >
-                    ボードを開く
-                    <ArrowUpRight className="h-3 w-3" />
-                </Link>
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={() => setPhaseNotice(true)}
+                        aria-label="テーマを追加"
+                        aria-describedby={phaseNotice ? "sidebar-theme-draft-notice" : undefined}
+                        className="inline-grid h-11 w-11 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <Link
+                        href={`/dashboard/board?date=${dateStr}`}
+                        className="inline-flex min-h-11 items-center gap-0.5 rounded-lg px-1.5 text-[10px] font-medium text-primary transition-colors hover:bg-muted hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        ボードを開く
+                        <ArrowUpRight className="h-3 w-3" />
+                    </Link>
+                </div>
             </div>
+
+            {phaseNotice ? (
+                <p id="sidebar-theme-draft-notice" role="status" className="mb-2 rounded-lg border border-dashed border-border px-2.5 py-2 text-[10.5px] text-muted-foreground">
+                    テーマ追加の保存は次のDB接続段階で実装します。
+                </p>
+            ) : null}
 
             {/* 全体サマリ帯 */}
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-border/45 bg-muted/[0.06] px-2.5 py-2 text-[11px]">
@@ -129,16 +147,7 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
             {/* スマホboardと同一部品でそのまま描画（テーマ→計画カード→未分類・子07） */}
             <div className="space-y-2.5">
                 {board.themeGroups.length > 0 ? (
-                    <div className="space-y-2.5">
-                        {board.themeGroups.map((group) => (
-                            <ThemeGroupCard
-                                key={group.key}
-                                group={group}
-                                selectedDate={dateStr}
-                                aiTargets={board.aiTargets}
-                            />
-                        ))}
-                    </div>
+                    <ThemePlanBoard groups={board.themeGroups} selectedDate={dateStr} aiTargets={board.aiTargets} compact />
                 ) : null}
 
                 {hasUnplanned ? (

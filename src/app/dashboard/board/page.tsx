@@ -40,7 +40,7 @@ import {
 } from '@/lib/turso/plan-links';
 import { BoardPoller } from './_components/board-poller';
 import { BoardPaneSwitch } from '@/components/today/board-pane-switch';
-import { ThemeGroupCard } from '@/components/today/board-v2/theme-group';
+import { ThemePlanBoard } from '@/components/today/board-v2/theme-plan-board';
 import { DayHeader } from '@/components/today/board-v2/day-header';
 import { StrayBox } from '@/components/today/board-v2/stray-box';
 import { UnplannedAgents } from '@/components/today/board-v2/unplanned-agents';
@@ -225,6 +225,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
           liveTotal={board.liveTotal}
           waitTotal={board.waitTotal}
           runMin={board.runMin}
+          showThemeDraftAction
         />
 
         {errors.size > 0 ? (
@@ -244,16 +245,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
         ) : null}
 
         {board.themeGroups.length > 0 ? (
-          <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-            {board.themeGroups.map((group) => (
-              <ThemeGroupCard
-                key={group.key}
-                group={group}
-                selectedDate={selectedDate}
-                aiTargets={board.aiTargets}
-              />
-            ))}
-          </div>
+          <ThemePlanBoard groups={board.themeGroups} selectedDate={selectedDate} aiTargets={board.aiTargets} />
         ) : null}
 
         {hasUnplanned ? (
