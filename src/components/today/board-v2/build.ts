@@ -42,7 +42,7 @@ export interface BuildInput {
   // 未指定は「計画リンクなし」として扱う（後方互換・任意）。
   planSlugByTodo?: Map<string, string>;
   resolvablePlanSlugs?: Set<string>;
-  // 子05: 計画直結ボード。activePlans=plan_docs bucket='active' の全計画（カード軸）、
+  // 子05: 計画直結ボード。activePlans=plan_docs bucket='active'/'planning' の全計画（カード軸）、
   // planStepProgress={ベースslug->工程集計}（カードの済/総）。未指定は空扱い（後方互換・任意）。
   activePlans?: ActivePlan[];
   planStepProgress?: Map<string, PlanStepProgress>;
@@ -125,15 +125,16 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     subagents: subagentsBySession.get(session.sessionKey) ?? [],
   }));
 
-  // カードの器（子05）: active計画 → 当日todoが参照する計画（非active/未解決も沈黙で消さない）の順に作る。
+  // カードの器（子05）: active/planning計画 → 当日todoが参照する計画（それ以外/未解決も沈黙で消さない）の順に作る。
   const cards: PlanCardData[] = [];
   const cardByPlanSlug = new Map<string, PlanCardData>();
-  const newPlanCard = (slug: string, title: string, resolved: boolean, bucket: string) => {
+  const newPlanCard = (slug: string, title: string, resolved: boolean, bucket: string, repoPath = '') => {
     const card: PlanCardData = {
       planSlug: slug,
       planTitle: title,
       planResolved: resolved,
       bucket,
+      repoPath,
       theme: null,
       stepProgress: planStepProgress?.get(slug) ?? null,
       progress: null,
@@ -149,7 +150,7 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     return card;
   };
   for (const plan of activePlans ?? []) {
-    if (!cardByPlanSlug.has(plan.slug)) newPlanCard(plan.slug, plan.title, true, plan.bucket);
+    if (!cardByPlanSlug.has(plan.slug)) newPlanCard(plan.slug, plan.title, true, plan.bucket, plan.path);
   }
   for (const todo of todos) {
     const base = planSlugBase(planSlugByTodo?.get(todo.id) ?? '');
@@ -176,6 +177,7 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
         planTitle: theme.name,
         planResolved: false,
         bucket: '',
+        repoPath: '',
         theme,
         stepProgress: null,
         progress: themeProgress.get(theme.id) ?? null,

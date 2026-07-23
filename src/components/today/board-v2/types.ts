@@ -47,6 +47,8 @@ export interface PlanCardData {
   planTitle: string; // plan_docs.title（テーマのみカードは theme.name／未解決slugはslugそのまま）
   planResolved: boolean; // plan_docs に解決するか（false=グレー非リンク・沈黙故障させない）
   bucket: string; // plan_docs.bucket（'active' 等。todo由来の非active・未解決・テーマのみは ''）
+  // plansync が同期した計画Markdownの絶対path。表示はせず、workspace（project.repo_path）との照合だけに使う。
+  repoPath: string;
   theme: Theme | null; // 朝の意図ラベル（planRefs でこの計画を指すテーマ。カード上部の小ラベルに降格）
   stepProgress: { done: number; total: number; pct: number | null } | null; // 計画カードの済/総＝plan_slug一致のtodo_steps全期間集計（SQL導出）
   progress: ThemeProgress | null; // テーマのみカードの済/総（従来の当日todo集計）

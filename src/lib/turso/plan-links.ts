@@ -86,19 +86,22 @@ export async function getUnresolvedPlanLinksForDate(date: string): Promise<Unres
   return out
 }
 
-// 子05「計画直結ボード」: ボードのカード軸に使う active 計画の一覧。
+// 子05「計画直結ボード」: ボードのカード軸に使う active / planning 計画の一覧。
 // plan_docs の代表文書（program/single）だけを軽量に返す（body は読まない・カードに計画本文は出さない）。
 export type ActivePlan = {
   slug: string // program_slug（カードのキー・todos.plan_slug のベースと突き合わせる）
   title: string
   bucket: string
+  // plan_docs.path は plansync がrepoのMarkdownから同期する表示用の経路情報。
+  // Dailyのworkspace選択では、Theme.plan_refsで辿ったPlanがどのrepoに属するかを判定するためだけに使う。
+  path: string
 }
 
 export async function getActivePlans(): Promise<ActivePlan[]> {
   const result = await getPersonalOsInboxClient().execute({
     sql: `
-      SELECT program_slug, title, bucket FROM plan_docs
-      WHERE kind IN ('program', 'single') AND bucket = 'active'
+      SELECT program_slug, title, bucket, path FROM plan_docs
+      WHERE kind IN ('program', 'single') AND bucket IN ('active', 'planning')
       ORDER BY program_slug
     `,
     args: {},
@@ -107,6 +110,7 @@ export async function getActivePlans(): Promise<ActivePlan[]> {
     slug: asString(row.program_slug),
     title: asString(row.title) || asString(row.program_slug),
     bucket: asString(row.bucket),
+    path: asString(row.path),
   }))
 }
 

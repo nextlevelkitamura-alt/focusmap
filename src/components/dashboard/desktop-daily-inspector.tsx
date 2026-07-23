@@ -16,6 +16,7 @@ interface DesktopDailyInspectorProps {
     onEditItem: (item: TimeBlock) => void
     onClose: () => void
     width?: number
+    projectRepoPath?: string | null
 }
 
 function itemKey(item: TimeBlock) {
@@ -34,6 +35,7 @@ export function DesktopDailyInspector({
     onEditItem,
     onClose,
     width,
+    projectRepoPath,
 }: DesktopDailyInspectorProps) {
     const sortedItems = useMemo(
         () => [...items].sort((a, b) => a.startTime.getTime() - b.startTime.getTime()),
@@ -72,7 +74,7 @@ export function DesktopDailyInspector({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-                <BoardSummaryPanel selectedDate={selectedDate} />
+                <BoardSummaryPanel selectedDate={selectedDate} projectRepoPath={projectRepoPath} />
 
                 <section className="border-b border-border/35 px-3 py-3">
                     <div className="mb-2 flex items-center justify-between gap-2">

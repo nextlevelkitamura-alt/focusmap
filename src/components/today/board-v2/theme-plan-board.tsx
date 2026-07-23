@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { ThemeGroupCard } from './theme-group';
+import type { Theme } from '@/lib/turso/themes';
 import type { PlanCardData, ThemeGroup } from './types';
 
 function repoLabel(raw: string) {
@@ -19,6 +20,17 @@ function planRepo(card: PlanCardData) {
   const sessionRepo = [...card.tasks.flatMap((task) => task.sessions), ...card.cardSessions]
     .find((item) => item.session.repo)?.session.repo;
   return repoLabel(taskRepo || sessionRepo || '');
+}
+
+function normalizePath(path: string) {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function belongsToProject(card: PlanCardData, projectRepoPath?: string | null) {
+  if (!projectRepoPath) return true;
+  const planPath = normalizePath(card.repoPath);
+  const repoPath = normalizePath(projectRepoPath);
+  return Boolean(planPath && repoPath && (planPath === repoPath || planPath.startsWith(`${repoPath}/`)));
 }
 
 function planHasActivity(card: PlanCardData) {
@@ -60,26 +72,38 @@ export function ThemePlanBoard({
   aiTargets,
   compact = false,
   isPreview = false,
+  projectRepoPath,
+  onThemeChange,
 }: {
   groups: ThemeGroup[];
   selectedDate: string;
   aiTargets: { id: string; title: string }[];
   compact?: boolean;
   isPreview?: boolean;
+  projectRepoPath?: string | null;
+  onThemeChange?: (theme: Theme) => void;
 }) {
   const [selectedRepo, setSelectedRepo] = useState('すべて');
+  const projectGroups = useMemo(
+    () => projectRepoPath
+      ? groups
+        .map((group) => rebuildGroup(group, group.plans.filter((plan) => belongsToProject(plan, projectRepoPath))))
+        .filter((group) => group.plans.length > 0)
+      : groups,
+    [groups, projectRepoPath],
+  );
   const repoOptions = useMemo(
-    () => ['すべて', ...Array.from(new Set(groups.flatMap((group) => group.plans).map(planRepo).filter(Boolean)))],
-    [groups],
+    () => ['すべて', ...Array.from(new Set(projectGroups.flatMap((group) => group.plans).map(planRepo).filter(Boolean)))],
+    [projectGroups],
   );
   const filteredGroups = useMemo(() => {
-    if (selectedRepo === 'すべて') return groups;
-    return groups
+    if (selectedRepo === 'すべて') return projectGroups;
+    return projectGroups
       .map((group) => rebuildGroup(group, group.plans.filter((plan) => planRepo(plan) === selectedRepo)))
       .filter((group) => group.plans.length > 0);
-  }, [groups, selectedRepo]);
+  }, [projectGroups, selectedRepo]);
   const visiblePlanCount = filteredGroups.reduce((total, group) => total + group.planCount, 0);
-  const totalPlanCount = groups.reduce((total, group) => total + group.planCount, 0);
+  const totalPlanCount = projectGroups.reduce((total, group) => total + group.planCount, 0);
 
   return (
     <div className="space-y-3">
@@ -122,6 +146,7 @@ export function ThemePlanBoard({
               defaultOpen={index === 0 && group.hasActivity}
               compact={compact}
               isPreview={isPreview}
+              onThemeChange={onThemeChange}
             />
           ))}
         </div>

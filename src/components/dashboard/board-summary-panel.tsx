@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { format } from "date-fns"
 import { LayoutGrid, ArrowUpRight, Plus } from "lucide-react"
 import Link from "next/link"
@@ -8,21 +8,41 @@ import { ThemePlanBoard } from "@/components/today/board-v2/theme-plan-board"
 import { StrayBox } from "@/components/today/board-v2/stray-box"
 import { UnplannedAgents } from "@/components/today/board-v2/unplanned-agents"
 import type { BoardV2Data } from "@/components/today/board-v2/types"
+import type { Theme } from "@/lib/turso/themes"
 
 interface BoardSummaryPanelProps {
     selectedDate: Date
+    projectRepoPath?: string | null
 }
 
 // PCサイドバー上段の当日ボード。スマホboardページと同一DB・同一導出・同一部品（/api/board/summary が
 // 完全な BoardV2Data を返し、ThemeCardV2 / StrayBox でそのまま描画する。修正01・条件7）。
 // 折りたたみ挙動も同一部品側に持たせる（パネル側に個別実装しない。修正02・条件2）。
 // 失敗時はサイドバーを壊さないため非表示、取得中は薄いスケルトンを出す。
-export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
+export function BoardSummaryPanel({ selectedDate, projectRepoPath }: BoardSummaryPanelProps) {
     const dateStr = format(selectedDate, "yyyy-MM-dd")
     const [board, setBoard] = useState<BoardV2Data | null>(null)
     const [loading, setLoading] = useState(true)
     const [failed, setFailed] = useState(false)
     const [phaseNotice, setPhaseNotice] = useState(false)
+
+    // Theme本体だけを楽観的に置き換える。plan_refsやPlan本文は変更しない。
+    const applyOptimisticTheme = useCallback((nextTheme: Theme) => {
+        setBoard((previous) => {
+            if (!previous) return previous
+            const replaceTheme = (theme: Theme | null) => theme?.id === nextTheme.id ? nextTheme : theme
+            return {
+                ...previous,
+                themeGroups: previous.themeGroups.map((group) => ({
+                    ...group,
+                    theme: replaceTheme(group.theme),
+                    title: group.theme?.id === nextTheme.id ? nextTheme.name : group.title,
+                    plans: group.plans.map((plan) => ({ ...plan, theme: replaceTheme(plan.theme) })),
+                })),
+                planCards: previous.planCards.map((plan) => ({ ...plan, theme: replaceTheme(plan.theme) })),
+            }
+        })
+    }, [])
 
     // スマホboardページのBoardPoller(10秒)と同じ周期で再取得し、開きっぱなしのPCでも
     // スマホ側の変更が自動で追随する。裏の再取得ではloadingを立てない（ちらつき防止）。
@@ -154,7 +174,15 @@ export function BoardSummaryPanel({ selectedDate }: BoardSummaryPanelProps) {
             {/* スマホboardと同一部品でそのまま描画（テーマ→計画カード→未分類・子07） */}
             <div className="space-y-2.5">
                 {board.themeGroups.length > 0 ? (
-                    <ThemePlanBoard groups={board.themeGroups} selectedDate={dateStr} aiTargets={board.aiTargets} compact isPreview={board.isPreview} />
+                    <ThemePlanBoard
+                        groups={board.themeGroups}
+                        selectedDate={dateStr}
+                        aiTargets={board.aiTargets}
+                        compact
+                        isPreview={board.isPreview}
+                        projectRepoPath={projectRepoPath}
+                        onThemeChange={applyOptimisticTheme}
+                    />
                 ) : null}
 
                 {hasUnplanned ? (

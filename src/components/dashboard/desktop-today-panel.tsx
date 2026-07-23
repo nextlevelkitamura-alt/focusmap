@@ -94,6 +94,7 @@ export function DesktopTodayPanel({
         onCreateSubTask,
         onDeleteTask,
     })
+    const selectedProjectRepoPath = projects.find((project) => project.id === selectedProjectId)?.repo_path ?? null
     const {
         calendarMonth,
         calendarOpen,
@@ -792,6 +793,7 @@ export function DesktopTodayPanel({
                         onEditItem={handleItemTap}
                         onClose={() => setDailyPanelVisibility(false)}
                         width={dailyPanelWidth}
+                        projectRepoPath={selectedProjectRepoPath}
                     />
                 </div>
             )}

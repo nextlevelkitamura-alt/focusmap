@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, ChevronRight, Layers, Plus } from 'lucide-react';
-import { ThemeEditor } from '@/app/dashboard/board/_components/theme-editor';
+import { ThemeEditor, type EditableTheme } from '@/app/dashboard/board/_components/theme-editor';
+import type { Theme } from '@/lib/turso/themes';
 import { cn } from '@/lib/utils';
 import { PlanCardV2 } from './theme-card';
 import type { ThemeGroup } from './types';
@@ -17,6 +18,7 @@ export function ThemeGroupCard({
   defaultOpen = false,
   compact = false,
   isPreview = false,
+  onThemeChange,
 }: {
   group: ThemeGroup;
   selectedDate: string;
@@ -24,10 +26,20 @@ export function ThemeGroupCard({
   defaultOpen?: boolean;
   compact?: boolean;
   isPreview?: boolean;
+  onThemeChange?: (theme: Theme) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [phaseNotice, setPhaseNotice] = useState('');
-  const { theme, title, plans, planCount, stepDone, stepTotal, stepPct, liveCount, waitCount } = group;
+  const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
+  const theme = themeOverride ?? group.theme;
+  const title = theme?.name ?? group.title;
+  const plans = useMemo(
+    () => themeOverride
+      ? group.plans.map((plan) => plan.theme?.id === themeOverride.id ? { ...plan, theme: themeOverride } : plan)
+      : group.plans,
+    [group.plans, themeOverride],
+  );
+  const { planCount, stepDone, stepTotal, stepPct, liveCount, waitCount } = group;
   const isUnassigned = theme === null;
   const expandable = plans.length > 0;
   const activeCount = plans.filter((plan) => plan.bucket === 'active').length;
@@ -37,16 +49,37 @@ export function ThemeGroupCard({
     setPhaseNotice(`${action}の保存は、UI確認後のDB接続段階で実装します。`);
   };
 
+  const handleThemeChange = (next: EditableTheme) => {
+    if (!theme) return;
+    const updated: Theme = { ...theme, ...next };
+    setThemeOverride(updated);
+    onThemeChange?.(updated);
+  };
+
   if (!expandable) {
     return (
       <article className="overflow-hidden rounded-2xl border border-border/70 bg-card/60">
-        <div className="flex min-h-14 items-center gap-2 px-3 py-2.5">
+        <div className="flex min-h-14 flex-wrap items-center gap-2 px-3 py-2.5">
           <Layers className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-[13.5px] font-semibold leading-snug text-muted-foreground">{title}</h2>
             {theme?.purpose ? <p className="mt-0.5 truncate text-[10.5px] text-muted-foreground/80">{theme.purpose}</p> : null}
           </div>
           <span className="shrink-0 text-[10.5px] text-muted-foreground">今日は動きなし</span>
+          {theme ? (
+            <ThemeEditor
+              theme={{
+                id: theme.id,
+                name: theme.name,
+                purpose: theme.purpose,
+                doneCriteria: theme.doneCriteria,
+                goalRef: theme.goalRef,
+              }}
+              date={selectedDate}
+              isPreview={isPreview}
+              onThemeChange={handleThemeChange}
+            />
+          ) : null}
         </div>
       </article>
     );
@@ -101,25 +134,26 @@ export function ThemeGroupCard({
             </span>
           </span>
         </button>
-
+        {theme ? (
+          <ThemeEditor
+            theme={{
+              id: theme.id,
+              name: theme.name,
+              purpose: theme.purpose,
+              doneCriteria: theme.doneCriteria,
+              goalRef: theme.goalRef,
+            }}
+            date={selectedDate}
+            isPreview={isPreview}
+            onThemeChange={handleThemeChange}
+          />
+        ) : null}
       </div>
 
       {open ? (
         <div className="border-t border-border bg-muted/[0.04] p-2.5">
           {!isUnassigned ? (
             <div className="mb-2.5 flex flex-wrap items-start gap-2 px-0.5">
-              {theme && !isPreview ? (
-                <ThemeEditor
-                  theme={{
-                    id: theme.id,
-                    name: theme.name,
-                    purpose: theme.purpose,
-                    doneCriteria: theme.doneCriteria,
-                    goalRef: theme.goalRef,
-                  }}
-                  date={selectedDate}
-                />
-              ) : null}
               <button
                 type="button"
                 onClick={() => showNextPhaseNotice('翌日へのTheme引継ぎ')}

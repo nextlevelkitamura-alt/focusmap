@@ -156,6 +156,7 @@ function samplePlan(
     planTitle,
     planResolved: false,
     bucket,
+    repoPath: task.repoName === 'Focusmap' ? '/Users/kitamuranaohiro/Private/projects/active/focusmap' : '',
     theme,
     stepProgress: { done, total, pct: total > 0 ? Math.round((100 * done) / total) : null },
     progress: null,
