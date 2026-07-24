@@ -6,7 +6,7 @@
 # Daily Theme継承・Plan紐付け・実行状態の実運用化
 
 - Task ID: TASK-20260724-001
-- Status: active
+- Status: review_pending
 - Created: 2026-07-24
 - Parent: `~/Private/personal-os/my-brain/areas/ai運用/plans/active/2026-07-17-当日ボードSQL化/program.md`
 - Board: `docs/ai/task-board.md`
@@ -76,7 +76,7 @@ Themeを毎朝作り直さず、未完了なら翌日に自動継続し、昨日
 - [x] 06 実装: planningをplansync対象へ入れ、typed Plan遷移bridgeを追加する  評価: 都度
 - [x] 07 実装: 人の即追加とAI Theme候補の採用・却下をTurso/Dailyへ接続する  評価: 都度
 - [x] 08 評価: DB/API/UI/agent/plan正本境界を統合確認する  評価: まとめ
-- [ ] 09 実装: Theme完了条件を個別チェック項目へ正規化し、Dailyの人間操作へ接続する  評価: まとめ
+- [x] 09 実装: Theme完了条件を個別チェック項目へ正規化し、Dailyの人間操作へ接続する  評価: まとめ
 
 ## 完了条件
 
@@ -106,6 +106,7 @@ Themeを毎朝作り直さず、未完了なら翌日に自動継続し、昨日
 - routing採用はproposalとsession所属を同一transactionで更新し、ghost sessionは12時間超でも実体がなければ確認待ちへ降格する。
 - 検証: Focusmap対象21 test、routing 45、Theme CLI 30、reconcile 22、plansync 25、TypeScript typecheck、Mac agent build、対象eslint、diff checkがPASS。
 - 本番Turso readback: `theme_candidates`表あり・候補0件、active 3Themeのrepo所属は`focusmap/ai-platform`へ補完済み。コードの本番反映はpush/deploy後。
+- Theme完了条件: `theme_completion_criteria`を本番Tursoへadditive migrationで適用し、既存の文章形式を3件の未チェック項目としてbackfillした。人操作APIは`human`、将来用domain serviceは`ai`も受け、全項目チェック後も`theme_days.state`を自動変更しない。画面目視と対象テストは未実行。
 
 ## 終了記録
 
