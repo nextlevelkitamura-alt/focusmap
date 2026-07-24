@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronRight, GripVertical, HelpCircle } from 'lucide-react';
+import { ArrowRightLeft, Check, ChevronRight, GripVertical, HelpCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Todo } from '@/lib/turso/todos';
-import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
+import type { TodoStep, TodoTimes } from '@/lib/turso/todo-steps';
 import { deriveBoardStatus, boardStatusClassName, type BoardStatus } from '@/lib/board-status';
 import { toggleTodoAction } from '@/app/dashboard/board/actions';
 import {
@@ -557,6 +557,9 @@ export function PlanCardV2({
   isPreview?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [localBucket, setLocalBucket] = useState(data.bucket);
+  const [transitioning, setTransitioning] = useState(false);
+  const [transitionNotice, setTransitionNotice] = useState('');
   const { planSlug, planTitle, planResolved, bucket, stepProgress, progress, tasks, cardSessions, finishedTodos, finishedLogs, liveCount, waitCount } = data;
   const isThemeOnly = planSlug === '';
   // 済/総: 計画カード=plan_slug一致のtodo_steps集計（子05・SQL導出）／テーマのみカード=従来の当日todo集計。
@@ -565,7 +568,54 @@ export function PlanCardV2({
   const totalCount = isThemeOnly ? (progress?.total ?? tasks.length + finishedTodos.length) : (stepProgress?.total ?? 0);
   const hasActivity = tasks.length > 0 || cardSessions.length > 0 || finishedTodos.length > 0 || finishedLogs.length > 0;
   const detailHref = !isPreview && !isThemeOnly && planResolved ? `/dashboard/plans/${encodeURIComponent(planSlug)}` : null;
-  const lifecycle = isThemeOnly ? 'theme' : bucket || 'linked';
+  const lifecycle = isThemeOnly ? 'theme' : localBucket || 'linked';
+  const transitionTargets: Record<string, { value: string; label: string }[]> = {
+    planning: [{ value: 'active', label: 'activeへ開始' }, { value: 'archive', label: 'archiveへ終了' }],
+    active: [{ value: 'paused', label: 'pausedへ保留' }, { value: 'done', label: 'doneへ完了' }, { value: 'archive', label: 'archiveへ終了' }],
+    paused: [{ value: 'active', label: 'activeへ再開' }, { value: 'archive', label: 'archiveへ終了' }],
+    done: [{ value: 'archive', label: 'archiveへ格納' }],
+    archive: [],
+  };
+
+  useEffect(() => setLocalBucket(bucket), [bucket]);
+
+  const waitForTransition = async (commandId: string) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+      const response = await fetch(`/api/board/plans/transition/${encodeURIComponent(commandId)}`, { cache: 'no-store' });
+      const json = await response.json();
+      if (!response.ok || !json?.command) throw new Error('移動結果を確認できませんでした。');
+      if (json.command.status === 'completed') return;
+      if (json.command.status === 'failed' || json.command.status === 'cancelled') {
+        throw new Error(json.command.error || '計画を移動できませんでした。');
+      }
+    }
+    throw new Error('Mac側の処理が時間内に完了しませんでした。');
+  };
+
+  const transitionBucket = async (targetBucket: string) => {
+    if (!planSlug || !localBucket || transitioning || isPreview) return;
+    const previous = localBucket;
+    setLocalBucket(targetBucket);
+    setTransitioning(true);
+    setTransitionNotice(`${targetBucket}へ移動中…`);
+    try {
+      const response = await fetch('/api/board/plans/transition', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ planSlug, expectedBucket: previous, targetBucket }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json?.command?.id) throw new Error(json?.error || '移動を開始できませんでした。');
+      await waitForTransition(json.command.id);
+      setTransitionNotice(`${targetBucket}へ移動しました。`);
+    } catch (error) {
+      setLocalBucket(previous);
+      setTransitionNotice(error instanceof Error ? error.message : '移動に失敗したため元に戻しました。');
+    } finally {
+      setTransitioning(false);
+    }
+  };
 
   // 指揮官の識別（子06・v6）: そのカードの計画に紐づくセッションのうち、稼働(run/sub)を優先し、無ければ確認待ち(wait)を1本。
   // = todo_stepsを実行中に打刻しているメインセッション（session.todoId で task へ振り分け済み）。過剰に複雑化しない。
@@ -604,6 +654,29 @@ export function PlanCardV2({
               {liveCount > 0 ? <span>● 稼働 {liveCount}</span> : null}
               {waitCount > 0 ? <span className="text-amber-700 dark:text-amber-300">● 確認 {waitCount}</span> : null}
             </div>
+            {!isThemeOnly && planResolved && transitionTargets[localBucket]?.length ? (
+              <label className="mt-1.5 inline-flex min-h-9 items-center gap-1 rounded-md border border-border/70 bg-background px-1.5 text-[10px] text-muted-foreground">
+                <ArrowRightLeft className="h-3 w-3" aria-hidden />
+                <span className="sr-only">計画の状態を移動</span>
+                <select
+                  aria-label={`${planTitle}の計画状態を移動`}
+                  value=""
+                  disabled={transitioning}
+                  onChange={(event) => {
+                    const target = event.target.value;
+                    event.currentTarget.value = '';
+                    if (target) void transitionBucket(target);
+                  }}
+                  className="h-7 max-w-36 bg-transparent text-[10px] font-semibold text-foreground outline-none disabled:opacity-60"
+                >
+                  <option value="">状態を移動…</option>
+                  {transitionTargets[localBucket].map((target) => (
+                    <option key={target.value} value={target.value}>{target.label}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {transitionNotice ? <p className="mt-1 text-[10px] text-muted-foreground" role="status">{transitionNotice}</p> : null}
           </div>
         </div>
 

@@ -25,6 +25,10 @@ export interface AgentConfig {
   shell_enabled?: boolean;
   /** Extra PATH for launchd environments. */
   path?: string;
+  /** Personal OS root used by typed plan transitions. Defaults to ~/Private. */
+  private_root?: string;
+  /** plan-ops Skill root. Defaults below private_root. */
+  plan_ops_root?: string;
 }
 
 export type AiTaskStatus =
@@ -288,6 +292,7 @@ export interface AgentCommand {
     | 'open_gws_auth'
     | 'open_browser_auth'
     | 'run_shell'
+    | 'plan_transition'
     | 'restart_agent'
     | 'pause_agent'
     | 'resume_agent'

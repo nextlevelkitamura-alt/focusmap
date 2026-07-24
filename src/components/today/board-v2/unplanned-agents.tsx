@@ -1,31 +1,44 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronRight, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SessionRow } from './session-row';
 import type { SessionItem } from './types';
 
-// 子05レーンB「計画外エージェント」ゾーン。
+// 子05レーンB「Theme/Plan未紐付けセッション」ゾーン。
 // テーマ→計画→工程→セッションの4段構造の外で動いている（plan/theme/todo をどれも宣言していない）稼働セッションの受け皿。
-// 未分類(StrayBox)に他の無所属物と混ぜず、専用ゾーンで「今どのエージェントが計画外で動いているか」を見せる。
+// 未分類(StrayBox)に他の無所属物と混ぜず、専用ゾーンでrun/waitを正確に見せる。
 // セッションが board.py update --plan で計画を宣言すると build 側で計画カードへ振り分けられ、次ポーリングでこのゾーンから消える（自然に成立・特別なアニメ不要）。
 // sessions が空なら非表示（null）。見た目は StrayBox / theme-group と同じ視覚語彙（折りたたみヘッダ＋件数バッジ＋稼働/待機の粒）。
 export function UnplannedAgents({
   sessions,
   selectedDate,
+  selectedRepo = 'すべて',
 }: {
   sessions: SessionItem[];
   selectedDate: string;
+  selectedRepo?: string;
 }) {
-  // 計画外で動いているエージェントは見えることが目的なので既定は展開。折りたたみ状態は useState（永続化しない）。
+  const visibleSessions = useMemo(() => {
+    if (selectedRepo === 'すべて') return sessions;
+    const normalized = selectedRepo.toLowerCase();
+    return sessions.filter(({ session }) => {
+      const repo = (session.repo ?? '').toLowerCase();
+      if (normalized === 'focusmap') return repo.includes('focusmap');
+      if (normalized === 'ai基盤') return repo.includes('ai') || repo.includes('基盤') || repo.includes('private');
+      if (normalized === '仕事') return repo === '仕事' || repo.includes('shigoto');
+      return repo === normalized;
+    });
+  }, [selectedRepo, sessions]);
+  // Theme/Plan未紐付けは発見できることが目的なので既定は展開。状態は永続化しない。
   const [open, setOpen] = useState(true);
-  if (sessions.length === 0) return null;
+  if (visibleSessions.length === 0) return null;
 
-  const liveCount = sessions.filter(
+  const liveCount = visibleSessions.filter(
     (s) => s.session.state === 'run' || s.session.state === 'sub',
   ).length;
-  const waitCount = sessions.filter((s) => s.session.state === 'wait').length;
+  const waitCount = visibleSessions.filter((s) => s.session.state === 'wait').length;
 
   return (
     <section
@@ -37,7 +50,7 @@ export function UnplannedAgents({
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
-        aria-label={`計画外で動いているエージェントを${open ? '折りたたむ' : '展開する'}`}
+        aria-label={`ThemeまたはPlan未紐付けセッションを${open ? '折りたたむ' : '展開する'}`}
         className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-left"
       >
         <ChevronRight
@@ -49,7 +62,7 @@ export function UnplannedAgents({
           id="unplanned-heading"
           className="min-w-0 flex-1 truncate text-[13.5px] font-semibold leading-snug text-muted-foreground"
         >
-          計画外で動いているエージェント
+          Theme/Plan未紐付けセッション
         </h2>
         <span className="flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
           {liveCount > 0 ? (
@@ -69,14 +82,14 @@ export function UnplannedAgents({
             </span>
           ) : null}
           <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-semibold">
-            {sessions.length}件
+            {visibleSessions.length}件
           </span>
         </span>
       </button>
 
       {open ? (
         <div className="border-t border-border px-3 pb-2 pt-1">
-          {sessions.map((item) => (
+          {visibleSessions.map((item) => (
             <SessionRow key={item.session.sessionKey} item={item} selectedDate={selectedDate} />
           ))}
         </div>

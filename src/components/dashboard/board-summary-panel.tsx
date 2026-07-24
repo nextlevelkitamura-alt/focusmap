@@ -166,7 +166,7 @@ export function BoardSummaryPanel({ selectedDate, projectRepoPath, selectedRepo 
                 ) : null}
 
                 {hasUnplanned ? (
-                    <UnplannedAgents sessions={board.unplannedSessions} selectedDate={dateStr} />
+                    <UnplannedAgents sessions={board.unplannedSessions} selectedDate={dateStr} selectedRepo={selectedRepo} />
                 ) : null}
 
                 {strayHasContent ? (

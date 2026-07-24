@@ -9,7 +9,13 @@ import {
   type TodoStepAggregate,
   type TodoTimes,
 } from '@/lib/turso/todo-steps';
-import { getActiveThemes, getThemeProgressForDate, type Theme, type ThemeProgress } from '@/lib/turso/themes';
+import {
+  ensureThemeDay,
+  getThemesForDate,
+  getThemeProgressForDate,
+  type DailyTheme,
+  type ThemeProgress,
+} from '@/lib/turso/themes';
 import {
   getCurrentSessions,
   getDailyTotals,
@@ -69,6 +75,16 @@ export async function GET(request: NextRequest) {
     const selectedDate = isDate(dateParam) ? dateParam : getJstDate();
     const isToday = selectedDate === getJstDate();
 
+    // 今日のDailyを最初に開いた時だけ、前日active Themeを冪等に引き継ぐ。
+    // 過去日の閲覧は履歴を変えない。
+    if (isToday) {
+      try {
+        await ensureThemeDay(selectedDate);
+      } catch {
+        // テーマDBが一時的に利用できなくても、予定・セッションの要約は返す。
+      }
+    }
+
     // board/page.tsx の load() と同じフェイルソフト: 片方のDB（inbox/board）に接続できなくても
     // 取れたデータだけで要約を返す（全体500にしない）。isToday でない日はライブ系を空にする。
     const soft = async <T,>(fallback: T, getter: () => Promise<T>): Promise<T> => {
@@ -102,7 +118,7 @@ export async function GET(request: NextRequest) {
       soft([] as TodoStep[], () => getStepsForDate(selectedDate)),
       soft(new Map<string, TodoStepAggregate>(), () => getStepAggregatesForDate(selectedDate)),
       soft(new Map<string, TodoTimes>(), () => getTodoTimesForDate(selectedDate)),
-      soft([] as Theme[], () => getActiveThemes()),
+      soft([] as DailyTheme[], () => getThemesForDate(selectedDate)),
       soft(new Map<string, ThemeProgress>(), () => getThemeProgressForDate(selectedDate)),
       soft(EMPTY_TOTALS, () => getDailyTotals(selectedDate)),
       soft([] as FinishedLog[], () => getFinishedLogs(selectedDate)),

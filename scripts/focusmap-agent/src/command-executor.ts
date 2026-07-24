@@ -18,6 +18,7 @@ import {
   browserText,
   browserCloseSession,
 } from './executors/playwright-interactive.js';
+import { executePlanTransition } from './executors/plan-transition.js';
 
 function payloadAs<T>(command: AgentCommand): T {
   return (command.payload ?? {}) as T;
@@ -149,6 +150,18 @@ export async function executeCommand(command: AgentCommand, config: AgentConfig)
       const resolvedTimeoutMs = resolveTimeoutMs(timeoutMs);
       const result = await runShell(shell, config, cwd, resolvedTimeoutMs);
       return { command: shell, cwd: cwd ? resolveCommandCwd(cwd) : null, ...result };
+    }
+    case 'plan_transition': {
+      const payload = payloadAs<{
+        plan_path?: string;
+        expected_bucket?: string;
+        target_bucket?: string;
+      }>(command);
+      return await executePlanTransition({
+        plan_path: payload.plan_path ?? '',
+        expected_bucket: payload.expected_bucket ?? '',
+        target_bucket: payload.target_bucket ?? '',
+      }, config);
     }
     case 'scan_capabilities':
       return await collectCapabilities(config);

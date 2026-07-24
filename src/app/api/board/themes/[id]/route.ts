@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateTheme } from '@/lib/turso/themes';
+import { getThemeById, updateTheme } from '@/lib/turso/themes';
 import { createClient } from '@/utils/supabase/server';
 
 type ThemePatchBody = {
@@ -47,7 +47,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       goalRef: text(body.goalRef, 300) || null,
     });
     if (!updated) return NextResponse.json({ success: false, error: 'THEME_NOT_FOUND' }, { status: 404 });
-    return NextResponse.json({ success: true });
+    const theme = await getThemeById(id);
+    return NextResponse.json({ success: true, theme });
   } catch {
     return NextResponse.json({ success: false, error: 'THEME_UPDATE_FAILED' }, { status: 500 });
   }

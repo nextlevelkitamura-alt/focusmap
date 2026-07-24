@@ -184,6 +184,9 @@ function sampleGroup(theme: Theme, plans: PlanCardData[]): ThemeGroup {
     liveCount: plans.reduce((sum, plan) => sum + plan.liveCount, 0),
     waitCount: plans.reduce((sum, plan) => sum + plan.waitCount, 0),
     hasActivity: true,
+    dayState: null,
+    carriedFromDay: null,
+    dayVersion: null,
   };
 }
 

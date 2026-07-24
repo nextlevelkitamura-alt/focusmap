@@ -9,6 +9,7 @@ const VALID_TYPES = new Set([
   'open_gws_auth',
   'open_browser_auth',
   'run_shell',
+  'plan_transition',
   'restart_agent',
   'pause_agent',
   'resume_agent',

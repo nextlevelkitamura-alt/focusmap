@@ -13,7 +13,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { hostname as osHostname } from 'node:os';
+import { hostname as osHostname, homedir } from 'node:os';
+import { join } from 'node:path';
 import type { AgentConfig } from './types.js';
 
 export class ConfigError extends Error {}
@@ -44,6 +45,8 @@ export async function loadConfig(path: string): Promise<AgentConfig> {
     api_url: fromFile.api_url ?? process.env.FOCUSMAP_API_URL ?? 'https://focusmap-official.com/api',
     shell_enabled: fromFile.shell_enabled ?? process.env.FOCUSMAP_SHELL_ENABLED === 'true',
     path: fromFile.path ?? process.env.PATH,
+    private_root: fromFile.private_root ?? process.env.FOCUSMAP_PRIVATE_ROOT ?? join(homedir(), 'Private'),
+    plan_ops_root: fromFile.plan_ops_root ?? process.env.FOCUSMAP_PLAN_OPS_ROOT,
   };
 
   validate(cfg);

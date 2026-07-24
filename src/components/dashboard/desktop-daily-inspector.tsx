@@ -59,7 +59,7 @@ export function DesktopDailyInspector({
                         <CalendarDays className="h-4 w-4 text-primary" />
                         <h2 className="text-sm font-semibold tracking-tight">デイリー</h2>
                         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pl-1" role="group" aria-label="表示するリポジトリ">
-                            {["すべて", "Focusmap", "AI基盤", "仕事"].map((repo) => {
+                            {["すべて", "Focusmap", "AI基盤", "仕事", "Private"].map((repo) => {
                                 const selected = selectedRepo === repo
                                 return (
                                     <button

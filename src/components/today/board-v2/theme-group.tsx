@@ -1,7 +1,7 @@
 'use client';
 
-import { type TextareaHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronRight, Layers, Pencil, Plus } from 'lucide-react';
+import { type DragEvent, type TextareaHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronRight, Layers, Pencil } from 'lucide-react';
 import { ThemeEditor, type EditableTheme } from '@/app/dashboard/board/_components/theme-editor';
 import type { Theme } from '@/lib/turso/themes';
 import { cn } from '@/lib/utils';
@@ -38,7 +38,7 @@ function AutoGrowingTextarea({ onInput, style, value, ...props }: TextareaHTMLAt
 
 // Theme → Plan → 工程 → AI の入口。
 // V5では「現在の動き」を別レーンにせず、各Planカードの中へライブAI行を統合する。
-// Theme追加・Plan追加・翌日継続・D&D保存は次のDB接続段階。UI段階では押下時に境界を明示し、無反応にしない。
+// Themeは日次状態を持ち、未完了なら翌日へ自動継続する。PlanのTheme間移動は楽観UI＋version付きAPIで保存する。
 export function ThemeGroupCard({
   group,
   selectedDate,
@@ -46,6 +46,10 @@ export function ThemeGroupCard({
   defaultOpen = false,
   compact = false,
   isPreview = false,
+  moveTargets = [],
+  onMovePlan,
+  onPlanDragStart,
+  onPlanDragEnd,
   onThemeChange,
 }: {
   group: ThemeGroup;
@@ -54,11 +58,17 @@ export function ThemeGroupCard({
   defaultOpen?: boolean;
   compact?: boolean;
   isPreview?: boolean;
+  moveTargets?: { id: string; name: string }[];
+  onMovePlan?: (planSlug: string, targetThemeId: string) => Promise<void>;
+  onPlanDragStart?: (planSlug: string, event: DragEvent<HTMLDivElement>) => void;
+  onPlanDragEnd?: () => void;
   onThemeChange?: (theme: Theme) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [phaseNotice, setPhaseNotice] = useState('');
   const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
+  const [dayState, setDayState] = useState(group.dayState);
+  const [dayVersion, setDayVersion] = useState(group.dayVersion);
   const theme = themeOverride ?? group.theme;
   const title = theme?.name ?? group.title;
   const plans = useMemo(
@@ -69,12 +79,42 @@ export function ThemeGroupCard({
   );
   const { planCount, stepDone, stepTotal, stepPct, liveCount, waitCount } = group;
   const isUnassigned = theme === null;
-  const expandable = plans.length > 0;
+  // Planが0件でもThemeの日次状態・目的・完了条件・Goalを確認/編集できるよう展開可能にする。
+  const expandable = plans.length > 0 || Boolean(theme);
   const activeCount = plans.filter((plan) => plan.bucket === 'active').length;
   const planningCount = plans.filter((plan) => plan.bucket === 'planning').length;
 
+  useEffect(() => {
+    setDayState(group.dayState);
+    setDayVersion(group.dayVersion);
+  }, [group.dayState, group.dayVersion]);
+
   const showNextPhaseNotice = (action: string) => {
     setPhaseNotice(`${action}の保存は、UI確認後のDB接続段階で実装します。`);
+  };
+
+  const updateDayState = async () => {
+    if (!theme || dayState === null || dayVersion === null || isPreview) return;
+    const previousState = dayState;
+    const previousVersion = dayVersion;
+    const nextState = dayState === 'completed' ? 'active' : 'completed';
+    setDayState(nextState);
+    setPhaseNotice('日次状態を保存中…');
+    try {
+      const response = await fetch(`/api/board/themes/${encodeURIComponent(theme.id)}/day`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ date: selectedDate, state: nextState, expectedVersion: previousVersion }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json?.day) throw new Error('save failed');
+      setDayVersion(json.day.version);
+      setPhaseNotice(nextState === 'completed' ? '今日分を完了にしました。明日へは自動繰越しません。' : '今日のThemeとして再開しました。未完了なら明日へ自動繰越します。');
+    } catch {
+      setDayState(previousState);
+      setDayVersion(previousVersion);
+      setPhaseNotice('日次状態を保存できなかったため、元に戻しました。');
+    }
   };
 
   const handleThemeChange = (next: EditableTheme) => {
@@ -143,6 +183,13 @@ export function ThemeGroupCard({
               placeholder="目的を入力"
               className="mt-1 block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
             />
+            <input
+              value={editor.draft.goalRef}
+              onChange={(event) => editor.updateDraft('goalRef', event.target.value)}
+              aria-label="ゴール参照"
+              placeholder="ゴール参照を入力"
+              className="mt-1 h-6 w-full rounded border border-primary/35 bg-background/50 px-1.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+            />
             <AutoGrowingTextarea
               value={editor.draft.doneCriteria}
               onChange={(event) => editor.updateDraft('doneCriteria', event.target.value)}
@@ -174,6 +221,11 @@ export function ThemeGroupCard({
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate text-[13.5px] font-semibold leading-snug text-muted-foreground">{title}</h2>
                     {theme?.purpose ? <p className="mt-0.5 truncate text-[10.5px] text-muted-foreground/80">{theme.purpose}</p> : null}
+                    {theme?.goalRef ? <p className="mt-0.5 truncate text-[10px] text-muted-foreground/70">Goal: {theme.goalRef}</p> : null}
+                    <span className="mt-1 flex flex-wrap gap-1 text-[9.5px] font-semibold">
+                      {dayState ? <span className={cn('rounded border px-1.5 py-0.5', dayState === 'active' ? 'border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300' : dayState === 'completed' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border text-muted-foreground')}>{dayState === 'active' ? '今日実行' : dayState === 'completed' ? '今日分完了' : '今日は見送り'}</span> : null}
+                      {group.carriedFromDay ? <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-300">前日から繰越</span> : null}
+                    </span>
                   </div>
                   <span className="shrink-0 text-[10.5px] text-muted-foreground">今日は動きなし</span>
                   <button type="button" onClick={editor.startEditing} aria-label={`テーマ「${theme.name}」を編集`} title="テーマを編集" className="m-1 inline-grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Pencil className="h-3.5 w-3.5" /></button>
@@ -208,6 +260,12 @@ export function ThemeGroupCard({
                     <span className="min-w-0 flex-1 self-start">
                       <span className="block truncate text-[15px] font-extrabold leading-snug">{title}</span>
                       {theme?.purpose ? <span className="mt-0.5 block truncate text-[10.5px] font-normal text-muted-foreground">{theme.purpose}</span> : null}
+                      {plans.length === 0 ? <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground/75">今日は動きなし</span> : null}
+                      <span className="mt-1 flex flex-wrap gap-1 text-[9.5px] font-semibold">
+                        {dayState ? <span className={cn('rounded border px-1.5 py-0.5', dayState === 'active' ? 'border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300' : dayState === 'completed' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border text-muted-foreground')}>{dayState === 'active' ? '今日実行' : dayState === 'completed' ? '今日分完了' : '今日は見送り'}</span> : null}
+                        {group.carriedFromDay ? <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-300">前日から繰越</span> : null}
+                        {theme?.goalRef ? <span className="max-w-40 truncate rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">Goal {theme.goalRef}</span> : null}
+                      </span>
                     </span>
                     {metrics}
                   </button>
@@ -222,23 +280,15 @@ export function ThemeGroupCard({
             <div className="mb-2.5 flex flex-wrap items-start gap-2 px-0.5">
               <button
                 type="button"
-                onClick={() => showNextPhaseNotice('翌日へのTheme引継ぎ')}
+                onClick={() => void updateDayState()}
                 aria-describedby={phaseNotice ? `phase-notice-${group.key}` : undefined}
+                disabled={dayState === null || dayVersion === null || isPreview}
                 className="ml-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Check className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
-                明日も継続
-                <span className="font-normal text-muted-foreground/70">未保存</span>
+                {dayState === 'completed' ? '今日のThemeへ戻す' : '今日分を完了'}
               </button>
-              <button
-                type="button"
-                onClick={() => showNextPhaseNotice('既存Planの追加・紐付け')}
-                aria-describedby={phaseNotice ? `phase-notice-${group.key}` : undefined}
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[11px] font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden />
-                Planを追加
-              </button>
+              <span className="self-center text-[10px] text-muted-foreground">未完了のThemeは翌日に自動継続</span>
             </div>
           ) : null}
 
@@ -248,16 +298,47 @@ export function ThemeGroupCard({
             </p>
           ) : null}
 
+          {theme && (theme.purpose || theme.doneCriteria || theme.goalRef) ? (
+            <dl className="mb-2.5 grid gap-1 rounded-lg border border-border/60 bg-background/55 px-2.5 py-2 text-[10.5px] leading-relaxed">
+              {theme.purpose ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">目的</dt><dd>{theme.purpose}</dd></div> : null}
+              {theme.doneCriteria ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">完了条件</dt><dd>{theme.doneCriteria}</dd></div> : null}
+              {theme.goalRef ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">Goal</dt><dd className="break-all">{theme.goalRef}</dd></div> : null}
+            </dl>
+          ) : null}
+
           <div className={cn('grid gap-2.5', compact ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2')}>
             {plans.map((card) => (
-              <PlanCardV2
+              <div
                 key={card.planSlug || `theme:${card.theme?.id ?? ''}`}
-                data={card}
-                selectedDate={selectedDate}
-                aiTargets={aiTargets}
-                onPreviewOnlyAction={showNextPhaseNotice}
-                isPreview={isPreview}
-              />
+                draggable={!isPreview && Boolean(card.planSlug)}
+                onDragStart={(event) => card.planSlug && onPlanDragStart?.(card.planSlug, event)}
+                onDragEnd={onPlanDragEnd}
+                className={cn(card.planSlug && !isPreview && 'cursor-grab active:cursor-grabbing')}
+              >
+                <PlanCardV2
+                  data={card}
+                  selectedDate={selectedDate}
+                  aiTargets={aiTargets}
+                  onPreviewOnlyAction={isPreview ? showNextPhaseNotice : undefined}
+                  isPreview={isPreview}
+                />
+                {!isPreview && card.planSlug && moveTargets.length > 1 ? (
+                  <label className="mt-1.5 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
+                    <span>テーマへ移動</span>
+                    <select
+                      aria-label={`${card.planTitle}を別のテーマへ移動`}
+                      value={theme?.id ?? ''}
+                      onChange={(event) => {
+                        const target = event.target.value;
+                        if (target && target !== theme?.id) void onMovePlan?.(card.planSlug, target);
+                      }}
+                      className="min-h-9 max-w-40 rounded-md border border-border bg-background px-2 text-[10.5px] text-foreground"
+                    >
+                      {moveTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
             ))}
           </div>
         </div>

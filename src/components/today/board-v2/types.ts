@@ -11,7 +11,7 @@
 import type { CurrentSession, StuckWait } from '@/lib/turso/personal-os-board';
 import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
-import type { Theme, ThemeProgress } from '@/lib/turso/themes';
+import type { Theme, ThemeDayState, ThemeProgress } from '@/lib/turso/themes';
 import type { SessionSubagent } from '@/lib/turso/session-subagents';
 
 export interface SessionItem {
@@ -58,6 +58,8 @@ export interface PlanCardData {
   finishedLogs: { entry: string; count: number }[]; // このカードのテーマ名を parent に持つ session_logs
   liveCount: number; // state==='run'|'sub' のセッション数（カード帯ライブ帯）
   waitCount: number; // state==='wait'
+  // theme_plan_links の楽観ロック用。旧データ/移行中は未取得の場合がある。
+  themeLinkVersion?: number | null;
 }
 
 export interface StrayData {
@@ -82,6 +84,9 @@ export interface ThemeGroup {
   liveCount: number; // 配下計画の稼働(run/sub)合算
   waitCount: number; // 配下計画の確認待ち(wait)合算
   hasActivity: boolean; // 当日動きの有無（並び順=活動ありを先へ）
+  dayState: ThemeDayState | null; // theme_days の当日状態。旧Theme一覧は null。
+  carriedFromDay: string | null; // 前日からの自動繰越元。
+  dayVersion: number | null; // 日次状態変更の楽観ロック。
 }
 
 export interface BoardV2Data {

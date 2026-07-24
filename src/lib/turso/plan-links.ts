@@ -114,6 +114,28 @@ export async function getActivePlans(): Promise<ActivePlan[]> {
   }))
 }
 
+export async function getPlanForTransition(slug: string): Promise<ActivePlan | null> {
+  const base = planSlugBase(slug)
+  if (!base) return null
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      SELECT program_slug, title, bucket, path FROM plan_docs
+      WHERE program_slug = :slug AND kind IN ('program', 'single')
+      ORDER BY CASE kind WHEN 'program' THEN 0 ELSE 1 END
+      LIMIT 1
+    `,
+    args: { slug: base },
+  })
+  const row = result.rows[0]
+  if (!row) return null
+  return {
+    slug: asString(row.program_slug),
+    title: asString(row.title) || asString(row.program_slug),
+    bucket: asString(row.bucket),
+    path: asString(row.path),
+  }
+}
+
 // 子05: 計画単位の工程進捗（カードの済/総）。該当 plan_slug（完全一致 `slug` と前方一致 `slug#%`）に
 // リンクする todos の todo_steps を全期間で集計する。分母は skipped 除外（todo-steps.ts の%契約と同型）。
 // すべてSQL導出・保存しない。キーはベースslug。

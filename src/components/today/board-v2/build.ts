@@ -10,7 +10,7 @@ import type {
 } from '@/lib/turso/personal-os-board';
 import type { Todo } from '@/lib/turso/todos';
 import type { TodoStep, TodoStepAggregate, TodoTimes } from '@/lib/turso/todo-steps';
-import type { Theme, ThemeProgress } from '@/lib/turso/themes';
+import type { DailyTheme, Theme, ThemeProgress } from '@/lib/turso/themes';
 import type { SessionSubagent } from '@/lib/turso/session-subagents';
 import type { ActivePlan, PlanStepProgress } from '@/lib/turso/plan-links';
 import type {
@@ -299,6 +299,9 @@ export function buildBoardV2Data(input: BuildInput): BoardV2Data {
     liveCount: 0,
     waitCount: 0,
     hasActivity: false,
+    dayState: (theme as Partial<DailyTheme> | null)?.dayState ?? null,
+    carriedFromDay: (theme as Partial<DailyTheme> | null)?.carriedFromDay ?? null,
+    dayVersion: (theme as Partial<DailyTheme> | null)?.dayVersion ?? null,
   });
   const themeGroupById = new Map<string, ThemeGroup>();
   const orderedGroups: ThemeGroup[] = [];

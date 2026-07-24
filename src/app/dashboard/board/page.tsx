@@ -24,9 +24,10 @@ import {
   type TodoTimes,
 } from '@/lib/turso/todo-steps';
 import {
-  getActiveThemes,
+  ensureThemeDay,
+  getThemesForDate,
   getThemeProgressForDate,
-  type Theme,
+  type DailyTheme,
   type ThemeProgress,
 } from '@/lib/turso/themes';
 import { getSubagentsBySession, type SessionSubagent } from '@/lib/turso/session-subagents';
@@ -111,6 +112,15 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
   const selectedDate = isDate(params.date) ? params.date : today;
   const isToday = selectedDate === today;
 
+  // 今日だけ前日active Themeを自動継承。昨日以前の閲覧は読み取り専用に保つ。
+  if (isToday) {
+    try {
+      await ensureThemeDay(selectedDate);
+    } catch {
+      // 下のフェイルソフト読込で接続できたデータだけ表示する。
+    }
+  }
+
   const [
     reposResult,
     todosResult,
@@ -134,7 +144,7 @@ export default async function TodayBoardPage({ searchParams }: PageProps) {
     load('inbox', [] as TodoStep[], () => getStepsForDate(selectedDate)),
     load('inbox', new Map<string, TodoStepAggregate>(), () => getStepAggregatesForDate(selectedDate)),
     load('inbox', new Map<string, TodoTimes>(), () => getTodoTimesForDate(selectedDate)),
-    load('inbox', [] as Theme[], () => getActiveThemes()),
+    load('inbox', [] as DailyTheme[], () => getThemesForDate(selectedDate)),
     load('inbox', new Map<string, ThemeProgress>(), () => getThemeProgressForDate(selectedDate)),
     load('board', EMPTY_TOTALS, () => getDailyTotals(selectedDate)),
     load('board', [] as FinishedLog[], () => getFinishedLogs(selectedDate)),

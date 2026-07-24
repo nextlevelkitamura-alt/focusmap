@@ -40,8 +40,18 @@ start_session() {
   tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
   : > "$LOG_FILE"
 
+  # local devだけの認証補完。secretは.envやログへ書かず、Keychainから起動プロセスへ直接渡す。
+  # Cloud Run等で環境変数が設定済みなら上書きしない。
   tmux new-session -d -s "$SESSION" -c "$ROOT_DIR" \
-    "export NODE_OPTIONS=\"\${NODE_OPTIONS:-} --max-http-header-size=65536\"; ./node_modules/.bin/next dev -p $PORT 2>&1 | tee -a \"$LOG_FILE\""
+    "export NODE_OPTIONS=\"\${NODE_OPTIONS:-} --max-http-header-size=65536\"; \
+     if [ -z \"\${PERSONAL_OS_INBOX_AUTH_TOKEN:-}\" ] && command -v security >/dev/null 2>&1; then \
+       PERSONAL_OS_INBOX_AUTH_TOKEN=\"\$(security find-generic-password -a \"\${USER:-}\" -s turso-personal-os-inbox -w 2>/dev/null || true)\"; \
+       export PERSONAL_OS_INBOX_AUTH_TOKEN; \
+     fi; \
+     if [ -n \"\${PERSONAL_OS_INBOX_AUTH_TOKEN:-}\" ] && [ -z \"\${PERSONAL_OS_INBOX_DATABASE_URL:-}\" ]; then \
+       export PERSONAL_OS_INBOX_DATABASE_URL=\"https://personal-os-inbox-nextlevelkitamura-alt.aws-ap-northeast-1.turso.io\"; \
+     fi; \
+     ./node_modules/.bin/next dev -p $PORT 2>&1 | tee -a \"$LOG_FILE\""
 
   for _ in $(seq 1 60); do
     if is_port_listening; then
