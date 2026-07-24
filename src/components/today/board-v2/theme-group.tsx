@@ -167,37 +167,39 @@ export function ThemeGroupCard({
         );
 
         const textFields = (
-          <div className="min-w-[180px] flex-1 self-stretch py-0.5">
-            <input
-              value={editor.draft.name}
-              onChange={(event) => editor.updateDraft('name', event.target.value)}
-              aria-label="テーマ名"
-              required
-              className="h-6 w-full rounded border border-primary/45 bg-background/65 px-1.5 text-[15px] font-extrabold leading-snug outline-none ring-0 placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
-            />
-            <AutoGrowingTextarea
-              value={editor.draft.purpose}
-              onChange={(event) => editor.updateDraft('purpose', event.target.value)}
-              aria-label="目的"
-              rows={1}
-              placeholder="目的を入力"
-              className="mt-1 block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
-            />
-            <input
-              value={editor.draft.goalRef}
-              onChange={(event) => editor.updateDraft('goalRef', event.target.value)}
-              aria-label="ゴール参照"
-              placeholder="ゴール参照を入力"
-              className="mt-1 h-6 w-full rounded border border-primary/35 bg-background/50 px-1.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
-            />
-            <AutoGrowingTextarea
-              value={editor.draft.doneCriteria}
-              onChange={(event) => editor.updateDraft('doneCriteria', event.target.value)}
-              aria-label="完了条件"
-              rows={1}
-              placeholder="完了条件を入力"
-              className="mt-1 block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
-            />
+          <div className="min-w-[180px] flex-1 self-stretch space-y-1.5 py-0.5">
+            <label className="block space-y-0.5">
+              <span className="block text-[10px] font-semibold text-muted-foreground">内容</span>
+              <input
+                value={editor.draft.name}
+                onChange={(event) => editor.updateDraft('name', event.target.value)}
+                aria-label="内容"
+                required
+                className="h-6 w-full rounded border border-primary/45 bg-background/65 px-1.5 text-[15px] font-extrabold leading-snug outline-none ring-0 placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+              />
+            </label>
+            <label className="block space-y-0.5">
+              <span className="block text-[10px] font-semibold text-muted-foreground">目的</span>
+              <AutoGrowingTextarea
+                value={editor.draft.purpose}
+                onChange={(event) => editor.updateDraft('purpose', event.target.value)}
+                aria-label="目的"
+                rows={1}
+                placeholder="目的を入力"
+                className="block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+              />
+            </label>
+            <label className="block space-y-0.5">
+              <span className="block text-[10px] font-semibold text-muted-foreground">完了条件</span>
+              <AutoGrowingTextarea
+                value={editor.draft.doneCriteria}
+                onChange={(event) => editor.updateDraft('doneCriteria', event.target.value)}
+                aria-label="完了条件"
+                rows={1}
+                placeholder="完了条件を入力"
+                className="block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+              />
+            </label>
           </div>
         );
 
@@ -221,7 +223,6 @@ export function ThemeGroupCard({
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate text-[13.5px] font-semibold leading-snug text-muted-foreground">{title}</h2>
                     {theme?.purpose ? <p className="mt-0.5 truncate text-[10.5px] text-muted-foreground/80">{theme.purpose}</p> : null}
-                    {theme?.goalRef ? <p className="mt-0.5 truncate text-[10px] text-muted-foreground/70">Goal: {theme.goalRef}</p> : null}
                     <span className="mt-1 flex flex-wrap gap-1 text-[9.5px] font-semibold">
                       {dayState ? <span className={cn('rounded border px-1.5 py-0.5', dayState === 'active' ? 'border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300' : dayState === 'completed' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border text-muted-foreground')}>{dayState === 'active' ? '今日実行' : dayState === 'completed' ? '今日分完了' : '今日は見送り'}</span> : null}
                       {group.carriedFromDay ? <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-300">前日から繰越</span> : null}
@@ -264,7 +265,6 @@ export function ThemeGroupCard({
                       <span className="mt-1 flex flex-wrap gap-1 text-[9.5px] font-semibold">
                         {dayState ? <span className={cn('rounded border px-1.5 py-0.5', dayState === 'active' ? 'border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300' : dayState === 'completed' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border text-muted-foreground')}>{dayState === 'active' ? '今日実行' : dayState === 'completed' ? '今日分完了' : '今日は見送り'}</span> : null}
                         {group.carriedFromDay ? <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-300">前日から繰越</span> : null}
-                        {theme?.goalRef ? <span className="max-w-40 truncate rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">Goal {theme.goalRef}</span> : null}
                       </span>
                     </span>
                     {metrics}
@@ -298,11 +298,10 @@ export function ThemeGroupCard({
             </p>
           ) : null}
 
-          {theme && (theme.purpose || theme.doneCriteria || theme.goalRef) ? (
+          {theme && (theme.purpose || theme.doneCriteria) ? (
             <dl className="mb-2.5 grid gap-1 rounded-lg border border-border/60 bg-background/55 px-2.5 py-2 text-[10.5px] leading-relaxed">
               {theme.purpose ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">目的</dt><dd>{theme.purpose}</dd></div> : null}
               {theme.doneCriteria ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">完了条件</dt><dd>{theme.doneCriteria}</dd></div> : null}
-              {theme.goalRef ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">Goal</dt><dd className="break-all">{theme.goalRef}</dd></div> : null}
             </dl>
           ) : null}
 

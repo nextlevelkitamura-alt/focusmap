@@ -117,6 +117,7 @@ export function ThemePlanBoard({
   const [showCreate, setShowCreate] = useState(false);
   const [newThemeName, setNewThemeName] = useState('');
   const [newThemePurpose, setNewThemePurpose] = useState('');
+  const [newThemeDoneCriteria, setNewThemeDoneCriteria] = useState('');
   const [themeActionNotice, setThemeActionNotice] = useState('');
   const [savingTheme, setSavingTheme] = useState(false);
   const [candidates, setCandidates] = useState<ThemeCandidate[]>([]);
@@ -170,6 +171,7 @@ export function ThemePlanBoard({
           date: selectedDate,
           name,
           purpose: newThemePurpose.trim(),
+          doneCriteria: newThemeDoneCriteria.trim(),
           repoSlugs: [repoSlugFromLabel(activeRepo)].filter(Boolean),
         }),
       });
@@ -179,6 +181,7 @@ export function ThemePlanBoard({
       setLocalGroups((current) => current.some((group) => group.key === created.id) ? current : [...current, groupFromTheme(created)]);
       setNewThemeName('');
       setNewThemePurpose('');
+      setNewThemeDoneCriteria('');
       setShowCreate(false);
       setThemeActionNotice('今日のThemeへ追加しました。未完了なら明日へ自動で繰り越します。');
     } catch {
@@ -186,7 +189,7 @@ export function ThemePlanBoard({
     } finally {
       setSavingTheme(false);
     }
-  }, [activeRepo, isPreview, newThemeName, newThemePurpose, savingTheme, selectedDate]);
+  }, [activeRepo, isPreview, newThemeDoneCriteria, newThemeName, newThemePurpose, savingTheme, selectedDate]);
 
   const decideCandidate = useCallback(async (candidate: ThemeCandidate, action: 'adopt' | 'reject') => {
     if (isPreview) return;
@@ -287,22 +290,39 @@ export function ThemePlanBoard({
               className="space-y-1.5 rounded-lg border border-primary/30 bg-background/70 p-2"
               onSubmit={(event) => { event.preventDefault(); void createTheme(); }}
             >
-              <input
-                autoFocus
-                value={newThemeName}
-                onChange={(event) => setNewThemeName(event.target.value)}
-                aria-label="新しいTheme名"
-                placeholder="今日向き合うTheme"
-                className="h-9 w-full rounded-md border border-border bg-background px-2.5 text-xs font-semibold outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
-              />
-              <textarea
-                value={newThemePurpose}
-                onChange={(event) => setNewThemePurpose(event.target.value)}
-                aria-label="新しいThemeの目的"
-                placeholder="何を良くするためのThemeか（後から編集できます）"
-                rows={2}
-                className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
-              />
+              <label className="block space-y-1">
+                <span className="block text-[10px] font-semibold text-muted-foreground">内容</span>
+                <input
+                  autoFocus
+                  value={newThemeName}
+                  onChange={(event) => setNewThemeName(event.target.value)}
+                  aria-label="内容"
+                  placeholder="今日向き合うTheme"
+                  className="h-9 w-full rounded-md border border-border bg-background px-2.5 text-xs font-semibold outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="block text-[10px] font-semibold text-muted-foreground">目的</span>
+                <textarea
+                  value={newThemePurpose}
+                  onChange={(event) => setNewThemePurpose(event.target.value)}
+                  aria-label="目的"
+                  placeholder="何を良くするためのThemeか"
+                  rows={2}
+                  className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="block text-[10px] font-semibold text-muted-foreground">完了条件</span>
+                <textarea
+                  value={newThemeDoneCriteria}
+                  onChange={(event) => setNewThemeDoneCriteria(event.target.value)}
+                  aria-label="完了条件"
+                  placeholder="どの状態になれば完了か"
+                  rows={2}
+                  className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                />
+              </label>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground">{activeRepo === 'すべて' ? 'リポ未指定' : `${activeRepo}に紐付け`}</span>
                 <div className="flex gap-1.5">

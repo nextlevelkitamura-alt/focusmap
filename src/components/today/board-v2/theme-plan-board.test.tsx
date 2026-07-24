@@ -150,10 +150,18 @@ describe('ThemePlanBoard', () => {
     });
     render(<ThemePlanBoard groups={[]} selectedDate="2026-07-24" aiTargets={[]} selectedRepo="Focusmap" />);
     fireEvent.click(screen.getByRole('button', { name: 'Themeを追加' }));
-    fireEvent.change(screen.getByLabelText('新しいTheme名'), { target: { value: '今日思いついたTheme' } });
+    fireEvent.change(screen.getByLabelText('内容'), { target: { value: '今日思いついたTheme' } });
+    fireEvent.change(screen.getByLabelText('目的'), { target: { value: '今日の目的' } });
+    fireEvent.change(screen.getByLabelText('完了条件'), { target: { value: '今日の完了条件' } });
     fireEvent.click(screen.getByRole('button', { name: '追加' }));
     expect(await screen.findByText('今日思いついたTheme')).toBeInTheDocument();
     expect(screen.getByText(/未完了なら明日へ自動で繰り越します/)).toBeInTheDocument();
+    const [, request] = vi.mocked(globalThis.fetch).mock.calls.find(([input]) => String(input).endsWith('/api/board/themes')) ?? [];
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      name: '今日思いついたTheme',
+      purpose: '今日の目的',
+      doneCriteria: '今日の完了条件',
+    });
   });
 
   test('AI候補は採用ボタンで当日のThemeへ昇格する', async () => {
