@@ -12,11 +12,25 @@ export type Theme = {
   purpose: string
   doneCriteria: string
   goalRef: string
+  completionCriteria: ThemeCompletionCriterion[]
   planRefs: string[]
   planLinks?: ThemePlanLink[]
   repoSlugs?: string[]
   sortOrder: number
   status: ThemeStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export type ThemeCompletionCriterion = {
+  id: string
+  themeId: string
+  content: string
+  isCompleted: boolean
+  completedAt: string
+  completedBy: 'human' | 'ai' | ''
+  sortOrder: number
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -66,6 +80,7 @@ export type NewThemeInput = {
   name: string
   purpose?: string | null
   doneCriteria?: string | null
+  completionCriteria?: string[] | null
   goalRef?: string | null
   planRefs?: string[] | null
 }
@@ -79,6 +94,7 @@ export type UpdateThemeInput = {
   id: string
   name: string
   purpose?: string | null
+  // 旧server action互換。新しいDaily UIはcompletionCriteria APIを使う。
   doneCriteria?: string | null
   goalRef?: string | null
   planRefs?: string[] | null
@@ -103,11 +119,27 @@ function uniqueSlugs(values: string[] | null | undefined): string[] {
   return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))]
 }
 
+function completionCriteria(values: string[] | null | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean).map((value) => value.slice(0, 1_000)))]
+}
+
+function completionCriteriaStatements(themeId: string, values: string[], now: string) {
+  return values.map((content, sortOrder) => ({
+    sql: `
+      INSERT INTO theme_completion_criteria
+        (id, theme_id, content, is_completed, completed_at, completed_by, sort_order, version, created_at, updated_at)
+      VALUES (:id, :themeId, :content, 0, NULL, NULL, :sortOrder, 1, :now, :now)
+    `,
+    args: { id: randomUUID(), themeId, content, sortOrder, now },
+  }))
+}
+
 function toTheme(
   row: Row,
   planRefsByTheme: Map<string, string[]> = new Map(),
   reposByTheme: Map<string, string[]> = new Map(),
   planLinksByTheme: Map<string, ThemePlanLink[]> = new Map(),
+  completionCriteriaByTheme: Map<string, ThemeCompletionCriterion[]> = new Map(),
 ): Theme {
   const id = asString(row.id)
   return {
@@ -116,11 +148,27 @@ function toTheme(
     purpose: asString(row.purpose),
     doneCriteria: asString(row.done_criteria),
     goalRef: asString(row.goal_ref),
+    completionCriteria: completionCriteriaByTheme.get(id) ?? [],
     planRefs: planRefsByTheme.get(id) ?? [],
     planLinks: planLinksByTheme.get(id) ?? [],
     repoSlugs: reposByTheme.get(id) ?? [],
     sortOrder: asNumber(row.sort_order),
     status: (asString(row.status) || 'active') as ThemeStatus,
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  }
+}
+
+function toThemeCompletionCriterion(row: Row): ThemeCompletionCriterion {
+  return {
+    id: asString(row.id),
+    themeId: asString(row.theme_id),
+    content: asString(row.content),
+    isCompleted: asNumber(row.is_completed) === 1,
+    completedAt: asString(row.completed_at),
+    completedBy: asString(row.completed_by) as ThemeCompletionCriterion['completedBy'],
+    sortOrder: asNumber(row.sort_order),
+    version: asNumber(row.version),
     createdAt: asString(row.created_at),
     updatedAt: asString(row.updated_at),
   }
@@ -169,9 +217,10 @@ async function getThemeRelations(): Promise<{
   planRefsByTheme: Map<string, string[]>
   planLinksByTheme: Map<string, ThemePlanLink[]>
   reposByTheme: Map<string, string[]>
+  completionCriteriaByTheme: Map<string, ThemeCompletionCriterion[]>
 }> {
   const client = getPersonalOsInboxClient()
-  const [linkResult, repoResult] = await Promise.all([
+  const [linkResult, repoResult, completionCriteriaResult] = await Promise.all([
     client.execute({
       sql: `
         SELECT plan_slug, theme_id, sort_order, version, created_at, updated_at
@@ -184,10 +233,20 @@ async function getThemeRelations(): Promise<{
       sql: `SELECT theme_id, repo_slug FROM theme_repos ORDER BY theme_id, repo_slug`,
       args: {},
     }),
+    client.execute({
+      sql: `
+        SELECT id, theme_id, content, is_completed, completed_at, completed_by,
+               sort_order, version, created_at, updated_at
+        FROM theme_completion_criteria
+        ORDER BY theme_id, sort_order, created_at, id
+      `,
+      args: {},
+    }),
   ])
   const planRefsByTheme = new Map<string, string[]>()
   const planLinksByTheme = new Map<string, ThemePlanLink[]>()
   const reposByTheme = new Map<string, string[]>()
+  const completionCriteriaByTheme = new Map<string, ThemeCompletionCriterion[]>()
   for (const row of linkResult.rows) {
     const themeId = asString(row.theme_id)
     const values = planRefsByTheme.get(themeId) ?? []
@@ -203,7 +262,13 @@ async function getThemeRelations(): Promise<{
     values.push(asString(row.repo_slug))
     reposByTheme.set(themeId, values)
   }
-  return { planRefsByTheme, planLinksByTheme, reposByTheme }
+  for (const row of completionCriteriaResult.rows) {
+    const criterion = toThemeCompletionCriterion(row)
+    const values = completionCriteriaByTheme.get(criterion.themeId) ?? []
+    values.push(criterion)
+    completionCriteriaByTheme.set(criterion.themeId, values)
+  }
+  return { planRefsByTheme, planLinksByTheme, reposByTheme, completionCriteriaByTheme }
 }
 
 // Theme定義の一覧。日別Dailyでは getThemesForDate を使い、この関数は選択肢・管理画面用に限定する。
@@ -225,6 +290,7 @@ export async function getActiveThemes(): Promise<Theme[]> {
     relations.planRefsByTheme,
     relations.reposByTheme,
     relations.planLinksByTheme,
+    relations.completionCriteriaByTheme,
   ))
 }
 
@@ -245,6 +311,7 @@ export async function getThemeById(id: string): Promise<Theme | null> {
     relations.planRefsByTheme,
     relations.reposByTheme,
     relations.planLinksByTheme,
+    relations.completionCriteriaByTheme,
   ) : null
 }
 
@@ -274,6 +341,7 @@ export async function getThemesForDate(day: string): Promise<DailyTheme[]> {
       relations.planRefsByTheme,
       relations.reposByTheme,
       relations.planLinksByTheme,
+      relations.completionCriteriaByTheme,
     ),
     day: asString(row.day),
     dayState: asString(row.day_state) as ThemeDayState,
@@ -525,6 +593,8 @@ export async function insertTheme(input: NewThemeInput): Promise<string> {
   const id = randomUUID()
   const now = new Date().toISOString()
   const planRefs = uniqueSlugs(input.planRefs)
+  const criteria = completionCriteria(input.completionCriteria)
+  const legacyDoneCriteria = input.completionCriteria === undefined ? input.doneCriteria ?? null : null
   await getPersonalOsInboxClient().batch([
     {
       sql: `
@@ -540,11 +610,12 @@ export async function insertTheme(input: NewThemeInput): Promise<string> {
         id,
         name: input.name,
         purpose: input.purpose ?? null,
-        doneCriteria: input.doneCriteria ?? null,
+        doneCriteria: legacyDoneCriteria,
         goalRef: input.goalRef ?? null,
         now,
       },
     },
+    ...completionCriteriaStatements(id, criteria, now),
     ...planRefs.map((planSlug, sortOrder) => ({
       sql: `
         INSERT OR IGNORE INTO theme_plan_links
@@ -567,6 +638,8 @@ export async function insertThemeForDate(input: NewDailyThemeInput): Promise<Dai
   const now = new Date().toISOString()
   const planRefs = uniqueSlugs(input.planRefs)
   const repoSlugs = uniqueSlugs(input.repoSlugs)
+  const criteria = completionCriteria(input.completionCriteria)
+  const legacyDoneCriteria = input.completionCriteria === undefined ? input.doneCriteria?.trim() || null : null
   const client = getPersonalOsInboxClient()
   await client.batch([
       {
@@ -583,11 +656,12 @@ export async function insertThemeForDate(input: NewDailyThemeInput): Promise<Dai
           id,
           name,
           purpose: input.purpose?.trim() || null,
-          doneCriteria: input.doneCriteria?.trim() || null,
+          doneCriteria: legacyDoneCriteria,
           goalRef: input.goalRef?.trim() || null,
           now,
         },
       },
+      ...completionCriteriaStatements(id, criteria, now),
       {
         sql: `
           INSERT INTO theme_days
@@ -623,8 +697,11 @@ export async function updateTheme(input: UpdateThemeInput): Promise<boolean> {
   const result = await getPersonalOsInboxClient().execute({
     sql: `
       UPDATE themes
-      SET name = :name, purpose = :purpose, done_criteria = :doneCriteria,
-          goal_ref = :goalRef, updated_at = :now
+      SET name = :name,
+          purpose = :purpose,
+          done_criteria = COALESCE(:doneCriteria, done_criteria),
+          goal_ref = COALESCE(:goalRef, goal_ref),
+          updated_at = :now
       WHERE id = :id AND status = 'active'
     `,
     args: {
@@ -652,6 +729,122 @@ export async function updateTheme(input: UpdateThemeInput): Promise<boolean> {
     ], 'write')
   }
   return true
+}
+
+async function getThemeCompletionCriterion(themeId: string, id: string): Promise<ThemeCompletionCriterion | null> {
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      SELECT id, theme_id, content, is_completed, completed_at, completed_by,
+             sort_order, version, created_at, updated_at
+      FROM theme_completion_criteria
+      WHERE id = :id AND theme_id = :themeId
+    `,
+    args: { id, themeId },
+  })
+  return result.rows[0] ? toThemeCompletionCriterion(result.rows[0]) : null
+}
+
+// Goal commandなどの呼び出し側は、この関数で未完了の条件だけを取得する。
+export async function getIncompleteThemeCompletionCriteria(themeId: string): Promise<ThemeCompletionCriterion[]> {
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      SELECT id, theme_id, content, is_completed, completed_at, completed_by,
+             sort_order, version, created_at, updated_at
+      FROM theme_completion_criteria
+      WHERE theme_id = :themeId AND is_completed = 0
+      ORDER BY sort_order, created_at, id
+    `,
+    args: { themeId },
+  })
+  return result.rows.map(toThemeCompletionCriterion)
+}
+
+export async function addThemeCompletionCriterion(input: {
+  id?: string
+  themeId: string
+  content: string
+}): Promise<ThemeCompletionCriterion | null> {
+  const id = input.id ?? randomUUID()
+  const content = input.content.trim().slice(0, 1_000)
+  if (!content) throw new Error('THEME_COMPLETION_CRITERION_REQUIRED')
+  const now = new Date().toISOString()
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      INSERT INTO theme_completion_criteria
+        (id, theme_id, content, is_completed, completed_at, completed_by, sort_order, version, created_at, updated_at)
+      SELECT
+        :id, id, :content, 0, NULL, NULL,
+        (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM theme_completion_criteria WHERE theme_id = :themeId),
+        1, :now, :now
+      FROM themes WHERE id = :themeId AND status = 'active'
+    `,
+    args: { id, themeId: input.themeId, content, now },
+  })
+  if (result.rowsAffected === 0) return null
+  return getThemeCompletionCriterion(input.themeId, id)
+}
+
+// APIはhumanだけを渡す。aiは将来のGoal/AI commandが同じCAS契約を使うための予約語彙。
+export async function updateThemeCompletionCriterion(input: {
+  themeId: string
+  id: string
+  expectedVersion: number
+  content?: string
+  isCompleted?: boolean
+  completedBy?: 'human' | 'ai'
+}): Promise<MutationResult<ThemeCompletionCriterion>> {
+  const content = input.content === undefined ? undefined : input.content.trim().slice(0, 1_000)
+  if (content !== undefined && !content) throw new Error('THEME_COMPLETION_CRITERION_REQUIRED')
+  if (input.isCompleted === undefined && content === undefined) throw new Error('THEME_COMPLETION_CRITERION_UPDATE_REQUIRED')
+  const now = new Date().toISOString()
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `
+      UPDATE theme_completion_criteria
+      SET content = COALESCE(:content, content),
+          is_completed = COALESCE(:isCompleted, is_completed),
+          completed_at = CASE
+            WHEN :isCompleted = 1 THEN :now
+            WHEN :isCompleted = 0 THEN NULL
+            ELSE completed_at
+          END,
+          completed_by = CASE
+            WHEN :isCompleted = 1 THEN :completedBy
+            WHEN :isCompleted = 0 THEN NULL
+            ELSE completed_by
+          END,
+          version = version + 1,
+          updated_at = :now
+      WHERE id = :id AND theme_id = :themeId AND version = :expectedVersion
+    `,
+    args: {
+      id: input.id,
+      themeId: input.themeId,
+      expectedVersion: input.expectedVersion,
+      content: content ?? null,
+      isCompleted: input.isCompleted === undefined ? null : input.isCompleted ? 1 : 0,
+      completedBy: input.isCompleted ? input.completedBy ?? 'human' : null,
+      now,
+    },
+  })
+  const current = await getThemeCompletionCriterion(input.themeId, input.id)
+  if (result.rowsAffected === 0 || !current) return { ok: false, conflict: true, current }
+  return { ok: true, value: current }
+}
+
+export async function deleteThemeCompletionCriterion(input: {
+  themeId: string
+  id: string
+  expectedVersion: number
+}): Promise<MutationResult<ThemeCompletionCriterion>> {
+  const before = await getThemeCompletionCriterion(input.themeId, input.id)
+  const result = await getPersonalOsInboxClient().execute({
+    sql: `DELETE FROM theme_completion_criteria WHERE id = :id AND theme_id = :themeId AND version = :expectedVersion`,
+    args: input,
+  })
+  if (result.rowsAffected === 0 || !before) {
+    return { ok: false, conflict: true, current: await getThemeCompletionCriterion(input.themeId, input.id) }
+  }
+  return { ok: true, value: before }
 }
 
 // アーカイブ（論理削除）。過去の theme_days / todo.theme_id は履歴として温存する。

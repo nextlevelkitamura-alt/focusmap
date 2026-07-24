@@ -8,6 +8,11 @@ function isDate(value: string | null): value is string {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
 }
 
+function criteria(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 1_000)))]
+}
+
 // 読み取り専用。日次行の作成・継承は POST /api/board/themes/ensure へ分離する。
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
@@ -44,7 +49,7 @@ export async function POST(request: NextRequest) {
       day,
       name,
       purpose: typeof body.purpose === 'string' ? body.purpose : null,
-      doneCriteria: typeof body.doneCriteria === 'string' ? body.doneCriteria : null,
+      completionCriteria: criteria(body.completionCriteria ?? (typeof body.doneCriteria === 'string' ? [body.doneCriteria] : [])),
       goalRef: typeof body.goalRef === 'string' ? body.goalRef : null,
       repoSlugs: Array.isArray(body.repoSlugs) ? body.repoSlugs.filter((value: unknown): value is string => typeof value === 'string') : [],
     })

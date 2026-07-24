@@ -6,8 +6,6 @@ export type EditableTheme = {
   id: string;
   name: string;
   purpose: string;
-  doneCriteria: string;
-  goalRef: string;
 };
 
 export type ThemeEditorControls = {
@@ -64,8 +62,6 @@ export function ThemeEditor({
       ...draft,
       name: draft.name.trim(),
       purpose: draft.purpose.trim(),
-      doneCriteria: draft.doneCriteria.trim(),
-      goalRef: draft.goalRef.trim(),
     };
     if (!nextTheme.name) {
       setError('テーマ名を入力してください。');

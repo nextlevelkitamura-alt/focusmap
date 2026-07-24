@@ -10,6 +10,7 @@ function theme(id: string, name: string, repoSlugs: string[], planRefs: string[]
     name,
     purpose: `${name}の目的`,
     doneCriteria: `${name}の完了条件`,
+    completionCriteria: [],
     goalRef: `goal-${id}`,
     planRefs,
     planLinks: planRefs.map((planSlug) => ({
@@ -160,7 +161,7 @@ describe('ThemePlanBoard', () => {
     expect(JSON.parse(String(request?.body))).toMatchObject({
       name: '今日思いついたTheme',
       purpose: '今日の目的',
-      doneCriteria: '今日の完了条件',
+      completionCriteria: ['今日の完了条件'],
     });
   });
 

@@ -93,11 +93,11 @@ describe('Daily Theme API', () => {
     mockInsertThemeForDate.mockResolvedValue({ id: 'theme-new', day: '2026-07-24', name: '新Theme' })
     const response = await createTheme(new NextRequest('http://localhost/api/board/themes', {
       method: 'POST',
-      body: JSON.stringify({ date: '2026-07-24', name: ' 新Theme ', purpose: '目的', repoSlugs: ['focusmap'] }),
+      body: JSON.stringify({ date: '2026-07-24', name: ' 新Theme ', purpose: '目的', completionCriteria: ['条件1', '条件2'], repoSlugs: ['focusmap'] }),
     }))
     expect(response.status).toBe(201)
     expect(mockInsertThemeForDate).toHaveBeenCalledWith(expect.objectContaining({
-      day: '2026-07-24', name: '新Theme', repoSlugs: ['focusmap'],
+      day: '2026-07-24', name: '新Theme', completionCriteria: ['条件1', '条件2'], repoSlugs: ['focusmap'],
     }))
   })
 

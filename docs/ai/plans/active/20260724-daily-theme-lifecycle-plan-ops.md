@@ -6,7 +6,7 @@
 # Daily Theme継承・Plan紐付け・実行状態の実運用化
 
 - Task ID: TASK-20260724-001
-- Status: review_pending
+- Status: active
 - Created: 2026-07-24
 - Parent: `~/Private/personal-os/my-brain/areas/ai運用/plans/active/2026-07-17-当日ボードSQL化/program.md`
 - Board: `docs/ai/task-board.md`
@@ -63,7 +63,7 @@ Themeを毎朝作り直さず、未完了なら翌日に自動継続し、昨日
 6. routing proposalの採用とsession所属更新を同一の専用操作にし、`sessions.theme_id / plan_slug / todo_id`へ冪等適用する。
 7. session表示はreconcileを正としつつ、UIでも鮮度を示す。staleは「実行中」ではなく「状態不明/確認待ち」へ倒す。
 8. Plan bucket変更はtyped `plan_transition` commandとしてMac agentへ渡し、`bucketctl dry-run → apply/commit → plansync → readback`を実行する。DBだけでactive/archiveを偽装しない。
-9. Theme編集は現在のインラインUIを維持し、目的・完了条件・goal参照・管理状況を同じカード内で編集する。管理状況の語彙は既存Theme lifecycleと日別stateを先に使い、新しい主観列は必要性を確認してから追加する。
+9. Theme編集は現在のインラインUIを維持し、内容・目的・完了条件を同じカード内で扱う。完了条件は本文と個別のチェック状態を持つ正規化テーブルを正本とし、全チェック後も日次Theme完了は人が押すまで自動遷移させない。完了者は現在`human`、将来のAI操作に備えて`ai`も表せる契約にする。
 10. 人がDailyで追加したThemeは即時に`themes + theme_days + theme_repos`へ保存する。AI判断は`theme_candidates`へ提案として置き、人がチェックした時だけ同じ3表へtransactionで昇格する。
 
 ## 工程
@@ -76,6 +76,7 @@ Themeを毎朝作り直さず、未完了なら翌日に自動継続し、昨日
 - [x] 06 実装: planningをplansync対象へ入れ、typed Plan遷移bridgeを追加する  評価: 都度
 - [x] 07 実装: 人の即追加とAI Theme候補の採用・却下をTurso/Dailyへ接続する  評価: 都度
 - [x] 08 評価: DB/API/UI/agent/plan正本境界を統合確認する  評価: まとめ
+- [ ] 09 実装: Theme完了条件を個別チェック項目へ正規化し、Dailyの人間操作へ接続する  評価: まとめ
 
 ## 完了条件
 
@@ -87,6 +88,10 @@ Themeを毎朝作り直さず、未完了なら翌日に自動継続し、昨日
 - [x] transcriptのない12時間超sessionが実行中に残らず、現存sessionは誤降格しない。
 - [x] Planのplanning→active等は`bucketctl`の規約・容量・評価・終了条件を通り、plansync readback後だけ確定表示になる。
 - [x] Themeの目的・完了条件・ゴール参照・継続状態がカードから確認/編集できる。
+- [ ] 既存の文章形式の完了条件が1件の未チェック項目として移行され、新規Themeは複数の完了条件を個別に保存できる。
+- [ ] Dailyでは完了条件ごとのチェック状態と完了数を表示・変更でき、チェック完了だけではThemeの日次状態を完了へ自動変更しない。
+- [ ] 完了条件の完了者は現在の人操作を`human`として記録し、将来のGoal/AI commandが`ai`として同じドメイン操作を利用できる。
+- [ ] Theme編集・追加フォームの目的と完了条件は内容欄と同じ前景色で表示される。
 - [x] Plan本文とbucketの正本がrepo Markdown/フォルダのままで、Tursoに本文の逆書込み経路がない。
 - [x] 人がその日に思いついたThemeをDaily上で追加でき、当日行とrepo所属まで保存される。
 - [x] AIの新Theme判断は候補として表示され、人が採用するまで正式Themeや当日Themeを増やさない。

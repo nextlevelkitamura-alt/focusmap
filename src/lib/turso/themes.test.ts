@@ -10,12 +10,16 @@ vi.mock('./client', () => ({
 }))
 
 import {
+  addThemeCompletionCriterion,
   ensureThemeDay,
+  getIncompleteThemeCompletionCriteria,
+  getThemeDay,
   getThemePlanLink,
   getThemesForDate,
   insertThemeForDate,
   movePlanToTheme,
   setThemeDayState,
+  updateThemeCompletionCriterion,
 } from './themes'
 
 let db: Client
@@ -26,6 +30,10 @@ const baseMigration = readFileSync(
 )
 const normalizedMigration = readFileSync(
   resolve(process.cwd(), 'db/turso/migrations/20260724000000_theme_days_plan_links.sql'),
+  'utf8',
+)
+const completionCriteriaMigration = readFileSync(
+  resolve(process.cwd(), 'db/turso/migrations/20260724120000_theme_completion_criteria.sql'),
   'utf8',
 )
 
@@ -74,6 +82,7 @@ beforeEach(async () => {
     },
   ], 'write')
   await db.executeMultiple(normalizedMigration)
+  await db.executeMultiple(completionCriteriaMigration)
 })
 
 afterEach(() => {
@@ -184,6 +193,7 @@ describe('Theme日次継承と正規化', () => {
       name: '今日思いついたTheme',
       purpose: '今日から整理する',
       repoSlugs: ['focusmap'],
+      completionCriteria: ['初回の完了条件', 'もう一つの完了条件'],
     })
     expect(created).toMatchObject({
       name: '今日思いついたTheme',
@@ -191,6 +201,32 @@ describe('Theme日次継承と正規化', () => {
       dayState: 'active',
       carriedFromDay: null,
       repoSlugs: ['focusmap'],
+      completionCriteria: [
+        { content: '初回の完了条件' },
+        { content: 'もう一つの完了条件' },
+      ],
     })
+  })
+
+  test('既存本文を1件の未チェック項目として移行し、human完了だけを記録する', async () => {
+    const themes = await getThemesForDate('2026-07-23')
+    const criterion = themes[0].completionCriteria[0]
+    expect(criterion).toMatchObject({ content: '完了1', isCompleted: false, completedBy: '' })
+
+    const updated = await updateThemeCompletionCriterion({
+      themeId: 'theme-1',
+      id: criterion.id,
+      expectedVersion: criterion.version,
+      isCompleted: true,
+      completedBy: 'human',
+    })
+    expect(updated).toMatchObject({ ok: true, value: { isCompleted: true, completedBy: 'human', version: 2 } })
+    expect(await getIncompleteThemeCompletionCriteria('theme-1')).toEqual([])
+    expect(await getThemeDay('theme-1', '2026-07-23')).toMatchObject({ state: 'active', version: 1 })
+  })
+
+  test('新規完了条件をThemeへ追加できる', async () => {
+    const created = await addThemeCompletionCriterion({ themeId: 'theme-1', content: '追加の完了条件' })
+    expect(created).toMatchObject({ content: '追加の完了条件', isCompleted: false, sortOrder: 1 })
   })
 })

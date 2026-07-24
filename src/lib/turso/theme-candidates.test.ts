@@ -15,6 +15,7 @@ beforeEach(async () => {
   mockGetClient.mockReturnValue(db)
   const base = readFileSync(resolve(process.cwd(), 'db/turso/migrations/20260719000000_themes_and_carryover.sql'), 'utf8')
   const normalized = readFileSync(resolve(process.cwd(), 'db/turso/migrations/20260724000000_theme_days_plan_links.sql'), 'utf8')
+  const completionCriteria = readFileSync(resolve(process.cwd(), 'db/turso/migrations/20260724120000_theme_completion_criteria.sql'), 'utf8')
   const candidates = readFileSync(resolve(process.cwd(), 'db/turso/migrations/20260724010000_theme_candidates.sql'), 'utf8')
   await db.executeMultiple(`
     PRAGMA foreign_keys = ON;
@@ -24,6 +25,7 @@ beforeEach(async () => {
     CREATE TABLE todo_steps (id TEXT PRIMARY KEY, todo_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending');
     ${base}
     ${normalized}
+    ${completionCriteria}
     ${candidates}
     INSERT INTO theme_candidates
       (id, name, purpose, done_criteria, repo_slug, source_session_key, source_turn_id)

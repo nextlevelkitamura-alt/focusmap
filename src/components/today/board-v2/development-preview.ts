@@ -18,6 +18,7 @@ function sampleTheme(
     name,
     purpose,
     doneCriteria: '',
+    completionCriteria: [],
     goalRef: '',
     planRefs,
     sortOrder,

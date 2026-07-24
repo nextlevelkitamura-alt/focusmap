@@ -1,7 +1,7 @@
 'use client';
 
 import { type DragEvent, type TextareaHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronRight, Layers, Pencil } from 'lucide-react';
+import { Check, ChevronRight, Layers, Pencil, Plus, Trash2 } from 'lucide-react';
 import { ThemeEditor, type EditableTheme } from '@/app/dashboard/board/_components/theme-editor';
 import type { Theme } from '@/lib/turso/themes';
 import { cn } from '@/lib/utils';
@@ -69,6 +69,8 @@ export function ThemeGroupCard({
   const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
   const [dayState, setDayState] = useState(group.dayState);
   const [dayVersion, setDayVersion] = useState(group.dayVersion);
+  const [newCriterionContent, setNewCriterionContent] = useState('');
+  const [savingCriterionId, setSavingCriterionId] = useState<string | null>(null);
   const theme = themeOverride ?? group.theme;
   const title = theme?.name ?? group.title;
   const plans = useMemo(
@@ -83,6 +85,8 @@ export function ThemeGroupCard({
   const expandable = plans.length > 0 || Boolean(theme);
   const activeCount = plans.filter((plan) => plan.bucket === 'active').length;
   const planningCount = plans.filter((plan) => plan.bucket === 'planning').length;
+  const completionCriteria = theme?.completionCriteria ?? [];
+  const completedCriteriaCount = completionCriteria.filter((criterion) => criterion.isCompleted).length;
 
   useEffect(() => {
     setDayState(group.dayState);
@@ -124,14 +128,109 @@ export function ThemeGroupCard({
     onThemeChange?.(updated);
   };
 
+  const updateCompletionCriteria = (nextCriteria: Theme['completionCriteria']) => {
+    if (!theme) return;
+    const updated = { ...theme, completionCriteria: nextCriteria };
+    setThemeOverride(updated);
+    onThemeChange?.(updated);
+  };
+
+  const toggleCompletionCriterion = async (criterionId: string) => {
+    if (!theme || isPreview || savingCriterionId) return;
+    const previous = completionCriteria;
+    const criterion = previous.find((item) => item.id === criterionId);
+    if (!criterion) return;
+    const isCompleted = !criterion.isCompleted;
+    updateCompletionCriteria(previous.map((item) => item.id === criterionId ? {
+      ...item,
+      isCompleted,
+      completedAt: isCompleted ? new Date().toISOString() : '',
+      completedBy: isCompleted ? 'human' : '',
+      version: item.version + 1,
+    } : item));
+    setSavingCriterionId(criterionId);
+    try {
+      const response = await fetch(`/api/board/themes/${encodeURIComponent(theme.id)}/criteria/${encodeURIComponent(criterionId)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ isCompleted, expectedVersion: criterion.version }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json?.criterion) throw new Error('save failed');
+      updateCompletionCriteria(previous.map((item) => item.id === criterionId ? json.criterion : item));
+      setPhaseNotice(isCompleted ? '完了条件にチェックしました。Themeの完了は「今日分を完了」で確定します。' : '完了条件のチェックを戻しました。');
+    } catch {
+      updateCompletionCriteria(previous);
+      setPhaseNotice('完了条件を更新できなかったため、元に戻しました。');
+    } finally {
+      setSavingCriterionId(null);
+    }
+  };
+
+  const addCompletionCriterion = async () => {
+    const content = newCriterionContent.trim();
+    if (!theme || !content || isPreview || savingCriterionId) return;
+    const previous = completionCriteria;
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    updateCompletionCriteria([...previous, {
+      id,
+      themeId: theme.id,
+      content,
+      isCompleted: false,
+      completedAt: '',
+      completedBy: '',
+      sortOrder: previous.length,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    }]);
+    setNewCriterionContent('');
+    setSavingCriterionId(id);
+    try {
+      const response = await fetch(`/api/board/themes/${encodeURIComponent(theme.id)}/criteria`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, content }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json?.criterion) throw new Error('save failed');
+      updateCompletionCriteria([...previous, json.criterion]);
+      setPhaseNotice('完了条件を追加しました。');
+    } catch {
+      updateCompletionCriteria(previous);
+      setNewCriterionContent(content);
+      setPhaseNotice('完了条件を追加できませんでした。入力内容は戻しました。');
+    } finally {
+      setSavingCriterionId(null);
+    }
+  };
+
+  const deleteCompletionCriterion = async (criterionId: string) => {
+    if (!theme || isPreview || savingCriterionId) return;
+    const previous = completionCriteria;
+    const criterion = previous.find((item) => item.id === criterionId);
+    if (!criterion) return;
+    updateCompletionCriteria(previous.filter((item) => item.id !== criterionId));
+    setSavingCriterionId(criterionId);
+    try {
+      const response = await fetch(`/api/board/themes/${encodeURIComponent(theme.id)}/criteria/${encodeURIComponent(criterionId)}?expectedVersion=${criterion.version}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('delete failed');
+      setPhaseNotice('完了条件を削除しました。');
+    } catch {
+      updateCompletionCriteria(previous);
+      setPhaseNotice('完了条件を削除できなかったため、元に戻しました。');
+    } finally {
+      setSavingCriterionId(null);
+    }
+  };
+
   const themeEditor = theme ? (
     <ThemeEditor
       theme={{
         id: theme.id,
         name: theme.name,
         purpose: theme.purpose,
-        doneCriteria: theme.doneCriteria,
-        goalRef: theme.goalRef,
       }}
       isPreview={isPreview}
       onThemeChange={handleThemeChange}
@@ -186,18 +285,7 @@ export function ThemeGroupCard({
                 aria-label="目的"
                 rows={1}
                 placeholder="目的を入力"
-                className="block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
-              />
-            </label>
-            <label className="block space-y-0.5">
-              <span className="block text-[10px] font-semibold text-muted-foreground">完了条件</span>
-              <AutoGrowingTextarea
-                value={editor.draft.doneCriteria}
-                onChange={(event) => editor.updateDraft('doneCriteria', event.target.value)}
-                aria-label="完了条件"
-                rows={1}
-                placeholder="完了条件を入力"
-                className="block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-muted-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
+                className="block min-h-5 w-full resize-none overflow-hidden rounded border border-primary/35 bg-background/50 px-1.5 py-0.5 text-[10.5px] leading-snug text-foreground outline-none placeholder:text-muted-foreground/65 focus:border-primary focus:ring-1 focus:ring-primary/30"
               />
             </label>
           </div>
@@ -226,6 +314,7 @@ export function ThemeGroupCard({
                     <span className="mt-1 flex flex-wrap gap-1 text-[9.5px] font-semibold">
                       {dayState ? <span className={cn('rounded border px-1.5 py-0.5', dayState === 'active' ? 'border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300' : dayState === 'completed' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border text-muted-foreground')}>{dayState === 'active' ? '今日実行' : dayState === 'completed' ? '今日分完了' : '今日は見送り'}</span> : null}
                       {group.carriedFromDay ? <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-300">前日から繰越</span> : null}
+                      {completionCriteria.length > 0 ? <span className="rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">完了条件 {completedCriteriaCount}/{completionCriteria.length}</span> : null}
                     </span>
                   </div>
                   <span className="shrink-0 text-[10.5px] text-muted-foreground">今日は動きなし</span>
@@ -265,6 +354,7 @@ export function ThemeGroupCard({
                       <span className="mt-1 flex flex-wrap gap-1 text-[9.5px] font-semibold">
                         {dayState ? <span className={cn('rounded border px-1.5 py-0.5', dayState === 'active' ? 'border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300' : dayState === 'completed' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border text-muted-foreground')}>{dayState === 'active' ? '今日実行' : dayState === 'completed' ? '今日分完了' : '今日は見送り'}</span> : null}
                         {group.carriedFromDay ? <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-violet-700 dark:text-violet-300">前日から繰越</span> : null}
+                        {completionCriteria.length > 0 ? <span className="rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">完了条件 {completedCriteriaCount}/{completionCriteria.length}</span> : null}
                       </span>
                     </span>
                     {metrics}
@@ -298,10 +388,47 @@ export function ThemeGroupCard({
             </p>
           ) : null}
 
-          {theme && (theme.purpose || theme.doneCriteria) ? (
+          {theme ? (
             <dl className="mb-2.5 grid gap-1 rounded-lg border border-border/60 bg-background/55 px-2.5 py-2 text-[10.5px] leading-relaxed">
-              {theme.purpose ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">目的</dt><dd>{theme.purpose}</dd></div> : null}
-              {theme.doneCriteria ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">完了条件</dt><dd>{theme.doneCriteria}</dd></div> : null}
+              {theme.purpose ? <div className="grid grid-cols-[52px_1fr] gap-2"><dt className="font-semibold text-muted-foreground">目的</dt><dd className="text-foreground">{theme.purpose}</dd></div> : null}
+              {completionCriteria.length > 0 ? (
+                <div className="grid grid-cols-[52px_1fr] gap-2">
+                  <dt className="font-semibold text-muted-foreground">完了条件</dt>
+                  <dd className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground">{completedCriteriaCount}/{completionCriteria.length} 件完了。すべてチェック後も、Themeの完了は人が操作します。</p>
+                    {completionCriteria.map((criterion) => (
+                      <div key={criterion.id} className="flex min-h-11 items-center gap-2 rounded-md border border-border/55 bg-background/55 px-2">
+                        <input
+                          type="checkbox"
+                          checked={criterion.isCompleted}
+                          disabled={Boolean(savingCriterionId) || isPreview}
+                          onChange={() => void toggleCompletionCriterion(criterion.id)}
+                          aria-label={`${criterion.content}を完了にする`}
+                          className="h-4 w-4 shrink-0 accent-primary"
+                        />
+                        <span className={cn('min-w-0 flex-1 text-foreground', criterion.isCompleted && 'text-muted-foreground line-through')}>{criterion.content}</span>
+                        {criterion.completedBy ? <span className="text-[9px] text-muted-foreground">{criterion.completedBy === 'human' ? '人が完了' : 'AIが完了'}</span> : null}
+                        <button type="button" onClick={() => void deleteCompletionCriterion(criterion.id)} disabled={Boolean(savingCriterionId) || isPreview} aria-label={`${criterion.content}を削除`} className="grid h-8 w-8 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    ))}
+                    <form onSubmit={(event) => { event.preventDefault(); void addCompletionCriterion(); }} className="flex gap-1.5 pt-1">
+                      <input value={newCriterionContent} onChange={(event) => setNewCriterionContent(event.target.value)} aria-label="完了条件を追加" placeholder="完了条件を追加" className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-[10.5px] text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30" />
+                      <button type="submit" disabled={!newCriterionContent.trim() || Boolean(savingCriterionId) || isPreview} className="inline-flex min-h-9 items-center gap-1 rounded-md border border-border px-2 text-[10px] font-semibold text-foreground disabled:opacity-50"><Plus className="h-3.5 w-3.5" />追加</button>
+                    </form>
+                  </dd>
+                </div>
+              ) : (
+                <div className="grid grid-cols-[52px_1fr] gap-2">
+                  <dt className="font-semibold text-muted-foreground">完了条件</dt>
+                  <dd className="space-y-1">
+                    <p className="text-muted-foreground">未登録</p>
+                    <form onSubmit={(event) => { event.preventDefault(); void addCompletionCriterion(); }} className="flex gap-1.5">
+                      <input value={newCriterionContent} onChange={(event) => setNewCriterionContent(event.target.value)} aria-label="完了条件を追加" placeholder="完了条件を追加" className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-[10.5px] text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30" />
+                      <button type="submit" disabled={!newCriterionContent.trim() || Boolean(savingCriterionId) || isPreview} className="inline-flex min-h-9 items-center gap-1 rounded-md border border-border px-2 text-[10px] font-semibold text-foreground disabled:opacity-50"><Plus className="h-3.5 w-3.5" />追加</button>
+                    </form>
+                  </dd>
+                </div>
+              )}
             </dl>
           ) : null}
 

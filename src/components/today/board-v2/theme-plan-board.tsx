@@ -171,7 +171,7 @@ export function ThemePlanBoard({
           date: selectedDate,
           name,
           purpose: newThemePurpose.trim(),
-          doneCriteria: newThemeDoneCriteria.trim(),
+          completionCriteria: newThemeDoneCriteria.split('\n').map((criterion) => criterion.trim()).filter(Boolean),
           repoSlugs: [repoSlugFromLabel(activeRepo)].filter(Boolean),
         }),
       });
@@ -309,7 +309,7 @@ export function ThemePlanBoard({
                   aria-label="目的"
                   placeholder="何を良くするためのThemeか"
                   rows={2}
-                  className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                  className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
                 />
               </label>
               <label className="block space-y-1">
@@ -318,9 +318,9 @@ export function ThemePlanBoard({
                   value={newThemeDoneCriteria}
                   onChange={(event) => setNewThemeDoneCriteria(event.target.value)}
                   aria-label="完了条件"
-                  placeholder="どの状態になれば完了か"
+                  placeholder="1行に1つずつ、完了条件を入力"
                   rows={2}
-                  className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                  className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-4 text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
                 />
               </label>
               <div className="flex items-center justify-between gap-2">

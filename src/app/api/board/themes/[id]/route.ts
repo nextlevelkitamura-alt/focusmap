@@ -5,8 +5,6 @@ import { createClient } from '@/utils/supabase/server';
 type ThemePatchBody = {
   name?: unknown;
   purpose?: unknown;
-  doneCriteria?: unknown;
-  goalRef?: unknown;
 };
 
 function text(value: unknown, maxLength: number) {
@@ -43,8 +41,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       id,
       name,
       purpose: text(body.purpose, 1_000) || null,
-      doneCriteria: text(body.doneCriteria, 1_000) || null,
-      goalRef: text(body.goalRef, 300) || null,
     });
     if (!updated) return NextResponse.json({ success: false, error: 'THEME_NOT_FOUND' }, { status: 404 });
     const theme = await getThemeById(id);
